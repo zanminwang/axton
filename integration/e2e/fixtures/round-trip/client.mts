@@ -27,11 +27,12 @@ try {
     try {
       if (line === "quit") break;
       if (line.startsWith("edit ")) {
-        await client.transaction((tx) =>
-          tx.mutate.edit({
-            entry: { identity: { id: "entry-1" }, values: { text: line.slice(5) } },
-          }),
-        );
+        await client.mutate.edit({
+          entry: {
+            identity: { id: "entry-1" },
+            values: { text: line.slice(5) },
+          },
+        });
       } else if (line === "offline") {
         await client.connection!.pause();
         console.log("Sync paused. Local reads and writes remain available.");

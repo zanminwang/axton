@@ -196,9 +196,16 @@ fn generated_clients_are_the_whole_client() {
         "{model}"
     );
     assert!(
-        model.contains("interface WritePort extends ReadPort, MutatePort"),
-        "{model}"
+        model.contains(
+            "interface WritePort extends ReadPort { direct(operation:object):Promise<void>; }"
+        ),
+        "transactions expose direct writes without mutation submission: {model}"
     );
+    let write_port = model
+        .lines()
+        .find(|line| line.starts_with("export interface WritePort "))
+        .unwrap();
+    assert!(!write_port.contains("mutate"), "{write_port}");
     let dart = ahead_compiler::dart(&schema);
     for member in [
         "late final Mutate mutate = Mutate(client);",
@@ -211,6 +218,49 @@ fn generated_clients_are_the_whole_client() {
     ] {
         assert!(dart.contains(member), "missing {member}: {dart}");
     }
+}
+
+#[test]
+fn generated_transaction_facades_are_local_only() {
+    let schema = compile("model Entry { id String title String @@id(id) } mutation Edit { entry Entry.update<title> }").unwrap();
+    let ts = ahead_compiler::typescript(&schema);
+    let ts_transaction = ts
+        .lines()
+        .find(|line| line.starts_with("export class GeneratedTransaction "))
+        .unwrap();
+    assert!(
+        ts_transaction.contains("readonly models:TxModels;"),
+        "{ts_transaction}"
+    );
+    assert!(!ts_transaction.contains("mutate"), "{ts_transaction}");
+    assert!(
+        ts.contains("export class Mutate { readonly port:MutatePort;"),
+        "{ts}"
+    );
+    let ts_client = ahead_compiler::client_typescript("@example/custom-runtime");
+    assert!(
+        ts_client.contains("this.mutate = new Mutate(client)"),
+        "{ts_client}"
+    );
+
+    let dart = ahead_compiler::dart(&schema);
+    let dart_transaction = dart
+        .lines()
+        .find(|line| line.starts_with("class GeneratedTransaction "))
+        .unwrap();
+    assert!(
+        dart_transaction.contains("late final TxModels models"),
+        "{dart_transaction}"
+    );
+    assert!(!dart_transaction.contains("mutate"), "{dart_transaction}");
+    assert!(
+        dart.contains("class Mutate { final MutatePort port;"),
+        "{dart}"
+    );
+    assert!(
+        dart.contains("late final Mutate mutate = Mutate(client);"),
+        "{dart}"
+    );
 }
 
 fn line_of(error: &str) -> usize {

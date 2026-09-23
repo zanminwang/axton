@@ -166,7 +166,7 @@ class Channels { final Client client; Channels(this.client);
  Future<void> subscribe(String channel) => client.subscribe(channel);
  Future<void> unsubscribe(String channel) => client.unsubscribe(channel);
 }
-class GeneratedTransaction { final Transaction transaction; late final TxModels models = TxModels(transaction); late final Mutate mutate = Mutate(transaction); GeneratedTransaction(this.transaction); }
+class GeneratedTransaction { final Transaction transaction; late final TxModels models = TxModels(transaction); GeneratedTransaction(this.transaction); }
 class GeneratedClient {
  /// The runtime handle (internal); application code uses the members below.
  final Client client; RuntimeConnection? connection; late final LiveModels models = LiveModels(client);

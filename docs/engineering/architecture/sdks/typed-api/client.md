@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-An application should write `tx.mutate.editEntry(...)` and `client.models.entry.watch(...)` and never see JSON, ordinals or cursors. The client typed API is that layer: a generic runtime class per language that knows how to talk to Rust, and generated classes that give it the application's model names and types.
+An application should write `client.mutate.editEntry(...)` and `client.models.entry.watch(...)` and never see JSON or cursors. The client typed API is that layer: a generic runtime class per language that knows how to talk to Rust, and generated classes that give it the application's model names and types.
 
 ## 3. Context and Scope
 
@@ -13,7 +13,7 @@ What an application sees:
 | `GeneratedClient.open({path, server?, connection?})` | open the local database; with `server`, connect and keep syncing |
 | `client.models.<model>.get / query / watch / <relation>` | reads on the last commit; `watch` re-emits when results change |
 | `client.mutate.<mutation>(args)` | one named mutation in its own local transaction |
-| `client.transaction(tx => …)` with `tx.models.<model>.create / update / delete` and `tx.mutate.<mutation>(args)` | direct writes and named mutations in one local transaction |
+| `client.transaction(tx => …)` with `tx.models.<model>.create / update / delete` | local reads and direct writes in one local transaction |
 | `client.channels.subscribe / unsubscribe` | choose which server channels to follow |
 | `client.syncState()`, `client.models.<model>.syncState(identity)` | the client's and one record's sync state; the record form is typed by model and mutation names |
 | `clientId`, `connect()`, `pendingTasks()`, `setReadiness()`, `runPrerequisites()`, `drop()`, `dismissRejection()`, `querySpec()`, `readSql()`, `close()` | identity, connection, recovery and escape hatches, on the same object |
@@ -22,12 +22,13 @@ Every call becomes one command through the [bindings](../bindings.md). Generated
 
 ## 5. Building Block View
 
-- **Ports.** Three small interfaces separate what can be done where: a read port (reads), a write port (reads plus `direct` and `mutate`), and in TypeScript a live port (reads plus `watch`). The client implements the live port; a transaction implements the write port. Generated model classes are written against the ports, which is why a `watch` inside a transaction is a compile error.
+- **Ports.** Read, write, live, and mutation ports separate capabilities: a write port adds `direct` to reads; a live port adds `watch`; a mutation port belongs to the client facade. A transaction implements the write port and cannot watch or enqueue a named mutation. [Generated code](../../compiler/generate.md) binds model and mutation classes to these ports.
 - **TypeScript hosts.** Node and React Native share [client orchestration](../../../../../packages/client-js/runtime.mts). Each entry point supplies its native string carrier, transaction scope, and server transport. Node retains AsyncLocalStorage savepoints; React Native uses an explicit transaction scope without a nested-savepoint API.
-- **Client.** One promise chain per client serializes every command, so calls from the application, the connection and watchers never interleave inside Rust. `transaction` sends `begin`, runs the body against a transaction object, then `finish` and `commit`, or `rollback` on any error.
+- **Client.** One promise chain per client serializes every command, so calls from the application, the connection and watchers never interleave inside Rust. `transaction` sends `begin`, runs the body against a transaction object, then `finish` and `commit`, or `rollback` on any error. A standalone `client.mutate` privately encloses optimistic writes and enqueueing in one SQLite transaction, then returns a local ordinal after commit.
 - **Transaction.** Commands are queued in submission order and marked as belonging to the transaction. `finish` fails if any command was never awaited, if any command failed even though the application caught the error, or if savepoints overlapped. `savepoint(body)` nests via async context (TypeScript) or zone values (Dart) so a failure inside it is confined to that scope.
+- **Captured client guard.** A `client.mutate` call from its own active transaction callback fails before it can wait on the client's queue. Node uses async context and Dart a zone token to identify that callback. React Native rejects any `client.mutate` while a public transaction is active, including an unrelated concurrent caller; retry after the transaction settles. [Client runtime](../../../../../packages/client-js/runtime.mts) owns the shared guard and enqueue flow.
 - **Watch.** Re-runs the query after every commit notification and emits only when the JSON result differs; Dart exposes a broadcast stream.
-- **Generated code.** Types, codecs (dates to `Date`/`DateTime`), mutation builders, model classes and the two facades `GeneratedClient` and `GeneratedTransaction` ([Compiler / Generate](../../compiler/generate.md)). Presence is expressed as an omitted key versus `null` in TypeScript and as `Present<T>?` in Dart; both encode to the same wire patch.
+- **Generated code.** Types, codecs (dates to `Date`/`DateTime`), mutation builders, model classes and the two facades `GeneratedClient` and `GeneratedTransaction` ([Compiler / Generate](../../compiler/generate.md)). The client owns named mutations and watch; the transaction owns local model reads and writes. Presence is expressed as an omitted key versus `null` in TypeScript and as `Present<T>?` in Dart; both encode to the same wire patch.
 
 Code: [React Native adapter](../../../../../packages/client-react-native/index.ts), [shared runtime](../../../../../packages/client-js/runtime.mts), [client-js/index.mts](../../../../../packages/client-js/index.mts), [client-js/transaction.mts](../../../../../packages/client-js/transaction.mts), [dart/client.dart](../../../../../packages/dart/lib/src/client.dart), [dart/port.dart](../../../../../packages/dart/lib/src/port.dart).
 

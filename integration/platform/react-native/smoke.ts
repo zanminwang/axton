@@ -89,8 +89,10 @@ export async function runSmoke(show: (message: string) => void) {
       let rolledBack = false;
       try {
         await current.transaction(async (tx) => {
-          await tx.mutate.addEntry({
-            entry: { id: "rollback", text: "discard", note: null },
+          await tx.models.entry.create({
+            id: "rollback",
+            text: "discard",
+            note: null,
           });
           throw Error("rollback test");
         });
@@ -103,14 +105,12 @@ export async function runSmoke(show: (message: string) => void) {
         "transaction rollback failed",
       );
       if (user === "alice") {
-        await current.transaction((tx) =>
-          tx.mutate.edit({
-            entry: {
-              identity: { id: "entry-1" },
-              values: { text: "from alice" },
-            },
-          }),
-        );
+        await current.mutate.edit({
+          entry: {
+            identity: { id: "entry-1" },
+            values: { text: "from alice" },
+          },
+        });
         await until(
           async () => (await text()) === "from bob",
           "Bob live update",
@@ -120,31 +120,25 @@ export async function runSmoke(show: (message: string) => void) {
           async () => (await text()) === "from alice",
           "Alice live update",
         );
-        await current.transaction((tx) =>
-          tx.mutate.edit({
-            entry: {
-              identity: { id: "entry-1" },
-              values: { text: "from bob" },
-            },
-          }),
-        );
+        await current.mutate.edit({
+          entry: {
+            identity: { id: "entry-1" },
+            values: { text: "from bob" },
+          },
+        });
       }
       await settled();
     } else if (phase === "offline") {
       check((await text()) === "from bob", "cached record missing offline");
-      await current.transaction((tx) =>
-        tx.mutate.addEntry({
-          entry: { id: "offline", text: "offline create", note: null },
-        }),
-      );
-      await current.transaction((tx) =>
-        tx.mutate.edit({
-          entry: {
-            identity: { id: "offline" },
-            values: { text: "offline edited" },
-          },
-        }),
-      );
+      await current.mutate.addEntry({
+        entry: { id: "offline", text: "offline create", note: null },
+      });
+      await current.mutate.edit({
+        entry: {
+          identity: { id: "offline" },
+          values: { text: "offline edited" },
+        },
+      });
       await until(
         async () => watched.get("offline") === "offline edited",
         "offline local watch",
@@ -163,14 +157,12 @@ export async function runSmoke(show: (message: string) => void) {
         "queued work lost across process restart",
       );
     } else if (phase === "remote") {
-      await current.transaction((tx) =>
-        tx.mutate.edit({
-          entry: {
-            identity: { id: "entry-1" },
-            values: { text: "remote while offline" },
-          },
-        }),
-      );
+      await current.mutate.edit({
+        entry: {
+          identity: { id: "entry-1" },
+          values: { text: "remote while offline" },
+        },
+      });
       await settled();
     } else if (phase === "settle" || phase === "observe") {
       await until(

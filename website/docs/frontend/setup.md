@@ -112,9 +112,9 @@ For expiring credentials, supply a token function and `refreshAuth`. See [server
     const stop = client.models.entry.watch({}, entries => console.log(entries), console.error);
 
     // After entry-1 has arrived locally:
-    await client.transaction(tx => tx.mutate.edit({
+    await client.mutate.edit({
       entry: { identity: { id: 'entry-1' }, values: { text: 'Draft', note: null } },
-    }));
+    });
     ```
 
 === "Flutter"
@@ -126,15 +126,13 @@ For expiring credentials, supply a token function and `refreshAuth`. See [server
     );
 
     // After entry-1 has arrived locally:
-    await client.transaction((tx) async {
-      await tx.mutate.edit(
-        entry: const EditEntryUpdate(
-          identity: EntryIdentity(id: 'entry-1'),
-          text: Present('Draft'),
-          note: Present(null),
-        ),
-      );
-    });
+    await client.mutate.edit(
+      entry: const EditEntryUpdate(
+        identity: EntryIdentity(id: 'entry-1'),
+        text: Present('Draft'),
+        note: Present(null),
+      ),
+    );
     ```
 
 Watch emits an initial local result and distinct committed results. A mutation applies locally and queues the backend operation. Its return value is a local ordinal, not server confirmation. Direct writes through `tx.models` only change local storage.

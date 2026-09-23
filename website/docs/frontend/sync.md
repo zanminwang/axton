@@ -39,9 +39,9 @@ You can send mutations without subscribing to any channel. The receipt still cor
 
     ```ts
     await client.connection!.pause();
-    await client.transaction(tx => tx.mutate.edit({
+    await client.mutate.edit({
       entry: { identity: { id: 'entry-1' }, values: { text: '  Draft  ' } },
-    }));
+    });
     console.log((await client.models.entry.get({ id: 'entry-1' }))?.text);
     await client.connection!.resume();
     ```
@@ -50,19 +50,19 @@ You can send mutations without subscribing to any channel. The receipt still cor
 
     ```dart
     await client.connection!.pause();
-    await client.transaction((tx) => tx.mutate.edit(
+    await client.mutate.edit(
       entry: const EditEntryUpdate(
         identity: EntryIdentity(id: 'entry-1'),
         text: Present('  Draft  '),
       ),
-    ));
+    );
     print((await client.models.entry.get(const EntryIdentity(id: 'entry-1')))?.text);
     await client.connection!.resume();
     ```
 
 This assumes `GeneratedClient.open` was given `server` and the record has already arrived locally. Without it the client is local-only until you call `client.connect`. Dart uses the same `pause`/`resume` methods with its typed mutation arguments.
 
-A local transaction's completion confirms local commit. It does not mean the server has accepted the operation. Display pending and rejected state using the record's [syncState](runtime.md#pending-work-and-recovery) when that distinction matters to the UI.
+A `client.mutate` call's completion confirms its local commit. It does not mean the server has accepted the operation. Display pending and rejected state using the record's [syncState](runtime.md#pending-work-and-recovery) when that distinction matters to the UI.
 
 You can close and reopen the same local database without losing queued changes. Keep the same backend database as well: replacing a backend's receipt/cursor history with an empty database is a reset, not a temporary network interruption. The tutorial's `offline` / `online` commands preserve both databases.
 

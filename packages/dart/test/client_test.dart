@@ -92,6 +92,95 @@ void main() {
       expect(await text(client), 'hello');
     });
 
+    test(
+      'raw transaction has no mutation method and captured client calls reject promptly',
+      () async {
+        final gate = Completer<void>();
+        final entered = Completer<void>();
+        final transaction = client.transaction((tx) async {
+          expect(
+            () => (tx as dynamic).mutate({'name': 'Edit'}),
+            throwsNoSuchMethodError,
+          );
+          entered.complete();
+          final outcome = await client
+              .mutate({
+                'name': 'Edit',
+                'operations': [update('inside')],
+              })
+              .then(
+                (_) => 'committed',
+                onError: (Object error) => error.toString(),
+              )
+              .timeout(
+                const Duration(milliseconds: 200),
+                onTimeout: () => 'timeout',
+              );
+          expect(outcome, contains('transaction_active'));
+          await gate.future;
+        });
+        try {
+          await entered.future;
+          final independent = client.mutate({
+            'name': 'Edit',
+            'operations': [update('outside')],
+          });
+          final state = await independent
+              .then(
+                (_) => 'committed',
+                onError: (Object error) => error.toString(),
+              )
+              .timeout(
+                const Duration(milliseconds: 50),
+                onTimeout: () => 'queued',
+              );
+          expect(state, 'queued');
+          gate.complete();
+          await transaction;
+          expect(await independent, 1);
+          expect(await text(client), 'outside');
+        } finally {
+          if (!gate.isCompleted) gate.complete();
+          await transaction;
+        }
+      },
+    );
+
+    test(
+      'failed standalone enqueue leaves no queue entry or optimistic record',
+      () async {
+        await expectLater(
+          client.mutate({
+            'name': 'Broken',
+            'operations': [
+              {
+                'model': 'Entry',
+                'op': 'create',
+                'identity': {'id': 'failed'},
+                'values': {'text': 'optimistic'},
+              },
+              {
+                'model': 'Missing',
+                'op': 'create',
+                'identity': {'id': 'missing'},
+                'values': {'text': 'invalid'},
+              },
+            ],
+          }),
+          throwsStateError,
+        );
+        expect((await client.syncState())['pending'], 0);
+        expect(await client.read('Entry', {'id': 'failed'}), isNull);
+        expect(
+          await client.mutate({
+            'name': 'Edit',
+            'operations': [update('after')],
+          }),
+          1,
+        );
+      },
+    );
+
     test('an unawaited native call fails the transaction', () async {
       await expectLater(
         client.transaction((tx) async {

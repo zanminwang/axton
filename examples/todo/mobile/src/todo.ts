@@ -1,11 +1,18 @@
 import { randomUUID } from "expo-crypto";
 import { databasePath } from "@ahead/client-react-native";
-import { GeneratedClient, type Todo, type User } from "../../generated/mobile/client";
+import {
+  GeneratedClient,
+  type Todo,
+  type User,
+} from "../../generated/mobile/client";
 
 export const channel = "todo:demo";
 
 export interface TodoSession {
-  watch(listener: (rows: Todo[]) => void, onError: (error: unknown) => void): () => void;
+  watch(
+    listener: (rows: Todo[]) => void,
+    onError: (error: unknown) => void,
+  ): () => void;
   add(title: string): Promise<void>;
   setDone(id: string, done: boolean): Promise<void>;
   close(): Promise<void>;
@@ -44,21 +51,28 @@ export async function openTodoSession(options: {
   await client.channels.subscribe(channel);
   const session: TodoSession = {
     watch(listener, onError) {
-      return client.models.todo.watch({}, (rows) => listener(sortTodos(rows)), onError);
+      return client.models.todo.watch(
+        {},
+        (rows) => listener(sortTodos(rows)),
+        onError,
+      );
     },
     async add(title) {
       const value = title.trim();
       if (!value) throw Error("Enter a task title");
-      await client.transaction((tx) =>
-        tx.mutate.addTodo({
-          todo: { id: randomUUID(), title: value, done: false, createdById: options.user },
-        }),
-      );
+      await client.mutate.addTodo({
+        todo: {
+          id: randomUUID(),
+          title: value,
+          done: false,
+          createdById: options.user,
+        },
+      });
     },
     async setDone(id, done) {
-      await client.transaction((tx) =>
-        tx.mutate.setTodoDone({ todo: { identity: { id }, values: { done } } }),
-      );
+      await client.mutate.setTodoDone({
+        todo: { identity: { id }, values: { done } },
+      });
     },
     close() {
       return client.close();
@@ -68,8 +82,10 @@ export async function openTodoSession(options: {
     session,
     client,
     user: () => client.models.user.get({ id: options.user }),
-    rejections: async () => (await client.syncState()).rejections as Rejection[],
-    dismiss: (ordinal) => client.dismissRejection(ordinal).then(() => undefined),
+    rejections: async () =>
+      (await client.syncState()).rejections as Rejection[],
+    dismiss: (ordinal) =>
+      client.dismissRejection(ordinal).then(() => undefined),
   };
 }
 

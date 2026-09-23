@@ -14,6 +14,15 @@ typedef _Call = Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _FreeNative = Void Function(Pointer<Utf8>);
 typedef _Free = void Function(Pointer<Utf8>);
 
+class _MutationRollbackError extends Error {
+  final Object submission;
+  final Object rollback;
+  _MutationRollbackError(this.submission, this.rollback);
+  @override
+  String toString() =>
+      'mutation submission and rollback failed: $submission; $rollback';
+}
+
 void _nativeWorker(List<Object?> args) {
   final ready = args[0] as SendPort;
   try {
@@ -71,6 +80,8 @@ class Client implements ReadPort, MutatePort {
   Future<void>? _closing;
   final _work = StreamController<void>.broadcast();
   final _changes = StreamController<void>.broadcast();
+  final Object _txZoneKey = Object();
+  Object? _activeTxToken;
   Client._(this._worker, this._isolate, this._handle, this.clientId);
   static Future<Client> open({
     required String path,
@@ -148,7 +159,17 @@ class Client implements ReadPort, MutatePort {
         await _send({'op': 'begin'});
         final tx = Transaction._(this);
         try {
-          final result = await body(tx);
+          final token = Object();
+          _activeTxToken = token;
+          late T result;
+          try {
+            result = await runZoned(
+              () => body(tx),
+              zoneValues: {_txZoneKey: token},
+            );
+          } finally {
+            _activeTxToken = null;
+          }
           await tx._finish();
           await _send({'op': 'commit'});
           _work.add(null);
@@ -229,8 +250,32 @@ class Client implements ReadPort, MutatePort {
                 as List)
             .cast<Map<String, dynamic>>(),
   );
-  Future<int> mutate(Map<String, dynamic> mutation) =>
-      transaction((tx) => tx.mutate(mutation));
+  Future<int> mutate(Map<String, dynamic> mutation) {
+    if (_activeTxToken != null &&
+        identical(Zone.current[_txZoneKey], _activeTxToken)) {
+      return Future.error(StateError('transaction_active'));
+    }
+    return _submitMutation(mutation);
+  }
+
+  Future<int> _submitMutation(Map<String, dynamic> mutation) =>
+      _exclusive(() async {
+        await _send({'op': 'begin'});
+        try {
+          final ordinal =
+              await _send({'op': 'enqueue', 'mutation': mutation}) as int;
+          await _send({'op': 'commit'});
+          _work.add(null);
+          return ordinal;
+        } catch (error, stack) {
+          try {
+            await _send({'op': 'rollback'});
+          } catch (rollbackError) {
+            throw _MutationRollbackError(error, rollbackError);
+          }
+          Error.throwWithStackTrace(error, stack);
+        }
+      });
   Future<void> subscribe(String channel) => _setChannel(channel, true);
   Future<void> unsubscribe(String channel) => _setChannel(channel, false);
 
@@ -617,8 +662,6 @@ class Transaction implements WritePort {
     await _send({'op': 'direct', 'operation': operation});
   }
 
-  Future<int> mutate(Map<String, dynamic> mutation) async =>
-      await _send({'op': 'enqueue', 'mutation': mutation}) as int;
   Future<T> savepoint<T>(Future<T> Function() body) {
     if (!_open) return Future.error(StateError('transaction_closed'));
     if (_active != null && Zone.current[_zoneKey] != _active) {

@@ -125,29 +125,27 @@ For a `Comment.book` relationship, `client.models.comment.book(commentIdentity)`
 === "TypeScript"
 
     ```ts
-    const ordinal = await client.transaction(async tx => {
-      return tx.mutate.edit({
-        entry: { identity: { id: 'entry-1' }, values: { text: 'Draft' } },
-      });
+    await client.transaction(async tx => {
+      await tx.models.entry.update({ id: 'entry-1' }, { text: 'Draft' });
+      const draft = await tx.models.entry.get({ id: 'entry-1' });
+      if (draft?.text !== 'Draft') throw Error('local update missing');
     });
     ```
 
 === "Flutter"
 
     ```dart
-    final ordinal = await client.transaction((tx) async {
-      return tx.mutate.edit(
-        entry: const EditEntryUpdate(
-          identity: EntryIdentity(id: 'entry-1'),
-          text: Present('Draft'),
-        ),
-      );
+    await client.transaction((tx) async {
+      const id = EntryIdentity(id: 'entry-1');
+      await tx.models.entry.update(id, const EntryPatch(text: Present('Draft')));
+      final draft = await tx.models.entry.get(id);
+      if (draft?.text != 'Draft') throw StateError('local update missing');
     });
     ```
 
-`transaction<T>(callback)` returns the callback's result after local commit. Throwing or a failed operation rolls it back. Await each operation, including nested callbacks; unfinished work is rejected. Inside the callback, use `tx.models` for reads that must see earlier writes in the same transaction. Calling the outer `client` for a read from inside its transaction can wait behind that transaction.
+`transaction<T>(callback)` returns the callback's result after local commit. Throwing or a failed operation rolls it back. Await each operation, including nested callbacks; unfinished work is rejected. Inside the callback, use `tx.models` for reads that must see earlier writes in the same transaction. Calling the outer `client` for a read from inside its transaction can wait behind that transaction. A captured `client.mutate` call inside its own transaction callback fails promptly with `transaction_active` instead of waiting on itself.
 
-`GeneratedTransaction` exposes `models`, `mutate`, and the underlying `transaction`. For nested savepoints, see [transactions and savepoints](runtime.md#transactions-and-savepoints).
+`GeneratedTransaction` exposes `models` and the underlying `transaction`; it has no mutation or watch method. For nested savepoints, see [transactions and savepoints](runtime.md#transactions-and-savepoints).
 
 A single mutation does not need an explicit transaction: `client.mutate.edit(args)` runs in its own local transaction and returns the ordinal.
 
@@ -155,7 +153,7 @@ A single mutation does not need an explicit transaction: `client.mutate.edit(arg
 
 The backend result of your own mutation arrives in its receipt: the records the handler changed are read back by your loader and replace the optimistic values, with or without a subscription. Subscribe to a channel to receive changes made elsewhere. See [receiving mutation results](sync.md#receive-mutation-results).
 
-`tx.mutate.edit(args)` returns the mutation's local ordinal (`number` / `int`). This identifies queued work; it is not a backend result or confirmation. Its declared changes apply in local storage immediately, and the backend later runs the matching handler.
+`client.mutate.edit(args)` runs one framework-owned local transaction and returns the mutation's local ordinal (`number` / `int`). This identifies queued work; it is not a backend result or confirmation. Its declared changes apply in local storage immediately, and the backend later runs the matching handler.
 
 | Schema slot | TypeScript argument | Backend input |
 | --- | --- | --- |
@@ -165,7 +163,7 @@ The backend result of your own mutation arrives in its receipt: the records the 
 | Optional slot (`?`) | Optional slot value | Optional value |
 | List slot (`[]`) | Array of slot values | Array of decoded values |
 
-Dart generates typed slot classes such as `EditEntryUpdate`. Use `Present` for fields you intend to change. The compiler gives each named mutation a method with a lower-case first letter: `Edit` becomes `edit`. Several slots can participate in one mutation, and several mutations can be enqueued inside one local transaction. Each mutation still has its own backend handler and acceptance/rejection outcome.
+Dart generates typed slot classes such as `EditEntryUpdate`. Use `Present` for fields you intend to change. The compiler gives each named mutation a method with a lower-case first letter: `Edit` becomes `edit`. Several slots can participate in one mutation. Separate `client.mutate` calls have separate local commits and backend acceptance/rejection outcomes; use one multi-slot mutation when the changes must form one business operation.
 
 The backend handler's implementation can differ from the declared local operation. It may normalize input, enforce permissions, or write several business tables. [Notifications and loaders](../backend/api.md) tell the client the resulting server state.
 
@@ -194,7 +192,7 @@ The backend handler's implementation can differ from the declared local operatio
     });
     ```
 
-`create(record)`, `update(identity, patch)` and `delete(identity)` return `Promise<void>` / `Future<void>`. They change local storage without enqueueing a backend mutation. Use `tx.mutate` for changes that must reach your backend. Invalid identities, field values, references or uniqueness constraints can reject a local write and roll back the transaction.
+`create(record)`, `update(identity, patch)` and `delete(identity)` return `Promise<void>` / `Future<void>`. They change local storage without enqueueing a backend mutation. Use `client.mutate` outside the callback for changes that must reach your backend. Invalid identities, field values, references or uniqueness constraints can reject a local write and roll back the transaction.
 
 ## Channels
 

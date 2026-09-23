@@ -41,7 +41,7 @@ The compiler writes TypeScript and Dart clients, typed backend interfaces, descr
 | Generated interface | Your use |
 | --- | --- |
 | `client.models.entry` | Local get, query and watch |
-| `tx.mutate.edit` | Apply the local update and queue `Edit` |
+| `client.mutate.edit` | Apply the local update and queue `Edit` |
 | `Handlers<Tx>.edit` | Implement authoritative business logic for `Edit` |
 | `Loaders<Tx>.entry` | Return current records from your backend |
 | Backend `Entry(identity)` | Identify a changed record in `publish` or `changes.add` |
@@ -74,7 +74,7 @@ mutation CreateProject {
 
 `CreateProject` becomes one typed client call and one backend handler. Its declared operations apply together locally, and its backend business writes share one mutation savepoint. The list slot supplies zero or more complete task records. If you need a declared relationship as well, add a reference; a field named `projectId` alone does not create one automatically.
 
-Several `tx.mutate` calls in a local transaction commit locally together, but remain separate backend mutations with separate rejection outcomes. Choose one multi-slot mutation when the business operation must be accepted or rejected as one unit.
+Several `client.mutate` calls commit locally one at a time and have separate backend rejection outcomes. Choose one multi-slot mutation when the business operation must be accepted or rejected as one unit.
 
 ## Relations, prerequisites and ordering
 

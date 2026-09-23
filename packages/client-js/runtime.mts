@@ -66,7 +66,8 @@ import { Events } from "./events.mts";
 export function createClient<
   Tx extends {
     finish(): Promise<void>;
-    mutate(mutation: object): Promise<number>;
+    runCallback<T>(body: () => Promise<T>): Promise<T>;
+    inCallback(): boolean;
   },
 >(
   native: { clientCall(request: string): Promise<string> },
@@ -84,6 +85,7 @@ export function createClient<
     #handle: number;
     #closed = false;
     #tail: Promise<unknown> = Promise.resolve();
+    #activePublicTx: Tx | undefined;
     #events = new Events();
     readonly clientId: string;
     private constructor(handle: number, id: string) {
@@ -122,7 +124,13 @@ export function createClient<
         await this.#send({ op: "begin" });
         const tx = new Transaction((request) => this.#send(request));
         try {
-          const result = await body(tx);
+          this.#activePublicTx = tx;
+          let result: T;
+          try {
+            result = await tx.runCallback(() => body(tx));
+          } finally {
+            this.#activePublicTx = undefined;
+          }
           await tx.finish();
           await this.#send({ op: "commit" });
           this.#events.emit("work");
@@ -177,7 +185,33 @@ export function createClient<
       );
     }
     mutate(mutation: object): Promise<number> {
-      return this.transaction((tx) => tx.mutate(mutation));
+      if (this.#activePublicTx?.inCallback())
+        return Promise.reject(Error("transaction_active"));
+      return this.#submitMutation(mutation);
+    }
+    #submitMutation(mutation: object): Promise<number> {
+      return this.#exclusive(async () => {
+        await this.#send({ op: "begin" });
+        try {
+          const ordinal = (await this.#send({
+            op: "enqueue",
+            mutation,
+          })) as number;
+          await this.#send({ op: "commit" });
+          this.#events.emit("work");
+          return ordinal;
+        } catch (error) {
+          try {
+            await this.#send({ op: "rollback" });
+          } catch (rollbackError) {
+            throw new AggregateError(
+              [error, rollbackError],
+              "mutation submission and rollback failed",
+            );
+          }
+          throw error;
+        }
+      });
     }
     subscribe(channel: string) {
       return this.#setChannel(channel, true);

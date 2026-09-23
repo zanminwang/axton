@@ -37,9 +37,9 @@ The URL above is for a simulator using a backend on its host. Configure a reacha
 
 ## Client behavior
 
-Generated reads, queries, watches, direct writes, named mutations, transactions, and channel subscriptions use the same ports as Node. Writes commit to local SQLite before returning; network delivery proceeds independently. See [client API](../../website/docs/frontend/client-api.md) for the shared generated API.
+Generated reads, queries, watches, direct writes, named mutations, transactions, and channel subscriptions use the same ports as Node. A `client.mutate` call commits its optimistic changes and queue entry together before returning its local ordinal; network delivery proceeds independently. Public transactions are for local model reads and direct writes only. See [client API](../../website/docs/frontend/client-api.md) for the shared generated API.
 
-Always await each operation inside a transaction. A failed command poisons that transaction even if the callback catches its error. Unawaited operations prevent commit; queued work drains before rollback, and escaped transaction objects reject further calls. The mobile raw transaction does **not** expose nested `savepoint`; Node's existing savepoint API remains available on Node.
+Always await each operation inside a transaction. A failed command poisons that transaction even if the callback catches its error. Unawaited operations prevent commit; queued work drains before rollback, and escaped transaction objects reject further calls. The mobile raw transaction does **not** expose nested `savepoint`; Node's existing savepoint API remains available on Node. A captured `client.mutate` call during an active public transaction fails promptly with `transaction_active`. React Native applies this guard to unrelated concurrent mutation calls too; retry those after the public transaction settles.
 
 `Client` also exposes inspection/control methods used by the generated facade: `status`, `recordStatus`, `pendingTasks`, `setReadiness`, `runPrerequisites`, `drop`, `dismissRejection`, `readSql`, connection lifecycle, and `close`. These retain the current engine contracts, including the existing limitations of migration options. Do not create a new client on every React render. Dispose watches and call `close` when the owning session ends.
 

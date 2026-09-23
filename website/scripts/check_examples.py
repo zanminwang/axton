@@ -20,12 +20,17 @@ BACKEND_SOURCES = ['website/docs/backend/api.md', 'website/docs/backend/database
                    'website/docs/backend/setup.md']
 
 
-def snippets(language, sources=None):
+def snippets(language, sources=None, *, context='ordinary'):
     result = []
+    fences = r'(?:ts|typescript)' if language == 'ts' else re.escape(language)
     for source in sources if sources is not None else SOURCES[language]:
         text = (ROOT / source).read_text()
-        for match in re.finditer(r'^(?P<indent> *)```' + language + r'\n(.*?)^(?P=indent)```', text, re.M | re.S):
-            code = re.sub(r'^import .*?;\n', '', textwrap.dedent(match[2]), flags=re.M | re.S)
+        pattern = r'^(?P<indent> *)```' + fences + r'(?P<meta>[^\n]*)\n(?P<code>.*?)^(?P=indent)```'
+        for match in re.finditer(pattern, text, re.M | re.S):
+            is_action = match['meta'].strip() == 'title="action-contract"'
+            if is_action != (context == 'action'):
+                continue
+            code = re.sub(r'^import .*?;\n', '', textwrap.dedent(match['code']), flags=re.M | re.S)
             line = text[:match.start()].count('\n') + 1
             result.append((f'{source}:{line}', code))
     return result
@@ -53,6 +58,18 @@ declare const stop: () => void;
                         '--exactOptionalPropertyTypes', '--skipLibCheck', '--target', 'ES2022',
                         '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
                         '--allowImportingTsExtensions', str(ts)], cwd=ROOT, check=True)
+    with tempfile.TemporaryDirectory(prefix='.docs-check-', dir=ROOT / 'integration/action-contract') as temp:
+        action = Path(temp) / 'examples.mts'
+        action.write_text('''import type { ActionClientContract, TodoCreate } from '../generated.ts';
+declare const client: ActionClientContract;
+''' + '\n'.join(f'// {source}\nasync function example{i}() {{\n{code}\n}}'
+                  for i, (source, code) in enumerate(snippets('ts', context='action'))))
+        subprocess.run([str(ROOT / 'node_modules/.bin/tsc'), '--noEmit', '--strict',
+                        '--exactOptionalPropertyTypes', '--skipLibCheck', '--target', 'ES2022',
+                        '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
+                        '--allowImportingTsExtensions', str(action)], cwd=ROOT, check=True)
+    with tempfile.TemporaryDirectory(prefix='.docs-check-', dir=ROOT / 'packages/dart') as temp:
+        directory = Path(temp)
         dart = directory / 'examples.dart'
         dart.write_text('''// ignore_for_file: unused_local_variable, unused_import
 import 'dart:async';
@@ -102,7 +119,7 @@ declare const publish: Publish;
             subprocess.run([str(ROOT / 'target/debug/axton'), 'compile', str(directory),
                             str(directory / 'generated')], cwd=ROOT, check=True)
             print(f'Compiled schema from {source}')
-    print(f"Typechecked {len(snippets('ts')) + len(snippets('ts', BACKEND_SOURCES))} TypeScript and {len(snippets('dart'))} Dart documentation snippets.")
+    print(f"Typechecked {len(snippets('ts')) + len(snippets('ts', BACKEND_SOURCES))} TypeScript, {len(snippets('ts', context='action'))} Action TypeScript and {len(snippets('dart'))} Dart documentation snippets.")
 
 
 if __name__ == '__main__':

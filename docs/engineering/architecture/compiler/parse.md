@@ -7,14 +7,14 @@ Parse turns one or more `.model` files into structured declarations with token p
 ## 3. Context and Scope
 
 - Input: the CLI concatenates every `*.model` file in the input directory in path order; the library takes one string.
-- Output: `Declarations`, a typed tree of enums, models (fields, identity, unique constraints, version), mutations (slots, version, sequence) and prerequisites, each with the position of its first token; directive arguments, slot bindings and sequence arguments stay as JSON expressions. [Validate](validate.md) consumes it; `compile` is `generate::descriptors(validate(parse(source)))`.
+- Output: `Declarations`, a typed tree of enums, models, legacy mutations, Actions (ordinary inputs, Model operands and named outputs), and prerequisites, each with source positions. Directive arguments, bindings and sequence arguments stay as JSON expressions. [Validate](validate.md) consumes it; `compile` is `generate::descriptors(validate(parse(source)))`.
 - Errors: `line:col: message (found 'token')` for syntax errors; the CLI rewrites the line into `path:line` for the file that contains it. Every declaration, field, slot, directive and prerequisite field also keeps its token position for [Validate](validate.md).
 
 ## 5. Building Block View
 
 - **Lexer.** Identifiers and digit runs, double-quoted strings with backslash escapes, the punctuation `{ } ( ) [ ] ? , . @ < > :`, and `//` line comments. Anything else is an error. Every token carries its line and column.
-- **Grammar.** Four declarations: `enum`, `model`, `mutation`, `prerequisite`. Directives are `@@name(args)` at declaration level and `@name(args)` on fields, enum values or slots; arguments are positional or `key: value`, and values are identifiers, dotted paths, strings, lists or nested invocations. `@deprecated` takes nothing or `(reason: "text")`, on a field, an enum value or a slot, at most once each.
-- **CLI.** `axton compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--model-history FILE] [--initialize-model-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]`.
+- **Grammar.** `enum`, `model`, `mutation`, `action` and `prerequisite` declarations. An Action uses `action Name(input Type, operand Model.create?) { output Type }`; braces are optional for void output. `@version` and `@sequence` appear above an Action; `@@id` and `@@unique` stay inside Models. Ordinary Action values support scalar or enum types, `?` for nullable values and `[]` for lists; Model operands support create/update/delete and single, optional or list cardinality. The existing directive argument grammar still applies. Unsupported Action member annotations are rejected.
+- **CLI.** `axton compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--model-history FILE] [--initialize-model-history] [--action-history FILE] [--initialize-action-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]`.
 
 Code: `lex`, `Parser`, `parse` and the `Declarations` types in [compiler/parse.rs](../../../../crates/compiler/src/parse.rs); file handling in [compiler/main.rs](../../../../crates/compiler/src/main.rs).
 

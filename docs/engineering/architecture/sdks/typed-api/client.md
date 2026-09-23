@@ -20,6 +20,10 @@ What an application sees:
 
 Every call becomes one command through the [bindings](../bindings.md). Generated code depends on the runtime package (`@axton/client`, `package:axton`); the generic runtime depends on nothing generated.
 
+The compiler also emits TypeScript and Dart `ActionClientContract` interfaces. They are type-level contracts pending #142; the concrete `GeneratedClient` still runs the legacy `client.mutate` path. The contract gives standalone `client.models` local CRUD/read/watch, transaction `tx.models` local CRUD/read without watch or Actions, queued `client.actions.name(args)` returning an `ActionCall<Output>`, and direct `client.actions.call.name(args)` returning the final output. Neither Action route may run inside an application-owned local transaction. Standalone local Model writes use their own local transaction and do not enqueue backend work.
+
+Under the #142 execution contract, a queued call returns its handle after initial local acceptance and commit; that is not final backend success. The handle exposes only `status` and `wait()`, with `wait()` yielding either a result or an `ActionError`. An initial local failure rejects before a handle exists. Direct calls skip the queue and automatic optimism, returning the result or rejecting with `ActionError`. A Model result is a per-invocation Loader snapshot: a later call in the same batch may change the batch-final settlement authority, and current local reads may include later optimism. #142 owns that shared Loader/materialization path and durable per-call outcome persistence. Live handles keep business results in memory while pending/completion state remains durable. #116 owns ephemeral output policy.
+
 ## 5. Building Block View
 
 - **Ports.** Read, write, live, and mutation ports separate capabilities: a write port adds `direct` to reads; a live port adds `watch`; a mutation port belongs to the client facade. A transaction implements the write port and cannot watch or enqueue a named mutation. [Generated code](../../compiler/generate.md) binds model and mutation classes to these ports.

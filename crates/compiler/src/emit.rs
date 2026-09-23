@@ -365,6 +365,7 @@ pub fn typescript(v: &Value) -> String {
         .unwrap();
     }
     ts_models(v, &mut o);
+    ts_actions(v, &mut o);
     o.push_str("export class Mutate { readonly port:MutatePort; constructor(port:MutatePort) { this.port=port; }\n");
     for mu in arr(v, "mutations") {
         let n = s(mu, "name");
@@ -455,6 +456,269 @@ fn slot_input_type(slot: &Value) -> String {
         _ => one,
     }
 }
+fn action_cardinality(base: &str, cardinality: &str) -> String {
+    match cardinality {
+        "optional" => format!("{base} | null"),
+        "list" => format!("{base}[]"),
+        _ => base.to_string(),
+    }
+}
+fn action_input_type(input: &Value) -> String {
+    if input["kind"] == "value" {
+        let mut base = ty(&input["type"], false);
+        if input["list"] == true {
+            base.push_str("[]");
+        }
+        return if input["nullable"] == true {
+            format!("{base} | null")
+        } else {
+            base
+        };
+    }
+    let model = s(input, "model");
+    let base = match s(input, "operation") {
+        "create" => format!("{model}Create"),
+        "delete" => format!("{model}Delete"),
+        _ => {
+            let keys = input["allowedPatchFields"]
+                .as_array()
+                .map(|fields| {
+                    if fields.is_empty() {
+                        "never".to_string()
+                    } else {
+                        fields
+                            .iter()
+                            .map(Value::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" | ")
+                    }
+                })
+                .unwrap_or_else(|| format!("keyof {model}Patch"));
+            format!("{model}Update<{keys}>")
+        }
+    };
+    action_cardinality(&base, s(input, "cardinality"))
+}
+fn action_output_type(output: &Value, handler: bool) -> String {
+    let base = match s(output, "kind") {
+        "value" => ty(&output["type"], false),
+        "deleteIdentity" => format!("{}Identity", s(output, "model")),
+        "model" if handler => format!("{}Identity", s(output, "model")),
+        "model" => s(output, "model").to_string(),
+        _ => unreachable!(),
+    };
+    action_cardinality(&base, s(output, "cardinality"))
+}
+fn action_type_name(action: &Value, latest: u64, suffix: &str) -> String {
+    let name = s(action, "name");
+    let version = action["version"].as_u64().unwrap();
+    if version == latest {
+        format!("{name}{suffix}")
+    } else {
+        format!("{name}V{version}{suffix}")
+    }
+}
+fn snapshot_type(ty_value: &Value, enums: &Value) -> String {
+    if ty_value["kind"] == "list" {
+        return format!("{}[]", snapshot_type(&ty_value["element"], enums));
+    }
+    if ty_value["kind"] == "enum"
+        && let Some(en) = enums
+            .as_array()
+            .and_then(|list| list.iter().find(|en| en["name"] == ty_value["name"]))
+    {
+        return arr(en, "values")
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join(" | ");
+    }
+    ty(ty_value, false)
+}
+fn snapshot_field_type(field: &Value, enums: &Value) -> String {
+    let base = snapshot_type(&field["type"], enums);
+    if field["nullable"] == true {
+        format!("{base} | null")
+    } else {
+        base
+    }
+}
+fn historical_action_input_type(arg: &Value, action: &Value, latest: u64) -> String {
+    if action["version"].as_u64() == Some(latest) {
+        return action_input_type(arg);
+    }
+    if arg["kind"] == "value" {
+        let mut base = snapshot_type(&arg["type"], &action["input"]["enums"]);
+        if arg["list"] == true {
+            base = format!("({base})[]");
+        }
+        return if arg["nullable"] == true {
+            format!("{base} | null")
+        } else {
+            base
+        };
+    }
+    let prefix = action_type_name(action, latest, "");
+    let model = s(arg, "model");
+    let base = match s(arg, "operation") {
+        "create" => format!("{prefix}{model}Create"),
+        "delete" => format!("{prefix}{model}Identity"),
+        _ => {
+            let keys = arg["allowedPatchFields"]
+                .as_array()
+                .map(|fields| {
+                    if fields.is_empty() {
+                        "never".to_string()
+                    } else {
+                        fields
+                            .iter()
+                            .map(Value::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" | ")
+                    }
+                })
+                .unwrap_or_else(|| format!("keyof {prefix}{model}Patch"));
+            format!("{prefix}{model}Update<{keys}>")
+        }
+    };
+    action_cardinality(&base, s(arg, "cardinality"))
+}
+fn backend_action_output_type(field: &Value, action: &Value, models: &[Value]) -> String {
+    let base = if field["kind"] == "value" {
+        snapshot_type(&field["type"], &action["outputEnums"])
+    } else {
+        let model = s(field, "model");
+        let read_version = field["modelReadVersion"].as_u64();
+        let current = models
+            .iter()
+            .find(|m| m["name"] == model)
+            .and_then(|m| m["version"].as_u64());
+        if field["kind"] == "model" && read_version != current {
+            format!("{model}V{}Identity", read_version.unwrap())
+        } else {
+            format!("{model}Identity")
+        }
+    };
+    if field["kind"] == "value" && field["type"]["kind"] == "enum" && field["cardinality"] == "list"
+    {
+        format!("({base})[]")
+    } else {
+        action_cardinality(&base, s(field, "cardinality"))
+    }
+}
+fn ts_actions(v: &Value, o: &mut String) {
+    let actions = arr(v, "actions");
+    if actions.is_empty() {
+        return;
+    }
+    o.push_str(
+        "/** Type-level Action contracts; runtime binding arrives with the Action engine. */\n",
+    );
+    o.push_str("export interface ActionError extends Error { readonly code: string; }\n");
+    o.push_str("export type ActionStatus = 'pending' | 'succeeded' | 'failed';\n");
+    o.push_str("export type ActionOutcome<T> = { result: T; error: null } | { result: undefined; error: ActionError };\n");
+    o.push_str("export interface ActionCall<T> { readonly status: ActionStatus; wait(): Promise<ActionOutcome<T>>; }\n");
+    for model in arr(&v["schema"], "models") {
+        let n = s(model, "name");
+        writeln!(o, "export type {n}Create = {n};").unwrap();
+        writeln!(o, "export type {n}Update<K extends keyof {n}Patch = keyof {n}Patch> = {n}Identity & Partial<Pick<{n}Patch, K>>;").unwrap();
+        writeln!(o, "export type {n}Delete = {n}Identity;").unwrap();
+    }
+    let mut latest = std::collections::BTreeMap::new();
+    for action in actions {
+        latest
+            .entry(s(action, "name"))
+            .and_modify(|n: &mut u64| *n = (*n).max(action["version"].as_u64().unwrap()))
+            .or_insert(action["version"].as_u64().unwrap());
+    }
+    for action in actions {
+        let n = s(action, "name");
+        let version = latest[n];
+        if action["version"].as_u64() != Some(version) {
+            continue;
+        }
+        let input = action_type_name(action, version, "Input");
+        let output = action_type_name(action, version, "Output");
+        writeln!(o, "export interface {input} {{").unwrap();
+        for arg in arr(action, "inputs") {
+            let optional = arg["kind"] == "model" && arg["cardinality"] == "optional";
+            writeln!(
+                o,
+                " {}{}: {};",
+                s(arg, "name"),
+                if optional { "?" } else { "" },
+                action_input_type(arg)
+            )
+            .unwrap();
+        }
+        o.push_str("}\n");
+        if arr(action, "outputs").is_empty() {
+            writeln!(o, "export type {output} = void;").unwrap();
+        } else {
+            writeln!(o, "export interface {output} {{").unwrap();
+            for field in arr(action, "outputs") {
+                writeln!(
+                    o,
+                    " {}: {};",
+                    s(field, "name"),
+                    action_output_type(field, false)
+                )
+                .unwrap();
+            }
+            o.push_str("}\n");
+        }
+    }
+    o.push_str("export interface ActionTxModels {\n");
+    for model in arr(&v["schema"], "models") {
+        let n = s(model, "name");
+        writeln!(
+            o,
+            " {}: Pick<{n}TxModel, 'get' | 'query' | 'create' | 'update' | 'delete'>;",
+            lower(n)
+        )
+        .unwrap();
+    }
+    o.push_str("}\nexport interface ActionModels {\n");
+    for model in arr(&v["schema"], "models") {
+        let n = s(model, "name");
+        writeln!(
+            o,
+            " {}: ActionTxModels['{}'] & Pick<{n}LiveModel, 'watch'>;",
+            lower(n),
+            lower(n)
+        )
+        .unwrap();
+    }
+    o.push_str(
+        "}\nexport interface ActionTransactionContract { readonly models: ActionTxModels; }\n",
+    );
+    o.push_str("export interface ActionClientContract {\n readonly models: ActionModels;\n transaction<T>(body: (tx: ActionTransactionContract) => Promise<T>): Promise<T>;\n readonly actions: {\n");
+    for (n, version) in &latest {
+        let action = actions
+            .iter()
+            .find(|a| s(a, "name") == *n && a["version"].as_u64() == Some(*version))
+            .unwrap();
+        let input = action_type_name(action, *version, "Input");
+        let output = action_type_name(action, *version, "Output");
+        writeln!(
+            o,
+            "  {}(args: {input}): Promise<ActionCall<{output}>>;",
+            lower(n)
+        )
+        .unwrap();
+    }
+    o.push_str("  call: {\n");
+    for (n, version) in &latest {
+        let action = actions
+            .iter()
+            .find(|a| s(a, "name") == *n && a["version"].as_u64() == Some(*version))
+            .unwrap();
+        let input = action_type_name(action, *version, "Input");
+        let output = action_type_name(action, *version, "Output");
+        writeln!(o, "   {}(args: {input}): Promise<{output}>;", lower(n)).unwrap();
+    }
+    o.push_str("  };\n };\n}\n");
+}
 /// Client entry point bound to the compiled schema. `runtime` is the import specifier of `@axton/client`.
 pub fn client_typescript(runtime: &str) -> String {
     let mut o = String::from("// Generated by axton. Do not edit.\n");
@@ -488,7 +752,16 @@ pub fn client_typescript(runtime: &str) -> String {
 /// Backend surface bound to the compiled schema. `runtime` is the import specifier of `@axton/server`.
 pub fn backend_typescript(v: &Value, runtime: &str) -> String {
     let mut o = String::from("// Generated by axton. Do not edit.\n");
-    writeln!(o, "import {{ createBackend as createRuntimeBackend, type BackendOptions, type HandlerCall, type LoaderCall, type RecordRef }} from \"{runtime}\";").unwrap();
+    let has_actions = !arr(v, "actions").is_empty();
+    if has_actions {
+        writeln!(
+            o,
+            "import {{ type HandlerCall, type LoaderCall, type RecordRef }} from \"{runtime}\";"
+        )
+        .unwrap();
+    } else {
+        writeln!(o, "import {{ createBackend as createRuntimeBackend, type BackendOptions, type HandlerCall, type LoaderCall, type RecordRef }} from \"{runtime}\";").unwrap();
+    }
     writeln!(o, "export {{ MutationRejected, devAuth, type HandlerCall, type LoaderCall, type RecordRef }} from \"{runtime}\";").unwrap();
     let models = arr(&v["schema"], "models");
     let names: Vec<String> = models
@@ -502,6 +775,20 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
             ]
         })
         .collect();
+    let mut names = names;
+    if has_actions {
+        for en in arr(&v["schema"], "enums") {
+            names.push(s(en, "name").to_string());
+        }
+        for m in models {
+            let n = s(m, "name");
+            names.extend([
+                format!("{n}Create"),
+                format!("{n}Update"),
+                format!("{n}Delete"),
+            ]);
+        }
+    }
     writeln!(
         o,
         "import type {{ {} }} from \"./generated.ts\";",
@@ -554,9 +841,95 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
         }
         o.push_str("}\n");
     }
+    let actions = arr(v, "actions");
+    let mut action_latest = std::collections::BTreeMap::new();
+    for action in actions {
+        action_latest
+            .entry(s(action, "name"))
+            .and_modify(|version: &mut u64| {
+                *version = (*version).max(action["version"].as_u64().unwrap())
+            })
+            .or_insert(action["version"].as_u64().unwrap());
+    }
+    if has_actions {
+        o.push_str("/** Trusted framework context and caller-supplied arguments. */\nexport type ActionHandlerCall<Ctx, Args> = { ctx: Ctx; args: Args };\n");
+        for action in actions {
+            let latest = action_latest[s(action, "name")];
+            if action["version"].as_u64() != Some(latest) {
+                let prefix = action_type_name(action, latest, "");
+                for model in arr(&action["input"], "models") {
+                    let n = s(model, "name");
+                    for (suffix, identity_only, patch_only) in [
+                        ("Create", false, false),
+                        ("Identity", true, false),
+                        ("Patch", false, true),
+                    ] {
+                        writeln!(o, "export interface {prefix}{n}{suffix} {{").unwrap();
+                        for field in arr(model, "fields") {
+                            let is_id = arr(model, "identity").contains(&field["name"]);
+                            if (identity_only && !is_id) || (patch_only && is_id) {
+                                continue;
+                            }
+                            writeln!(
+                                o,
+                                " {}{}: {};",
+                                s(field, "name"),
+                                if patch_only { "?" } else { "" },
+                                snapshot_field_type(field, &action["input"]["enums"])
+                            )
+                            .unwrap();
+                        }
+                        o.push_str("}\n");
+                    }
+                    writeln!(o, "export type {prefix}{n}Update<K extends keyof {prefix}{n}Patch = keyof {prefix}{n}Patch> = {prefix}{n}Identity & Partial<Pick<{prefix}{n}Patch, K>>;").unwrap();
+                }
+            }
+            let input = action_type_name(action, latest, "Input");
+            let output = action_type_name(action, latest, "HandlerOutput");
+            writeln!(o, "export interface {input} {{").unwrap();
+            for arg in arr(action, "inputs") {
+                let optional = arg["kind"] == "model" && arg["cardinality"] == "optional";
+                writeln!(
+                    o,
+                    " {}{}: {};",
+                    s(arg, "name"),
+                    if optional { "?" } else { "" },
+                    historical_action_input_type(arg, action, latest)
+                )
+                .unwrap();
+            }
+            o.push_str("}\n");
+            if arr(action, "outputs")
+                .iter()
+                .all(|field| field["source"].is_object())
+            {
+                writeln!(o, "export type {output} = void;").unwrap();
+            } else {
+                writeln!(o, "export interface {output} {{").unwrap();
+                for field in arr(action, "outputs") {
+                    if field["source"].is_object() {
+                        continue;
+                    }
+                    writeln!(
+                        o,
+                        " {}: {};",
+                        s(field, "name"),
+                        backend_action_output_type(field, action, models)
+                    )
+                    .unwrap();
+                }
+                o.push_str("}\n");
+            }
+        }
+    }
     // Registration groups every retained version under the mutation name; a bare function is
     // shorthand for v1 and never for the latest version ([#91](https://github.com/zanminwang/axton/issues/91)).
-    o.push_str("export interface Handlers<Tx> {\n");
+    o.push_str(if has_actions {
+        "export interface Handlers<Ctx> {\n"
+    } else {
+        "export interface Handlers<Tx> {\n"
+    });
+    let handler_context = if has_actions { "Ctx" } else { "Tx" };
     let mut emitted: Vec<&str> = vec![];
     for m in mutations {
         let n = s(m, "name");
@@ -570,7 +943,7 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
             .iter()
             .map(|x| {
                 format!(
-                    "v{}(call: HandlerCall<Tx, {}>): Promise<void>;",
+                    "v{}(call: HandlerCall<{handler_context}, {}>): Promise<void>;",
                     x["version"].as_u64().unwrap(),
                     input_name(x)
                 )
@@ -580,13 +953,39 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
         if versions.len() == 1 && versions[0]["version"].as_u64() == Some(1) {
             writeln!(
                 o,
-                " {}: {grouped} | ((call: HandlerCall<Tx, {}>) => Promise<void>);",
+                " {}: {grouped} | ((call: HandlerCall<{handler_context}, {}>) => Promise<void>);",
                 lower(n),
                 input_name(versions[0])
             )
             .unwrap();
         } else {
             writeln!(o, " {}: {grouped};", lower(n)).unwrap();
+        }
+    }
+    if has_actions {
+        for name in action_latest.keys() {
+            let mut versions: Vec<&Value> =
+                actions.iter().filter(|a| s(a, "name") == *name).collect();
+            versions.sort_by_key(|a| a["version"].as_u64().unwrap());
+            let members = versions
+                .iter()
+                .map(|a| {
+                    let input = action_type_name(a, action_latest[name], "Input");
+                    let output = action_type_name(a, action_latest[name], "HandlerOutput");
+                    format!(
+                        "v{}(call: ActionHandlerCall<Ctx, {input}>): Promise<{output}>;",
+                        a["version"].as_u64().unwrap()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            writeln!(
+                o,
+                " {}: {{ {} }};",
+                lower(name),
+                members.trim_end_matches(';')
+            )
+            .unwrap();
         }
     }
     o.push_str("}\n");
@@ -630,6 +1029,19 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
         if name == s(contract, "name") {
             continue;
         }
+        writeln!(o, "export interface {name}Identity {{").unwrap();
+        for f in arr(contract, "fields") {
+            if arr(contract, "identity").contains(&f["name"]) {
+                writeln!(
+                    o,
+                    " {}: {};",
+                    s(f, "name"),
+                    snapshot_field_type(f, &contract["enums"])
+                )
+                .unwrap();
+            }
+        }
+        o.push_str("}\n");
         writeln!(o, "export interface {name} {{").unwrap();
         for f in arr(contract, "fields") {
             let field_type = if f["type"]["kind"] == "enum" {
@@ -684,10 +1096,479 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
         }
     }
     o.push_str("}\n");
-    o.push_str("export type Options<Tx> = Omit<BackendOptions<Tx>, \"config\" | \"handlers\" | \"loaders\"> & { handlers: Handlers<Tx>; loaders: Loaders<Tx> };\n");
-    o.push_str("export function createBackend<Tx>(options: Options<Tx>) {\n return createRuntimeBackend<Tx>({ ...options, config: schema, handlers: options.handlers as unknown as BackendOptions<Tx>[\"handlers\"], loaders: options.loaders as unknown as BackendOptions<Tx>[\"loaders\"] });\n}\n");
+    if has_actions {
+        o.push_str("/** Registration contract only; #142 supplies the Action runtime factory. */\nexport interface ActionBackendContract<Ctx> { handlers: Handlers<Ctx>; loaders: Loaders<Ctx>; }\n");
+    } else {
+        o.push_str("export type Options<Tx> = Omit<BackendOptions<Tx>, \"config\" | \"handlers\" | \"loaders\"> & { handlers: Handlers<Tx>; loaders: Loaders<Tx> };\n");
+        o.push_str("export function createBackend<Tx>(options: Options<Tx>) {\n return createRuntimeBackend<Tx>({ ...options, config: schema, handlers: options.handlers as unknown as BackendOptions<Tx>[\"handlers\"], loaders: options.loaders as unknown as BackendOptions<Tx>[\"loaders\"] });\n}\n");
+    }
     o
 }
+fn dart_action_type(ty_value: &Value) -> String {
+    ty(ty_value, true)
+}
+fn dart_snapshot_type(ty_value: &Value, prefix: &str, enums: &Value) -> String {
+    if ty_value["kind"] == "list" {
+        return format!(
+            "List<{}>",
+            dart_snapshot_type(&ty_value["element"], prefix, enums)
+        );
+    }
+    if ty_value["kind"] == "enum"
+        && enums
+            .as_array()
+            .is_some_and(|items| items.iter().any(|e| e["name"] == ty_value["name"]))
+    {
+        return format!("{prefix}{}", s(ty_value, "name"));
+    }
+    dart_action_type(ty_value)
+}
+fn dart_snapshot_field(field: &Value, prefix: &str, enums: &Value) -> String {
+    let base = dart_snapshot_type(&field["type"], prefix, enums);
+    if field["nullable"] == true {
+        format!("{base}?")
+    } else {
+        base
+    }
+}
+fn dart_action_cardinality(base: &str, cardinality: &str) -> String {
+    match cardinality {
+        "optional" => format!("{base}?"),
+        "list" => format!("List<{base}>"),
+        _ => base.to_string(),
+    }
+}
+fn dart_action_input_type(
+    arg: &Value,
+    prefix: &str,
+    restriction_prefix: &str,
+    enums: &Value,
+    restricted: bool,
+) -> String {
+    if arg["kind"] == "value" {
+        let base = dart_snapshot_type(&arg["type"], prefix, enums);
+        return if arg["list"] == true {
+            format!("List<{base}>")
+        } else if arg["nullable"] == true {
+            format!("{base}?")
+        } else {
+            base
+        };
+    }
+    let model = s(arg, "model");
+    let base = match s(arg, "operation") {
+        "create" => format!("{prefix}{model}Create"),
+        "delete" => format!("{prefix}{model}Delete"),
+        "update" if restricted => format!(
+            "{restriction_prefix}{}{}Update",
+            upper(s(arg, "name")),
+            if prefix.is_empty() { "" } else { "Slot" }
+        ),
+        "update" => format!("{prefix}{model}Update"),
+        _ => unreachable!(),
+    };
+    dart_action_cardinality(&base, s(arg, "cardinality"))
+}
+fn dart_action_output_type(
+    field: &Value,
+    identity: bool,
+    output_prefix: &str,
+    output_enums: &Value,
+    models: &[Value],
+) -> String {
+    let base = match s(field, "kind") {
+        "value" => dart_snapshot_type(&field["type"], output_prefix, output_enums),
+        "deleteIdentity" => format!("{}Identity", s(field, "model")),
+        "model" if identity => {
+            let model = s(field, "model");
+            let current = models
+                .iter()
+                .find(|m| m["name"] == model)
+                .and_then(|m| m["version"].as_u64());
+            let read = field["modelReadVersion"].as_u64();
+            match read {
+                Some(version) if Some(version) != current => {
+                    format!("{model}V{version}Identity")
+                }
+                _ => format!("{model}Identity"),
+            }
+        }
+        "model" => s(field, "model").to_string(),
+        _ => unreachable!(),
+    };
+    dart_action_cardinality(&base, s(field, "cardinality"))
+}
+
+fn dart_data_class(o: &mut String, name: &str, fields: &[(String, String, bool)]) {
+    writeln!(o, "class {name} {{").unwrap();
+    for (field, ty, _) in fields {
+        writeln!(o, " final {ty} {field};").unwrap();
+    }
+    let params = fields
+        .iter()
+        .map(|(field, _, required)| {
+            format!("{}this.{field}", if *required { "required " } else { "" })
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    writeln!(
+        o,
+        " const {name}({});\n}}",
+        if fields.is_empty() {
+            String::new()
+        } else {
+            format!("{{{params}}}")
+        }
+    )
+    .unwrap();
+}
+fn dart_action_update(
+    o: &mut String,
+    name: &str,
+    model: &Value,
+    allowed: Option<&Vec<Value>>,
+    prefix: &str,
+    enums: &Value,
+) {
+    let mut fields = vec![];
+    for field in arr(model, "fields") {
+        let key = s(field, "name");
+        if arr(model, "identity").contains(&field["name"]) {
+            fields.push((
+                key.to_string(),
+                dart_snapshot_field(field, prefix, enums),
+                true,
+            ));
+        } else if allowed.is_none_or(|a| a.contains(&field["name"])) {
+            fields.push((
+                key.to_string(),
+                format!("Present<{}>?", dart_snapshot_field(field, prefix, enums)),
+                false,
+            ));
+        }
+    }
+    dart_data_class(o, name, &fields);
+}
+fn dart_actions(v: &Value, o: &mut String) {
+    let actions = arr(v, "actions");
+    if actions.is_empty() {
+        return;
+    }
+    o.push_str(
+        "/// Type-level Action contracts; runtime binding arrives with the Action engine.\n",
+    );
+    o.push_str("enum ActionStatus { pending, succeeded, failed }\nabstract interface class ActionError implements Exception { String get code; }\nsealed class ActionOutcome<T> { const ActionOutcome(); }\nfinal class ActionSuccess<T> extends ActionOutcome<T> { final T result; const ActionSuccess(this.result); }\nfinal class ActionFailure<T> extends ActionOutcome<T> { final ActionError error; const ActionFailure(this.error); }\nabstract interface class ActionCall<T> { ActionStatus get status; Future<ActionOutcome<T>> wait(); }\n");
+    let models = arr(&v["schema"], "models");
+    for model in models {
+        let n = s(model, "name");
+        writeln!(
+            o,
+            "typedef {n}Create = {n};\ntypedef {n}Delete = {n}Identity;"
+        )
+        .unwrap();
+        dart_action_update(o, &format!("{n}Update"), model, None, "", &Value::Null);
+    }
+    let mut emitted_reads = std::collections::BTreeSet::new();
+    for model in v
+        .get("backendModels")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let name = s(model, "name");
+        let version = model["version"].as_u64().unwrap_or(1);
+        let current = models
+            .iter()
+            .find(|m| m["name"] == name)
+            .and_then(|m| m["version"].as_u64());
+        if Some(version) == current || !emitted_reads.insert((name.to_string(), version)) {
+            continue;
+        }
+        let fields = arr(model, "fields")
+            .iter()
+            .filter(|field| arr(model, "identity").contains(&field["name"]))
+            .map(|field| (s(field, "name").to_string(), ft(field, true), true))
+            .collect::<Vec<_>>();
+        dart_data_class(o, &format!("{name}V{version}Identity"), &fields);
+    }
+    let mut latest = std::collections::BTreeMap::new();
+    for action in actions {
+        latest
+            .entry(s(action, "name"))
+            .and_modify(|n: &mut u64| *n = (*n).max(action["version"].as_u64().unwrap()))
+            .or_insert(action["version"].as_u64().unwrap());
+    }
+    for action in actions {
+        let name = s(action, "name");
+        let is_latest = action["version"].as_u64() == Some(latest[name]);
+        let prefix = action_type_name(action, latest[name], "");
+        let historical = if is_latest { "" } else { prefix.as_str() };
+        let input_enums = if is_latest {
+            &Value::Null
+        } else {
+            &action["input"]["enums"]
+        };
+        if !is_latest {
+            let mut seen = std::collections::BTreeSet::new();
+            for en in input_enums.as_array().into_iter().flatten() {
+                let name = s(en, "name");
+                if seen.insert(name) {
+                    writeln!(
+                        o,
+                        "enum {prefix}{name} {{ {} }}",
+                        arr(en, "values")
+                            .iter()
+                            .map(Value::as_str)
+                            .map(Option::unwrap)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                    .unwrap();
+                }
+            }
+            for model in arr(&action["input"], "models") {
+                let model_name = s(model, "name");
+                for (suffix, identity_only) in
+                    [("Create", false), ("Identity", true), ("Delete", true)]
+                {
+                    let fields = arr(model, "fields")
+                        .iter()
+                        .filter(|field| {
+                            !identity_only || arr(model, "identity").contains(&field["name"])
+                        })
+                        .map(|field| {
+                            (
+                                s(field, "name").to_string(),
+                                dart_snapshot_field(field, &prefix, input_enums),
+                                true,
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    dart_data_class(o, &format!("{prefix}{model_name}{suffix}"), &fields);
+                }
+                dart_action_update(
+                    o,
+                    &format!("{prefix}{model_name}Update"),
+                    model,
+                    None,
+                    &prefix,
+                    input_enums,
+                );
+            }
+        }
+        for arg in arr(action, "inputs") {
+            if arg["kind"] == "model"
+                && arg["operation"] == "update"
+                && arg["allowedPatchFields"].is_array()
+            {
+                let model = arr(&action["input"], "models")
+                    .iter()
+                    .chain(models.iter())
+                    .find(|m| m["name"] == arg["model"])
+                    .unwrap();
+                dart_action_update(
+                    o,
+                    &format!(
+                        "{prefix}{}{}Update",
+                        upper(s(arg, "name")),
+                        if is_latest { "" } else { "Slot" }
+                    ),
+                    model,
+                    arg["allowedPatchFields"].as_array(),
+                    historical,
+                    input_enums,
+                );
+            }
+        }
+        let inputs = arr(action, "inputs")
+            .iter()
+            .map(|arg| {
+                let optional = arg["kind"] == "model" && arg["cardinality"] == "optional";
+                (
+                    s(arg, "name").to_string(),
+                    dart_action_input_type(
+                        arg,
+                        historical,
+                        &prefix,
+                        input_enums,
+                        arg["allowedPatchFields"].is_array(),
+                    ),
+                    !optional,
+                )
+            })
+            .collect::<Vec<_>>();
+        dart_data_class(o, &format!("{prefix}Input"), &inputs);
+        let outputs = arr(action, "outputs");
+        let output_prefix = if is_latest {
+            String::new()
+        } else {
+            format!("{prefix}Output")
+        };
+        let output_enums = if is_latest {
+            &Value::Null
+        } else {
+            &action["outputEnums"]
+        };
+        if !is_latest {
+            let mut seen = std::collections::BTreeSet::new();
+            for en in output_enums.as_array().into_iter().flatten() {
+                let name = s(en, "name");
+                if seen.insert(name) {
+                    writeln!(
+                        o,
+                        "enum {output_prefix}{name} {{ {} }}",
+                        arr(en, "values")
+                            .iter()
+                            .map(Value::as_str)
+                            .map(Option::unwrap)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        if is_latest {
+            if outputs.is_empty() {
+                writeln!(o, "typedef {prefix}Output = void;").unwrap();
+            } else {
+                let fields = outputs
+                    .iter()
+                    .map(|field| {
+                        (
+                            s(field, "name").to_string(),
+                            dart_action_output_type(field, false, "", &Value::Null, models),
+                            true,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                dart_data_class(o, &format!("{prefix}Output"), &fields);
+            }
+        }
+        let explicit = outputs
+            .iter()
+            .filter(|field| !field["source"].is_object())
+            .collect::<Vec<_>>();
+        if explicit.is_empty() {
+            writeln!(o, "typedef {prefix}HandlerOutput = void;").unwrap();
+        } else {
+            let fields = explicit
+                .iter()
+                .map(|field| {
+                    (
+                        s(field, "name").to_string(),
+                        dart_action_output_type(field, true, &output_prefix, output_enums, models),
+                        true,
+                    )
+                })
+                .collect::<Vec<_>>();
+            dart_data_class(o, &format!("{prefix}HandlerOutput"), &fields);
+        }
+    }
+    o.push_str("abstract interface class ActionTxModels {\n");
+    for model in models {
+        writeln!(
+            o,
+            " Action{0}Model get {1};",
+            s(model, "name"),
+            lower(s(model, "name"))
+        )
+        .unwrap();
+    }
+    o.push_str("}\nabstract interface class ActionModels {\n");
+    for model in models {
+        writeln!(
+            o,
+            " Action{0}LiveModel get {1};",
+            s(model, "name"),
+            lower(s(model, "name"))
+        )
+        .unwrap();
+    }
+    o.push_str("}\n");
+    for model in models {
+        let n = s(model, "name");
+        writeln!(o, "abstract interface class Action{n}Model {{\n Future<{n}?> get({n}Identity identity);\n Future<List<{n}>> query({{{n}Filter? where, List<{n}Order> orderBy = const [], int? limit}});\n Future<void> create({n} value);\n Future<void> update({n}Identity identity, {n}Patch patch);\n Future<void> delete({n}Identity identity);\n}}\nabstract interface class Action{n}LiveModel implements Action{n}Model {{\n Stream<List<{n}>> watch({{{n}Filter? where}});\n}}").unwrap();
+    }
+    o.push_str("abstract interface class ActionTransactionContract { ActionTxModels get models; }\nabstract interface class ActionClientContract { ActionModels get models; Future<T> transaction<T>(Future<T> Function(ActionTransactionContract tx) body); ActionActionsContract get actions; }\nabstract interface class ActionActionsContract { ActionDirectCallsContract get call;\n");
+    for (name, version) in &latest {
+        let action = actions
+            .iter()
+            .find(|a| s(a, "name") == *name && a["version"].as_u64() == Some(*version))
+            .unwrap();
+        let params = dart_action_params(action);
+        writeln!(
+            o,
+            " Future<ActionCall<{name}Output>> {}({});",
+            lower(name),
+            if params.is_empty() {
+                String::new()
+            } else {
+                format!("{{{params}}}")
+            }
+        )
+        .unwrap();
+    }
+    o.push_str("}\nabstract interface class ActionDirectCallsContract {\n");
+    for (name, version) in &latest {
+        let action = actions
+            .iter()
+            .find(|a| s(a, "name") == *name && a["version"].as_u64() == Some(*version))
+            .unwrap();
+        let params = dart_action_params(action);
+        writeln!(
+            o,
+            " Future<{name}Output> {}({});",
+            lower(name),
+            if params.is_empty() {
+                String::new()
+            } else {
+                format!("{{{params}}}")
+            }
+        )
+        .unwrap();
+    }
+    o.push_str("}\nabstract interface class ActionHandlerCall<Ctx, Args> { Ctx get ctx; Args get args; }\nabstract interface class ActionHandlers<Ctx> {\n");
+    for name in latest.keys() {
+        writeln!(o, " Action{}Handlers<Ctx> get {};", name, lower(name)).unwrap();
+    }
+    o.push_str("}\n");
+    for (name, version) in &latest {
+        writeln!(o, "abstract interface class Action{name}Handlers<Ctx> {{").unwrap();
+        for action in actions.iter().filter(|a| s(a, "name") == *name) {
+            let prefix = action_type_name(action, *version, "");
+            writeln!(
+                o,
+                " Future<{prefix}HandlerOutput> v{}(ActionHandlerCall<Ctx, {prefix}Input> call);",
+                action["version"]
+            )
+            .unwrap();
+        }
+        o.push_str("}\n");
+    }
+}
+fn dart_action_params(action: &Value) -> String {
+    arr(action, "inputs")
+        .iter()
+        .map(|arg| {
+            let optional = arg["kind"] == "model" && arg["cardinality"] == "optional";
+            format!(
+                "{}{} {}",
+                if optional { "" } else { "required " },
+                dart_action_input_type(
+                    arg,
+                    "",
+                    s(action, "name"),
+                    &Value::Null,
+                    arg["allowedPatchFields"].is_array()
+                ),
+                s(arg, "name")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub fn dart(v: &Value) -> String {
     let mut o = String::from(
         "// Generated by axton. Do not edit.\nimport 'dart:convert';\nimport 'package:axton/axton.dart';\nexport 'package:axton/axton.dart' show RuntimeConnection, SyncServer;\nclass Present<T> { final T value; const Present(this.value); }\n",
@@ -972,6 +1853,7 @@ pub fn dart(v: &Value) -> String {
     }
     dart_query_types(v, &mut o);
     dart_models(v, &mut o);
+    dart_actions(v, &mut o);
     writeln!(
         o,
         "class Mutate {{ final MutatePort port; Mutate(this.port);\n{}\n}}",

@@ -1,0 +1,30 @@
+enum Status { open closed archived }
+model Todo {
+ id String
+ title String
+ state Status
+ note String?
+ @@id(id)
+ @@version(2)
+}
+model Project {
+ tenantId String
+ id String
+ title String
+ @@id(tenantId, id)
+}
+@version(2)
+action AddTodo(todo Todo.create, patch Todo.update<title>?, gone Todo.delete[], status Status?, tags String[]) {
+ relatedTodo Todo?
+ matches Todo[]
+ count Int
+ state Status?
+}
+action Link(project Project.create) { relatedProject Project? }
+action Ping()
+action RemoveTodo(todo Todo.delete)
+action Search(query String?)
+action DeleteTodo(todo Todo.delete)
+action SendEmail(to String, subject String, body String)
+action GetTodos() { todos Todo[] }
+@version(2) action StateList() { states Status[] }

@@ -1,4 +1,166 @@
+use axton_compiler::reconcile_action_history;
 use axton_compiler::{check_fence, compile, reconcile_history};
+use serde_json::json;
+
+#[test]
+fn new_action_names_must_start_at_version_one() {
+    let model = "model Todo { id String @@id(id) }";
+    let first_at_v2 = compile(&format!(
+        "{model} @version(2) action Send(to String) {{ id String }}"
+    ))
+    .unwrap();
+    let error = reconcile_action_history(&first_at_v2, None).unwrap_err();
+    assert!(error.contains("begin at version 1"), "{error}");
+
+    let existing = compile(&format!("{model} action Save(to String) {{ id String }}")).unwrap();
+    let history = reconcile_action_history(&existing, None).unwrap();
+    let second_at_v2 = compile(&format!(
+        "{model} action Save(to String) {{ id String }} @version(2) action Send(to String) {{ id String }}"
+    ))
+    .unwrap();
+    let error = reconcile_action_history(&second_at_v2, Some(&history)).unwrap_err();
+    assert!(
+        error.contains("Send") && error.contains("begin at version 1"),
+        "{error}"
+    );
+
+    let second_at_v1 = compile(&format!(
+        "{model} action Save(to String) {{ id String }} action Send(to String) {{ id String }}"
+    ))
+    .unwrap();
+    let next = reconcile_action_history(&second_at_v1, Some(&history)).unwrap();
+    assert_eq!(
+        next["actions"]["Save"]["1"],
+        history["actions"]["Save"]["1"]
+    );
+    assert_eq!(next["actions"]["Send"]["1"]["version"], 1);
+}
+
+#[test]
+fn actions_retain_output_shapes_and_model_read_versions() {
+    let first =
+        compile("model Todo { id String @@id(id) } action Find(query String?) { related Todo? }")
+            .unwrap();
+    let history = reconcile_action_history(&first, None).unwrap();
+    assert_eq!(
+        history["actions"]["Find"]["1"]["inputs"][0]["required"],
+        true
+    );
+    assert_eq!(
+        history["actions"]["Find"]["1"]["outputs"][0]["modelReadVersion"],
+        1
+    );
+    assert_eq!(
+        history["actions"]["Find"]["1"]["outputs"][0]["handlerType"],
+        json!({"kind":"identity","model":"Todo","fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}]})
+    );
+    let changed =
+        compile("model Todo { id String @@id(id) } action Find(query String?) { related String? }")
+            .unwrap();
+    assert!(
+        reconcile_action_history(&changed, Some(&history))
+            .unwrap_err()
+            .contains("output")
+    );
+    let bumped = compile("model Todo { id String @@id(id) } @version(2) action Find(query String?) { related String? }").unwrap();
+    let next = reconcile_action_history(&bumped, Some(&history)).unwrap();
+    assert_eq!(
+        next["actions"]["Find"]["1"],
+        history["actions"]["Find"]["1"]
+    );
+    assert_eq!(next["actions"]["Find"]["2"]["outputs"][0]["kind"], "value");
+}
+
+#[test]
+fn action_history_fences_input_shapes_and_preserves_compatible_model_additions() {
+    let source = "model Todo { id String title String body String @@id(id) } action Edit(value String?, todo Todo.update<title,body>) { result String }";
+    let history = reconcile_action_history(&compile(source).unwrap(), None).unwrap();
+    for changed in [
+        source.replace("value String?", "value String"),
+        source.replace("value String?", "value String[]"),
+        source.replace("todo Todo.update<title,body>", "todo Todo.update<title>"),
+        source.replace("result String", "result String?"),
+        source.replace("result String", "result String[]"),
+        source.replace("result String", "other String"),
+    ] {
+        assert!(
+            reconcile_action_history(&compile(&changed).unwrap(), Some(&history)).is_err(),
+            "{changed}"
+        );
+    }
+    let compatible = source.replace("title String", "title String note String?");
+    assert!(reconcile_action_history(&compile(&compatible).unwrap(), Some(&history)).is_ok());
+    let bumped = source.replace("action Edit", "@version(2) action Edit");
+    let newer = reconcile_action_history(&compile(&bumped).unwrap(), Some(&history)).unwrap();
+    assert!(
+        reconcile_action_history(&compile(source).unwrap(), Some(&newer))
+            .unwrap_err()
+            .contains("cannot decrease")
+    );
+    assert!(
+        reconcile_action_history(
+            &compile("model Todo { id String @@id(id) }").unwrap(),
+            Some(&history)
+        )
+        .unwrap_err()
+        .contains("cannot be removed")
+    );
+}
+
+#[test]
+fn action_identity_source_changes_need_a_version_bump() {
+    let first = compile("model Todo { id String @@id(id) } action Find(todo Todo.update)").unwrap();
+    let history = reconcile_action_history(&first, None).unwrap();
+    let explicit =
+        compile("model Todo { id String @@id(id) } action Find() { todo Todo }").unwrap();
+    assert!(
+        reconcile_action_history(&explicit, Some(&history))
+            .unwrap_err()
+            .contains("output")
+    );
+}
+
+#[test]
+fn action_output_enum_changes_are_fenced_but_input_enum_growth_is_compatible() {
+    let first = compile("enum Status { open closed } model Todo { id String @@id(id) } action Pick(input Status) { output Status }").unwrap();
+    let history = reconcile_action_history(&first, None).unwrap();
+    let changed = compile("enum Status { open closed archived } model Todo { id String @@id(id) } action Pick(input Status) { output Status }").unwrap();
+    assert!(
+        reconcile_action_history(&changed, Some(&history))
+            .unwrap_err()
+            .contains("output")
+    );
+    let bumped = compile("enum Status { open closed archived } model Todo { id String @@id(id) } @version(2) action Pick(input Status) { output Status }").unwrap();
+    let next = reconcile_action_history(&bumped, Some(&history)).unwrap();
+    assert_eq!(
+        next["actions"]["Pick"]["1"]["outputEnums"][0]["values"],
+        json!(["open", "closed"])
+    );
+    assert_eq!(
+        next["actions"]["Pick"]["2"]["outputEnums"][0]["values"],
+        json!(["open", "closed", "archived"])
+    );
+    let input_only = compile(
+        "enum Status { open closed } model Todo { id String @@id(id) } action Filter(input Status)",
+    )
+    .unwrap();
+    let input_history = reconcile_action_history(&input_only, None).unwrap();
+    let input_expanded = compile("enum Status { open closed archived } model Todo { id String @@id(id) } action Filter(input Status)").unwrap();
+    assert!(reconcile_action_history(&input_expanded, Some(&input_history)).is_ok());
+}
+
+#[test]
+fn retained_action_prerequisites_remain_available_after_a_version_bump() {
+    let source = "prerequisite Uploaded(key String) model Todo { id String title String @requires(Uploaded(key: self)) @@id(id) } action Save(todo Todo.create)";
+    let history = reconcile_action_history(&compile(source).unwrap(), None).unwrap();
+    let changed =
+        "model Todo { id String title String @@id(id) } @version(2) action Save(todo Todo.create)";
+    let error = reconcile_action_history(&compile(changed).unwrap(), Some(&history)).unwrap_err();
+    assert!(
+        error.contains("retained Action") && error.contains("Uploaded"),
+        "{error}"
+    );
+}
 #[test]
 fn versions_retain_original_inputs() {
     let v1 =

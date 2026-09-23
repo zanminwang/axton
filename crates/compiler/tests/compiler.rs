@@ -1,4 +1,245 @@
 use axton_compiler::compile;
+use axton_compiler::validate::{
+    ActionInput, ActionOutputSource, ActionOutputType, Cardinality, FieldType, Scalar,
+};
+use axton_compiler::{parse, validate};
+
+#[test]
+fn action_values_and_explicit_outputs_are_typed() {
+    let schema = parse("enum Status { active closed } model Todo { id String @@id(id) } action Search(query String?, labels String[]) { count Int status Status? statuses Status[] }").unwrap();
+    let action = &validate(&schema).unwrap().actions[0];
+    assert_eq!(
+        action.inputs[0],
+        ActionInput::Value {
+            name: "query".into(),
+            ty: FieldType::Scalar(Scalar::String),
+            nullable: true,
+            list: false
+        }
+    );
+    assert_eq!(
+        action.inputs[1],
+        ActionInput::Value {
+            name: "labels".into(),
+            ty: FieldType::Scalar(Scalar::String),
+            nullable: false,
+            list: true
+        }
+    );
+    assert_eq!(
+        action
+            .outputs
+            .iter()
+            .map(|x| x.cardinality)
+            .collect::<Vec<_>>(),
+        [
+            Cardinality::Single,
+            Cardinality::Optional,
+            Cardinality::List
+        ]
+    );
+    assert!(
+        action
+            .outputs
+            .iter()
+            .all(|x| x.source == ActionOutputSource::HandlerValue)
+    );
+    assert_eq!(
+        action.outputs[1].ty,
+        ActionOutputType::Value(FieldType::Enum("Status".into()))
+    );
+}
+
+#[test]
+fn action_model_operands_imply_bound_outputs() {
+    let schema = parse("model Todo { id String title String @@id(id) } action Edit(one Todo.create, maybe Todo.update<title>?, many Todo.delete[]) { related Todo? }").unwrap();
+    let action = &validate(&schema).unwrap().actions[0];
+    assert_eq!(
+        action
+            .outputs
+            .iter()
+            .map(|x| x.cardinality)
+            .collect::<Vec<_>>(),
+        [
+            Cardinality::Single,
+            Cardinality::Optional,
+            Cardinality::List,
+            Cardinality::Optional
+        ]
+    );
+    assert_eq!(action.outputs[0].ty, ActionOutputType::Model("Todo".into()));
+    assert_eq!(
+        action.outputs[2].ty,
+        ActionOutputType::DeleteIdentity("Todo".into())
+    );
+    assert_eq!(
+        action.outputs[1].source,
+        ActionOutputSource::InputIdentity {
+            input: "maybe".into()
+        }
+    );
+    assert_eq!(
+        action.outputs[3].source,
+        ActionOutputSource::HandlerModelIdentity
+    );
+    assert_eq!(action.outputs[0].model_read_version, Some(1));
+}
+
+#[test]
+fn action_model_operand_deprecation_is_rejected_at_the_operand() {
+    let source = "model Todo { id String @@id(id) }\naction Edit(todo Todo.update @deprecated(reason: \"use other\"))";
+    let err = validate(&parse(source).unwrap()).unwrap_err();
+    assert!(err.starts_with("2:"), "{err}");
+    assert!(err.contains("todo") && err.contains("deprecated"), "{err}");
+}
+
+#[test]
+fn action_void_and_explicit_model_outputs_keep_their_shapes() {
+    let schema = parse("model Todo { id String @@id(id) @@version(3) } action Void() action Load() { one Todo maybe Todo? many Todo[] }").unwrap();
+    let valid = validate(&schema).unwrap();
+    assert!(valid.actions[0].outputs.is_empty());
+    let outputs = &valid.actions[1].outputs;
+    assert_eq!(
+        outputs.iter().map(|x| x.cardinality).collect::<Vec<_>>(),
+        [
+            Cardinality::Single,
+            Cardinality::Optional,
+            Cardinality::List
+        ]
+    );
+    assert!(
+        outputs
+            .iter()
+            .all(|x| x.ty == ActionOutputType::Model("Todo".into())
+                && x.source == ActionOutputSource::HandlerModelIdentity
+                && x.model_read_version == Some(3))
+    );
+}
+
+#[test]
+fn action_model_operations_keep_each_operand_cardinality() {
+    for operation in ["create", "update", "delete"] {
+        for (suffix, expected) in [
+            ("", Cardinality::Single),
+            ("?", Cardinality::Optional),
+            ("[]", Cardinality::List),
+        ] {
+            let source = format!(
+                "model Todo {{ id String title String @@id(id) }} action Do(todo Todo.{operation}{suffix})"
+            );
+            let valid = validate(&parse(&source).unwrap()).unwrap();
+            let action = &valid.actions[0];
+            let ActionInput::Model { slot } = &action.inputs[0] else {
+                panic!("expected Model operand")
+            };
+            assert_eq!(slot.cardinality, expected, "{source}");
+            assert_eq!(action.outputs[0].cardinality, expected, "{source}");
+            assert_eq!(
+                action.outputs[0].source,
+                ActionOutputSource::InputIdentity {
+                    input: "todo".into()
+                },
+                "{source}"
+            );
+            assert_eq!(
+                action.outputs[0].ty,
+                if operation == "delete" {
+                    ActionOutputType::DeleteIdentity("Todo".into())
+                } else {
+                    ActionOutputType::Model("Todo".into())
+                },
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn action_sequence_can_match_all_prior_instances_or_a_list_target() {
+    let source = "model Todo { id String @@id(id) } @sequence(after: [Prior()]) action Any(todo Todo.update) @sequence(after: [Prior(todos: todo)]) action One(todo Todo.update) action Prior(todos Todo.create[])";
+    let valid = validate(&parse(source).unwrap()).unwrap();
+    assert!(
+        valid.actions[0].sequence.as_ref().unwrap().after[0]
+            .bindings
+            .is_empty()
+    );
+    assert_eq!(
+        valid.actions[1].sequence.as_ref().unwrap().after[0].bindings[0].path,
+        ["todo"]
+    );
+}
+
+#[test]
+fn action_sequence_unknown_target_names_the_target() {
+    let source = "model Todo { id String @@id(id) }\n@sequence(after: [Missing()]) action Later(todo Todo.create)";
+    let err = validate(&parse(source).unwrap()).unwrap_err();
+    assert!(err.starts_with("2:"), "{err}");
+    assert!(err.contains("Missing"), "{err}");
+}
+
+#[test]
+fn action_semantic_errors_name_the_member_and_location() {
+    for (source, name) in [
+        ("action Search(query Object)", "Object"),
+        (
+            "model Todo { id String @@id(id) } action A(todo Todo.create) { todo Todo }",
+            "todo",
+        ),
+        ("action A(x String, x Int)", "x"),
+        ("action Call(x String)", "Call"),
+        (
+            "model Todo { id String @@id(id) } action Todo(x String)",
+            "Todo",
+        ),
+        (
+            "model Todo { id String @@id(id) } action Save(x String) action save(y String)",
+            "save",
+        ),
+        (
+            "model Todo { id String @@id(id) } action A(todo Todo.update<missing>)",
+            "missing",
+        ),
+    ] {
+        let err = validate(&parse(source).unwrap()).unwrap_err();
+        assert!(err.contains("1:") && err.contains(name), "{source}: {err}");
+    }
+}
+
+#[test]
+fn action_preserves_restricted_patch_bindings_and_sequence() {
+    let schema = parse(r#"
+prerequisite Uploaded(key String)
+model Parent { id String children Child[] @@id(id) }
+model Child { id String parentId String title String @requires(Uploaded(key: self)) parent Parent @reference(via: [parentId]) @@id(id) }
+@sequence(after: [Rename(child: child)])
+action Add(parent Parent.create, child Child.create(parent: parent))
+action Rename(child Child.update<title>)
+"#).unwrap();
+    let valid = validate(&schema).unwrap();
+    let ActionInput::Model { slot: child } = &valid.actions[0].inputs[1] else {
+        panic!("model input")
+    };
+    assert_eq!(child.bindings[0].slot, "parent");
+    assert_eq!(
+        valid.actions[0].sequence.as_ref().unwrap().after[0].bindings[0].path,
+        ["child"]
+    );
+    let ActionInput::Model { slot: patch } = &valid.actions[1].inputs[0] else {
+        panic!("model input")
+    };
+    assert_eq!(patch.allowed_patch_fields.as_ref().unwrap(), &["title"]);
+    assert_eq!(valid.requirements[0].prerequisite, "Uploaded");
+}
+
+#[test]
+fn action_value_input_can_share_a_name_with_an_explicit_output() {
+    let schema =
+        parse("model Todo { id String @@id(id) } action Echo(value String) { value String }")
+            .unwrap();
+    let action = &validate(&schema).unwrap().actions[0];
+    assert_eq!(action.inputs.len(), 1);
+    assert_eq!(action.outputs.len(), 1);
+}
 #[test]
 fn schema_and_mutations() {
     let v=compile("enum Status { active archived } model Entry { owner UUID id UUID title String note String? labels String[] at DateTime status Status @@id(owner,id) @@unique(title) } mutation Edit { entry Entry.update<title,note> @@version(2) }").unwrap();
@@ -588,4 +829,294 @@ fn deprecations_reach_every_generated_surface_and_leave_the_descriptors_alone() 
     assert!(dart.contains("class TaskFilter {\n final Present<String>? id;\n @Deprecated('renamed to title')\n final Present<String>? name;\n"), "{dart}");
     assert!(dart.contains("Map<String,dynamic> edit({required EditTaskUpdate task,@Deprecated('use task') EditOldUpdate? old})"), "{dart}");
     assert!(dart.contains(" Future<int> edit({required EditTaskUpdate task,@Deprecated('use task') EditOldUpdate? old})"), "{dart}");
+}
+#[test]
+fn action_descriptors_separate_values_operands_and_output_sources() {
+    let source = "model Todo { id String title String @@id(id) } action Save(label String?, todo Todo.create, maybe Todo.update<title>?, gone Todo.delete[]) { related Todo? count Int }";
+    let descriptor = axton_compiler::compile(source).unwrap();
+    let action = &descriptor["actions"][0];
+    assert_eq!(action["name"], "Save");
+    assert_eq!(action["inputs"][0]["kind"], "value");
+    assert_eq!(action["inputs"][0]["required"], true);
+    assert_eq!(action["inputs"][0]["nullable"], true);
+    assert_eq!(action["inputs"][1]["kind"], "model");
+    assert_eq!(action["inputs"][2]["cardinality"], "optional");
+    assert_eq!(
+        action["inputs"][2]["allowedPatchFields"],
+        serde_json::json!(["title"])
+    );
+    assert_eq!(
+        action["outputs"][1]["source"],
+        serde_json::json!({"inputIdentity":"maybe"})
+    );
+    assert_eq!(action["outputs"][2]["kind"], "deleteIdentity");
+    assert_eq!(action["outputs"][2]["cardinality"], "list");
+    assert_eq!(
+        action["outputs"][3]["source"],
+        serde_json::json!("handlerIdentity")
+    );
+    assert_eq!(
+        action["outputs"][3]["handlerType"]["fields"][0]["name"],
+        "id"
+    );
+    assert_eq!(action["outputs"][3]["modelReadVersion"], 1);
+    assert!(
+        descriptor["schema"]["clientPolicies"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn action_descriptors_keep_bindings_sequence_prerequisites_and_composite_keys() {
+    let source = r#"
+prerequisite Uploaded(key String)
+model Parent { id String children Child[] @@id(id) }
+model Child { tenant String id String parentId String title String @requires(Uploaded(key: self)) parent Parent @reference(via: [parentId]) @@id(tenant, id) }
+@sequence(after: [Rename(child: child)])
+action Add(parent Parent.create, child Child.create(parent: parent)) { found Child[] }
+action Rename(child Child.update<title>)
+"#;
+    let descriptors = axton_compiler::compile(source).unwrap();
+    let action = &descriptors["actions"][0];
+    assert_eq!(action["inputs"][1]["bindings"][0]["slot"], "parent");
+    assert_eq!(
+        action["sequence"]["after"][0]["arguments"]["child"],
+        "child"
+    );
+    assert_eq!(action["outputs"][2]["cardinality"], "list");
+    assert_eq!(
+        action["outputs"][2]["handlerType"]["fields"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        action["outputs"][2]["handlerType"]["fields"][0]["name"],
+        "tenant"
+    );
+    let history = axton_compiler::reconcile_action_history(&descriptors, None).unwrap();
+    let snapshot = &history["actions"]["Add"]["1"];
+    assert_eq!(snapshot["requirements"][0]["name"], "Uploaded");
+    assert_eq!(snapshot["prerequisites"][0]["name"], "Uploaded");
+    assert_eq!(snapshot["sequence"], action["sequence"]);
+}
+
+#[test]
+fn action_typescript_emits_flattened_operands_and_separate_client_contract() {
+    let v = compile("model Todo { id String title String @@id(id) } action AddTodo(todo Todo.create, patch Todo.update<title>?, gone Todo.delete[], label String?) { related Todo? matches Todo[] count Int }").unwrap();
+    let ts = axton_compiler::typescript(&v);
+    assert!(ts.contains("export type TodoCreate = Todo;"), "{ts}");
+    assert!(ts.contains("export type TodoUpdate<K extends keyof TodoPatch = keyof TodoPatch> = TodoIdentity & Partial<Pick<TodoPatch, K>>;"), "{ts}");
+    assert!(
+        ts.contains("export type TodoDelete = TodoIdentity;"),
+        "{ts}"
+    );
+    assert!(ts.contains("export interface AddTodoInput"), "{ts}");
+    assert!(ts.contains("label: string | null;"), "{ts}");
+    assert!(ts.contains("export interface ActionCall<T>"), "{ts}");
+    assert!(ts.contains("export interface ActionClientContract"), "{ts}");
+    assert!(
+        ts.contains("addTodo(args: AddTodoInput): Promise<ActionCall<AddTodoOutput>>"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("addTodo(args: AddTodoInput): Promise<AddTodoOutput>"),
+        "{ts}"
+    );
+    assert!(!ts.contains("class GeneratedClient {"), "{ts}");
+}
+
+#[test]
+fn action_backend_emits_versioned_handler_identity_contracts_without_factory() {
+    let v = compile("model Todo { id String title String @@id(id) } action AddTodo(todo Todo.create) { relatedTodo Todo? }").unwrap();
+    let mut retained = v.clone();
+    let mut old = retained["actions"][0].clone();
+    old["outputs"].as_array_mut().unwrap().pop();
+    old["input"] = serde_json::json!({"models": [v["schema"]["models"][0].clone()], "enums": []});
+    old["outputEnums"] = serde_json::json!([]);
+    let mut current = v["actions"][0].clone();
+    current["version"] = serde_json::json!(2);
+    retained["actions"] = serde_json::json!([old, current]);
+    let ts = axton_compiler::backend_typescript(&retained, "@axton/server");
+    assert!(
+        ts.contains("export type AddTodoV1HandlerOutput = void;"),
+        "{ts}"
+    );
+    assert!(ts.contains("export interface AddTodoHandlerOutput"), "{ts}");
+    assert!(ts.contains("relatedTodo: TodoIdentity | null;"), "{ts}");
+    assert!(
+        ts.contains(
+            "v1(call: ActionHandlerCall<Ctx, AddTodoV1Input>): Promise<AddTodoV1HandlerOutput>"
+        ),
+        "{ts}"
+    );
+    assert!(
+        ts.contains(
+            "v2(call: ActionHandlerCall<Ctx, AddTodoInput>): Promise<AddTodoHandlerOutput>"
+        ),
+        "{ts}"
+    );
+    assert!(!ts.contains("export function createBackend"), "{ts}");
+    assert!(!ts.contains("createRuntimeBackend"), "{ts}");
+    assert!(!ts.contains("BackendOptions"), "{ts}");
+}
+
+#[test]
+fn mixed_action_and_legacy_backend_keeps_handler_context_in_scope() {
+    let v = compile("model Todo { id String @@id(id) } mutation Legacy { todo Todo.delete } action New(todo Todo.delete)").unwrap();
+    let ts = axton_compiler::backend_typescript(&v, "@axton/server");
+    assert!(
+        ts.contains("legacy: { v1(call: HandlerCall<Ctx, LegacyInput>)"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("new: { v1(call: ActionHandlerCall<Ctx, NewInput>)"),
+        "{ts}"
+    );
+    assert!(!ts.contains("export function createBackend"), "{ts}");
+}
+
+#[test]
+fn action_dart_emits_type_only_client_and_versioned_handler_contracts() {
+    let v = compile("model Todo { id String title String @@id(id) } action Search(query String?) { relatedTodo Todo? } action Ping()").unwrap();
+    let dart = axton_compiler::dart(&v);
+    for expected in [
+        "abstract interface class ActionCall<T>",
+        "ActionStatus get status;",
+        "Future<ActionOutcome<T>> wait();",
+        "required String? query",
+        "class TodoIdentity",
+        "required this.relatedTodo",
+        "TodoIdentity? relatedTodo",
+        "Todo? relatedTodo",
+        "abstract interface class ActionClientContract",
+        "ActionActionsContract get actions;",
+        "ActionDirectCallsContract get call;",
+        "Future<ActionCall<SearchOutput>> search(",
+        "Future<SearchOutput> search(",
+        "abstract interface class ActionTransactionContract",
+        "typedef PingOutput = void;",
+    ] {
+        assert!(dart.contains(expected), "missing {expected}: {dart}");
+    }
+    assert!(!dart.contains("class GeneratedClient extends ActionClientContract"));
+}
+
+#[test]
+fn action_dart_retains_output_read_version_and_enum_snapshot() {
+    let mut v = compile("enum Status { open closed } model Todo { id String title String @@id(id) @@version(2) } action Add() { related Todo? state Status }").unwrap();
+    let mut old = v["actions"][0].clone();
+    old["version"] = serde_json::json!(1);
+    old["outputs"][0]["modelReadVersion"] = serde_json::json!(1);
+    old["outputEnums"] = serde_json::json!([{"name":"Status","values":["open"]}]);
+    old["input"] = serde_json::json!({"models":[],"enums":[]});
+    let mut current = v["actions"][0].clone();
+    current["version"] = serde_json::json!(2);
+    v["actions"] = serde_json::json!([old, current]);
+    v["backendModels"] = serde_json::json!([{"name":"Todo","version":1,"identity":["id"],"fields":[{"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false},{"name":"title","type":{"kind":"scalar","name":"string"},"nullable":false}]}]);
+    let dart = axton_compiler::dart(&v);
+    assert!(dart.contains("class TodoV1Identity"), "{dart}");
+    assert!(dart.contains("TodoV1Identity? related"), "{dart}");
+    assert!(dart.contains("enum AddV1OutputStatus { open }"), "{dart}");
+    assert!(dart.contains("AddV1OutputStatus state"), "{dart}");
+}
+
+#[test]
+fn action_generated_identifiers_reject_current_collisions_with_positions() {
+    let cases = [
+        (
+            "model FetchInput { id String @@id(id) } action Fetch()",
+            "FetchInput",
+        ),
+        (
+            "model FetchOutput { id String @@id(id) } action Fetch()",
+            "FetchOutput",
+        ),
+        (
+            "model FetchHandlerOutput { id String @@id(id) } action Fetch()",
+            "FetchHandlerOutput",
+        ),
+        (
+            "model Todo { id String @@id(id) } mutation Fetch { todo Todo.create } action Fetch()",
+            "FetchInput",
+        ),
+        (
+            "enum ActionOutcome { open } model Todo { id String @@id(id) } action Fetch()",
+            "ActionOutcome",
+        ),
+        (
+            "model ActionSuccess { id String @@id(id) } action Fetch()",
+            "ActionSuccess",
+        ),
+        (
+            "model ActionFailure { id String @@id(id) } action Fetch()",
+            "ActionFailure",
+        ),
+        (
+            "model ActionBackendContract { id String @@id(id) } action Fetch()",
+            "ActionBackendContract",
+        ),
+        (
+            "model Todo { id String @@id(id) } model ActionTodoModel { id String @@id(id) } action Fetch()",
+            "ActionTodoModel",
+        ),
+        (
+            "model Todo { id String title String @@id(id) } model FetchTodoUpdate { id String @@id(id) } action Fetch(todo Todo.update<title>)",
+            "FetchTodoUpdate",
+        ),
+    ];
+    for (source, name) in cases {
+        let error = compile(source).unwrap_err();
+        assert!(
+            error.contains(name) && error.contains("Action") && error.starts_with("1:"),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[test]
+fn action_generated_identifiers_reject_other_actions_without_overbanning() {
+    assert!(
+        compile("model Todo { id String @@id(id) } action Fetch() action FetchInput()").is_ok()
+    );
+    assert!(compile("model FetchV1Input { id String @@id(id) } action Fetch()").is_ok());
+}
+
+#[test]
+fn backend_enum_list_handler_outputs_preserve_latest_and_retained_union_cardinality() {
+    let old = compile("enum Status { open closed } model Todo { id String @@id(id) } action Fetch() { states Status[] }").unwrap();
+    let history = axton_compiler::reconcile_action_history(&old, None).unwrap();
+    let mut latest = compile("enum Status { open closed archived } model Todo { id String @@id(id) } @version(2) action Fetch() { states Status[] }").unwrap();
+    let history = axton_compiler::reconcile_action_history(&latest, Some(&history)).unwrap();
+    latest["actions"] = serde_json::Value::Array(
+        history["actions"]["Fetch"]
+            .as_object()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect(),
+    );
+    let emitted = axton_compiler::backend_typescript(&latest, "@axton/server");
+    let interface = |name: &str| {
+        let marker = format!("export interface {name} {{");
+        emitted
+            .split_once(&marker)
+            .unwrap()
+            .1
+            .split_once("}\n")
+            .unwrap()
+            .0
+    };
+    assert!(
+        interface("FetchV1HandlerOutput").contains("states: (\"open\" | \"closed\")[];"),
+        "{emitted}"
+    );
+    assert!(
+        interface("FetchHandlerOutput")
+            .contains("states: (\"open\" | \"closed\" | \"archived\")[];"),
+        "{emitted}"
+    );
 }

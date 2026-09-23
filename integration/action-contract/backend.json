@@ -748,6 +748,39 @@
           "name": "Status",
           "values": [
             "open",
+            "closed"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "cardinality": "list",
+          "kind": "value",
+          "name": "states",
+          "source": "handlerValue",
+          "type": {
+            "kind": "enum",
+            "name": "Status"
+          }
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 1
+    },
+    {
+      "input": {
+        "enums": [],
+        "models": []
+      },
+      "inputs": [],
+      "name": "StateList",
+      "outputEnums": [
+        {
+          "name": "Status",
+          "values": [
+            "open",
             "closed",
             "archived"
           ]
@@ -768,7 +801,7 @@
       "prerequisites": [],
       "requirements": [],
       "sequence": null,
-      "version": 1
+      "version": 2
     }
   ],
   "deprecations": [],

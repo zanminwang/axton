@@ -1,7 +1,7 @@
 import * as actionBackend from "./backend.ts";
 import type { GeneratedClient } from "./client.ts";
 import type { ActionCall, ActionClientContract, AddTodoInput, AddTodoOutput, Todo, TodoIdentity, TodoUpdate, ProjectIdentity, PingOutput } from './generated.ts';
-import type { AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, LinkHandlerOutput, PingHandlerOutput, RemoveTodoHandlerOutput, Handlers, StateListHandlerOutput } from './backend.ts';
+import type { AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, LinkHandlerOutput, PingHandlerOutput, RemoveTodoHandlerOutput, Handlers, StateListHandlerOutput, StateListV1HandlerOutput } from './backend.ts';
 
 declare const client: ActionClientContract;
 declare const concrete: GeneratedClient;
@@ -71,3 +71,9 @@ const stateListScalar: StateListHandlerOutput = { states: 'open' };
 // @ts-expect-error enum-list output rejects an invalid member
 const stateListInvalid: StateListHandlerOutput = { states: ['invalid'] };
 void [stateListScalar, stateListInvalid];
+
+// @ts-expect-error retained v1 enum-list excludes the new case
+const oldStateListArchived: StateListV1HandlerOutput = { states: ['archived'] };
+// @ts-expect-error retained v1 enum-list rejects a scalar
+const oldStateListScalar: StateListV1HandlerOutput = { states: 'open' };
+void [oldStateListArchived, oldStateListScalar];

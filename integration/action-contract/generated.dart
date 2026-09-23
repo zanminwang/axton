@@ -298,6 +298,14 @@ class SendEmailInput {
 }
 typedef SendEmailOutput = void;
 typedef SendEmailHandlerOutput = void;
+class StateListV1Input {
+ const StateListV1Input();
+}
+enum StateListV1OutputStatus { open, closed }
+class StateListV1HandlerOutput {
+ final List<StateListV1OutputStatus> states;
+ const StateListV1HandlerOutput({required this.states});
+}
 class StateListInput {
  const StateListInput();
 }
@@ -399,7 +407,8 @@ abstract interface class ActionSendEmailHandlers<Ctx> {
  Future<SendEmailHandlerOutput> v1(ActionHandlerCall<Ctx, SendEmailInput> call);
 }
 abstract interface class ActionStateListHandlers<Ctx> {
- Future<StateListHandlerOutput> v1(ActionHandlerCall<Ctx, StateListInput> call);
+ Future<StateListV1HandlerOutput> v1(ActionHandlerCall<Ctx, StateListV1Input> call);
+ Future<StateListHandlerOutput> v2(ActionHandlerCall<Ctx, StateListInput> call);
 }
 class Mutate { final MutatePort port; Mutate(this.port);
 

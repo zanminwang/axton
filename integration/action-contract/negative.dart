@@ -42,3 +42,6 @@ Future<void> missingSearchQuery(ActionClientContract client) async {
 
 final stateListScalar = StateListHandlerOutput(states: Status.open);
 final stateListInvalid = StateListHandlerOutput(states: [Status.invalid]);
+
+final oldStateListScalar = StateListV1HandlerOutput(states: StateListV1OutputStatus.open);
+final oldStateListArchived = StateListV1HandlerOutput(states: [StateListV1OutputStatus.archived]);

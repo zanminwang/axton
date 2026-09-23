@@ -27,4 +27,4 @@ action Search(query String?)
 action DeleteTodo(todo Todo.delete)
 action SendEmail(to String, subject String, body String)
 action GetTodos() { todos Todo[] }
-action StateList() { states Status[] }
+@version(2) action StateList() { states Status[] }

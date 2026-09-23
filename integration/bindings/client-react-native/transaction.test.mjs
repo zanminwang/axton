@@ -11,17 +11,18 @@ test('mobile transaction adapter is available without a Node async context', () 
   test('commands serialize and retained scopes reject after finish', async () => {
     const seen = [];
     const tx = new Transaction(async request => { seen.push(request); return 1; });
-    await tx.mutate({name:'Add'});
+    assert.equal('mutate' in tx, false);
+    await tx.direct({model:'Entry',op:'create',identity:{id:'one'},values:{text:'one'}});
     await tx.read('Entry', {id:'one'});
     await tx.finish();
-    assert.deepEqual(seen.map(x => x.op), ['enqueue','read']);
+    assert.deepEqual(seen.map(x => x.op), ['direct','read']);
     assert.ok(seen.every(x => x.transaction === true));
     await assert.rejects(tx.read('Entry', {id:'one'}), /transaction_closed/);
     assert.equal('savepoint' in tx, false);
   });
   test('finish rejects a caught native error', async () => {
     const tx = new Transaction(async () => { throw Error('native failure'); });
-    await tx.mutate({}).catch(() => {});
+    await tx.direct({}).catch(() => {});
     await assert.rejects(tx.finish(), /native failure/);
   });
   test('finish drains unawaited operations before rejecting', async () => {
@@ -29,7 +30,7 @@ test('mobile transaction adapter is available without a Node async context', () 
     let completed = false;
     const gate = new Promise(resolve => { release = resolve; });
     const tx = new Transaction(async () => { await gate; completed=true; return 1; });
-    const queued = tx.mutate({});
+    const queued = tx.direct({});
     const finish = tx.finish();
     release();
     await assert.rejects(finish, /unawaited transaction operation/);

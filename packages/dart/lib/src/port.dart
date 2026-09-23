@@ -21,12 +21,12 @@ abstract interface class ReadPort {
   );
 }
 
-/// Enqueues a mutation: inside a [Transaction], or on a [Client] as its own transaction.
+/// Enqueues a mutation through a [Client] as its own transaction.
 abstract interface class MutatePort {
   Future<int> mutate(Map<String, dynamic> mutation);
 }
 
 /// Writes available inside a [Transaction].
-abstract interface class WritePort implements ReadPort, MutatePort {
+abstract interface class WritePort implements ReadPort {
   Future<void> direct(Map<String, dynamic> operation);
 }

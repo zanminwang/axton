@@ -6,8 +6,20 @@ export class Transaction {
   #tail: Promise<unknown> = Promise.resolve();
   #pending = 0;
   #failure: unknown;
+  #activeCallback = false;
   constructor(send: (request: RecordValue) => Promise<any>) {
     this.#send = send;
+  }
+  async runCallback<T>(body: () => Promise<T>): Promise<T> {
+    this.#activeCallback = true;
+    try {
+      return await body();
+    } finally {
+      this.#activeCallback = false;
+    }
+  }
+  inCallback(): boolean {
+    return this.#activeCallback;
   }
   #queue(request: RecordValue): Promise<any> {
     this.#pending++;
@@ -70,8 +82,5 @@ export class Transaction {
   }
   direct(operation: object) {
     return this.#call({ op: "direct", operation });
-  }
-  mutate(mutation: object): Promise<number> {
-    return this.#call({ op: "enqueue", mutation });
   }
 }

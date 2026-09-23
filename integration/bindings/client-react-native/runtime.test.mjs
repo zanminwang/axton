@@ -6,6 +6,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Transaction } from '../../../packages/client-react-native/transaction.mts';
 import * as runtime from '../../../packages/client-js/runtime.mts';
+const edit = (text) => ({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'e'},values:{text}}]});
+async function within(promise) {
+  let timer;
+  try { return await Promise.race([promise, new Promise(resolve => {timer=setTimeout(() => resolve('timeout'),100);})]); }
+  finally { clearTimeout(timer); }
+}
 test('shared runtime accepts the mobile transaction and native carrier', () => {
   assert.equal(typeof runtime?.createClient, 'function');
 });
@@ -49,6 +55,47 @@ test('shared runtime accepts the mobile transaction and native carrier', () => {
       release(); await transaction;
       assert.equal((await read).text,'after');
     } finally {await client.close(); await rm(directory,{recursive:true,force:true});}
+  });
+}
+{
+  const native = createRequire(import.meta.url)('../../../bindings/node/ahead-node.node');
+  const Client = runtime.createClient(native, Transaction, () => { throw Error('network not configured'); });
+  const schema={models:[{name:'Entry',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'string'},nullable:false},{name:'text',type:{kind:'scalar',name:'string'},nullable:false}],relations:[],unique:[]}],enums:[],clientPolicies:[]};
+  test('mobile client mutation rejects promptly during a public callback, including unrelated callers', async () => {
+    const directory=await mkdtemp(join(tmpdir(),'ahead-rn-guard-'));
+    const client=await Client.open({path:join(directory,'client.sqlite'),schema});
+    let release;
+    try {
+      await client.transaction(tx=>tx.direct({model:'Entry',op:'create',identity:{id:'e'},values:{text:'A'}}));
+      let entered;
+      const started=new Promise(resolve=>entered=resolve);
+      const gate=new Promise(resolve=>release=resolve);
+      const transaction=client.transaction(async tx=>{
+        assert.equal('mutate' in tx,false);
+        entered();
+        assert.equal(await within(client.mutate(edit('inside')).then(()=> 'committed',error=>error.message)), 'transaction_active');
+        await gate;
+      });
+      await started;
+      assert.equal(await within(client.mutate(edit('unrelated')).then(()=> 'committed',error=>error.message)), 'transaction_active');
+      release(); await transaction;
+      assert.equal((await client.syncState()).pending,0);
+      assert.equal(await client.mutate(edit('after')),1);
+      assert.equal((await client.read('Entry',{id:'e'})).text,'after');
+    } finally { release?.(); await client.close(); await rm(directory,{recursive:true,force:true}); }
+  });
+  test('mobile standalone submission rolls back optimistic writes and queue on enqueue failure', async () => {
+    const directory=await mkdtemp(join(tmpdir(),'ahead-rn-atomic-'));
+    const client=await Client.open({path:join(directory,'client.sqlite'),schema});
+    try {
+      await assert.rejects(client.mutate({name:'Broken',operations:[
+        {model:'Entry',op:'create',identity:{id:'failed'},values:{text:'optimistic'}},
+        {model:'Missing',op:'create',identity:{id:'missing'},values:{text:'invalid'}},
+      ]}));
+      assert.equal((await client.syncState()).pending,0);
+      assert.equal(await client.read('Entry',{id:'failed'}),null);
+      assert.equal(await client.mutate({name:'Create',operations:[{model:'Entry',op:'create',identity:{id:'good'},values:{text:'committed'}}]}),1);
+    } finally { await client.close(); await rm(directory,{recursive:true,force:true}); }
   });
 }
 {

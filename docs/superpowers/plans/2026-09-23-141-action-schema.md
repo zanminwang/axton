@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Before code changes, update/rebase `codex/141-action-schema` onto the completed #145 branch, inspect its new public transaction contract, then adjust file paths and tests below to that baseline. Resolve conflicts in this worktree only.
+- Before code changes, update/rebase `codex/141-action-schema` onto the completed, reviewed #145 branch (implementation may proceed while its CI runs; merge #145 before the #141 PR), inspect its new public transaction contract, then adjust file paths and tests below to that baseline. Resolve conflicts in this worktree only.
 - #141 owns compiler, descriptors, generated interfaces, type tests, diagnostics, fixtures and docs; #142 owns execution and the shared Loader/materialization path; #116 owns ephemeral policy and dedicated output acceptance. Do not add a callable stub or make #141's gate depend on unfinished #142/#116.
 - Preserve a working existing optimistic mutation path during the staged compiler transition. Internal compatibility metadata is temporary development scaffolding, not a user migration contract.
 - No `@tool`, `@local`, `@synced`, new invocation dependencies, cross-Action atomic groups, nested or nullable lists.

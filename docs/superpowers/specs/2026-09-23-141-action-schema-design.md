@@ -1,6 +1,6 @@
 # Model and Action schema contracts — design (#141)
 
-Status: approved design from [#141](https://github.com/zanminwang/axton/issues/141); implementation pending. This document specifies compiler and generated contracts. #145 must land before implementation; #142 supplies execution and the shared Model Loader path; #116 adds ephemeral policy.
+Status: approved design from [#141](https://github.com/zanminwang/axton/issues/141); implementation pending. This document specifies compiler and generated contracts. Implementation requires the completed, reviewed #145 branch as its baseline; #145 merges before the #141 PR; #142 supplies execution and the shared Model Loader path; #116 adds ephemeral policy.
 
 ## Context and ownership
 

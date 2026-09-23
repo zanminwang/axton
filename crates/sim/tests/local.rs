@@ -1,5 +1,5 @@
 //! Guarantees L1, L4, L5 on the simulation (L2, L3 are store contracts in crates/sqlite).
-use ahead_sim::{
+use axton_sim::{
     Action, MutationSpec, Sim,
     schema::{comment_key, entry_key},
 };

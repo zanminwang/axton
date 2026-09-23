@@ -2,7 +2,7 @@ import type { DriverOptions, PostgresDriver } from "./driver.mts";
 import { RETRYABLE_SQLSTATES, withRetries } from "./driver.mts";
 import { persistence } from "./persistence.mts";
 
-/** The part of a `pg` client Ahead uses; `pg.PoolClient` satisfies it. */
+/** The part of a `pg` client AXTON uses; `pg.PoolClient` satisfies it. */
 export interface PgClient {
   query(
     sql: string,
@@ -10,7 +10,7 @@ export interface PgClient {
   ): Promise<{ rows: Record<string, unknown>[] }>;
   release(error?: Error | boolean): void;
 }
-/** The part of a `pg` pool Ahead uses; `pg.Pool` satisfies it. */
+/** The part of a `pg` pool AXTON uses; `pg.Pool` satisfies it. */
 export interface PgPool {
   connect(): Promise<PgClient>;
 }

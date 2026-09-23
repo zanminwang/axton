@@ -14,7 +14,7 @@ Parse turns one or more `.model` files into structured declarations with token p
 
 - **Lexer.** Identifiers and digit runs, double-quoted strings with backslash escapes, the punctuation `{ } ( ) [ ] ? , . @ < > :`, and `//` line comments. Anything else is an error. Every token carries its line and column.
 - **Grammar.** `enum`, `model`, `mutation`, `action` and `prerequisite` declarations. An Action uses `action Name(input Type, operand Model.create?) { output Type }`; braces are optional for void output. `@version` and `@sequence` appear above an Action; `@@id` and `@@unique` stay inside Models. Ordinary Action values support scalar or enum types, `?` for nullable values and `[]` for lists; Model operands support create/update/delete and single, optional or list cardinality. The existing directive argument grammar still applies. Unsupported Action member annotations are rejected.
-- **CLI.** `ahead compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--model-history FILE] [--initialize-model-history] [--action-history FILE] [--initialize-action-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]`.
+- **CLI.** `axton compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--model-history FILE] [--initialize-model-history] [--action-history FILE] [--initialize-action-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]`.
 
 Code: `lex`, `Parser`, `parse` and the `Declarations` types in [compiler/parse.rs](../../../../crates/compiler/src/parse.rs); file handling in [compiler/main.rs](../../../../crates/compiler/src/main.rs).
 
@@ -29,4 +29,4 @@ Code: `lex`, `Parser`, `parse` and the `Declarations` types in [compiler/parse.r
 
 ## 11. Risks and Technical Debt
 
-- **Accepted limitation:** there are no numeric or boolean literals outside `@@version` (on mutations and models); this is the parsing half of the missing field default ([#27](https://github.com/zanminwang/ahead/issues/27)).
+- **Accepted limitation:** there are no numeric or boolean literals outside `@@version` (on mutations and models); this is the parsing half of the missing field default ([#27](https://github.com/zanminwang/axton/issues/27)).

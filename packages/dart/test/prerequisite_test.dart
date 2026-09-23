@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:ahead/ahead.dart';
+import 'package:axton/axton.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -8,7 +8,7 @@ void main() {
     'prerequisite failure stays optimistic and explicit retry unlocks the push',
     () async {
       final dir = await Directory.systemTemp.createTemp(
-        'ahead-dart-prerequisite-',
+        'axton-dart-prerequisite-',
       );
       final schema =
           jsonDecode(
@@ -34,7 +34,7 @@ void main() {
       final client = await Client.open(
         path: '${dir.path}/db',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       try {
         await client.transaction(

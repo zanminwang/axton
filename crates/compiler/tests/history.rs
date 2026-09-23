@@ -1,5 +1,5 @@
-use ahead_compiler::reconcile_action_history;
-use ahead_compiler::{check_fence, compile, reconcile_history};
+use axton_compiler::reconcile_action_history;
+use axton_compiler::{check_fence, compile, reconcile_history};
 use serde_json::json;
 
 #[test]
@@ -196,7 +196,7 @@ fn nullable_addition_compatible_and_fence_blocks_removal() {
 }
 
 mod models {
-    use ahead_compiler::{check_fence, compile, reconcile_model_history};
+    use axton_compiler::{check_fence, compile, reconcile_model_history};
     use serde_json::{Value, json};
 
     fn task(fields: &str, version: &str) -> Value {

@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Work only in this worktree (`.worktrees/notify-50-transaction`, branch `codex/notify-50-transaction`). Never touch the main checkout.
-- Setup once before any JS suite: `npm ci` at the root, then `bash scripts/build.sh` (installs `packages/server` and `packages/client-js` deps, builds `bindings/node/ahead-node.node`). Read `docs/engineering/testing/running.md` and `docs/engineering/testing/end-to-end.md` for the exact runner commands; the persistence runner is `bash integration/persistence/server/run.sh`.
+- Setup once before any JS suite: `npm ci` at the root, then `bash scripts/build.sh` (installs `packages/server` and `packages/client-js` deps, builds `bindings/node/axton-node.node`). Read `docs/engineering/testing/running.md` and `docs/engineering/testing/end-to-end.md` for the exact runner commands; the persistence runner is `bash integration/persistence/server/run.sh`.
 - Keep `bindTransaction` and its four methods unchanged.
 - Single object argument for the new callback; the type is `TransactionCall<Tx>`.
 - Commit messages end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
@@ -367,7 +367,7 @@ Add a section `## 9. Architecture Decisions` between §6 and §10:
 ```
 ## 9. Architecture Decisions
 
-**External writes go through `backend.transaction` (decided in [#50](https://github.com/zanminwang/ahead/issues/50), implemented 2026-09-15).** The framework owns the transaction, the completion check and the after-commit wake, so an application cannot publish without waking. Business writes and publications share one transaction; a failure rolls back both and wakes nobody. `bindTransaction` remains for an application whose framework already owns the transaction. The unbound `backend.notify(tx, …)` shortcut, which published without a wake set, was removed. Cross-process wakes stay with [#62](https://github.com/zanminwang/ahead/issues/62). Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `backend.transaction publishes in the application transaction and wakes after commit`, `backend.transaction rolls back a failing body and wakes nobody`, `backend.transaction refuses to commit an unawaited notify`, `backend.transaction wakes a connected live subscriber without reconnect`.
+**External writes go through `backend.transaction` (decided in [#50](https://github.com/zanminwang/axton/issues/50), implemented 2026-09-15).** The framework owns the transaction, the completion check and the after-commit wake, so an application cannot publish without waking. Business writes and publications share one transaction; a failure rolls back both and wakes nobody. `bindTransaction` remains for an application whose framework already owns the transaction. The unbound `backend.notify(tx, …)` shortcut, which published without a wake set, was removed. Cross-process wakes stay with [#62](https://github.com/zanminwang/axton/issues/62). Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `backend.transaction publishes in the application transaction and wakes after commit`, `backend.transaction rolls back a failing body and wakes nobody`, `backend.transaction refuses to commit an unawaited notify`, `backend.transaction wakes a connected live subscriber without reconnect`.
 ```
 
 §11: delete the paragraph starting `**Problem: the shortcut \`backend.notify(tx, …)\` never wakes live subscribers.**`. Keep the accepted limitation and the potential risk. Also update the "Code:" line in §5 to name `transaction` next to `Session.touched` and `WakeHub`.
@@ -399,7 +399,7 @@ Unlike a handler's `publish`, `notify` is asynchronous and allocates a new stamp
 
 ### Externally owned transactions
 
-When your framework already owns the transaction and Ahead cannot open it, bind that transaction instead and perform the completion and wake steps yourself:
+When your framework already owns the transaction and AXTON cannot open it, bind that transaction instead and perform the completion and wake steps yourself:
 
 ```ts
 const afterCommit = await database.transaction(async tx => {
@@ -472,7 +472,7 @@ If `api-index.md` has an "Advanced interfaces" table, put the `bindTransaction` 
 
 `docs/engineering/testing/end-to-end.md`: replace `except the wiring itself and the \`backend.notify(tx, …)\` shortcut used by the fixture server and the To-do seed, which relies on catch-up rather than a wake ([Notify §11](../architecture/server/engine/notify.md))` with `except the wiring itself`.
 
-`docs/engineering/testing/review.md`, item 1: remove `the \`backend.notify(tx, …)\` shortcut that never wakes subscribers ([#50](https://github.com/zanminwang/ahead/issues/50), [Notify §11](../architecture/server/engine/notify.md));` and fix the sentence.
+`docs/engineering/testing/review.md`, item 1: remove `the \`backend.notify(tx, …)\` shortcut that never wakes subscribers ([#50](https://github.com/zanminwang/axton/issues/50), [Notify §11](../architecture/server/engine/notify.md));` and fix the sentence.
 
 - [x] **Step 4: Sweep**
 

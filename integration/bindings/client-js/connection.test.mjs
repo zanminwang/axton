@@ -67,7 +67,7 @@ test("closing an old client connection twice preserves ownership of the replacem
   const { mkdtemp, rm, readFile } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const directory = await mkdtemp(join(tmpdir(), "ahead-connection-"));
+  const directory = await mkdtemp(join(tmpdir(), "axton-connection-"));
   const schema = JSON.parse(
     await readFile(
       new URL("../../../fixtures/schemas/entry.json", import.meta.url),
@@ -100,7 +100,7 @@ test("client close waits for in-flight connection setup and remains idempotent",
   const { mkdtemp, rm, readFile } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const directory = await mkdtemp(join(tmpdir(), "ahead-connection-close-"));
+  const directory = await mkdtemp(join(tmpdir(), "axton-connection-close-"));
   const schema = JSON.parse(
     await readFile(
       new URL("../../../fixtures/schemas/entry.json", import.meta.url),

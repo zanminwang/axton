@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-const { runProbe } = createRequire(import.meta.url)('../../../bindings/node/ahead-node-probe.node');
+const { runProbe } = createRequire(import.meta.url)('../../../bindings/node/axton-node-probe.node');
 const scopes = new WeakMap();
 
 /** Test fixture over the probe-only addon build; only an active caller-owned transaction can bind it. */

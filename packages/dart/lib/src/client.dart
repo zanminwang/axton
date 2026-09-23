@@ -32,8 +32,8 @@ void _nativeWorker(List<Object?> args) {
         : Platform.isIOS
         ? DynamicLibrary.process()
         : throw StateError('libraryPath is required outside iOS');
-    final call = library.lookupFunction<_CallNative, _Call>('ahead_call');
-    final free = library.lookupFunction<_FreeNative, _Free>('ahead_free');
+    final call = library.lookupFunction<_CallNative, _Call>('axton_call');
+    final free = library.lookupFunction<_FreeNative, _Free>('axton_free');
     final port = ReceivePort();
     ready.send(port.sendPort);
     port.listen((dynamic raw) {
@@ -412,7 +412,7 @@ class Client implements ReadPort, MutatePort {
       // What the receipt or page could not apply; the client stays consistent
       // and the application hears about each one.
       for (final report in reports as List<dynamic>) {
-        onError?.call(AheadReport.fromJson(report as Map<String, dynamic>));
+        onError?.call(AxtonReport.fromJson(report as Map<String, dynamic>));
       }
     }
   }

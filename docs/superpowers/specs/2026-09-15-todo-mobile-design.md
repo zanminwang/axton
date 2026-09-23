@@ -2,11 +2,11 @@
 
 Status: implementation specification; the mobile application and React Native integration are not implemented by this document.
 
-Tracking: [mobile #31](https://github.com/zanminwang/ahead/issues/31), [browser dependencies #59](https://github.com/zanminwang/ahead/issues/59), [web demo #72](https://github.com/zanminwang/ahead/issues/72).
+Tracking: [mobile #31](https://github.com/zanminwang/axton/issues/31), [browser dependencies #59](https://github.com/zanminwang/axton/issues/59), [web demo #72](https://github.com/zanminwang/axton/issues/72).
 
 ## 1. Goal and scope
 
-**Delivery order:** [React Native support #100](https://github.com/zanminwang/ahead/issues/100) blocks [demo #31](https://github.com/zanminwang/ahead/issues/31). #100 owns native carrier, SDK/transport adaptation, and independent iOS runtime validation. #31 consumes that supported integration and owns the To-do schema/backend/UI, example migration, and application-level demonstration.
+**Delivery order:** [React Native support #100](https://github.com/zanminwang/axton/issues/100) blocks [demo #31](https://github.com/zanminwang/axton/issues/31). #100 owns native carrier, SDK/transport adaptation, and independent iOS runtime validation. #31 consumes that supported integration and owns the To-do schema/backend/UI, example migration, and application-level demonstration.
 
 Replace `examples/rust-round-trip` with a small, understandable collaborative To-do example at `examples/todo`. A developer should be able to understand the schema, run two independent phones, and observe local writes, durable offline work, and synchronization through an application-owned backend.
 
@@ -19,7 +19,7 @@ Excluded: assignment, replies, reply counts, title editing, task deletion, list 
 These complete the agreed minimal scope without adding product features:
 
 - iOS simulators are the first required runtime target. Android and physical-device support require separate evidence before being claimed.
-- Use an Expo development build and an iOS Expo native module. Expo Go cannot include Ahead's custom native library. See [Expo development builds](https://docs.expo.dev/develop/development-builds/introduction/) and [local native modules](https://docs.expo.dev/workflow/customizing/).
+- Use an Expo development build and an iOS Expo native module. Expo Go cannot include AXTON's custom native library. See [Expo development builds](https://docs.expo.dev/develop/development-builds/introduction/) and [local native modules](https://docs.expo.dev/workflow/customizing/).
 - Use the existing Rust client engine and its SQLite storage, plus a TypeScript/Node backend with Prisma and PostgreSQL.
 - Seed two demo identities, `alice` / Alice and `bob` / Bob. Select the identity through launch configuration, not a new login flow. This is a local development identity mechanism, not production authentication.
 - Derive a circular avatar from the participant's initial and a fixed color. No avatar column or network image dependency.
@@ -41,7 +41,7 @@ These complete the agreed minimal scope without adding product features:
 
 `Todo.createdBy` is a generated relation, not another stored column. User records are seeded by the backend; the app cannot create or edit them. There is no `List`, `Membership`, `Reply`, or `Assignment` table. All demo participants share the fixed channel `todo:demo`.
 
-Target Ahead schema:
+Target AXTON schema:
 
 ```text
 model User {
@@ -65,7 +65,7 @@ mutation SetTodoDone { todo Todo.update<done> }
 
 Compile this with the repository compiler and use generated builders. Do not hand-maintain a second schema or generated interfaces. The default lifecycle dependency of an update on its pending create must be verified with an offline add-then-done test; do not add ordering annotations speculatively.
 
-The backend has these two business tables plus Ahead's existing persistence tables. Each phone has an independent SQLite database containing its local business data and engine-owned queue, cursor, identity, and other sync metadata. Those internal tables are not application models. The developer walkthrough must make that distinction.
+The backend has these two business tables plus AXTON's existing persistence tables. Each phone has an independent SQLite database containing its local business data and engine-owned queue, cursor, identity, and other sync metadata. Those internal tables are not application models. The developer walkthrough must make that distinction.
 
 ### Operations and backend rules
 
@@ -76,7 +76,7 @@ The backend has these two business tables plus Ahead's existing persistence tabl
 
 Use `MutationRejected` codes `todo.title_empty`, `todo.creator_invalid`, `todo.initial_state_invalid`, `todo.missing`, and `todo.id_conflict` for these expected business refusals. A completion request without a boolean `done` never reaches the handler: the runtime refuses it as `mutation.invalid`. Unexpected database failures remain retryable server failures. Never convert an arbitrary Prisma failure into a successful operation.
 
-The UI trims text and prevents empty submission; the server repeats validation. Repeating a frozen request uses Ahead's durable receipt contract. A genuinely different create with an existing ID is rejected; it must not overwrite that task. `createdById` is immutable after creation.
+The UI trims text and prevents empty submission; the server repeats validation. Repeating a frozen request uses AXTON's durable receipt contract. A genuinely different create with an existing ID is rejected; it must not overwrite that task. `createdById` is immutable after creation.
 
 Authenticate only the two demo identities. Loaders allow those identities to read both users and all tasks on `todo:demo`; reject or return no data for other scopes according to the existing server API. Publish seeds and handler changes inside their database transactions using the existing notification/persistence contract.
 
@@ -111,7 +111,7 @@ The platform requirements below belong to #100 and describe what #31 consumes. T
 React Native / TypeScript             TypeScript / Node
 generated client                     generated backend
         │                                  │
-mobile host adapter  ─── HTTP + WS ─── Ahead server
+mobile host adapter  ─── HTTP + WS ─── AXTON server
         │                                  │
 Expo iOS string bridge                Prisma transaction
         │                                  │

@@ -1,5 +1,5 @@
 //! Guarantees R1 and R3 on the simulation. R2 is tests/invariants.rs.
-use ahead_sim::{Action, MutationSpec, Sim, schema::entry_key};
+use axton_sim::{Action, MutationSpec, Sim, schema::entry_key};
 
 /// R1: with every message dropped, local writes keep working; once delivery resumes
 /// the client converges with the server.

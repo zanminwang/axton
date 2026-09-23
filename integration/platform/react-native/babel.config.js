@@ -1,5 +1,5 @@
 // The Expo preset applies its TypeScript transform to .ts/.tsx names only.
-// The shared Ahead client modules are .mts, so give them the same transform.
+// The shared AXTON client modules are .mts, so give them the same transform.
 const expoPackage = require.resolve('expo/package.json');
 const resolveFromExpo = (name) => require.resolve(name, { paths: [expoPackage] });
 

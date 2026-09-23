@@ -25,8 +25,8 @@
 }
 .md-header { box-shadow: none; border-bottom: 1px solid #8290a326; }
 .md-tabs { border-bottom: 1px solid #8290a326; }
-.md-header__button.md-logo { display: none; }
-.md-header__topic { font-weight: 650; }
+.md-header__button.md-logo img { border-radius: 3px; }
+.md-header__topic { font-weight: 750; font-style: italic; letter-spacing: .04em; }
 .md-typeset { font-size: .8rem; line-height: 1.7; }
 .md-typeset h1, .md-typeset h2, .md-typeset h3 { font-weight: 600; letter-spacing: -.02em; }
 .md-typeset h1 { color: var(--md-default-fg-color); }

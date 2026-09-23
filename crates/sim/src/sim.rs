@@ -6,9 +6,9 @@ use crate::{
     rng::Rng,
     schema,
 };
-use ahead_client::{Client, Operation, OperationKind, Report, ReportKind};
-use ahead_core::{PullPage, PushReceipt, PushRequest, RecordKey};
-use ahead_sqlite::SqliteStore;
+use axton_client::{Client, Operation, OperationKind, Report, ReportKind};
+use axton_core::{PullPage, PushReceipt, PushRequest, RecordKey};
+use axton_sqlite::SqliteStore;
 use serde_json::json;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -53,7 +53,7 @@ impl MutationSpec {
             | MutationSpec::DeleteComment { id } => schema::comment_key(id),
         }
     }
-    pub fn build(&self) -> ahead_client::Mutation {
+    pub fn build(&self) -> axton_client::Mutation {
         match self {
             MutationSpec::CreateEntry { id, text } => schema::create_entry(id, text),
             MutationSpec::Edit { id, text } => schema::edit(id, text),
@@ -148,7 +148,7 @@ pub enum Action {
 pub struct Slot {
     pub path: PathBuf,
     /// The schema this slot opens with; `Sim::upgrade` replaces it.
-    pub schema: ahead_core::Schema,
+    pub schema: axton_core::Schema,
     pub client: Option<Client<SqliteStore>>,
     pub enqueued: Vec<u64>,
     pub receipts: BTreeMap<u64, PushReceipt>,
@@ -230,7 +230,7 @@ type SimSnapshot = (usize, u64, Vec<(String, u64)>);
 
 /// Opens through the file-selection path (sidecar, descriptor, compatibility), the
 /// way an SDK does, so a restart after a rebuild lands on the rebuilt file.
-fn open(path: &PathBuf, schema: &ahead_core::Schema, discard_pending: bool) -> Client<SqliteStore> {
+fn open(path: &PathBuf, schema: &axton_core::Schema, discard_pending: bool) -> Client<SqliteStore> {
     Client::open_at(
         path,
         schema.clone(),
@@ -302,9 +302,9 @@ impl Sim {
     pub fn upgrade(
         &mut self,
         client: usize,
-        schema: ahead_core::Schema,
+        schema: axton_core::Schema,
         discard_pending: bool,
-    ) -> ahead_client::SchemaState {
+    ) -> axton_client::SchemaState {
         self.clients[client].client = None;
         self.clients[client].schema = schema;
         let slot = &self.clients[client];
@@ -321,7 +321,7 @@ impl Sim {
         &mut self,
         client: usize,
         discard_pending: bool,
-    ) -> Result<ahead_client::RebuildReport, String> {
+    ) -> Result<axton_client::RebuildReport, String> {
         let report = self
             .client(client)
             .rebuild(discard_pending)
@@ -656,7 +656,7 @@ impl Sim {
                     let local = self
                         .client(client)
                         .read_sql(
-                            "SELECT stamp FROM ahead_record WHERE model = ? AND identity = ?",
+                            "SELECT stamp FROM axton_record WHERE model = ? AND identity = ?",
                             &[json!(key.model), json!(key.encoded_identity().unwrap())],
                         )
                         .map_err(|e| e.to_string())?

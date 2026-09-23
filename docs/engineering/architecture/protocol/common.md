@@ -26,7 +26,7 @@ Code: [core/lib.rs](../../../../crates/core/src/lib.rs) (`canonical_json`), [cor
 
 ## 8. Crosscutting Concepts
 
-Three limits are shared by both sides but not negotiated on the wire: 20 mutations and 256 KiB per push, 50 changes per channel in a pull page. They are defined once, in `limits` of [core/protocol.rs](../../../../crates/core/src/protocol.rs), and every consumer reads them from there: the push request decoder and the client's [batching](../client/engine/push/batching.md), the per-channel continuation rule (`CursorRange::continues`) and the [server pull](../server/engine/pull.md) scan. A page with more than 50 changes per named channel is refused by `PullPage::validate`. Making the limits configurable is [#11](https://github.com/zanminwang/ahead/issues/11).
+Three limits are shared by both sides but not negotiated on the wire: 20 mutations and 256 KiB per push, 50 changes per channel in a pull page. They are defined once, in `limits` of [core/protocol.rs](../../../../crates/core/src/protocol.rs), and every consumer reads them from there: the push request decoder and the client's [batching](../client/engine/push/batching.md), the per-channel continuation rule (`CursorRange::continues`) and the [server pull](../server/engine/pull.md) scan. A page with more than 50 changes per named channel is refused by `PullPage::validate`. Making the limits configurable is [#11](https://github.com/zanminwang/axton/issues/11).
 
 Host resource limits are not protocol rules and stay with each transport: 1 MiB HTTP bodies and WebSocket frames on the server, 8 MiB WebSocket frames and the page buffers on the clients ([Client transport](../client/connection/transport.md), [Server transport](../server/connection/transport.md)).
 
@@ -37,7 +37,7 @@ Host resource limits are not protocol rules and stay with each transport: 1 MiB 
 - **Encoding is byte-identical to JavaScript's: key order, number spelling and unknown-field preservation**. Evidence: [core/tests/contracts.rs](../../../../crates/core/tests/contracts.rs) `canonical_numbers_match_javascript_and_utf16_key_order`, `a_page_names_its_channels_and_keeps_unknown_fields_out_of_the_records`, `server_pull_request_accepts_js_integer_number_spellings`, `shared_wire_fixtures_preserve_counter_boundaries`.
 - **A received state tolerates extra fields and refuses missing required ones**. Evidence: `received_state_supports_additive_schema_evolution`, `state_is_complete_but_patch_preserves_absent_and_null`.
 
-Executed 2026-09-16: `cargo test -p ahead-core --locked` passed with the tests above.
+Executed 2026-09-16: `cargo test -p axton-core --locked` passed with the tests above.
 
 ## 11. Risks and Technical Debt
 

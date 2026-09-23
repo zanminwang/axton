@@ -5,14 +5,14 @@ Explore delayed, duplicated, reordered or dropped messages, rejected mutations, 
 Existing entry points: [resilience scenarios](../../../../crates/sim/tests/resilience.rs), [network queues](../../../../crates/sim/src/net.rs) and [action execution](../../../../crates/sim/src/step.rs).
 
 ```sh
-cargo test -p ahead-sim --test resilience --locked
+cargo test -p axton-sim --test resilience --locked
 ```
 
 A generated failure reports its seed, step, error and traces. Keep the commit, client count, run settings and trace when reporting it. [Replay and shrinking](../../../../crates/sim/src/shrink.rs) replay an action list and remove actions while preserving the failure identity.
 
 Preserve a minimal failing trace as a named regression before fixing its cause.
 
-**Process-failure injection: deferred.** The harness's `Crash`/`Restart` reopens a client's SQLite file between actions; it does not interrupt a commit, kill the process mid-page, or fail the server's persistence mid-batch. Adding those faults would need a fault-injecting store (interrupting between SQLite statements) and a failing host persistence, which is new harness machinery rather than a test. Decision for this round: record the boundary and keep R3 evidence limited to what the table below says; do not report close/reopen as arbitrary crash coverage. Reopen this when a defect points at a commit boundary or when the store gains a fault-injection seam ([#68](https://github.com/zanminwang/ahead/issues/68)).
+**Process-failure injection: deferred.** The harness's `Crash`/`Restart` reopens a client's SQLite file between actions; it does not interrupt a commit, kill the process mid-page, or fail the server's persistence mid-batch. Adding those faults would need a fault-injecting store (interrupting between SQLite statements) and a failing host persistence, which is new harness machinery rather than a test. Decision for this round: record the boundary and keep R3 evidence limited to what the table below says; do not report close/reopen as arbitrary crash coverage. Reopen this when a defect points at a commit boundary or when the store gains a fault-injection seam ([#68](https://github.com/zanminwang/axton/issues/68)).
 
 ## Coverage review
 
@@ -24,7 +24,7 @@ Reviewed 2026-09-14; not executed.
 | Client crash and restart | `Crash` drops the client handle, `Restart` reopens the same SQLite file | R3 at every step boundary of a round trip (`r3_crash_after_every_step_loses_nothing`); L2 and P4 across restart | A step is not a commit. Every client transaction is one SQLite commit, so a crash between two commits inside one action (for example between two changes of a page) is not reachable. An operating-system kill during a commit is out of scope; SQLite's own durability is assumed. |
 | Server failure | `FailNext` makes the next handler throw; the host rolls its tables back, stamps and publications included | P6 abort path | No server crash mid-batch, no persistence failure, no partial commit, no loader refusal or failure (those are in [readback.rs](../../../../crates/server/tests/readback.rs)). The host's savepoints are snapshots; real savepoint semantics are PostgreSQL-only. |
 | Rejection | `RejectNext` makes the next handler reject | P5 | none |
-| Subscription change | `Subscribe`, `Unsubscribe`; the stepwise `unsubscribe cannot remove content` check runs after every `Unsubscribe` | D6; A2 `a2_page_from_a_previous_subscription_is_stale_not_a_gap` | The in-flight-page-after-resubscribe case ([#32](https://github.com/zanminwang/ahead/issues/32)) is fixed and its scenario enabled. Unsubscribing removes nothing, so there is no cleanup path to fault. |
-| Membership move | `MoveMembership` with parent-and-child follow-through | D4 in random runs and the named `d4_parent_and_child_move_channels_together_without_deletes` | Executed 2026-09-15 by `cargo test -p ahead-sim --locked`. |
+| Subscription change | `Subscribe`, `Unsubscribe`; the stepwise `unsubscribe cannot remove content` check runs after every `Unsubscribe` | D6; A2 `a2_page_from_a_previous_subscription_is_stale_not_a_gap` | The in-flight-page-after-resubscribe case ([#32](https://github.com/zanminwang/axton/issues/32)) is fixed and its scenario enabled. Unsubscribing removes nothing, so there is no cleanup path to fault. |
+| Membership move | `MoveMembership` with parent-and-child follow-through | D4 in random runs and the named `d4_parent_and_child_move_channels_together_without_deletes` | Executed 2026-09-15 by `cargo test -p axton-sim --locked`. |
 
 Shrinking replays candidate traces and keeps a removal only if the failure key (the invariant name or error text) is unchanged, so a minimized trace exposes the same failure, not merely some failure. A trace that references a crashed client after a removal is rejected rather than accepted. No test asserts that a shrunk trace still reproduces the original; that property follows from the key check, which was read, not exercised.

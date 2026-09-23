@@ -1,9 +1,9 @@
 //! The server's persistence, in memory. Mirrors packages/postgres/src/persistence.mts
-//! closely enough that ahead_server cannot tell the difference: per-client receipts,
+//! closely enough that axton_server cannot tell the difference: per-client receipts,
 //! per-channel heads, one invalidation row per (channel, record) carrying the latest
 //! cursor, and one stamp counter per record that only a business change advances.
-use ahead_core::{PushRequest, RecordKey};
-use ahead_server::{
+use axton_core::{PushRequest, RecordKey};
+use axton_server::{
     Host,
     host::{
         Acknowledged, Claimed, Handled, Head, HostRequest, Invalidation as ContractInvalidation,
@@ -145,7 +145,7 @@ impl MemHost {
     }
     /// One business change to `key`, distributed to `channels`: the stamp advances
     /// once and every channel is invalidated at that same stamp. This is what
-    /// `ahead_server::publish` does for an external notification.
+    /// `axton_server::publish` does for an external notification.
     pub fn notify(&self, key: &RecordKey, channels: &[&str]) {
         let mut s = self.0.lock().unwrap();
         let stamp = advance(&mut s.tables, key);
@@ -326,7 +326,7 @@ impl MemHost {
                 s.handler_invocations.len(),
             )
         };
-        let result = block_on(ahead_server::process_push(
+        let result = block_on(axton_server::process_push(
             &crate::schema::config(),
             owner,
             bytes,
@@ -357,7 +357,7 @@ impl MemHost {
         self.0.lock().unwrap().savepoints.len()
     }
     pub fn pull(&self, owner: &str, bytes: &[u8]) -> Result<String, String> {
-        block_on(ahead_server::process_pull(
+        block_on(axton_server::process_pull(
             &crate::schema::config(),
             owner,
             bytes,
@@ -517,7 +517,7 @@ impl Host for MemHost {
     fn call(
         &self,
         request: Value,
-    ) -> Pin<Box<dyn Future<Output = ahead_server::HostResult<Value>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = axton_server::HostResult<Value>> + Send + '_>> {
         Box::pin(async move {
             let request: HostRequest = serde_json::from_value(request)
                 .map_err(|error| format!("unsupported host request: {error}"))?;
@@ -776,13 +776,13 @@ impl Host for MemHost {
 mod tests {
     use super::*;
     use crate::schema::{self, entry_key};
-    use ahead_core::{PullPage, PullRequest, PushReceipt};
+    use axton_core::{PullPage, PullRequest, PushReceipt};
 
-    fn push_bytes(client_id: &str, sequence: u64, mutation: &ahead_client::Mutation) -> Vec<u8> {
+    fn push_bytes(client_id: &str, sequence: u64, mutation: &axton_client::Mutation) -> Vec<u8> {
         let m = serde_json::to_value(mutation).unwrap();
         let ops = &m["operations"];
         let body = json!({"clientId":client_id,"batchSequence":sequence,"models":schema::declared_models(),"mutations":[{"ordinal":1,"name":mutation.name,"version":1,"operations":ops}]});
-        ahead_core::PushRequest::decode(ahead_core::canonical_json(&body).unwrap().as_bytes())
+        axton_core::PushRequest::decode(axton_core::canonical_json(&body).unwrap().as_bytes())
             .unwrap()
             .encode()
             .unwrap()

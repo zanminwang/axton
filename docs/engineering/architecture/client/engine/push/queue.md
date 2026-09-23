@@ -14,7 +14,7 @@
 
 - Each mutation has a durable ordinal, ordered operations and an optional push number.
 - Wire operations are sent. Companion operations and derived cascade effects stay local and share the mutation's fate.
-- `ahead_client` holds the counters (`next_ordinal`, `next_push`), `last_completed_push` (the sequence of the last batch a receipt completed; a batch is in flight while its push number is above it) and `push_models` (the read contracts frozen with the batch in flight, released on completion). There is no per-batch table: the batch is the set of mutations sharing a push number.
+- `axton_client` holds the counters (`next_ordinal`, `next_push`), `last_completed_push` (the sequence of the last batch a receipt completed; a batch is in flight while its push number is above it) and `push_models` (the read contracts frozen with the batch in flight, released on completion). There is no per-batch table: the batch is the set of mutations sharing a push number.
 - Code: [queue.rs](../../../../../../crates/client/src/queue.rs); table definitions in [ddl.rs](../../../../../../crates/client/src/ddl.rs).
 
 ## 10. Quality Requirements

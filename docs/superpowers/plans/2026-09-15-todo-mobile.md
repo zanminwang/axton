@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. The user requested a handoff to another agent; this document does not start execution or delegate work.
 
-**Goal:** Deliver issue #31: a minimal React Native To-do app that demonstrates real Ahead collaboration on two independent iOS clients.
+**Goal:** Deliver issue #31: a minimal React Native To-do app that demonstrates real AXTON collaboration on two independent iOS clients.
 
 **Architecture:** One generated User/Todo schema, one TypeScript/Prisma/PostgreSQL backend, and one React Native app using the existing Rust/SQLite engine through an Expo native carrier. Consume the verified React Native client/native module from #100; SDK implementation is outside this demo issue. Move the old example's regression harness into integration fixtures before deleting the public example.
 
@@ -10,7 +10,7 @@
 
 ## Global constraints
 
-- **Blocked by [React Native support #100](https://github.com/zanminwang/ahead/issues/100).** Complete SDK/native integration and its iOS validation first, then execute this demo plan.
+- **Blocked by [React Native support #100](https://github.com/zanminwang/axton/issues/100).** Complete SDK/native integration and its iOS validation first, then execute this demo plan.
 
 - Source of requirements: [design spec](../specs/2026-09-15-todo-mobile-design.md).
 - Use React Native with TypeScript. First required target: two independent iOS simulator installations.
@@ -57,15 +57,15 @@ git diff --name-status a837cf8..HEAD
 - [x] Copy the exact `model User` / `model Todo` schema block from the spec into `examples/todo/models/todo.model`. Generate both targets using the repository compiler; do not edit generated outputs.
 
 ```sh
-cargo run -p ahead-compiler --locked -- compile examples/todo/models examples/todo/generated/node --backend-runtime ../../../../packages/server/index.mts --client-runtime ../../../../packages/client-js/index.mts
-cargo run -p ahead-compiler --locked -- compile examples/todo/models examples/todo/generated/mobile --backend-runtime ../../../../packages/server/index.mts --client-runtime ../../../../packages/client-react-native/index.ts
+cargo run -p axton-compiler --locked -- compile examples/todo/models examples/todo/generated/node --backend-runtime ../../../../packages/server/index.mts --client-runtime ../../../../packages/client-js/index.mts
+cargo run -p axton-compiler --locked -- compile examples/todo/models examples/todo/generated/mobile --backend-runtime ../../../../packages/server/index.mts --client-runtime ../../../../packages/client-react-native/index.ts
 ```
 
 - [x] Put these commands in `generate.sh` with `set -euo pipefail` and a repository-root `cd`. Confirm both `schema.json` descriptors match; runtime import strings may differ in generated source. Typecheck backend inputs before writing handlers. Confirm the wire create separates identity from values, while the generated backend `AddTodoInput.todo` is the complete Todo record. Updates use `patch` server-side / `values` client-side.
 - [x] Run the existing binding and compiler baseline; record failures before changing runtime code.
 
 ```sh
-cargo test -p ahead-binding -p ahead-compiler --locked
+cargo test -p axton-binding -p axton-compiler --locked
 ```
 
 Expected: existing tests pass and both generation commands exit zero. This proves schema compatibility, not mobile runtime support. Commit the schema/generation deliverable.
@@ -132,7 +132,7 @@ Insert through `tx.todo.create`; translate only a proven task-primary-key confli
 
 ## Task 3: Consume the verified React Native integration
 
-**Prerequisite:** [#100](https://github.com/zanminwang/ahead/issues/100) must deliver its supported API and iOS runtime evidence first. Its implementation is tracked in the [separate SDK plan](2026-09-15-react-native-support.md).
+**Prerequisite:** [#100](https://github.com/zanminwang/axton/issues/100) must deliver its supported API and iOS runtime evidence first. Its implementation is tracked in the [separate SDK plan](2026-09-15-react-native-support.md).
 
 - [x] Confirm #100's verified revision, generated runtime import path, native module installation steps, and supported API surface.
 - [x] Scaffold the To-do Expo app using that integration's documented dependency versions and build configuration.

@@ -34,7 +34,7 @@ pub fn descriptors(v: &Validated) -> Value {
 }
 
 /// The client descriptor (`schema.json` before the CLI substitutes retained
-/// mutation versions for `clientPolicies`), the shape `ahead_core::Schema` loads.
+/// mutation versions for `clientPolicies`), the shape `axton_core::Schema` loads.
 pub fn schema(v: &Validated) -> Value {
     let models: Vec<Value> = v
         .models

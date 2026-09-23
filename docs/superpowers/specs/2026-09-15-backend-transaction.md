@@ -1,6 +1,6 @@
 # `backend.transaction`: framework-managed external writes that wake subscribers
 
-Status: implementation specification. Tracking: [#50](https://github.com/zanminwang/ahead/issues/50). Cross-process wake delivery stays with [#62](https://github.com/zanminwang/ahead/issues/62); persistence boundaries with [#103](https://github.com/zanminwang/ahead/issues/103).
+Status: implementation specification. Tracking: [#50](https://github.com/zanminwang/axton/issues/50). Cross-process wake delivery stays with [#62](https://github.com/zanminwang/axton/issues/62); persistence boundaries with [#103](https://github.com/zanminwang/axton/issues/103).
 
 ## 1. Problem
 
@@ -37,7 +37,7 @@ It cannot wake correctly without the completion and after-commit steps, so it is
 
 ### `bindTransaction(tx)` stays, as the advanced path
 
-Unchanged contract (`notify`, `assertCommittable`, `afterCommit`, `close`). Documented as the path for an application whose framework already owns the transaction and cannot let Ahead open it. The user left this open in #50 and chose to keep it on 2026-09-15.
+Unchanged contract (`notify`, `assertCommittable`, `afterCommit`, `close`). Documented as the path for an application whose framework already owns the transaction and cannot let AXTON open it. The user left this open in #50 and chose to keep it on 2026-09-15.
 
 ## 3. Implementation shape
 

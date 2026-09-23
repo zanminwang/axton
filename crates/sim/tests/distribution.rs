@@ -1,6 +1,6 @@
 //! Distribution on the simulation: channels deliver updates by stamp; records
 //! remain local once delivered, whatever happens to the channel.
-use ahead_sim::{
+use axton_sim::{
     Action, MutationSpec, Sim,
     schema::{comment_key, entry_key},
 };
@@ -34,7 +34,7 @@ fn move_to(sim: &mut Sim, key: &str, channels: &[&str]) {
 }
 fn stamp_rows(sim: &mut Sim, client: usize) -> Vec<serde_json::Value> {
     sim.client(client)
-        .read_sql("SELECT stamp FROM ahead_record WHERE model='Entry'", &[])
+        .read_sql("SELECT stamp FROM axton_record WHERE model='Entry'", &[])
         .unwrap()
 }
 

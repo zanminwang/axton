@@ -20,7 +20,7 @@ Request handling is a pipeline: `authenticate` (null or blank → `401 unauthent
 | `model_version_unsupported` (pull and live subscribe only) | 409 | `{code, model, version}` |
 | any other code, or a non-engine error | 500 | `{code: "server"}`, and the error goes to `onError` |
 
-A push answers `200` even when one or more mutations are rejected: `mutation_version_unsupported`, `model_version_unsupported`, `handler.failed` and `loader.failed` are per-mutation entries in the receipt's `rejections`, never a status of their own ([Server / Push §9](../engine/push.md#9-architecture-decisions), [#95](https://github.com/zanminwang/ahead/issues/95)).
+A push answers `200` even when one or more mutations are rejected: `mutation_version_unsupported`, `model_version_unsupported`, `handler.failed` and `loader.failed` are per-mutation entries in the receipt's `rejections`, never a status of their own ([Server / Push §9](../engine/push.md#9-architecture-decisions), [#95](https://github.com/zanminwang/axton/issues/95)).
 
 The live path closes with `1002` when negotiation fails with `request.invalid`, and with `1011` for any other failure (a failed pull, or a controller error such as `live.invalid_page`), which also goes to `onError`. What to pull and send is decided by the Rust controller; `serveLive` only executes its actions ([Controller](controller.md)).
 
@@ -43,6 +43,6 @@ Verified 2026-09-14: `bash integration/persistence/server/run.sh` passed with th
 
 ## 11. Risks and Technical Debt
 
-**Accepted limitation.** No TLS, CORS, compression or proxy-header handling is built in; the listener is meant to sit behind a reverse proxy on loopback ([Deployment View](#7-deployment-view)). TLS termination and specific proxy products are not exercised by any test; browser clients ([#59](https://github.com/zanminwang/ahead/issues/59)) and multi-process live delivery ([#62](https://github.com/zanminwang/ahead/issues/62)) are separate decisions.
+**Accepted limitation.** No TLS, CORS, compression or proxy-header handling is built in; the listener is meant to sit behind a reverse proxy on loopback ([Deployment View](#7-deployment-view)). TLS termination and specific proxy products are not exercised by any test; browser clients ([#59](https://github.com/zanminwang/axton/issues/59)) and multi-process live delivery ([#62](https://github.com/zanminwang/axton/issues/62)) are separate decisions.
 
-**Accepted limitation.** The 1 MiB limits are fixed; the internal options exist but `listen` does not expose them ([#11](https://github.com/zanminwang/ahead/issues/11)).
+**Accepted limitation.** The 1 MiB limits are fixed; the internal options exist but `listen` does not expose them ([#11](https://github.com/zanminwang/axton/issues/11)).

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** Use superpowers:executing-plans. This is now a continuation plan: implementation exists but final native acceptance is incomplete. Checked steps are complete; unchecked steps may contain partial implementation and require their remaining verification.
 
-**Goal:** Deliver [React Native support #100](https://github.com/zanminwang/ahead/issues/100) independently, then unblock [To-do demo #31](https://github.com/zanminwang/ahead/issues/31).
+**Goal:** Deliver [React Native support #100](https://github.com/zanminwang/axton/issues/100) independently, then unblock [To-do demo #31](https://github.com/zanminwang/axton/issues/31).
 
 **Architecture:** Reuse Rust RuntimeHost/SQLite and the generated TypeScript client contract through a small native carrier and React Native host/transport adapter.
 
@@ -27,12 +27,12 @@ npx expo prebuild --platform ios --no-install
 npm run ios:build
 ```
 
-Expected: plugin/type checks pass, AheadNative autolinks, and the Release app builds with embedded JS. Follow the [harness setup](../../../integration/platform/react-native/README.md) only for missing prerequisites; do not recreate intact artifacts.
+Expected: plugin/type checks pass, AxtonNative autolinks, and the Release app builds with embedded JS. Follow the [harness setup](../../../integration/platform/react-native/README.md) only for missing prerequisites; do not recreate intact artifacts.
 
 - [x] From the repository root, run the real two-simulator scenario with the successful build's actual app path:
 
 ```sh
-AHEAD_RN_APP_BUNDLE=/absolute/path/from/build/aheadrnharness.app \
+AXTON_RN_APP_BUNDLE=/absolute/path/from/build/axtonrnharness.app \
   bash integration/platform/run_react_native_ios_smoke.sh
 ```
 
@@ -59,23 +59,23 @@ Expected: all phase assertions pass; Alice's identity and offline create/depende
 
 **Consumes:** `RuntimeHost::call(serde_json::Value) -> Result<serde_json::Value>` and the client JSON contract in the binding architecture document.
 
-**Produces:** Expo module `AheadNative` with `clientCall(request: string): Promise<string>` and `databasePath(name: string): Promise<string>`. Successful `clientCall` returns the unwrapped RuntimeHost response JSON, like Node's carrier; Rust/ABI failures reject. The database path is persistent and stable across launches.
+**Produces:** Expo module `AxtonNative` with `clientCall(request: string): Promise<string>` and `databasePath(name: string): Promise<string>`. Successful `clientCall` returns the unwrapped RuntimeHost response JSON, like Node's carrier; Rust/ABI failures reject. The database path is persistent and stable across launches.
 
 - [x] Scaffold a blank TypeScript Expo app and local iOS module using the official [Expo local-module guide](https://docs.expo.dev/modules/get-started/). Resolve the compatible Expo/React Native/React set once, pin it in the app lockfile, and record versions and Xcode/iOS target in the README. Do not guess current versions or upgrade the root workspace as part of scaffolding.
-- [x] Create a `staticlib` Rust crate using existing workspace dependency conventions. Start from the small C carrier in `bindings/dart/src/lib.rs`, with symbols renamed `ahead_mobile_call` and `ahead_mobile_free`. Keep panic catching, null/UTF-8/JSON validation, and the process host mutex. This adds a carrier; it must not alter Dart's ABI. Publish this header:
+- [x] Create a `staticlib` Rust crate using existing workspace dependency conventions. Start from the small C carrier in `bindings/dart/src/lib.rs`, with symbols renamed `axton_mobile_call` and `axton_mobile_free`. Keep panic catching, null/UTF-8/JSON validation, and the process host mutex. This adds a carrier; it must not alter Dart's ABI. Publish this header:
 
 ```c
-#ifndef AHEAD_MOBILE_H
-#define AHEAD_MOBILE_H
-char *ahead_mobile_call(const char *input);
-void ahead_mobile_free(char *output);
+#ifndef AXTON_MOBILE_H
+#define AXTON_MOBILE_H
+char *axton_mobile_call(const char *input);
+void axton_mobile_free(char *output);
 #endif
 ```
 
-- [x] Bind the C carrier through an Expo Swift `AsyncFunction` executed on a dedicated serial background queue. Copy the output string before `ahead_mobile_free`; use `defer` to free it on every decode/error path. Decode `{ok,result,error}` and return serialized `result` only when `ok` is true. Do not expose the C pointer or block the main UI thread. The TS-facing contract is:
+- [x] Bind the C carrier through an Expo Swift `AsyncFunction` executed on a dedicated serial background queue. Copy the output string before `axton_mobile_free`; use `defer` to free it on every decode/error path. Decode `{ok,result,error}` and return serialized `result` only when `ok` is true. Do not expose the C pointer or block the main UI thread. The TS-facing contract is:
 
 ```ts
-export interface AheadNativeModule {
+export interface AxtonNativeModule {
   clientCall(request: string): Promise<string>;
   databasePath(name: string): Promise<string>;
 }

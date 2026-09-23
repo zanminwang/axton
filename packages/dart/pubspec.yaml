@@ -1,4 +1,4 @@
-name: ahead
+name: axton
 description: Schema-driven local-first state client backed by Rust.
 version: 0.1.0
 publish_to: none

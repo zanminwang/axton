@@ -1,12 +1,12 @@
 [package]
-name = "ahead-binding"
+name = "axton-binding"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 [dependencies]
-ahead-core = { path = "../../crates/core" }
-ahead-client = { path = "../../crates/client" }
-ahead-sqlite = { path = "../../crates/sqlite" }
+axton-core = { path = "../../crates/core" }
+axton-client = { path = "../../crates/client" }
+axton-sqlite = { path = "../../crates/sqlite" }
 serde_json.workspace = true
 [dev-dependencies]
 tempfile.workspace = true

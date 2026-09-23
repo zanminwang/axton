@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 //! Helpers shared by every client-facing integration test in this crate.
-use ahead_client::*;
-use ahead_sqlite::SqliteStore;
+use axton_client::*;
+use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 

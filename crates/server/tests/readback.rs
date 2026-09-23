@@ -2,8 +2,8 @@
 //! records it changed, reads them back through the loaders at the declared
 //! version inside its own savepoint, publishes at those stamps, and the
 //! receipt carries the last successful authority per record.
-use ahead_core::{PushReceipt, RecordKey};
-use ahead_server::{Config, Host, HostResult, code, host::HostRequest};
+use axton_core::{PushReceipt, RecordKey};
+use axton_server::{Config, Host, HostResult, code, host::HostRequest};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -373,8 +373,8 @@ impl Host for Scripted {
 }
 
 /// A push against `config` by owner `u`.
-fn process(config: &Config, body: &[u8], host: &Scripted) -> ahead_server::Result<String> {
-    run(ahead_server::process_push(config, "u", body, host))
+fn process(config: &Config, body: &[u8], host: &Scripted) -> axton_server::Result<String> {
+    run(axton_server::process_push(config, "u", body, host))
 }
 
 /// Every `publish` in the log carries the stamp the record currently has.
@@ -411,7 +411,7 @@ fn success_reads_back_each_changed_record_once_at_its_stamp() {
     assert!(receipt.rejections.is_empty());
     assert_eq!(
         receipt.records,
-        vec![ahead_core::AuthorityRecord {
+        vec![axton_core::AuthorityRecord {
             model: "Entry".into(),
             identity: json!({"id":"a"}),
             stamp: 1,
@@ -748,7 +748,7 @@ fn a_changed_model_the_client_did_not_declare_rejects_that_mutation() {
     let receipt = decode(&process(&config, &body, &host).unwrap());
     assert_eq!(
         receipt.rejections,
-        vec![ahead_core::Rejection {
+        vec![axton_core::Rejection {
             ordinal: 1,
             code: code::MODEL_VERSION_UNSUPPORTED.into()
         }]
@@ -795,7 +795,7 @@ fn a_loader_refusal_rejects_the_mutation_and_keeps_earlier_results() {
     let receipt = decode(&process(&config(), &body, &host).unwrap());
     assert_eq!(
         receipt.rejections,
-        vec![ahead_core::Rejection {
+        vec![axton_core::Rejection {
             ordinal: 2,
             code: "task.forbidden".into()
         }]
@@ -861,7 +861,7 @@ fn invalid_loader_rows_reject_only_their_mutation() {
             decode(&process(&config(), &push(1, vec![edit(1, "a", "typed")]), &host).unwrap());
         assert_eq!(
             receipt.rejections,
-            vec![ahead_core::Rejection {
+            vec![axton_core::Rejection {
                 ordinal: 1,
                 code: code::LOADER_INVALID.into()
             }],
@@ -883,7 +883,7 @@ fn a_later_rejection_on_the_same_record_keeps_the_first_success() {
     let receipt = decode(&process(&config(), &body, &host).unwrap());
     assert_eq!(
         receipt.rejections,
-        vec![ahead_core::Rejection {
+        vec![axton_core::Rejection {
             ordinal: 2,
             code: "entry.stale".into()
         }]
@@ -967,7 +967,7 @@ fn an_unsupported_version_rejects_only_that_mutation() {
     let receipt = decode(&process(&config(), &body, &host).unwrap());
     assert_eq!(
         receipt.rejections,
-        vec![ahead_core::Rejection {
+        vec![axton_core::Rejection {
             ordinal: 1,
             code: code::MUTATION_VERSION_UNSUPPORTED.into()
         }]
@@ -990,7 +990,7 @@ fn a_handler_failure_rejects_only_that_mutation() {
     let receipt = decode(&process(&config(), &body, &host).unwrap());
     assert_eq!(
         receipt.rejections,
-        vec![ahead_core::Rejection {
+        vec![axton_core::Rejection {
             ordinal: 1,
             code: code::HANDLER_FAILED.into()
         }]
@@ -1021,7 +1021,7 @@ fn a_loader_failure_rejects_only_that_mutation() {
     let receipt = decode(&process(&config(), &body, &host).unwrap());
     assert_eq!(
         receipt.rejections,
-        vec![ahead_core::Rejection {
+        vec![axton_core::Rejection {
             ordinal: 1,
             code: code::LOADER_FAILED.into()
         }]
@@ -1085,7 +1085,7 @@ fn an_unretained_declaration_rejects_only_the_touching_mutation() {
     let receipt = decode(&process(&config, &body, &host).unwrap());
     assert_eq!(
         receipt.rejections,
-        vec![ahead_core::Rejection {
+        vec![axton_core::Rejection {
             ordinal: 1,
             code: code::MODEL_VERSION_UNSUPPORTED.into()
         }]

@@ -10,7 +10,7 @@ fn read_json(path: &Path) -> Result<Value, String> {
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args().collect();
     if args.len() < 4 || args[1] != "compile" {
-        return Err("usage: ahead compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--model-history FILE] [--initialize-model-history] [--action-history FILE] [--initialize-action-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]".into());
+        return Err("usage: axton compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--model-history FILE] [--initialize-model-history] [--action-history FILE] [--initialize-action-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]".into());
     }
     let input = Path::new(&args[2]);
     let out = Path::new(&args[3]);
@@ -20,8 +20,8 @@ fn run() -> Result<(), String> {
     let mut action_history_path = input.join("history").join("actions.json");
     let superseded = out.join("mutation-history.json");
     let mut fence_path = out.join("schema.json");
-    let mut backend_runtime = String::from("@ahead/server");
-    let mut client_runtime = String::from("@ahead/client");
+    let mut backend_runtime = String::from("@axton/server");
+    let mut client_runtime = String::from("@axton/client");
     let mut initialize = false;
     let mut explicit_history = false;
     let mut initialize_models = false;
@@ -94,7 +94,7 @@ fn run() -> Result<(), String> {
         source.push('\n');
         origins.push((start, path));
     }
-    let mut config = ahead_compiler::compile(&source).map_err(|e| {
+    let mut config = axton_compiler::compile(&source).map_err(|e| {
         let line = e
             .split(':')
             .next()
@@ -141,7 +141,7 @@ fn run() -> Result<(), String> {
         return Err("initial model history must begin at version 1".into());
     }
     if fence_path.exists() {
-        ahead_compiler::check_fence(&read_json(&fence_path)?, &config["schema"])?;
+        axton_compiler::check_fence(&read_json(&fence_path)?, &config["schema"])?;
     }
     let history_source = if relocate {
         superseded.clone()
@@ -155,13 +155,13 @@ fn run() -> Result<(), String> {
     };
     // Both histories are reconciled before anything is written, so a refusal
     // from either leaves every output and both histories as they were.
-    let history = ahead_compiler::reconcile_history(&config, previous.as_ref())?;
+    let history = axton_compiler::reconcile_history(&config, previous.as_ref())?;
     let previous_models = if model_history_path.exists() {
         Some(read_json(&model_history_path)?)
     } else {
         None
     };
-    let model_history = ahead_compiler::reconcile_model_history(&config, previous_models.as_ref())?;
+    let model_history = axton_compiler::reconcile_model_history(&config, previous_models.as_ref())?;
     let retained = |history: &Value, key: &str| -> Vec<Value> {
         history[key]
             .as_object()
@@ -178,7 +178,7 @@ fn run() -> Result<(), String> {
         } else {
             None
         };
-        Some(ahead_compiler::reconcile_action_history(
+        Some(axton_compiler::reconcile_action_history(
             &config,
             previous_actions.as_ref(),
         )?)
@@ -191,7 +191,7 @@ fn run() -> Result<(), String> {
     if let Some(action_history) = &action_history {
         config["actions"] = serde_json::json!(retained(action_history, "actions"));
     }
-    ahead_compiler::check_action_names(&config)?;
+    axton_compiler::check_action_names(&config)?;
     let mut backend = config.clone();
     backend["mutations"] = serde_json::json!(historical);
     backend["models"] = config["backendModels"].clone();
@@ -208,17 +208,17 @@ fn run() -> Result<(), String> {
         ),
         (
             out.join("generated.ts"),
-            ahead_compiler::typescript(&config),
+            axton_compiler::typescript(&config),
         ),
         (
             out.join("backend.ts"),
-            ahead_compiler::backend_typescript(&config, &backend_runtime),
+            axton_compiler::backend_typescript(&config, &backend_runtime),
         ),
         (
             out.join("client.ts"),
-            ahead_compiler::client_typescript(&client_runtime),
+            axton_compiler::client_typescript(&client_runtime),
         ),
-        (out.join("generated.dart"), ahead_compiler::dart(&config)),
+        (out.join("generated.dart"), axton_compiler::dart(&config)),
         (
             history_path.clone(),
             serde_json::to_string_pretty(&history).unwrap(),

@@ -2,7 +2,7 @@
 //! delivery paths: they never own a record, and stamp evidence outlives both
 //! deletion and unsubscription.
 mod common;
-use ahead_client::*;
+use axton_client::*;
 use common::*;
 
 fn stamped(channel: &str, from: u64, to: u64, stamp: u64, text: Option<&str>) -> PullPage {
@@ -46,7 +46,7 @@ fn redelivered_page_is_a_no_op() {
     let again = c.apply_page(stamped("a", 0, 1, 1, Some("A"))).unwrap();
     assert!(again.stale);
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
-    assert_eq!(table_count(&mut c, "ahead_record"), 1);
+    assert_eq!(table_count(&mut c, "axton_record"), 1);
 }
 
 /// Spec scenario 6: a delete with a newer stamp removes the record on the first
@@ -72,7 +72,7 @@ fn delete_keeps_its_stamp_so_stale_content_cannot_resurrect_the_record() {
     assert!(c.read(&key()).unwrap().is_none());
     assert_eq!(c.cursor("a").unwrap(), 3);
     assert_eq!(
-        table_count(&mut c, "ahead_record"),
+        table_count(&mut c, "axton_record"),
         1,
         "the stamp is retained"
     );
@@ -131,5 +131,5 @@ fn reopen_preserves_stamps_and_tombstones() {
     assert!(c.read(&key()).unwrap().is_none());
     c.apply_page(stamped("a", 2, 3, 5, Some("alive"))).unwrap();
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "alive");
-    assert_eq!(table_count(&mut c, "ahead_record"), 1);
+    assert_eq!(table_count(&mut c, "axton_record"), 1);
 }

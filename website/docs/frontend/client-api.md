@@ -25,7 +25,7 @@ Examples below assume an `Entry` model with `id`, `text` and nullable `note`, an
 
     final client = await GeneratedClient.open(
       path: 'local.sqlite',
-      libraryPath: '/absolute/path/to/libahead_dart.dylib',
+      libraryPath: '/absolute/path/to/libaxton_dart.dylib',
     );
     ```
 
@@ -34,8 +34,8 @@ Both examples open local storage. To start background sync, supply `server` as s
 | Option | Required | Behavior |
 | --- | --- | --- |
 | `path` | Yes | SQLite file to create or reopen. The application selects a writable directory. Use a separate file per signed-in user. |
-| `server` | No | Backend URL and credentials: `ServerOptions` in TypeScript, `SyncServer` in Dart. Ahead manages HTTP mutation submission, HTTP catch-up and WebSocket updates. |
-| `connection` (TypeScript) | No | `onError` and `refreshAuth` callbacks for the background connection. `onError` also receives an `AheadReport` for each record Ahead could not apply ([Sync](sync.md#recover-from-connection-failures)). |
+| `server` | No | Backend URL and credentials: `ServerOptions` in TypeScript, `SyncServer` in Dart. AXTON manages HTTP mutation submission, HTTP catch-up and WebSocket updates. |
+| `connection` (TypeScript) | No | `onError` and `refreshAuth` callbacks for the background connection. `onError` also receives an `AxtonReport` for each record AXTON could not apply ([Sync](sync.md#recover-from-connection-failures)). |
 | `onError`, `refreshAuth` (Dart) | No | The same callbacks, passed directly to `open`. |
 | `libraryPath` (Dart) | Outside iOS | Absolute native library path; iOS can use symbols linked into the process. |
 | `migration` | No | Defaults and optional cursor rewind for an explicitly changed schema. See [runtime migration](runtime.md#opening-and-schema-changes). |
@@ -118,7 +118,7 @@ TypeScript returns an unsubscribe function; Dart returns `Stream<List<Entry>>`. 
 
 The compiler emits relation methods only for relationships declared in the schema. A forward relation returns the related record or `null`; an inverse collection returns a list. Methods take the source model's identity, and read the local database.
 
-For a `Comment.book` relationship, `client.models.comment.book(commentIdentity)` follows the forward reference. The [relations fixture](https://github.com/zanminwang/ahead/blob/main/fixtures/compiler/relations.model) defines `Book.comments` and `Comment.book`; the [generated API checks](https://github.com/zanminwang/ahead/blob/main/integration/generated-api/verify.sh) exercise those accessors. A singular inverse needs a unique foreign key; an ambiguous inverse is rejected during compilation.
+For a `Comment.book` relationship, `client.models.comment.book(commentIdentity)` follows the forward reference. The [relations fixture](https://github.com/zanminwang/axton/blob/main/fixtures/compiler/relations.model) defines `Book.comments` and `Comment.book`; the [generated API checks](https://github.com/zanminwang/axton/blob/main/integration/generated-api/verify.sh) exercise those accessors. A singular inverse needs a unique foreign key; an ambiguous inverse is rejected during compilation.
 
 ## Transactions
 
@@ -151,7 +151,7 @@ A single mutation does not need an explicit transaction: `client.mutate.edit(arg
 
 ## Action contract (execution pending #142)
 
-The compiler emits `ActionClientContract` and backend handler types for the [Action schema](../schema/reference.md#action-contracts-execution-pending-142). These are type-level examples; today's runnable `GeneratedClient` still uses the mutation methods below. This example uses the [integration Action schema](https://github.com/zanminwang/ahead/blob/main/integration/action-contract/schema.model) and its generated `ActionClientContract` and `TodoCreate` types. The [standalone declaration example](../schema/define.md#declare-an-action-contract) defines a different, smaller schema.
+The compiler emits `ActionClientContract` and backend handler types for the [Action schema](../schema/reference.md#action-contracts-execution-pending-142). These are type-level examples; today's runnable `GeneratedClient` still uses the mutation methods below. This example uses the [integration Action schema](https://github.com/zanminwang/axton/blob/main/integration/action-contract/schema.model) and its generated `ActionClientContract` and `TodoCreate` types. The [standalone declaration example](../schema/define.md#declare-an-action-contract) defines a different, smaller schema.
 
 ```typescript title="action-contract"
 const todo: TodoCreate = { id: 'todo-1', title: 'Done', state: 'open', note: null };

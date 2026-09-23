@@ -1,10 +1,10 @@
 [package]
-name = "ahead-dart"
+name = "axton-dart"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 [lib]
 crate-type = ["cdylib", "staticlib"]
 [dependencies]
-ahead-binding = { path = "../common" }
+axton-binding = { path = "../common" }
 serde_json.workspace = true

@@ -1,8 +1,8 @@
-use ahead_compiler::compile;
-use ahead_compiler::validate::{
+use axton_compiler::compile;
+use axton_compiler::validate::{
     ActionInput, ActionOutputSource, ActionOutputType, Cardinality, FieldType, Scalar,
 };
-use ahead_compiler::{parse, validate};
+use axton_compiler::{parse, validate};
 
 #[test]
 fn action_values_and_explicit_outputs_are_typed() {
@@ -265,11 +265,11 @@ fn rejects_invalid_identity() {
 #[test]
 fn emitters_include_typed_conversion() {
     let v = compile(include_str!("../../../fixtures/compiler/example.model")).unwrap();
-    let ts = ahead_compiler::typescript(&v);
+    let ts = axton_compiler::typescript(&v);
     assert!(ts.contains("export interface EntryIdentity"));
     assert!(ts.contains("new Date("));
     assert!(ts.contains("EditEntry"));
-    let dart = ahead_compiler::dart(&v);
+    let dart = axton_compiler::dart(&v);
     assert!(dart.contains("class EntryPatch"));
     assert!(dart.contains("DateTime.parse("));
 }
@@ -290,7 +290,7 @@ fn relationships_bindings_and_dependency_metadata() {
         "parent"
     );
     assert_eq!(v["prerequisites"][0]["name"], "Uploaded");
-    // `Parent.update<>` is valid: an empty patch is a no-op update ([#49](https://github.com/zanminwang/ahead/issues/49)).
+    // `Parent.update<>` is valid: an empty patch is a no-op update ([#49](https://github.com/zanminwang/axton/issues/49)).
     assert_eq!(v["mutations"][1]["name"], "Rename");
     assert_eq!(
         v["mutations"][1]["slots"][0]["allowedPatchFields"],
@@ -315,8 +315,8 @@ fn singular_inverse_requires_a_unique_foreign_key() {
 #[test]
 fn backend_emitter_declares_handlers_loaders_and_references() {
     let v = compile(include_str!("../../../fixtures/compiler/relations.model")).unwrap();
-    let ts = ahead_compiler::backend_typescript(&v, "@ahead/server");
-    assert!(ts.contains("from \"@ahead/server\""));
+    let ts = axton_compiler::backend_typescript(&v, "@axton/server");
+    assert!(ts.contains("from \"@axton/server\""));
     assert!(ts.contains("export interface Handlers<Tx> {"));
     assert!(ts.contains(
         " addBook: { v1(call: HandlerCall<Tx, AddBookInput>): Promise<void> } | ((call: HandlerCall<Tx, AddBookInput>) => Promise<void>);"
@@ -333,7 +333,7 @@ fn backend_emitter_declares_handlers_loaders_and_references() {
     assert!(ts.contains("export function Book(identity: BookIdentity): RecordRef { return { model: \"Book\", identity }; }"));
     assert!(ts.contains("export interface AddBookInput {\n book: Book;\n}"));
     assert!(ts.contains("export function createBackend<Tx>("));
-    assert!(!ahead_compiler::typescript(&v).contains("backendConfig"));
+    assert!(!axton_compiler::typescript(&v).contains("backendConfig"));
 }
 #[test]
 fn backend_emitter_groups_handler_versions_under_the_mutation_name() {
@@ -342,7 +342,7 @@ fn backend_emitter_groups_handler_versions_under_the_mutation_name() {
     let mut old = v["mutations"][0].clone();
     old["version"] = serde_json::json!(1);
     with_history["backendMutations"] = serde_json::json!([old, v["mutations"][0].clone()]);
-    let ts = ahead_compiler::backend_typescript(&with_history, "@ahead/server");
+    let ts = axton_compiler::backend_typescript(&with_history, "@axton/server");
     assert!(
         ts.contains(
             " edit: { v1(call: HandlerCall<Tx, EditV1Input>): Promise<void>; v2(call: HandlerCall<Tx, EditInput>): Promise<void> };\n"
@@ -356,7 +356,7 @@ fn backend_emitter_groups_handler_versions_under_the_mutation_name() {
 fn backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation() {
     let v = compile("model A { id String title String @@id(id) } mutation Save { a A.create }")
         .unwrap();
-    let ts = ahead_compiler::backend_typescript(&v, "@ahead/server");
+    let ts = axton_compiler::backend_typescript(&v, "@axton/server");
     assert!(
         ts.contains(
             " save: { v1(call: HandlerCall<Tx, SaveInput>): Promise<void> } | ((call: HandlerCall<Tx, SaveInput>) => Promise<void>);\n"
@@ -367,7 +367,7 @@ fn backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation() {
         "model A { id String title String @@id(id) } mutation Save { a A.create @@version(2) }",
     )
     .unwrap();
-    let ts = ahead_compiler::backend_typescript(&later, "@ahead/server");
+    let ts = axton_compiler::backend_typescript(&later, "@axton/server");
     assert!(
         ts.contains(" save: { v2(call: HandlerCall<Tx, SaveInput>): Promise<void> };\n"),
         "{ts}"
@@ -380,7 +380,7 @@ fn backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation() {
 
 #[test]
 fn generated_clients_expose_one_server_connection() {
-    let ts = ahead_compiler::client_typescript("@example/custom-runtime");
+    let ts = axton_compiler::client_typescript("@example/custom-runtime");
     assert!(ts.contains("type ServerOptions"));
     assert!(ts.contains("server?: ServerOptions"));
     assert!(ts.contains("client.connect(options.server"));
@@ -390,7 +390,7 @@ fn generated_clients_expose_one_server_connection() {
         ts.find("connection options were removed").unwrap() < ts.find("await Client.open").unwrap()
     );
     let schema = compile("model Entry { id String title String @@id(id) } mutation Edit { entry Entry.update<title> }").unwrap();
-    let dart = ahead_compiler::dart(&schema);
+    let dart = axton_compiler::dart(&schema);
     assert!(dart.contains("show RuntimeConnection, SyncServer"));
     assert!(dart.contains("SyncServer? server"));
     assert!(dart.contains("client.connect(server"));
@@ -402,7 +402,7 @@ fn generated_clients_expose_one_server_connection() {
 /// sync state), top-level mutations and the runtime members, in both languages.
 #[test]
 fn generated_clients_are_the_whole_client() {
-    let ts = ahead_compiler::client_typescript("@example/custom-runtime");
+    let ts = axton_compiler::client_typescript("@example/custom-runtime");
     for member in [
         "readonly mutate: Mutate;",
         "this.mutate = new Mutate(client)",
@@ -423,7 +423,7 @@ fn generated_clients_are_the_whole_client() {
         "model Entry { id String title String @@id(id) } mutation Edit { entry Entry.update<title> } mutation Touch { entry Entry.update<title> }",
     )
     .unwrap();
-    let model = ahead_compiler::typescript(&schema);
+    let model = axton_compiler::typescript(&schema);
     assert!(
         model.contains("export type MutationName = 'Edit'|'Touch';"),
         "{model}"
@@ -447,7 +447,7 @@ fn generated_clients_are_the_whole_client() {
         .find(|line| line.starts_with("export interface WritePort "))
         .unwrap();
     assert!(!write_port.contains("mutate"), "{write_port}");
-    let dart = ahead_compiler::dart(&schema);
+    let dart = axton_compiler::dart(&schema);
     for member in [
         "late final Mutate mutate = Mutate(client);",
         "Future<Map<String,dynamic>> syncState() => client.syncState();",
@@ -464,7 +464,7 @@ fn generated_clients_are_the_whole_client() {
 #[test]
 fn generated_transaction_facades_are_local_only() {
     let schema = compile("model Entry { id String title String @@id(id) } mutation Edit { entry Entry.update<title> }").unwrap();
-    let ts = ahead_compiler::typescript(&schema);
+    let ts = axton_compiler::typescript(&schema);
     let ts_transaction = ts
         .lines()
         .find(|line| line.starts_with("export class GeneratedTransaction "))
@@ -478,13 +478,13 @@ fn generated_transaction_facades_are_local_only() {
         ts.contains("export class Mutate { readonly port:MutatePort;"),
         "{ts}"
     );
-    let ts_client = ahead_compiler::client_typescript("@example/custom-runtime");
+    let ts_client = axton_compiler::client_typescript("@example/custom-runtime");
     assert!(
         ts_client.contains("this.mutate = new Mutate(client)"),
         "{ts_client}"
     );
 
-    let dart = ahead_compiler::dart(&schema);
+    let dart = axton_compiler::dart(&schema);
     let dart_transaction = dart
         .lines()
         .find(|line| line.starts_with("class GeneratedTransaction "))
@@ -617,7 +617,7 @@ fn rejects_model_and_enum_names_the_generated_client_uses() {
 
 #[test]
 fn rejects_reserved_model_names_at_the_declaration() {
-    for name in ["sqlite_entry", "SQLite_Entry", "ahead_entry", "Ahead_entry"] {
+    for name in ["sqlite_entry", "SQLite_Entry", "axton_entry", "AXTON_entry"] {
         let e = compile(&format!(
             "model Other {{ id UUID @@id(id) }}\n\nmodel {name} {{ id UUID @@id(id) }}\n\n\n"
         ))
@@ -625,7 +625,7 @@ fn rejects_reserved_model_names_at_the_declaration() {
         assert!(e.contains("reserved"), "{name}: {e}");
         assert_eq!(line_of(&e), 3, "{name}: {e}");
     }
-    for name in ["Sqlite", "sqlitex", "my_sqlite_table", "aheadEntry"] {
+    for name in ["Sqlite", "sqlitex", "my_sqlite_table", "axtonEntry"] {
         assert!(
             compile(&format!("model {name} {{ id UUID @@id(id) }}")).is_ok(),
             "{name} should stay valid"
@@ -720,7 +720,7 @@ fn model_versions_reach_every_generated_surface() {
         v["schema"]["models"][1]["version"], 1,
         "omitted is version 1"
     );
-    let ts = ahead_compiler::typescript(&v);
+    let ts = axton_compiler::typescript(&v);
     assert!(
         ts.contains(r#""name":"Task","relations":[],"unique":[],"version":2}"#),
         "{ts}"
@@ -729,7 +729,7 @@ fn model_versions_reach_every_generated_surface() {
         ts.contains(r#""name":"Note","relations":[],"unique":[],"version":1}"#),
         "{ts}"
     );
-    let dart = ahead_compiler::dart(&v);
+    let dart = axton_compiler::dart(&v);
     assert!(
         dart.contains(r#""name":"Task","relations":[],"unique":[],"version":2}"#),
         "{dart}"
@@ -737,7 +737,7 @@ fn model_versions_reach_every_generated_surface() {
     let mut with_history = v.clone();
     let old = serde_json::json!({"name":"Task","version":1,"identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}}],"enums":[]});
     with_history["backendModels"] = serde_json::json!([old]);
-    let backend = ahead_compiler::backend_typescript(&with_history, "@ahead/server");
+    let backend = axton_compiler::backend_typescript(&with_history, "@axton/server");
     assert!(backend.contains(r#""models":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}}],"identity":["id"],"name":"Task","version":1}]"#), "{backend}");
     assert!(!backend.contains("backendModels"), "{backend}");
 }
@@ -752,7 +752,7 @@ fn backend_emitter_groups_loader_versions_under_the_model_name() {
     current["enums"] = v["schema"]["enums"].clone();
     let note = serde_json::json!({"name":"Note","version":1,"identity":["id"],"fields":v["schema"]["models"][1]["fields"],"enums":[]});
     with_history["backendModels"] = serde_json::json!([note, old, current]);
-    let ts = ahead_compiler::backend_typescript(&with_history, "@ahead/server");
+    let ts = axton_compiler::backend_typescript(&with_history, "@axton/server");
     // An older contract is its own record type, with the enum values of its time inline.
     assert!(
         ts.contains(
@@ -775,7 +775,7 @@ fn backend_emitter_groups_loader_versions_under_the_model_name() {
     );
     // Without a history the schema's own version is the only retained one; a
     // single non-v1 version has no shorthand.
-    let ts = ahead_compiler::backend_typescript(&v, "@ahead/server");
+    let ts = axton_compiler::backend_typescript(&v, "@axton/server");
     assert!(
         ts.contains(" task: { v2(call: LoaderCall<Tx, TaskIdentity>): Promise<readonly (Task | null)[]> };\n"),
         "{ts}"
@@ -802,7 +802,7 @@ fn deprecations_reach_every_generated_surface_and_leave_the_descriptors_alone() 
             {"kind":"slot","mutation":"Edit","slot":"old","reason":"use task"}
         ])
     );
-    let ts = ahead_compiler::typescript(&v);
+    let ts = axton_compiler::typescript(&v);
     assert!(ts.contains("export interface Task {\n id: string;\n /** @deprecated renamed to title */\n name: string;\n title: string;\n /** @deprecated */\n legacy: number | null;\n"), "{ts}");
     assert!(
         ts.contains(
@@ -812,9 +812,9 @@ fn deprecations_reach_every_generated_surface_and_leave_the_descriptors_alone() 
     );
     assert!(ts.contains("/** @deprecated \"archived\": use closed */\nexport type Status = \"active\" | \"archived\" | \"closed\";"), "{ts}");
     assert!(ts.contains("export interface EditArgs {\n task: { identity:TaskIdentity; values:Pick<TaskPatch, \"title\"> };\n /** @deprecated use task */\n old?: { identity:TaskIdentity; values:Pick<TaskPatch, \"name\"> };\n}"), "{ts}");
-    let backend = ahead_compiler::backend_typescript(&v, "@ahead/server");
+    let backend = axton_compiler::backend_typescript(&v, "@axton/server");
     assert!(backend.contains("export interface EditInput {\n task: { identity: TaskIdentity; patch: Pick<TaskPatch, \"title\"> };\n /** @deprecated use task */\n old: { identity: TaskIdentity; patch: Pick<TaskPatch, \"name\"> } | null;\n}"), "{backend}");
-    let dart = ahead_compiler::dart(&v);
+    let dart = axton_compiler::dart(&v);
     assert!(
         dart.contains("enum Status { active, @Deprecated('use closed') archived, closed }"),
         "{dart}"
@@ -833,7 +833,7 @@ fn deprecations_reach_every_generated_surface_and_leave_the_descriptors_alone() 
 #[test]
 fn action_descriptors_separate_values_operands_and_output_sources() {
     let source = "model Todo { id String title String @@id(id) } action Save(label String?, todo Todo.create, maybe Todo.update<title>?, gone Todo.delete[]) { related Todo? count Int }";
-    let descriptor = ahead_compiler::compile(source).unwrap();
+    let descriptor = axton_compiler::compile(source).unwrap();
     let action = &descriptor["actions"][0];
     assert_eq!(action["name"], "Save");
     assert_eq!(action["inputs"][0]["kind"], "value");
@@ -878,7 +878,7 @@ model Child { tenant String id String parentId String title String @requires(Upl
 action Add(parent Parent.create, child Child.create(parent: parent)) { found Child[] }
 action Rename(child Child.update<title>)
 "#;
-    let descriptors = ahead_compiler::compile(source).unwrap();
+    let descriptors = axton_compiler::compile(source).unwrap();
     let action = &descriptors["actions"][0];
     assert_eq!(action["inputs"][1]["bindings"][0]["slot"], "parent");
     assert_eq!(
@@ -897,7 +897,7 @@ action Rename(child Child.update<title>)
         action["outputs"][2]["handlerType"]["fields"][0]["name"],
         "tenant"
     );
-    let history = ahead_compiler::reconcile_action_history(&descriptors, None).unwrap();
+    let history = axton_compiler::reconcile_action_history(&descriptors, None).unwrap();
     let snapshot = &history["actions"]["Add"]["1"];
     assert_eq!(snapshot["requirements"][0]["name"], "Uploaded");
     assert_eq!(snapshot["prerequisites"][0]["name"], "Uploaded");
@@ -907,7 +907,7 @@ action Rename(child Child.update<title>)
 #[test]
 fn action_typescript_emits_flattened_operands_and_separate_client_contract() {
     let v = compile("model Todo { id String title String @@id(id) } action AddTodo(todo Todo.create, patch Todo.update<title>?, gone Todo.delete[], label String?) { related Todo? matches Todo[] count Int }").unwrap();
-    let ts = ahead_compiler::typescript(&v);
+    let ts = axton_compiler::typescript(&v);
     assert!(ts.contains("export type TodoCreate = Todo;"), "{ts}");
     assert!(ts.contains("export type TodoUpdate<K extends keyof TodoPatch = keyof TodoPatch> = TodoIdentity & Partial<Pick<TodoPatch, K>>;"), "{ts}");
     assert!(
@@ -940,7 +940,7 @@ fn action_backend_emits_versioned_handler_identity_contracts_without_factory() {
     let mut current = v["actions"][0].clone();
     current["version"] = serde_json::json!(2);
     retained["actions"] = serde_json::json!([old, current]);
-    let ts = ahead_compiler::backend_typescript(&retained, "@ahead/server");
+    let ts = axton_compiler::backend_typescript(&retained, "@axton/server");
     assert!(
         ts.contains("export type AddTodoV1HandlerOutput = void;"),
         "{ts}"
@@ -967,7 +967,7 @@ fn action_backend_emits_versioned_handler_identity_contracts_without_factory() {
 #[test]
 fn mixed_action_and_legacy_backend_keeps_handler_context_in_scope() {
     let v = compile("model Todo { id String @@id(id) } mutation Legacy { todo Todo.delete } action New(todo Todo.delete)").unwrap();
-    let ts = ahead_compiler::backend_typescript(&v, "@ahead/server");
+    let ts = axton_compiler::backend_typescript(&v, "@axton/server");
     assert!(
         ts.contains("legacy: { v1(call: HandlerCall<Ctx, LegacyInput>)"),
         "{ts}"
@@ -982,7 +982,7 @@ fn mixed_action_and_legacy_backend_keeps_handler_context_in_scope() {
 #[test]
 fn action_dart_emits_type_only_client_and_versioned_handler_contracts() {
     let v = compile("model Todo { id String title String @@id(id) } action Search(query String?) { relatedTodo Todo? } action Ping()").unwrap();
-    let dart = ahead_compiler::dart(&v);
+    let dart = axton_compiler::dart(&v);
     for expected in [
         "abstract interface class ActionCall<T>",
         "ActionStatus get status;",
@@ -1017,7 +1017,7 @@ fn action_dart_retains_output_read_version_and_enum_snapshot() {
     current["version"] = serde_json::json!(2);
     v["actions"] = serde_json::json!([old, current]);
     v["backendModels"] = serde_json::json!([{"name":"Todo","version":1,"identity":["id"],"fields":[{"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false},{"name":"title","type":{"kind":"scalar","name":"string"},"nullable":false}]}]);
-    let dart = ahead_compiler::dart(&v);
+    let dart = axton_compiler::dart(&v);
     assert!(dart.contains("class TodoV1Identity"), "{dart}");
     assert!(dart.contains("TodoV1Identity? related"), "{dart}");
     assert!(dart.contains("enum AddV1OutputStatus { open }"), "{dart}");
@@ -1088,9 +1088,9 @@ fn action_generated_identifiers_reject_other_actions_without_overbanning() {
 #[test]
 fn backend_enum_list_handler_outputs_typecheck_latest_and_retained() {
     let old = compile("enum Status { open closed } model Todo { id String @@id(id) } action Fetch() { states Status[] }").unwrap();
-    let history = ahead_compiler::reconcile_action_history(&old, None).unwrap();
+    let history = axton_compiler::reconcile_action_history(&old, None).unwrap();
     let mut latest = compile("enum Status { open closed archived } model Todo { id String @@id(id) } @version(2) action Fetch() { states Status[] }").unwrap();
-    let history = ahead_compiler::reconcile_action_history(&latest, Some(&history)).unwrap();
+    let history = axton_compiler::reconcile_action_history(&latest, Some(&history)).unwrap();
     latest["actions"] = serde_json::Value::Array(
         history["actions"]["Fetch"]
             .as_object()
@@ -1099,7 +1099,7 @@ fn backend_enum_list_handler_outputs_typecheck_latest_and_retained() {
             .cloned()
             .collect(),
     );
-    let emitted = ahead_compiler::backend_typescript(&latest, "@ahead/server");
+    let emitted = axton_compiler::backend_typescript(&latest, "@axton/server");
     let interface = |name: &str| {
         let marker = format!("export interface {name} {{");
         let body = emitted
@@ -1117,7 +1117,7 @@ fn backend_enum_list_handler_outputs_typecheck_latest_and_retained() {
         interface("FetchHandlerOutput")
     );
     let path =
-        std::env::temp_dir().join(format!("ahead-action-enum-list-{}.ts", std::process::id()));
+        std::env::temp_dir().join(format!("axton-action-enum-list-{}.ts", std::process::id()));
     std::fs::write(&path, proof).unwrap();
     let result = std::process::Command::new("tsc")
         .args(["--strict", "--noEmit", "--skipLibCheck"])

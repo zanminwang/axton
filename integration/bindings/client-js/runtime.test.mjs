@@ -15,7 +15,7 @@ async function within(promise, ms) {
 }
 
 test('a captured client mutate rejects promptly inside its transaction callback', async () => {
- const dir = await mkdtemp(join(tmpdir(), 'ahead-runtime-'));
+ const dir = await mkdtemp(join(tmpdir(), 'axton-runtime-'));
  const client = await Client.open({ path: join(dir, 'client.sqlite'), schema });
  let release, entered;
  const gate = new Promise(resolve => { release = resolve; });
@@ -43,7 +43,7 @@ test('a captured client mutate rejects promptly inside its transaction callback'
 });
 
 test('an unrelated Node async context waits for a transaction then enqueues', async () => {
- const dir = await mkdtemp(join(tmpdir(), 'ahead-runtime-'));
+ const dir = await mkdtemp(join(tmpdir(), 'axton-runtime-'));
  const client = await Client.open({ path: join(dir, 'client.sqlite'), schema });
  let release, entered;
  const gate = new Promise(resolve => { release = resolve; });
@@ -62,7 +62,7 @@ test('an unrelated Node async context waits for a transaction then enqueues', as
 });
 
 test('failed standalone enqueue rolls back its queue entry and optimistic record', async () => {
- const dir = await mkdtemp(join(tmpdir(), 'ahead-runtime-'));
+ const dir = await mkdtemp(join(tmpdir(), 'axton-runtime-'));
  const client = await Client.open({ path: join(dir, 'client.sqlite'), schema });
  try {
   await assert.rejects(client.mutate({ name: 'Broken', operations: [
@@ -78,7 +78,7 @@ test('failed standalone enqueue rolls back its queue entry and optimistic record
 });
 
 test('standalone queued mutation and optimistic value survive SQLite reopen', async () => {
- const dir = await mkdtemp(join(tmpdir(), 'ahead-runtime-'));
+ const dir = await mkdtemp(join(tmpdir(), 'axton-runtime-'));
  const path = join(dir, 'client.sqlite');
  let client;
  try {

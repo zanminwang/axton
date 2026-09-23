@@ -101,12 +101,12 @@ impl RecordKey {
     }
 }
 
-/// Model names that must not become SQLite tables. `ahead_` is the framework's
+/// Model names that must not become SQLite tables. `axton_` is the framework's
 /// own table prefix and `sqlite_` is reserved by SQLite; both are compared
 /// case-insensitively because SQLite table names are.
 pub fn reserved_model_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    lower.starts_with("ahead_") || lower.starts_with("sqlite_")
+    lower.starts_with("axton_") || lower.starts_with("sqlite_")
 }
 
 impl Schema {

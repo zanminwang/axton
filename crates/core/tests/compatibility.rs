@@ -1,6 +1,6 @@
 //! Schema compatibility: what a local database built for one schema can
 //! accept from a newer one without a rebuild.
-use ahead_core::{AdditiveStep, Compatibility, Schema};
+use axton_core::{AdditiveStep, Compatibility, Schema};
 use serde_json::{Value, json};
 
 fn field(name: &str, ty: &str, nullable: bool) -> Value {

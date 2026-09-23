@@ -15,7 +15,7 @@ The generated client is the whole client: besides the [typed model and mutation 
     ```dart
     final client = await GeneratedClient.open(
       path: 'local.sqlite',
-      libraryPath: '/absolute/path/to/libahead_dart.dylib',
+      libraryPath: '/absolute/path/to/libaxton_dart.dylib',
     );
     ```
 
@@ -169,7 +169,7 @@ Here `backendUrl`, `accessToken` and `renewAccessToken` belong to your applicati
 
 ### Catch-up and live updates
 
-Ahead manages these phases automatically:
+AXTON manages these phases automatically:
 
 1. Connect to `/sync/live` and subscribe to the current channel set. The server installs listeners, then acknowledges the subscription with each channel's current position.
 2. If a saved cursor is behind, fetch missing records through one `POST /sync/pull` for all channels, repeated while a channel has more. Queue WebSocket pages arriving while catch-up runs. If every cursor is current, skip this step.
@@ -268,4 +268,4 @@ Callback failures are recorded as failed tasks with their reason rather than ret
 
 ## Protocol primitives
 
-The engine's protocol methods (`freeze`, `acknowledge`, `applyPull`, the last two returning reports for records they could not apply) are not part of the application surface; they exist on the runtime handle the framework's own tests use. Application synchronization is managed by `connect`. Wire fields are defined in the [protocol source](https://github.com/zanminwang/ahead/blob/main/crates/core/src/protocol.rs) and exercised by [shared wire fixtures](https://github.com/zanminwang/ahead/blob/main/fixtures). Do not manufacture receipts, advance cursors yourself or rewrite frozen requests to recover from a network failure.
+The engine's protocol methods (`freeze`, `acknowledge`, `applyPull`, the last two returning reports for records they could not apply) are not part of the application surface; they exist on the runtime handle the framework's own tests use. Application synchronization is managed by `connect`. Wire fields are defined in the [protocol source](https://github.com/zanminwang/axton/blob/main/crates/core/src/protocol.rs) and exercised by [shared wire fixtures](https://github.com/zanminwang/axton/blob/main/fixtures). Do not manufacture receipts, advance cursors yourself or rewrite frozen requests to recover from a network failure.

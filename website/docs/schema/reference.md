@@ -5,7 +5,7 @@ The compiler reads sorted `.model` files and generates client and backend interf
 ## Command
 
 ```sh
-cargo run -p ahead-compiler -- compile INPUT_DIR OUTPUT_DIR \
+cargo run -p axton-compiler -- compile INPUT_DIR OUTPUT_DIR \
   --backend-runtime BACKEND_IMPORT \
   --client-runtime CLIENT_IMPORT
 ```
@@ -14,8 +14,8 @@ cargo run -p ahead-compiler -- compile INPUT_DIR OUTPUT_DIR \
 | --- | --- |
 | `INPUT_DIR` | Directory containing `.model` files; sorted and compiled together |
 | `OUTPUT_DIR` | Destination for generated artifacts |
-| `--backend-runtime SPEC` | TypeScript backend import; default `@ahead/server` |
-| `--client-runtime SPEC` | TypeScript client import; default `@ahead/client` |
+| `--backend-runtime SPEC` | TypeScript backend import; default `@axton/server` |
+| `--client-runtime SPEC` | TypeScript client import; default `@axton/client` |
 | `--mutation-history FILE` | Override the retained mutation history path; default `INPUT_DIR/history/mutations.json` |
 | `--initialize-mutation-history` | Allow a missing explicitly selected mutation history file; only version 1 declarations |
 | `--model-history FILE` | Override the retained model history path; default `INPUT_DIR/history/models.json` |
@@ -39,7 +39,7 @@ For source-checkout use, supply runtime paths relative to the output directory; 
 
 History is not generated output: `INPUT_DIR/history/mutations.json` retains legacy mutation inputs, `INPUT_DIR/history/models.json` retains Model reads, and `INPUT_DIR/history/actions.json` retains both Action inputs and outputs when Actions exist. A refused compile leaves all histories and outputs untouched. An Action schema currently emits type contracts without a callable backend factory or executable client Action methods; #142 binds these routes. Legacy mutation schemas remain runnable.
 
-Dart output imports `package:ahead/ahead.dart`. Commit the history used to generate released clients; regenerating from an empty history loses compatibility information. A history left at the superseded `OUTPUT_DIR/mutation-history.json` is read once, rewritten at the new default and reported on stderr; the old file stays where it is and you can delete it after committing the new one.
+Dart output imports `package:axton/axton.dart`. Commit the history used to generate released clients; regenerating from an empty history loses compatibility information. A history left at the superseded `OUTPUT_DIR/mutation-history.json` is read once, rewritten at the new default and reported on stderr; the old file stays where it is and you can delete it after committing the new one.
 
 ## Fields and identities
 
@@ -57,7 +57,7 @@ Dart output imports `package:ahead/ahead.dart`. Commit the history used to gener
 
 `@deprecated` or `@deprecated(reason: "…")` after a field, an enum value or a mutation slot marks it deprecated, as in GraphQL: generated TypeScript carries `@deprecated` JSDoc and generated Dart carries `@Deprecated`, so editors and the Dart analyzer flag uses. Nothing else changes: the member stays in the schema and in every contract, and removing it still follows the versioning rules below.
 
-`@@id(field,...)` defines identity, including composite keys. Identity fields must be nonnullable. `@@version(n)` names the model's read contract, the record shape a loader of that version returns; it defaults to 1 and is independent of mutation versions (see [History and compatibility](#history-and-compatibility)). Model names starting with `ahead_` or `sqlite_` (in any letter case) are reserved and refused, and so are model and enum names the generated client itself declares (`SyncState`, `PendingMutation`, `Rejection`, `MutationName`, `Mutate`, `Channels`, `GeneratedClient`, `GeneratedTransaction`, `LiveModels`, `TxModels`, the port types, `Client`, `Transaction`, `Connection`, `RuntimeConnection`, `SyncServer`, `Present`). `@@unique(field,...)` declares a unique group that the client's local database enforces; the server does not check it, so your application database schema must carry its own constraints ([What your backend owns](../backend/api.md#what-your-backend-owns)). Generated patches exclude identity fields. Complete records contain all declared fields, including nullable ones; an optional patch field is a separate concept.
+`@@id(field,...)` defines identity, including composite keys. Identity fields must be nonnullable. `@@version(n)` names the model's read contract, the record shape a loader of that version returns; it defaults to 1 and is independent of mutation versions (see [History and compatibility](#history-and-compatibility)). Model names starting with `axton_` or `sqlite_` (in any letter case) are reserved and refused, and so are model and enum names the generated client itself declares (`SyncState`, `PendingMutation`, `Rejection`, `MutationName`, `Mutate`, `Channels`, `GeneratedClient`, `GeneratedTransaction`, `LiveModels`, `TxModels`, the port types, `Client`, `Transaction`, `Connection`, `RuntimeConnection`, `SyncServer`, `Present`). `@@unique(field,...)` declares a unique group that the client's local database enforces; the server does not check it, so your application database schema must carry its own constraints ([What your backend owns](../backend/api.md#what-your-backend-owns)). Generated patches exclude identity fields. Complete records contain all declared fields, including nullable ones; an optional patch field is a separate concept.
 
 TypeScript omission leaves a patch field unchanged; null clears a nullable field. Dart uses `Present<T>` to distinguish supplied values from omission. Generated TypeScript is intended for `exactOptionalPropertyTypes`.
 
@@ -77,7 +77,7 @@ model Comment {
 }
 ```
 
-A reference names the local fields matching the target identity. `onTargetDelete` accepts `none` (default) or `delete`. The cascade runs on the client only: deleting a `Book` locally deletes its `Comment` rows locally, and those deletes are never sent. A handler that deletes a book must delete its comments itself, report them with `changes.add` and publish them to their channels ([What your backend owns](../backend/api.md#what-your-backend-owns)). Inverse declarations generate navigation without storing another copy of the relationship. Singular inverses require a unique foreign key. Named references/inverses can disambiguate multiple relations; see the [parser tests](https://github.com/zanminwang/ahead/blob/main/crates/compiler/tests/compiler.rs) for validated examples.
+A reference names the local fields matching the target identity. `onTargetDelete` accepts `none` (default) or `delete`. The cascade runs on the client only: deleting a `Book` locally deletes its `Comment` rows locally, and those deletes are never sent. A handler that deletes a book must delete its comments itself, report them with `changes.add` and publish them to their channels ([What your backend owns](../backend/api.md#what-your-backend-owns)). Inverse declarations generate navigation without storing another copy of the relationship. Singular inverses require a unique foreign key. Named references/inverses can disambiguate multiple relations; see the [parser tests](https://github.com/zanminwang/axton/blob/main/crates/compiler/tests/compiler.rs) for validated examples.
 
 ## Mutations
 
@@ -96,7 +96,7 @@ mutation Edit {
 | `entry Entry.delete?` | Optional operation |
 | `entries Entry.delete[]` | List of operations |
 
-Builders emit operations in declared slot order. Slot bindings can connect operations; prerequisites and `@@sequence` specify dependencies. A prerequisite argument must be `self` (the annotated field's value); no other expression is accepted, and prerequisites are satisfied on the client, never seen by the backend. See [advanced declarations](define.md#relations-prerequisites-and-ordering) and [compiler tests](https://github.com/zanminwang/ahead/blob/main/crates/compiler/tests/compiler.rs). The generator does not implement your backend business logic or host prerequisite callbacks.
+Builders emit operations in declared slot order. Slot bindings can connect operations; prerequisites and `@@sequence` specify dependencies. A prerequisite argument must be `self` (the annotated field's value); no other expression is accepted, and prerequisites are satisfied on the client, never seen by the backend. See [advanced declarations](define.md#relations-prerequisites-and-ordering) and [compiler tests](https://github.com/zanminwang/axton/blob/main/crates/compiler/tests/compiler.rs). The generator does not implement your backend business logic or host prerequisite callbacks.
 
 ## Action contracts (execution pending #142)
 

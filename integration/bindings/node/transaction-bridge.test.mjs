@@ -112,7 +112,7 @@ test('real deferred constraint commit failure never returns accepted result', as
 });
 
 test('native boundary captures synchronous callback throws without terminating Node', async () => {
-  const {runProbe} = require('../../../bindings/node/ahead-node-probe.node');
+  const {runProbe} = require('../../../bindings/node/axton-node-probe.node');
   await assert.rejects(runProbe(() => { throw Error('synchronous callback'); }, false), /synchronous callback/);
 });
 

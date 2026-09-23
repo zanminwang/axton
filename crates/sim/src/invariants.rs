@@ -3,7 +3,7 @@
 //! checks are stepwise rather than periodic and are called from `Sim::apply`:
 //! `unsubscribe_cannot_remove_content` and `no_pending_operation_is_lost_on_reopen`.
 use crate::{Sim, sim::ReopenState};
-use ahead_core::PushReceipt;
+use axton_core::PushReceipt;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -54,7 +54,7 @@ fn stamps_never_decrease(sim: &mut Sim) -> Result<(), String> {
             let rows = sim
                 .client(i)
                 .read_sql(
-                    "SELECT stamp FROM ahead_record WHERE model = ? AND identity = ?",
+                    "SELECT stamp FROM axton_record WHERE model = ? AND identity = ?",
                     &[json!(key.model), json!(key.encoded_identity().unwrap())],
                 )
                 .map_err(|e| e.to_string())?;
@@ -212,7 +212,7 @@ fn queued_pushes(sim: &mut Sim, i: usize) -> Result<BTreeSet<u64>, String> {
     Ok(sim
         .client(i)
         .read_sql(
-            "SELECT DISTINCT push FROM ahead_mutation WHERE push IS NOT NULL",
+            "SELECT DISTINCT push FROM axton_mutation WHERE push IS NOT NULL",
             &[],
         )
         .map_err(|e| e.to_string())?
@@ -301,7 +301,7 @@ pub fn content_snapshot(sim: &mut Sim, client: usize) -> Result<ContentSnapshot,
     }
     let stamps = c
         .read_sql(
-            "SELECT model, identity, stamp FROM ahead_record ORDER BY model, identity",
+            "SELECT model, identity, stamp FROM axton_record ORDER BY model, identity",
             &[],
         )
         .map_err(|e| e.to_string())?;
@@ -346,7 +346,7 @@ pub fn unsubscribe_cannot_remove_content(
 pub fn reopen_state(sim: &mut Sim, client: usize) -> Result<ReopenState, String> {
     let c = sim.client(client);
     let ordinals = c
-        .read_sql("SELECT ordinal FROM ahead_mutation", &[])
+        .read_sql("SELECT ordinal FROM axton_mutation", &[])
         .map_err(|e| e.to_string())?
         .iter()
         .filter_map(|r| r["ordinal"].as_u64())
@@ -439,9 +439,9 @@ mod tests {
     /// crash record is cleared first, since the reopen check would otherwise catch
     /// the forgery itself instead of the periodic checker under test.
     fn corrupt(sim: &mut Sim, client: usize, sql: &str) {
-        use ahead_client::store::ClientStore;
+        use axton_client::store::ClientStore;
         sim.apply(Action::Crash { client }).unwrap();
-        let mut store = ahead_sqlite::SqliteStore::open(&sim.clients[client].path).unwrap();
+        let mut store = axton_sqlite::SqliteStore::open(&sim.clients[client].path).unwrap();
         store.execute(sql, &[]).unwrap();
         drop(store);
         sim.clients[client].crash_state = None;
@@ -470,7 +470,7 @@ mod tests {
         .unwrap();
         frozen_batch(&mut sim, "e1");
         sim.check().unwrap();
-        corrupt(&mut sim, 0, "DELETE FROM ahead_mutation");
+        corrupt(&mut sim, 0, "DELETE FROM axton_mutation");
         let err = sim.check().unwrap_err();
         assert!(
             err.contains("completed work had a matching response")
@@ -495,7 +495,7 @@ mod tests {
         corrupt(
             &mut sim,
             0,
-            "UPDATE ahead_client SET last_completed_push = 9",
+            "UPDATE axton_client SET last_completed_push = 9",
         );
         let err = sim.check().unwrap_err();
         assert!(
@@ -527,7 +527,7 @@ mod tests {
         corrupt(
             &mut sim,
             0,
-            "UPDATE ahead_record SET stamp = stamp - 1 WHERE stamp > 1",
+            "UPDATE axton_record SET stamp = stamp - 1 WHERE stamp > 1",
         );
         let err = sim.check().unwrap_err();
         assert!(
@@ -538,12 +538,12 @@ mod tests {
 
     #[test]
     fn an_erased_pending_operation_is_reported_on_reopen() {
-        use ahead_client::store::ClientStore;
+        use axton_client::store::ClientStore;
         let mut sim = Sim::new(8, 1);
         frozen_batch(&mut sim, "e1");
         sim.apply(Action::Crash { client: 0 }).unwrap();
-        let mut store = ahead_sqlite::SqliteStore::open(&sim.clients[0].path).unwrap();
-        store.execute("DELETE FROM ahead_mutation", &[]).unwrap();
+        let mut store = axton_sqlite::SqliteStore::open(&sim.clients[0].path).unwrap();
+        store.execute("DELETE FROM axton_mutation", &[]).unwrap();
         drop(store);
         let err = sim.apply(Action::Restart { client: 0 }).unwrap_err();
         assert!(

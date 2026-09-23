@@ -1,6 +1,6 @@
 mod common;
-use ahead_client::*;
-use ahead_sqlite::SqliteStore;
+use axton_client::*;
+use axton_sqlite::SqliteStore;
 use common::*;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -29,11 +29,11 @@ fn cross_channel_delete_applies_by_stamp_and_retains_the_stamp() {
         "a stamped delete applies across channels"
     );
     assert_eq!(c.record_stamp(&key()).unwrap(), 3);
-    assert_eq!(table_count(&mut c, "ahead_record"), 1);
+    assert_eq!(table_count(&mut c, "axton_record"), 1);
     c.apply_page(stamped("b", 1, 2, 4, None)).unwrap();
     assert_eq!(c.record_stamp(&key()).unwrap(), 4);
     assert_eq!(
-        table_count(&mut c, "ahead_record"),
+        table_count(&mut c, "axton_record"),
         1,
         "the stamp is retained after every channel confirmed the delete"
     );
@@ -99,14 +99,14 @@ fn newer_authority_lands_beneath_pending_edits_and_replays_them() {
     c.apply_page(page("book", 1, 2, Some("SERVER"))).unwrap();
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
     assert_eq!(
-        c.read_sql("SELECT text FROM ahead_before_Entry", &[])
+        c.read_sql("SELECT text FROM axton_before_Entry", &[])
             .unwrap(),
         vec![json!({"text":"SERVER"})]
     );
 }
 
 /// A change whose state does not fit the schema is skipped and reported; the
-/// page and its cursor still land ([#51](https://github.com/zanminwang/ahead/issues/51)).
+/// page and its cursor still land ([#51](https://github.com/zanminwang/axton/issues/51)).
 #[test]
 fn a_change_the_schema_refuses_is_reported_and_the_cursor_still_advances() {
     let dir = tempfile::tempdir().unwrap();
@@ -190,7 +190,7 @@ fn delete_cascades_to_descendants_and_keeps_their_stamps() {
         2,
         "the parent's deletion does not rewrite the child's stamp"
     );
-    assert_eq!(table_count(&mut c, "ahead_record"), 2);
+    assert_eq!(table_count(&mut c, "axton_record"), 2);
     let stale = c
         .apply_page(comment(4, 2, json!({"bookId":"b","text":"hi"})))
         .unwrap();
@@ -225,7 +225,7 @@ fn unsubscribing_retains_records_and_later_pages_are_dropped() {
     c.freeze().unwrap().unwrap();
     c.transaction(|tx| tx.set_channel("a".into(), false))
         .unwrap();
-    assert_eq!(table_count(&mut c, "ahead_subscription"), 0);
+    assert_eq!(table_count(&mut c, "axton_subscription"), 0);
     assert_eq!(
         c.read(&key()).unwrap().unwrap()["text"],
         "B",
@@ -252,7 +252,7 @@ fn unsubscribing_retains_records_and_later_pages_are_dropped() {
         report.stale,
         "a page for an unsubscribed channel is dropped whole"
     );
-    assert_eq!(table_count(&mut c, "ahead_subscription"), 0);
+    assert_eq!(table_count(&mut c, "axton_subscription"), 0);
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
     // Completion still works with no subscription at all.
     let r = receipt(&mut c, 1, vec![authority(Some("B"), 8)]);
@@ -533,7 +533,7 @@ fn channels_are_gated_one_by_one_and_a_gap_holds_the_whole_page() {
         ))
         .unwrap();
     assert_eq!(report.cursors, BTreeMap::from([("a".to_string(), 6)]));
-    assert_eq!(table_count(&mut c, "ahead_subscription"), 1);
+    assert_eq!(table_count(&mut c, "axton_subscription"), 1);
     assert_eq!(read(&mut c, "e").unwrap()["text"], "D");
 }
 

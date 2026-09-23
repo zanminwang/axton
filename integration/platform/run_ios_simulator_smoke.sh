@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 app_dir="$script_dir/ios_smoke"
-bundle_id="dev.localfirststate.aheadIosSmoke"
+bundle_id="dev.localfirststate.axtonIosSmoke"
 device_name="Local First State Smoke $$"
 device_id=""
 launch_pid=""
@@ -23,7 +23,7 @@ trap cleanup EXIT
 
 source "$repo_root/scripts/env.sh"
 rustup target add aarch64-apple-ios-sim
-cargo build -p ahead-dart --target aarch64-apple-ios-sim
+cargo build -p axton-dart --target aarch64-apple-ios-sim
 
 runtime_id="$(xcrun simctl list runtimes available | awk '/iOS 18[.]/ { gsub(/[()]/, "", $NF); print $NF; exit }')"
 device_type="$(xcrun simctl list devicetypes | awk -F '[()]' '/iPhone 16/ { print $2; exit }')"
@@ -44,9 +44,9 @@ xcrun simctl bootstatus "$device_id" -b
 app_bundle="$app_dir/build/ios/iphonesimulator/Runner.app"
 xcrun simctl install "$device_id" "$app_bundle"
 data_container="$(xcrun simctl get_app_container "$device_id" "$bundle_id" data)"
-result_file="$data_container/tmp/ahead-smoke-result.txt"
-stage_file="$data_container/tmp/ahead-smoke-stage.txt"
-console_file="$data_container/tmp/ahead-smoke-console.txt"
+result_file="$data_container/tmp/axton-smoke-result.txt"
+stage_file="$data_container/tmp/axton-smoke-stage.txt"
+console_file="$data_container/tmp/axton-smoke-console.txt"
 : >"$console_file"
 
 wait_for_result() {
@@ -83,10 +83,10 @@ finish_launch() {
 }
 
 launch_app
-wait_for_result AHEAD_SMOKE_PHASE1_OK
+wait_for_result AXTON_SMOKE_PHASE1_OK
 finish_launch
 xcrun simctl terminate "$device_id" "$bundle_id"
 launch_app
-wait_for_result AHEAD_SMOKE_RESTART_OK
+wait_for_result AXTON_SMOKE_RESTART_OK
 finish_launch
 cat "$console_file"

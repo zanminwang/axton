@@ -18,7 +18,7 @@ The compiler is a tool, the SDKs and connections carry bytes, storage and persis
 
 ## Components
 
-The tree stops at three levels: Ahead, a component, a part. A part that has internal structure keeps its own tree in its README and owns every page below it; nothing deeper appears here.
+The tree stops at three levels: AXTON, a component, a part. A part that has internal structure keeps its own tree in its README and owns every page below it; nothing deeper appears here.
 
 - **[Schema](architecture/schema/README.md)** — User-written, language-independent definitions of models, fields, types, identities and mutations.
   - **[Types](architecture/schema/types.md)** — Scalar and enum types, lists and nullability.
@@ -57,7 +57,7 @@ Solid lines show composition; dashed lines are labeled with contract use or data
 
 ```mermaid
 flowchart LR
-    A["Ahead"]
+    A["AXTON"]
 
     A --> C["Compiler · Rust"]
     C --> CP["Parse"]

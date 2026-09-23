@@ -1,6 +1,6 @@
 # Skills
 
-Selected skills for recurring work on Ahead. Follow the linked upstream instructions alongside the repository's [engineering](../engineering/README.md) and [writing](../writing/README.md) guidance.
+Selected skills for recurring work on AXTON. Follow the linked upstream instructions alongside the repository's [engineering](../engineering/README.md) and [writing](../writing/README.md) guidance.
 
 ## Engineering
 

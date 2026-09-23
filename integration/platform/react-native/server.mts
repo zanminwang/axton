@@ -190,7 +190,7 @@ const ports = {
   bob: bob.url,
   control: `http://127.0.0.1:${(control.address() as { port: number }).port}`,
 };
-await writeFile(process.env.AHEAD_SMOKE_PORTS!, JSON.stringify(ports));
+await writeFile(process.env.AXTON_SMOKE_PORTS!, JSON.stringify(ports));
 console.log(JSON.stringify(ports));
 let closing = false;
 async function close() {

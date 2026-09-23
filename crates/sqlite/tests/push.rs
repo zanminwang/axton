@@ -1,6 +1,6 @@
 mod common;
-use ahead_client::*;
-use ahead_sqlite::SqliteStore;
+use axton_client::*;
+use axton_sqlite::SqliteStore;
 use common::*;
 use serde_json::{Value, json};
 
@@ -426,7 +426,7 @@ fn late_task_completion_does_not_resurrect_unused_readiness() {
     c.drop_mutation(ordinal).unwrap();
     c.set_readiness("upload", Readiness::Ready).unwrap();
     assert!(c.pending_tasks().unwrap().is_empty());
-    assert_eq!(table_count(&mut c, "ahead_mutation_prerequisite"), 0);
+    assert_eq!(table_count(&mut c, "axton_mutation_prerequisite"), 0);
 }
 
 #[test]

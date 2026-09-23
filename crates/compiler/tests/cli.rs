@@ -7,7 +7,7 @@ fn cli_action_history_versions_outputs_and_refuses_edits_atomically() {
     let v1 = "model Todo { id String @@id(id) } action SendEmail(to String) { messageId String relatedTodo Todo? }";
     fs::write(&model, v1).unwrap();
     assert!(
-        ahead(&[input.as_os_str(), out.as_os_str()])
+        axton(&[input.as_os_str(), out.as_os_str()])
             .status
             .success()
     );
@@ -24,7 +24,7 @@ fn cli_action_history_versions_outputs_and_refuses_edits_atomically() {
     .map(|p| fs::read(p).unwrap())
     .collect();
     fs::write(&model, v1.replace("messageId String", "messageId Int")).unwrap();
-    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let rejected = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!rejected.status.success());
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("output"));
     let after: Vec<_> = [
@@ -49,7 +49,7 @@ fn cli_action_history_versions_outputs_and_refuses_edits_atomically() {
         .replace("messageId String", "messageId Int"),
     )
     .unwrap();
-    let result = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let result = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
         result.status.success(),
         "{}",
@@ -68,7 +68,7 @@ fn cli_action_history_versions_outputs_and_refuses_edits_atomically() {
     let retained = fs::read(&actions).unwrap();
     let generated = fs::read(out.join("backend.json")).unwrap();
     assert!(
-        ahead(&[input.as_os_str(), out.as_os_str()])
+        axton(&[input.as_os_str(), out.as_os_str()])
             .status
             .success()
     );
@@ -88,7 +88,7 @@ fn cli_rejects_new_action_names_above_v1_without_init_flags() {
         format!("{base} @version(2) action Send(to String) {{ id String }}"),
     )
     .unwrap();
-    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let rejected = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!rejected.status.success());
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("begin at version 1"));
     assert!(!input.join("history/actions.json").exists());
@@ -99,7 +99,7 @@ fn cli_rejects_new_action_names_above_v1_without_init_flags() {
         format!("{base} action Save(to String) {{ id String }}"),
     )
     .unwrap();
-    let first = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let first = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
         first.status.success(),
         "{}",
@@ -119,7 +119,7 @@ fn cli_rejects_new_action_names_above_v1_without_init_flags() {
         format!("{base} action Save(to String) {{ id String }} @version(2) action Send(to String) {{ id String }}"),
     )
     .unwrap();
-    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let rejected = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!rejected.status.success());
     let stderr = String::from_utf8_lossy(&rejected.stderr);
     assert!(
@@ -148,10 +148,10 @@ fn cli_action_history_options_require_explicit_initialization() {
         "--action-history".as_ref(),
         path.as_os_str(),
     ];
-    let missing = ahead(&args);
+    let missing = axton(&args);
     assert!(!missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stderr).contains("missing Action history"));
-    let uninitialized = ahead(&[
+    let uninitialized = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--action-history".as_ref(),
@@ -167,7 +167,7 @@ fn cli_action_history_options_require_explicit_initialization() {
     )
     .unwrap();
     assert!(
-        ahead(&[
+        axton(&[
             input.as_os_str(),
             out.as_os_str(),
             "--action-history".as_ref(),
@@ -180,7 +180,7 @@ fn cli_action_history_options_require_explicit_initialization() {
     assert!(path.exists());
     assert!(!input.join("history/actions.json").exists());
     assert!(
-        !ahead(&[
+        !axton(&[
             input.as_os_str(),
             out.as_os_str(),
             "--action-history".as_ref(),
@@ -204,7 +204,7 @@ fn cli_refuses_removing_the_last_retained_action() {
     )
     .unwrap();
     assert!(
-        ahead(&[input.as_os_str(), out.as_os_str()])
+        axton(&[input.as_os_str(), out.as_os_str()])
             .status
             .success()
     );
@@ -212,7 +212,7 @@ fn cli_refuses_removing_the_last_retained_action() {
     let before_history = fs::read(&actions).unwrap();
     let before_backend = fs::read(out.join("backend.json")).unwrap();
     fs::write(&model, "model Todo { id String @@id(id) }").unwrap();
-    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let rejected = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!rejected.status.success());
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("cannot be removed"));
     assert_eq!(fs::read(&actions).unwrap(), before_history);
@@ -221,7 +221,7 @@ fn cli_refuses_removing_the_last_retained_action() {
 }
 #[test]
 fn cli_retains_history_and_does_not_overwrite_on_break() {
-    let root = std::env::temp_dir().join(format!("ahead-compiler-cli-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("axton-compiler-cli-{}", std::process::id()));
     let input = root.join("input");
     let out = root.join("out");
     fs::create_dir_all(&input).unwrap();
@@ -232,7 +232,7 @@ fn cli_retains_history_and_does_not_overwrite_on_break() {
     )
     .unwrap();
     let compile = || {
-        Command::new(env!("CARGO_BIN_EXE_ahead"))
+        Command::new(env!("CARGO_BIN_EXE_axton"))
             .arg("compile")
             .arg(&input)
             .arg(&out)
@@ -293,7 +293,7 @@ fn cli_reads_the_superseded_history_location_and_writes_the_new_default() {
     )
     .unwrap();
     assert!(
-        ahead(&[input.as_os_str(), out.as_os_str()])
+        axton(&[input.as_os_str(), out.as_os_str()])
             .status
             .success()
     );
@@ -308,7 +308,7 @@ fn cli_reads_the_superseded_history_location_and_writes_the_new_default() {
         "model A { id UUID title String count Int @@id(id) } mutation Save { a A.create @@version(2) }",
     )
     .unwrap();
-    let moved = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let moved = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(moved.status.success());
     let notice = String::from_utf8_lossy(&moved.stderr);
     assert!(
@@ -336,10 +336,10 @@ fn cli_reads_the_superseded_history_location_and_writes_the_new_default() {
         "the old file is left in place, unchanged"
     );
     // A second run reads the new default and no longer reports a move.
-    let again = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let again = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(again.status.success());
     assert_eq!(String::from_utf8_lossy(&again.stderr), "");
-    let refused = ahead(&[
+    let refused = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--initialize-mutation-history".as_ref(),
@@ -358,7 +358,7 @@ fn cli_initializes_the_history_at_the_new_default_when_neither_location_exists()
         "model A { id UUID title String @@id(id) } mutation Save { a A.create }",
     )
     .unwrap();
-    let first = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let first = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(first.status.success());
     assert_eq!(String::from_utf8_lossy(&first.stderr), "");
     let history: serde_json::Value =
@@ -371,7 +371,7 @@ fn cli_initializes_the_history_at_the_new_default_when_neither_location_exists()
 }
 #[test]
 fn cli_writes_backend_ts_with_the_requested_runtime_import() {
-    let root = std::env::temp_dir().join(format!("ahead-compiler-backend-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("axton-compiler-backend-{}", std::process::id()));
     let input = root.join("input");
     let out = root.join("out");
     fs::create_dir_all(&input).unwrap();
@@ -380,7 +380,7 @@ fn cli_writes_backend_ts_with_the_requested_runtime_import() {
         "model A { id UUID title String @@id(id) } mutation Save { a A.create }",
     )
     .unwrap();
-    let status = Command::new(env!("CARGO_BIN_EXE_ahead"))
+    let status = Command::new(env!("CARGO_BIN_EXE_axton"))
         .arg("compile")
         .arg(&input)
         .arg(&out)
@@ -403,15 +403,15 @@ fn cli_writes_backend_ts_with_the_requested_runtime_import() {
 }
 
 fn workspace(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-    let root = std::env::temp_dir().join(format!("ahead-compiler-{tag}-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("axton-compiler-{tag}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let input = root.join("input");
     fs::create_dir_all(&input).unwrap();
     (root, input)
 }
 
-fn ahead(args: &[&std::ffi::OsStr]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ahead"))
+fn axton(args: &[&std::ffi::OsStr]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_axton"))
         .arg("compile")
         .args(args)
         .output()
@@ -432,7 +432,7 @@ fn cli_relocates_errors_into_the_file_that_declares_them() {
         "model Child {\n id UUID\n parent Parent @reference(via: [missing])\n @@id(id)\n}\n",
     )
     .unwrap();
-    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let rejected = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!rejected.status.success());
     let stderr = String::from_utf8_lossy(&rejected.stderr);
     assert!(
@@ -445,7 +445,7 @@ fn cli_relocates_errors_into_the_file_that_declares_them() {
         "model Child {\n id UUID\n @@id(id)\n}\nbogus Stuff {}\n",
     )
     .unwrap();
-    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let rejected = axton(&[input.as_os_str(), out.as_os_str()]);
     let stderr = String::from_utf8_lossy(&rejected.stderr);
     assert!(
         stderr.contains(&format!("{}:5:", input.join("b.model").display())),
@@ -468,12 +468,12 @@ fn cli_output_is_deterministic() {
     let first = root.join("first");
     let second = root.join("second");
     assert!(
-        ahead(&[input.as_os_str(), first.as_os_str()])
+        axton(&[input.as_os_str(), first.as_os_str()])
             .status
             .success()
     );
     assert!(
-        ahead(&[input.as_os_str(), second.as_os_str()])
+        axton(&[input.as_os_str(), second.as_os_str()])
             .status
             .success()
     );
@@ -491,7 +491,7 @@ fn cli_output_is_deterministic() {
         {
             fs::remove_file(input.join("history").join("models.json")).unwrap();
             assert!(
-                ahead(&[input.as_os_str(), first.as_os_str()])
+                axton(&[input.as_os_str(), first.as_os_str()])
                     .status
                     .success()
             );
@@ -519,7 +519,7 @@ fn cli_refuses_misuse_of_the_mutation_history() {
     )
     .unwrap();
     let history = root.join("history.json");
-    let missing = ahead(&[
+    let missing = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--mutation-history".as_ref(),
@@ -528,7 +528,7 @@ fn cli_refuses_misuse_of_the_mutation_history() {
     assert!(!missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stderr).contains("missing mutation history"));
     assert!(!out.exists(), "a refused compile must not write outputs");
-    let not_first = ahead(&[
+    let not_first = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--mutation-history".as_ref(),
@@ -543,7 +543,7 @@ fn cli_refuses_misuse_of_the_mutation_history() {
     )
     .unwrap();
     assert!(
-        ahead(&[
+        axton(&[
             input.as_os_str(),
             out.as_os_str(),
             "--mutation-history".as_ref(),
@@ -554,7 +554,7 @@ fn cli_refuses_misuse_of_the_mutation_history() {
         .success()
     );
     assert!(history.exists());
-    let again = ahead(&[
+    let again = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--mutation-history".as_ref(),
@@ -579,7 +579,7 @@ fn cli_retains_model_history_and_refuses_a_breaking_read_change_without_a_bump()
     )
     .unwrap();
     assert!(
-        ahead(&[input.as_os_str(), out.as_os_str()])
+        axton(&[input.as_os_str(), out.as_os_str()])
             .status
             .success()
     );
@@ -620,7 +620,7 @@ fn cli_retains_model_history_and_refuses_a_breaking_read_change_without_a_bump()
         "enum Status { open closed archived } model Task { id UUID title String note String? status Status @@id(id) } mutation Save { t Task.update<title> } mutation Rename { t Task.update<status> }",
     )
     .unwrap();
-    let refused = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let refused = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!refused.status.success());
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains("Task v1"), "{stderr}");
@@ -638,7 +638,7 @@ fn cli_retains_model_history_and_refuses_a_breaking_read_change_without_a_bump()
         "enum Status { open closed archived } model Task { id UUID title String status Status @@id(id) @@version(2) } mutation Save { t Task.update<title> } mutation Rename { t Task.update<status> }",
     )
     .unwrap();
-    let accepted = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let accepted = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
         accepted.status.success(),
         "{}",
@@ -690,7 +690,7 @@ fn cli_refuses_misuse_of_the_model_history() {
     )
     .unwrap();
     let history = root.join("models.json");
-    let missing = ahead(&[
+    let missing = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--model-history".as_ref(),
@@ -703,7 +703,7 @@ fn cli_refuses_misuse_of_the_model_history() {
         !input.join("history").exists(),
         "a refused compile must not write a history"
     );
-    let not_first = ahead(&[
+    let not_first = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--model-history".as_ref(),
@@ -717,7 +717,7 @@ fn cli_refuses_misuse_of_the_model_history() {
     );
     fs::write(input.join("test.model"), "model A { id UUID @@id(id) }").unwrap();
     assert!(
-        ahead(&[
+        axton(&[
             input.as_os_str(),
             out.as_os_str(),
             "--model-history".as_ref(),
@@ -736,7 +736,7 @@ fn cli_refuses_misuse_of_the_model_history() {
         input.join("history").join("mutations.json").exists(),
         "the mutation history keeps its default"
     );
-    let again = ahead(&[
+    let again = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--model-history".as_ref(),
@@ -754,7 +754,7 @@ fn cli_rejects_retained_action_identifier_collisions_before_writes() {
     let out = root.join("out");
     let model = input.join("test.model");
     fs::write(&model, "model Todo { id String @@id(id) } action Fetch()").unwrap();
-    let first = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let first = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
         first.status.success(),
         "{}",
@@ -770,7 +770,7 @@ fn cli_rejects_retained_action_identifier_collisions_before_writes() {
     ];
     let before: Vec<_> = files.iter().map(|path| fs::read(path).unwrap()).collect();
     fs::write(&model, "model Todo { id String @@id(id) } model FetchV1Input { id String @@id(id) } @version(2) action Fetch()").unwrap();
-    let second = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let second = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!second.status.success());
     let error = String::from_utf8_lossy(&second.stderr);
     assert!(
@@ -791,14 +791,14 @@ fn cli_disambiguates_retained_operand_helper() {
     let model = input.join("test.model");
     let v1 = "model Todo { id String title String @@id(id) } action Edit(todo Todo.update<title>)";
     fs::write(&model, v1).unwrap();
-    let first = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let first = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
         first.status.success(),
         "{}",
         String::from_utf8_lossy(&first.stderr)
     );
     fs::write(&model, v1.replace("action Edit", "@version(2) action Edit")).unwrap();
-    let second = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let second = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
         second.status.success(),
         "{}",
@@ -818,7 +818,7 @@ fn cli_rejects_collision_between_retained_and_new_action_symbols() {
     let model = input.join("test.model");
     fs::write(&model, "model Todo { id String @@id(id) } action Fetch()").unwrap();
     assert!(
-        ahead(&[input.as_os_str(), out.as_os_str()])
+        axton(&[input.as_os_str(), out.as_os_str()])
             .status
             .success()
     );
@@ -828,7 +828,7 @@ fn cli_rejects_collision_between_retained_and_new_action_symbols() {
         "model Todo { id String @@id(id) } @version(2) action Fetch() action FetchV1()",
     )
     .unwrap();
-    let refused = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let refused = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!refused.status.success());
     let error = String::from_utf8_lossy(&refused.stderr);
     assert!(
@@ -851,12 +851,12 @@ fn cli_rejects_retained_model_record_name_used_by_action_schema() {
     let model = input.join("test.model");
     fs::write(&model, "model Todo { id String @@id(id) } action Fetch()").unwrap();
     assert!(
-        ahead(&[input.as_os_str(), out.as_os_str()])
+        axton(&[input.as_os_str(), out.as_os_str()])
             .status
             .success()
     );
     fs::write(&model, "@version(2) model Todo { id String title String @@id(id) } model TodoV1 { id String @@id(id) } @version(2) action Fetch()").unwrap();
-    let refused = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let refused = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!refused.status.success());
     let error = String::from_utf8_lossy(&refused.stderr);
     assert!(
@@ -873,7 +873,7 @@ fn cli_rejects_retained_enum_name_matching_action_input_before_writes() {
     let model = input.join("test.model");
     let v1 = "enum Input { a b } model Todo { id String @@id(id) } action Fetch(value Input)";
     fs::write(&model, v1).unwrap();
-    let first = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let first = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
         first.status.success(),
         "{}",
@@ -891,7 +891,7 @@ fn cli_rejects_retained_enum_name_matching_action_input_before_writes() {
         v1.replace("action Fetch", "@version(2) action Fetch"),
     )
     .unwrap();
-    let refused = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let refused = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!refused.status.success());
     let error = String::from_utf8_lossy(&refused.stderr);
     assert!(
@@ -912,7 +912,7 @@ fn cli_reuses_retained_enum_across_action_members() {
     let model = input.join("test.model");
     let v1 = "enum Status { open closed } model Todo { id String @@id(id) } action Fetch(first Status, second Status) { firstStatus Status secondStatus Status }";
     fs::write(&model, v1).unwrap();
-    let first = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let first = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
         first.status.success(),
         "{}",
@@ -923,7 +923,7 @@ fn cli_reuses_retained_enum_across_action_members() {
         v1.replace("action Fetch", "@version(2) action Fetch"),
     )
     .unwrap();
-    let second = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let second = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
         second.status.success(),
         "{}",
@@ -943,7 +943,7 @@ fn cli_rejects_retained_enum_name_matching_handler_output() {
     let v1 = "enum HandlerOutput { a b } model Todo { id String @@id(id) } action Fetch(value HandlerOutput)";
     fs::write(&model, v1).unwrap();
     assert!(
-        ahead(&[input.as_os_str(), out.as_os_str()])
+        axton(&[input.as_os_str(), out.as_os_str()])
             .status
             .success()
     );
@@ -952,7 +952,7 @@ fn cli_rejects_retained_enum_name_matching_handler_output() {
         v1.replace("action Fetch", "@version(2) action Fetch"),
     )
     .unwrap();
-    let refused = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let refused = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!refused.status.success());
     let error = String::from_utf8_lossy(&refused.stderr);
     assert!(

@@ -3,7 +3,7 @@
 //! did ([Distribution](../../../docs/engineering/architecture/client/engine/distribution.md)).
 use crate::store::ClientStore;
 use crate::{ApplyReport, Client};
-use ahead_core::{PullPage, Result, invalid};
+use axton_core::{PullPage, Result, invalid};
 use std::collections::BTreeMap;
 
 impl<S: ClientStore> Client<S> {

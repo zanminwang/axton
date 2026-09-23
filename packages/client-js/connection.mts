@@ -156,7 +156,7 @@ export type ReportDetails = {
  * stamp, a `conflict` keeps the local content, a `diverged` mutation shows the
  * server's row and is still sent.
  */
-export class AheadReport extends Error {
+export class AxtonReport extends Error {
   readonly kind: ReportKind;
   readonly model: string;
   readonly identity: Record<string, unknown>;
@@ -170,7 +170,7 @@ export class AheadReport extends Error {
         (report.code ? ` (${report.code})` : "") +
         (report.ordinal !== undefined ? ` (mutation ${report.ordinal})` : ""),
     );
-    this.name = "AheadReport";
+    this.name = "AxtonReport";
     this.kind = report.kind;
     this.model = report.model;
     this.identity = report.identity;
@@ -301,7 +301,7 @@ export async function startLiveLane(
         return;
       case "report":
         for (const report of action.reports)
-          options.onError?.(new AheadReport(report));
+          options.onError?.(new AxtonReport(report));
         return;
       case "wait":
         clearTimer();

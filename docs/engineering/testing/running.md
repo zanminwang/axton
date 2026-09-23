@@ -28,10 +28,10 @@ For Dart tests, also install package dependencies and select the native library:
 ```sh
 (cd packages/dart && dart pub get)
 case "$(uname -s)" in
-  Darwin) export AHEAD_LIBRARY="$PWD/target/debug/libahead_dart.dylib" ;;
-  Linux) export AHEAD_LIBRARY="$PWD/target/debug/libahead_dart.so" ;;
+  Darwin) export AXTON_LIBRARY="$PWD/target/debug/libaxton_dart.dylib" ;;
+  Linux) export AXTON_LIBRARY="$PWD/target/debug/libaxton_dart.so" ;;
 esac
-export AHEAD_DART_LIBRARY="$AHEAD_LIBRARY"
+export AXTON_DART_LIBRARY="$AXTON_LIBRARY"
 (cd packages/dart && dart analyze && dart test)
 ```
 
@@ -48,5 +48,5 @@ The script builds artifacts, checks Rust formatting and linting, runs Rust and l
 Performance diagnostics are also separate from correctness tests:
 
 ```sh
-cargo run -p ahead-sim --example capacity --release
+cargo run -p axton-sim --example capacity --release
 ```

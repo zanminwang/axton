@@ -75,7 +75,7 @@ declare const client: ActionClientContract;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:ahead/ahead.dart';
+import 'package:axton/axton.dart';
 import '../../../integration/e2e/fixtures/round-trip/generated/generated.dart';
 late GeneratedClient client;
 late StreamSubscription<List<Entry>> subscription;
@@ -111,12 +111,12 @@ declare const publish: Publish;
                         '--exactOptionalPropertyTypes', '--skipLibCheck', '--target', 'ES2022',
                         '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
                         '--allowImportingTsExtensions', str(backend)], cwd=ROOT, check=True)
-    with tempfile.TemporaryDirectory(prefix='ahead-docs-schema-') as temp:
+    with tempfile.TemporaryDirectory(prefix='axton-docs-schema-') as temp:
         for i, (source, code) in enumerate(snippets('text', ['website/docs/schema/define.md'])):
             directory = Path(temp) / str(i)
             directory.mkdir()
             (directory / 'example.model').write_text(code)
-            subprocess.run([str(ROOT / 'target/debug/ahead'), 'compile', str(directory),
+            subprocess.run([str(ROOT / 'target/debug/axton'), 'compile', str(directory),
                             str(directory / 'generated')], cwd=ROOT, check=True)
             print(f'Compiled schema from {source}')
     print(f"Typechecked {len(snippets('ts')) + len(snippets('ts', BACKEND_SOURCES))} TypeScript, {len(snippets('ts', context='action'))} Action TypeScript and {len(snippets('dart'))} Dart documentation snippets.")

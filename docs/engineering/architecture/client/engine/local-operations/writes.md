@@ -48,10 +48,10 @@ Normalization of values and identities is shared with the server and the wire ([
 - **Deletes cascade to declared local children exactly once, including through cycles** (guarantee L5). Evidence: `schema_cascade_is_optimistic_same_fate_and_not_extra_wire_operations`, `direct_cascade_handles_cyclic_relationships_once`.
 - **Server truth lands beneath pending edits and they replay on top** (guarantee A1). Evidence: [sqlite/tests/downlink.rs](../../../../../../crates/sqlite/tests/downlink.rs) `newer_authority_lands_beneath_pending_edits_and_replays_them`.
 
-Verified 2026-09-14: `cargo test -p ahead-sim --locked` passed with the two L4 scenarios and the direct-write random run enabled; the earlier rows were read, not executed.
+Verified 2026-09-14: `cargo test -p axton-sim --locked` passed with the two L4 scenarios and the direct-write random run enabled; the earlier rows were read, not executed.
 
 ## 11. Risks and Technical Debt
 
-**Potential risk: a failed replay is silent.** *Condition:* a queued operation no longer applies to the current before image. *Consequence:* the visible row shows the before image while the mutation stays queued and will still be sent; nothing reports the divergence. *Evidence:* the `failed` branch of `rebuild`. No test covers it. **To confirm:** whether this case should be surfaced ([#122](https://github.com/zanminwang/ahead/issues/122), split out of #55).
+**Potential risk: a failed replay is silent.** *Condition:* a queued operation no longer applies to the current before image. *Consequence:* the visible row shows the before image while the mutation stays queued and will still be sent; nothing reports the divergence. *Evidence:* the `failed` branch of `rebuild`. No test covers it. **To confirm:** whether this case should be surfaced ([#122](https://github.com/zanminwang/axton/issues/122), split out of #55).
 
-**Potential risk: cost grows with queue length.** Extending queued deletes to new children re-scans the whole queue and recomputes descendants on every delivered record. Not measured; performance work is [#12](https://github.com/zanminwang/ahead/issues/12).
+**Potential risk: cost grows with queue length.** Extending queued deletes to new children re-scans the whole queue and recomputes descendants on every delivered record. Not measured; performance work is [#12](https://github.com/zanminwang/axton/issues/12).

@@ -3,8 +3,8 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 source "$root/scripts/env.sh"
 cd "$root"
-cargo test -p ahead-compiler
-cargo run -p ahead-compiler -- compile fixtures/compiler integration/generated-api --backend-runtime ../../packages/server/index.mts --client-runtime ../../packages/client-js/index.mts
+cargo test -p axton-compiler
+cargo run -p axton-compiler -- compile fixtures/compiler integration/generated-api --backend-runtime ../../packages/server/index.mts --client-runtime ../../packages/client-js/index.mts
 "$root/node_modules/.bin/tsc" -p integration/generated-api
 if "$root/node_modules/.bin/tsc" --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --allowImportingTsExtensions integration/generated-api/backend-missing.ts >/dev/null 2>&1; then
   echo 'A handlers object missing a mutation unexpectedly typechecked.' >&2

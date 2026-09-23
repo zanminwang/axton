@@ -1,5 +1,5 @@
 [package]
-name = "ahead-mobile"
+name = "axton-mobile"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -8,7 +8,7 @@ publish.workspace = true
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-ahead-binding = { path = "../common" }
+axton-binding = { path = "../common" }
 serde_json.workspace = true
 
 [dev-dependencies]

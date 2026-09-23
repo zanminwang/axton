@@ -43,10 +43,10 @@ Code: `Subscriptions`, `LiveEvent`, `LiveAction`, `decode_subscribe`, `negotiate
 - **Listeners are registered before the acknowledgement and every channel is pulled once from its head; commits on several channels share one pull and the frame names only what moved; a channel below its head continues and one at its head ends the drain; after close no event produces an action; an invalid page or an unknown channel is an error.** Evidence: [server/tests/live.rs](../../../../../crates/server/tests/live.rs) `open_registers_every_scope_before_the_acknowledgement_then_pulls_all_once_from_their_heads`, `commits_on_several_scopes_share_one_pull_and_the_frame_names_only_what_moved`, `a_channel_below_its_head_continues_and_one_at_its_head_ends_the_drain` (pure transitions, no host).
 - **A publication committed between the negotiation transaction and the acknowledgement arrives as a page on the same socket.** Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `a publication committed between negotiation and the acknowledgement is delivered by the first drain` (the negotiation result is held on a gate while a push commits; no listener exists yet, and the first drain delivers it after the acknowledgement).
 
-Executed 2026-09-16: `cargo test -p ahead-server --locked` and `bash integration/persistence/server/run.sh` with the multi-channel frames.
+Executed 2026-09-16: `cargo test -p axton-server --locked` and `bash integration/persistence/server/run.sh` with the multi-channel frames.
 
 ## 11. Risks and Technical Debt
 
-**Potential risk.** Every commit that touches a subscribed channel triggers one pull transaction per socket (several channels share it); there is no shared page cache. Not measured ([#12](https://github.com/zanminwang/ahead/issues/12)).
+**Potential risk.** Every commit that touches a subscribed channel triggers one pull transaction per socket (several channels share it); there is no shared page cache. Not measured ([#12](https://github.com/zanminwang/axton/issues/12)).
 
 **Accepted limitations.** Wakes are process-local ([Publish](../engine/publish.md)). Changing channels requires a new socket, and a subscribe may name any number of channels.

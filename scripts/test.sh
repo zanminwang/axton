@@ -9,11 +9,11 @@ cargo fmt --all --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 (cd integration/e2e/fixtures/round-trip && npm ci && npx prisma generate)
-cargo run -p ahead-compiler -- compile integration/e2e/fixtures/round-trip/models integration/e2e/fixtures/round-trip/generated --backend-runtime ../../../../../packages/server/index.mts --client-runtime ../../../../../packages/client-js/index.mts
+cargo run -p axton-compiler -- compile integration/e2e/fixtures/round-trip/models integration/e2e/fixtures/round-trip/generated --backend-runtime ../../../../../packages/server/index.mts --client-runtime ../../../../../packages/client-js/index.mts
 (cd examples/todo && npm ci && npx prisma generate)
 bash examples/todo/generate.sh
 npm run typecheck
-cargo run -p ahead-compiler --locked -- compile integration/action-contract integration/action-contract --backend-runtime ../../packages/server/index.mts --client-runtime ../../packages/client-js/index.mts
+cargo run -p axton-compiler --locked -- compile integration/action-contract integration/action-contract --backend-runtime ../../packages/server/index.mts --client-runtime ../../packages/client-js/index.mts
 "$root/node_modules/.bin/tsc" -p integration/action-contract
 dart pub get --directory integration/action-contract
 dart analyze integration/action-contract/generated.dart
@@ -27,11 +27,11 @@ node --test integration/bindings/client-react-native/*.test.mjs
 bash integration/persistence/transaction-probe/run.sh
 bash integration/persistence/server/run.sh
 case "$(uname -s)" in
- Darwin) export AHEAD_LIBRARY="$root/target/debug/libahead_dart.dylib";;
- Linux) export AHEAD_LIBRARY="$root/target/debug/libahead_dart.so";;
+ Darwin) export AXTON_LIBRARY="$root/target/debug/libaxton_dart.dylib";;
+ Linux) export AXTON_LIBRARY="$root/target/debug/libaxton_dart.so";;
  *) echo 'Use the documented platform-specific native library path on this host.' >&2; exit 1;;
 esac
-export AHEAD_DART_LIBRARY="$AHEAD_LIBRARY"
+export AXTON_DART_LIBRARY="$AXTON_LIBRARY"
 (cd packages/dart && dart pub get && dart analyze && dart test)
 bash integration/generated-api/verify.sh
 bash integration/e2e/run.sh

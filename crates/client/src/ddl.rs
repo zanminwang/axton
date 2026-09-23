@@ -1,38 +1,38 @@
 //! The tables are the schema record. Reconciliation makes them match the compiled schema or fails.
 use crate::store::ClientStore;
-use ahead_core::{
+use axton_core::{
     FieldDescriptor, ModelDescriptor, Result, ScalarType, Schema, ValueType, invalid,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub const FRAMEWORK_TABLES: &[&str] = &[
-    "ahead_schema",
-    "ahead_client",
-    "ahead_record",
-    "ahead_subscription",
-    "ahead_mutation",
-    "ahead_mutation_operation",
-    "ahead_mutation_dependency",
-    "ahead_mutation_prerequisite",
-    "ahead_rejection",
+    "axton_schema",
+    "axton_client",
+    "axton_record",
+    "axton_subscription",
+    "axton_mutation",
+    "axton_mutation_operation",
+    "axton_mutation_dependency",
+    "axton_mutation_prerequisite",
+    "axton_rejection",
 ];
 
 /// Framework tables an earlier layout kept and this one cannot open in place:
 /// channel claims owned records and push checkpoints settled batches, both
-/// replaced by receipt completion ([#55](https://github.com/zanminwang/ahead/issues/55)).
-pub const LEGACY_TABLES: &[&str] = &["ahead_claim", "ahead_push_checkpoint"];
+/// replaced by receipt completion ([#55](https://github.com/zanminwang/axton/issues/55)).
+pub const LEGACY_TABLES: &[&str] = &["axton_claim", "axton_push_checkpoint"];
 
-/// `ahead_client` columns this layout requires beyond the original ones. A
+/// `axton_client` columns this layout requires beyond the original ones. A
 /// database created before they existed holds pending work under the old
 /// contract; it is rebuilt beside, never converted or wiped.
 const CLIENT_COLUMNS: &[&str] = &["last_completed_push", "push_models"];
 /// Framework columns added after a layout shipped, with their definitions.
 /// A database without one gets it in place: its queue stays sendable.
 /// `diverged` marks a queued mutation whose replay failed over new authority
-/// ([#122](https://github.com/zanminwang/ahead/issues/122)).
+/// ([#122](https://github.com/zanminwang/axton/issues/122)).
 const ADDED_COLUMNS: &[(&str, &str, &str)] =
-    &[("ahead_mutation", "diverged", "INTEGER NOT NULL DEFAULT 0")];
+    &[("axton_mutation", "diverged", "INTEGER NOT NULL DEFAULT 0")];
 
 /// Add every framework column in [`ADDED_COLUMNS`] a table still lacks.
 pub fn add_framework_columns<S: ClientStore>(store: &mut S) -> Result<()> {
@@ -48,10 +48,10 @@ pub fn add_framework_columns<S: ClientStore>(store: &mut S) -> Result<()> {
 }
 
 pub const FRAMEWORK_DDL: &str = "
-CREATE TABLE IF NOT EXISTS ahead_schema (
+CREATE TABLE IF NOT EXISTS axton_schema (
   descriptor TEXT NOT NULL, created_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS ahead_client (
+CREATE TABLE IF NOT EXISTS axton_client (
   client_id    TEXT PRIMARY KEY,
   next_ordinal INTEGER NOT NULL,
   next_push    INTEGER NOT NULL,
@@ -59,19 +59,19 @@ CREATE TABLE IF NOT EXISTS ahead_client (
   last_completed_push INTEGER NOT NULL DEFAULT 0,
   push_models  TEXT
 );
-CREATE TABLE IF NOT EXISTS ahead_record (
+CREATE TABLE IF NOT EXISTS axton_record (
   model TEXT NOT NULL, identity TEXT NOT NULL, stamp INTEGER NOT NULL,
   PRIMARY KEY (model, identity)
 );
-CREATE TABLE IF NOT EXISTS ahead_subscription (
+CREATE TABLE IF NOT EXISTS axton_subscription (
   channel TEXT PRIMARY KEY, cursor INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS ahead_mutation (
+CREATE TABLE IF NOT EXISTS axton_mutation (
   ordinal INTEGER PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL, push INTEGER,
   diverged INTEGER NOT NULL DEFAULT 0
 );
-CREATE TABLE IF NOT EXISTS ahead_mutation_operation (
-  ordinal INTEGER NOT NULL REFERENCES ahead_mutation(ordinal) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS axton_mutation_operation (
+  ordinal INTEGER NOT NULL REFERENCES axton_mutation(ordinal) ON DELETE CASCADE,
   position INTEGER NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('wire','companion','effect')),
   model TEXT NOT NULL, identity TEXT NOT NULL,
@@ -79,20 +79,20 @@ CREATE TABLE IF NOT EXISTS ahead_mutation_operation (
   \"values\" TEXT,
   PRIMARY KEY (ordinal, position)
 );
-CREATE INDEX IF NOT EXISTS ahead_mutation_operation_record ON ahead_mutation_operation (model, identity, ordinal, position);
-CREATE TABLE IF NOT EXISTS ahead_mutation_dependency (
-  ordinal INTEGER NOT NULL REFERENCES ahead_mutation(ordinal) ON DELETE CASCADE,
-  depends_on INTEGER NOT NULL REFERENCES ahead_mutation(ordinal) ON DELETE CASCADE,
+CREATE INDEX IF NOT EXISTS axton_mutation_operation_record ON axton_mutation_operation (model, identity, ordinal, position);
+CREATE TABLE IF NOT EXISTS axton_mutation_dependency (
+  ordinal INTEGER NOT NULL REFERENCES axton_mutation(ordinal) ON DELETE CASCADE,
+  depends_on INTEGER NOT NULL REFERENCES axton_mutation(ordinal) ON DELETE CASCADE,
   kind TEXT NOT NULL CHECK (kind IN ('lifecycle','sequence')),
   PRIMARY KEY (ordinal, depends_on),
   CHECK (depends_on < ordinal)
 );
-CREATE TABLE IF NOT EXISTS ahead_mutation_prerequisite (
-  ordinal INTEGER NOT NULL REFERENCES ahead_mutation(ordinal) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS axton_mutation_prerequisite (
+  ordinal INTEGER NOT NULL REFERENCES axton_mutation(ordinal) ON DELETE CASCADE,
   key TEXT NOT NULL, error TEXT,
   PRIMARY KEY (ordinal, key)
 );
-CREATE TABLE IF NOT EXISTS ahead_rejection (
+CREATE TABLE IF NOT EXISTS axton_rejection (
   ordinal INTEGER PRIMARY KEY, name TEXT NOT NULL, code TEXT NOT NULL, detail TEXT
 );
 ";
@@ -105,7 +105,7 @@ pub enum Layout {
     /// This runtime's layout.
     Current,
     /// An earlier runtime's layout (channel claims, push checkpoints, or an
-    /// `ahead_client` without this layout's columns): only a rebuild can use
+    /// `axton_client` without this layout's columns): only a rebuild can use
     /// the file ([Reconciliation](../../../docs/engineering/architecture/client/storage/reconciliation.md)).
     Legacy(String),
 }
@@ -114,7 +114,7 @@ pub enum Layout {
 /// exactly as found, pending work included.
 pub fn check_layout<S: ClientStore>(store: &mut S) -> Result<Layout> {
     let tables = store.query_committed(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'ahead\\_%' ESCAPE '\\'",
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'axton\\_%' ESCAPE '\\'",
         &[],
     )?;
     let names: Vec<String> = tables
@@ -127,13 +127,13 @@ pub fn check_layout<S: ClientStore>(store: &mut S) -> Result<Layout> {
             return Ok(Layout::Legacy(format!("table {table}")));
         }
     }
-    if !names.iter().any(|n| n == "ahead_client") {
+    if !names.iter().any(|n| n == "axton_client") {
         return Ok(Layout::Fresh);
     }
-    let columns = store.query_committed("PRAGMA table_info(ahead_client)", &[])?;
+    let columns = store.query_committed("PRAGMA table_info(axton_client)", &[])?;
     for column in CLIENT_COLUMNS {
         if !columns.rows.iter().any(|r| r[1].as_str() == Some(column)) {
-            return Ok(Layout::Legacy(format!("ahead_client lacks {column}")));
+            return Ok(Layout::Legacy(format!("axton_client lacks {column}")));
         }
     }
     Ok(Layout::Current)
@@ -144,7 +144,7 @@ pub fn quote(name: &str) -> String {
 }
 
 pub fn before_table(model: &str) -> String {
-    format!("ahead_before_{model}")
+    format!("axton_before_{model}")
 }
 
 pub fn storage_type(value_type: &ValueType) -> &'static str {

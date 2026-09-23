@@ -3,9 +3,9 @@
 //! arrival and no channel is awaited. Each test asserts the visible records,
 //! the pending work and the retained stamp evidence.
 //!
-//! [#55]: https://github.com/zanminwang/ahead/issues/55
+//! [#55]: https://github.com/zanminwang/axton/issues/55
 mod common;
-use ahead_client::*;
+use axton_client::*;
 use common::*;
 use serde_json::json;
 
@@ -22,7 +22,7 @@ fn create_entry() -> Mutation {
 }
 
 /// Everything complete: no queue, no before image, no rejection.
-fn assert_quiet(c: &mut Client<ahead_sqlite::SqliteStore>) {
+fn assert_quiet(c: &mut Client<axton_sqlite::SqliteStore>) {
     assert_eq!(c.pending_count().unwrap(), 0, "nothing pending");
     assert_eq!(c.before_image_count().unwrap(), 0, "no base is retained");
     assert!(
@@ -224,7 +224,7 @@ fn later_unsent_edit_replays_over_the_returned_authority() {
     assert_eq!(c.pending_count().unwrap(), 1);
     assert_eq!(c.before_image_count().unwrap(), 1, "the base is kept");
     assert_eq!(
-        c.read_sql("SELECT text FROM ahead_before_Entry", &[])
+        c.read_sql("SELECT text FROM axton_before_Entry", &[])
             .unwrap(),
         vec![json!({"text":"SERVER B"})],
         "the base is the server's result"
@@ -549,7 +549,7 @@ fn frozen_batch_and_its_declaration_survive_restart_until_completed() {
     c.acknowledge(1, r).unwrap();
     assert_quiet(&mut c);
     assert_eq!(
-        c.read_sql("SELECT push_models FROM ahead_client", &[])
+        c.read_sql("SELECT push_models FROM axton_client", &[])
             .unwrap()[0]["push_models"],
         serde_json::Value::Null,
         "the frozen declaration is released with the batch"
@@ -577,7 +577,7 @@ fn repeated_record_in_one_batch_completes_from_one_final_result() {
     assert_quiet(&mut c);
 }
 
-/// Divergence ([#122](https://github.com/zanminwang/ahead/issues/122)): new
+/// Divergence ([#122](https://github.com/zanminwang/axton/issues/122)): new
 /// authority under which a queued operation no longer replays. The server's
 /// row stays visible, the mutation stays queued and is still sent, the
 /// application is told, and `record_status` marks the mutation until it

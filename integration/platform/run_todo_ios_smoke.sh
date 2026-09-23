@@ -5,9 +5,9 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$root/scripts/env.sh"
 app_dir="$root/examples/todo/mobile"
-bundle_id="dev.ahead.Todo"
-app_bundle="${AHEAD_TODO_APP_BUNDLE:-$app_dir/ios/build/Build/Products/Release-iphonesimulator/AheadTodo.app}"
-run_dir="$(mktemp -d "${TMPDIR:-/tmp}/ahead-todo-smoke.XXXXXX")"
+bundle_id="dev.axton.Todo"
+app_bundle="${AXTON_TODO_APP_BUNDLE:-$app_dir/ios/build/Build/Products/Release-iphonesimulator/AXTONTodo.app}"
+run_dir="$(mktemp -d "${TMPDIR:-/tmp}/axton-todo-smoke.XXXXXX")"
 backend_pid=""
 created_devices=()
 alice="${1:-}"
@@ -23,13 +23,13 @@ cleanup() {
   echo "Runtime evidence: $run_dir"
 }
 trap cleanup EXIT
-if [[ ! -d "$app_bundle" ]]; then echo "Build the Release simulator app first (npm run ios:build in examples/todo/mobile); set AHEAD_TODO_APP_BUNDLE to its .app path." >&2; exit 1; fi
+if [[ ! -d "$app_bundle" ]]; then echo "Build the Release simulator app first (npm run ios:build in examples/todo/mobile); set AXTON_TODO_APP_BUNDLE to its .app path." >&2; exit 1; fi
 if [[ -z "$alice" && -z "$bob" ]]; then
   # Default to the newest installed iOS runtime and the first iPhone device type it supports.
-  runtime="${AHEAD_TODO_SIM_RUNTIME:-$(xcrun simctl list runtimes -j | python3 -c 'import json,sys;r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"]];r.sort(key=lambda x:[int(p) for p in x["version"].split(".")]);print(r[-1]["identifier"])')}"
-  kind="${AHEAD_TODO_SIM_DEVICE:-$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys;print(next(x["identifier"] for x in json.load(sys.stdin)["devicetypes"] if x["identifier"].startswith("com.apple.CoreSimulator.SimDeviceType.iPhone-")))')}"
-  alice="$(xcrun simctl create "Ahead Todo Alice $$" "$kind" "$runtime")";created_devices+=("$alice")
-  bob="$(xcrun simctl create "Ahead Todo Bob $$" "$kind" "$runtime")";created_devices+=("$bob")
+  runtime="${AXTON_TODO_SIM_RUNTIME:-$(xcrun simctl list runtimes -j | python3 -c 'import json,sys;r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"]];r.sort(key=lambda x:[int(p) for p in x["version"].split(".")]);print(r[-1]["identifier"])')}"
+  kind="${AXTON_TODO_SIM_DEVICE:-$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys;print(next(x["identifier"] for x in json.load(sys.stdin)["devicetypes"] if x["identifier"].startswith("com.apple.CoreSimulator.SimDeviceType.iPhone-")))')}"
+  alice="$(xcrun simctl create "AXTON Todo Alice $$" "$kind" "$runtime")";created_devices+=("$alice")
+  bob="$(xcrun simctl create "AXTON Todo Bob $$" "$kind" "$runtime")";created_devices+=("$bob")
 fi
 [[ -n "$alice" && -n "$bob" && "$alice" != "$bob" ]] || { echo 'Supply two different simulator UDIDs, or neither.' >&2;exit 1; }
 # Only a fresh install is accepted; never erase existing caller data.
@@ -46,15 +46,15 @@ port="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));prin
 initdb -D "$run_dir/pg" -A trust --no-locale -E UTF8 >/dev/null
 pg_ctl -D "$run_dir/pg" -l "$run_dir/pg.log" -o "-p $port -h 127.0.0.1 -k $run_dir" start >/dev/null
 export DATABASE_URL="postgresql://$(id -un)@127.0.0.1:$port/postgres"
-export AHEAD_SMOKE_PORTS="$run_dir/ports.json"
+export AXTON_SMOKE_PORTS="$run_dir/ports.json"
 node "$root/integration/platform/todo-ios/server.mts" >"$run_dir/backend.log" 2>&1 & backend_pid="$!"
-for _ in $(seq 1 60); do [[ -f "$AHEAD_SMOKE_PORTS" ]] && break;sleep 1;done
-[[ -f "$AHEAD_SMOKE_PORTS" ]] || { cat "$run_dir/backend.log";exit 1; }
-control="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["control"])' "$AHEAD_SMOKE_PORTS")"
+for _ in $(seq 1 60); do [[ -f "$AXTON_SMOKE_PORTS" ]] && break;sleep 1;done
+[[ -f "$AXTON_SMOKE_PORTS" ]] || { cat "$run_dir/backend.log";exit 1; }
+control="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["control"])' "$AXTON_SMOKE_PORTS")"
 launch_phase() {
   local device="$1" data="$2" user="$3" phase="$4"
   xcrun simctl terminate "$device" "$bundle_id" >/dev/null 2>&1 || true
-  python3 - "$data" "$user" "$phase" "$AHEAD_SMOKE_PORTS" <<'PYCONF'
+  python3 - "$data" "$user" "$phase" "$AXTON_SMOKE_PORTS" <<'PYCONF'
 import json,sys
 from pathlib import Path
 folder,user,phase,ports=sys.argv[1:]

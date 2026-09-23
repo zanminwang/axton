@@ -137,7 +137,7 @@ impl Parser {
             .take()
             .parse::<u64>()
             .map_err(|_| self.err("expected positive version"))?;
-        if version == 0 || version > ahead_core::MAX_SAFE_INTEGER {
+        if version == 0 || version > axton_core::MAX_SAFE_INTEGER {
             return Err(self.err("version must be positive"));
         }
         self.need(")")?;

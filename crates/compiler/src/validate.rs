@@ -23,7 +23,7 @@ pub struct Validated {
     pub mutations: Vec<Mutation>,
     pub actions: Vec<Action>,
     /// Every `@deprecated`, in source order. A generated-code notice only
-    /// ([#91](https://github.com/zanminwang/ahead/issues/91)): Generate keeps
+    /// ([#91](https://github.com/zanminwang/axton/issues/91)): Generate keeps
     /// it beside the descriptors, never inside them, so no runtime reads it.
     pub deprecations: Vec<Deprecation>,
 }
@@ -512,11 +512,11 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
         }
     }
     for m in &d.models {
-        if ahead_core::reserved_model_name(&m.name) {
+        if axton_core::reserved_model_name(&m.name) {
             return Err(at(
                 m.pos,
                 format!(
-                    "model name {} uses a reserved prefix (ahead_, sqlite_)",
+                    "model name {} uses a reserved prefix (axton_, sqlite_)",
                     m.name
                 ),
             ));
@@ -1164,7 +1164,7 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
     // Backstop: core validates the client descriptor Generate renders. Rules
     // reachable from source are checked above with a location; anything left
     // reports the end of the input.
-    ahead_core::Schema::from_value(crate::generate::schema(&validated))
+    axton_core::Schema::from_value(crate::generate::schema(&validated))
         .map_err(|e| at(eof, e.to_string()))?;
     let mut seen = BTreeSet::new();
     for (m, decl) in validated.mutations.iter().zip(&d.mutations) {
@@ -1201,7 +1201,7 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
         // slot order and a non-single slot takes what it can. A later slot of
         // the same kind, with no single slot fixing a position in between, is
         // unreachable or takes an operation meant for the earlier one
-        // ([#54](https://github.com/zanminwang/ahead/issues/54)).
+        // ([#54](https://github.com/zanminwang/axton/issues/54)).
         for j in 1..m.slots.len() {
             let later = &m.slots[j];
             for i in (0..j).rev() {

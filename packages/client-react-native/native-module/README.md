@@ -1,11 +1,11 @@
-# `@ahead/native`
+# `@axton/native`
 
-Reusable iOS Expo module for Ahead's Rust client carrier.
+Reusable iOS Expo module for AXTON's Rust client carrier.
 
-The Expo module is named `AheadNative` and exposes:
+The Expo module is named `AxtonNative` and exposes:
 
 ```ts
-interface AheadNativeModule {
+interface AxtonNativeModule {
   clientCall(request: string): Promise<string>;
   databasePath(name: string): Promise<string>;
 }

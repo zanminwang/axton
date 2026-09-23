@@ -399,7 +399,7 @@ fn compatible(old: &Value, new: &Value) -> Result<bool, String> {
     Ok(true)
 }
 /// Preserve every published model read contract, independently of mutation
-/// history and of today's storage schema ([#91](https://github.com/zanminwang/ahead/issues/91)).
+/// history and of today's storage schema ([#91](https://github.com/zanminwang/axton/issues/91)).
 ///
 /// A snapshot is `{name, version, identity, fields, enums}`: the record
 /// structure a loader of that version returns, with the definitions of the

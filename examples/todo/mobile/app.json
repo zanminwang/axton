@@ -1,14 +1,14 @@
 {
   "expo": {
-    "name": "Ahead To-do",
-    "slug": "ahead-todo",
+    "name": "AXTON To-do",
+    "slug": "axton-todo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "dev.ahead.Todo",
+      "bundleIdentifier": "dev.axton.Todo",
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true

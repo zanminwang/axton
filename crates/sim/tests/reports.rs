@@ -1,7 +1,7 @@
 //! Pulls on the simulation: one request for every channel, and records that
 //! cannot be read or applied fail alone and are reported (#95, #51, #122).
-use ahead_client::ReportKind;
-use ahead_sim::{Action, MutationSpec, Sim, schema::entry_key};
+use axton_client::ReportKind;
+use axton_sim::{Action, MutationSpec, Sim, schema::entry_key};
 
 fn subscribe(sim: &mut Sim, client: usize, channels: &[&str]) {
     for c in channels {

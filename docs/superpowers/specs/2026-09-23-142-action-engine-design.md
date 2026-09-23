@@ -1,6 +1,6 @@
 # Durable and request-response Action execution — design (#142)
 
-Status: implementation design under review. Depends on the completed #145 and #141 branches. Issue: https://github.com/zanminwang/axton/issues/142.
+Status: reviewed implementation design. Depends on the completed #145 and #141 branches. Issue: https://github.com/zanminwang/axton/issues/142.
 
 ## Goal and boundaries
 

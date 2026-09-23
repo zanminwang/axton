@@ -174,6 +174,130 @@ impl Parser {
         }
         Ok(n)
     }
+    fn action_shape(&mut self) -> Result<(bool, bool), String> {
+        let list = if self.eat("[") {
+            self.need("]")?;
+            true
+        } else {
+            false
+        };
+        let nullable = self.eat("?");
+        if self.peek() == "[" {
+            return Err(self.err(if nullable {
+                "nullable list elements are unsupported"
+            } else {
+                "nested lists are unsupported"
+            }));
+        }
+        if list && nullable {
+            return Err(self.err("nullable lists are unsupported"));
+        }
+        Ok((list, nullable))
+    }
+    fn field(&mut self, action: bool) -> Result<FieldDecl, String> {
+        let pos = self.pos();
+        let name = self.ident()?;
+        let type_name = self.ident()?;
+        self.field_after_header(name, type_name, pos, action)
+    }
+    fn field_after_header(
+        &mut self,
+        name: String,
+        type_name: String,
+        pos: Pos,
+        action: bool,
+    ) -> Result<FieldDecl, String> {
+        let (list, nullable) = if action {
+            self.action_shape()?
+        } else {
+            let list = if self.eat("[") {
+                self.need("]")?;
+                true
+            } else {
+                false
+            };
+            (list, self.eat("?"))
+        };
+        let mut attributes = Map::new();
+        let mut deprecated = None;
+        while self.peek() == "@" && self.tokens.get(self.i + 1).is_some_and(|t| t.text != "@") {
+            self.need("@")?;
+            let attr = self.ident()?;
+            if attr == "deprecated" {
+                if deprecated.is_some() {
+                    return Err(self.err("duplicate field directive"));
+                }
+                deprecated = Some(self.deprecation()?);
+                continue;
+            }
+            if !["reference", "inverse", "requires"].contains(&attr.as_str()) {
+                return Err(self.err(format!("unsupported field directive {attr}")));
+            }
+            let args = self.arguments()?;
+            if attributes.insert(attr, args).is_some() {
+                return Err(self.err("duplicate field directive"));
+            }
+        }
+        Ok(FieldDecl {
+            name,
+            type_name,
+            list,
+            nullable,
+            attributes,
+            deprecated,
+            pos,
+        })
+    }
+    fn slot(&mut self, name: String, model: String, pos: Pos) -> Result<SlotDecl, String> {
+        self.need(".")?;
+        let operation = self.ident()?;
+        if !["create", "update", "delete"].contains(&operation.as_str()) {
+            return Err(self.err("unknown operation"));
+        }
+        let allowed_patch_fields = if self.eat("<") {
+            if operation != "update" {
+                return Err(self.err("field restriction requires update"));
+            }
+            Some(self.names(">")?)
+        } else {
+            None
+        };
+        let relation_bindings = if self.peek() == "(" {
+            self.arguments()?
+        } else {
+            json!({})
+        };
+        let (list, nullable) = self.action_shape()?;
+        let cardinality = if list {
+            "list"
+        } else if nullable {
+            "optional"
+        } else {
+            "single"
+        };
+        let mut deprecated = None;
+        while self.peek() == "@" && self.tokens.get(self.i + 1).is_some_and(|t| t.text != "@") {
+            self.need("@")?;
+            let attr = self.ident()?;
+            if attr != "deprecated" {
+                return Err(self.err(format!("unsupported slot directive {attr}")));
+            }
+            if deprecated.is_some() {
+                return Err(self.err("duplicate deprecated"));
+            }
+            deprecated = Some(self.deprecation()?);
+        }
+        Ok(SlotDecl {
+            name,
+            model,
+            operation,
+            cardinality: cardinality.into(),
+            allowed_patch_fields,
+            relation_bindings,
+            deprecated,
+            pos,
+        })
+    }
 }
 fn lex(s: &str) -> Result<Vec<Token>, String> {
     let chars: Vec<_> = s.chars().collect();
@@ -250,6 +374,7 @@ pub struct Declarations {
     pub enums: Vec<EnumDecl>,
     pub models: Vec<ModelDecl>,
     pub mutations: Vec<MutationDecl>,
+    pub actions: Vec<ActionDecl>,
     pub prerequisites: Vec<PrerequisiteDecl>,
     /// Position of the end of input, for diagnostics that have no declaration.
     pub end: Pos,
@@ -298,6 +423,24 @@ pub struct MutationDecl {
     pub pos: Pos,
 }
 #[derive(Clone, Debug, PartialEq)]
+pub struct ActionDecl {
+    pub name: String,
+    pub version: u64,
+    pub inputs: Vec<ActionInputDecl>,
+    pub outputs: Vec<ActionOutputDecl>,
+    pub sequence: Option<SequenceDecl>,
+    pub pos: Pos,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum ActionInputDecl {
+    Value(FieldDecl),
+    Model(SlotDecl),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActionOutputDecl {
+    pub field: FieldDecl,
+}
+#[derive(Clone, Debug, PartialEq)]
 pub struct SequenceDecl {
     pub arguments: Value,
     pub pos: Pos,
@@ -337,9 +480,85 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
     };
     let mut d = Declarations::default();
     while p.peek() != "<eof>" {
+        let (mut leading_version, mut leading_version_seen) = (1, false);
+        let mut leading_sequence = None;
+        while p.peek() == "@" {
+            let directive_pos = p.pos();
+            p.need("@")?;
+            let attr = p.ident()?;
+            match attr.as_str() {
+                "version" => leading_version = p.version(&mut leading_version_seen)?,
+                "sequence" => {
+                    if leading_sequence.is_some() {
+                        return Err(p.err("duplicate sequence"));
+                    }
+                    leading_sequence = Some(SequenceDecl {
+                        arguments: p.arguments()?,
+                        pos: directive_pos,
+                    });
+                }
+                _ => return Err(p.err(format!("unsupported declaration directive {attr}"))),
+            }
+        }
+        if p.peek() == "<eof>" && (leading_version_seen || leading_sequence.is_some()) {
+            return Err(p.err("expected declaration after directive"));
+        }
         let pos = p.pos();
         let kind = p.take();
         let name = p.ident()?;
+        if (leading_version_seen || leading_sequence.is_some())
+            && kind != "action"
+            && kind != "model"
+        {
+            return Err(p.err(format!("declaration directives are unsupported on {kind}")));
+        }
+        if kind == "model" && leading_sequence.is_some() {
+            return Err(p.err("sequence requires action"));
+        }
+        if kind == "action" {
+            p.need("(")?;
+            let mut inputs = vec![];
+            while !p.eat(")") {
+                let input_pos = p.pos();
+                let input_name = p.ident()?;
+                let input_type = p.ident()?;
+                let input = if p.peek() == "." {
+                    ActionInputDecl::Model(p.slot(input_name, input_type, input_pos)?)
+                } else {
+                    ActionInputDecl::Value(
+                        p.field_after_header(input_name, input_type, input_pos, true)?,
+                    )
+                };
+                inputs.push(input);
+                if p.peek() == "<eof>" {
+                    return Err(p.err("expected )"));
+                }
+                if p.peek() != ")" {
+                    p.need(",")?;
+                }
+            }
+            let mut outputs = vec![];
+            if p.eat("{") {
+                while !p.eat("}") {
+                    if p.peek() == "<eof>" {
+                        return Err(p.err("expected }"));
+                    }
+                    outputs.push(ActionOutputDecl {
+                        field: p.field(true)?,
+                    });
+                    p.eat(",");
+                }
+            }
+            d.actions.push(ActionDecl {
+                name,
+                version: leading_version,
+                inputs,
+                outputs,
+                sequence: leading_sequence,
+                pos,
+            });
+            continue;
+        }
         if kind == "prerequisite" {
             p.need("(")?;
             let mut fields = vec![];
@@ -390,7 +609,7 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
             }
             "model" => {
                 let (mut fields, mut identity, mut unique) = (vec![], vec![], vec![]);
-                let (mut version, mut version_seen) = (1, false);
+                let (mut version, mut version_seen) = (leading_version, leading_version_seen);
                 while !p.eat("}") {
                     let directive_pos = p.pos();
                     if p.eat("@") {
@@ -417,44 +636,7 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
                         }
                         continue;
                     }
-                    let field = p.ident()?;
-                    let type_name = p.ident()?;
-                    let list = if p.eat("[") {
-                        p.need("]")?;
-                        true
-                    } else {
-                        false
-                    };
-                    let nullable = p.eat("?");
-                    let mut attributes = Map::new();
-                    let mut deprecated = None;
-                    while p.peek() == "@" && p.tokens.get(p.i + 1).is_some_and(|t| t.text != "@") {
-                        p.need("@")?;
-                        let attr = p.ident()?;
-                        if attr == "deprecated" {
-                            if deprecated.is_some() {
-                                return Err(p.err("duplicate field directive"));
-                            }
-                            deprecated = Some(p.deprecation()?);
-                            continue;
-                        }
-                        if !["reference", "inverse", "requires"].contains(&attr.as_str()) {
-                            return Err(p.err(format!("unsupported field directive {attr}")));
-                        }
-                        let args = p.arguments()?;
-                        if attributes.insert(attr, args).is_some() {
-                            return Err(p.err("duplicate field directive"));
-                        }
-                    }
-                    fields.push(FieldDecl {
-                        name: field,
-                        type_name,
-                        list,
-                        nullable,
-                        attributes,
-                        deprecated,
-                        pos: directive_pos,
-                    });
+                    fields.push(p.field(false)?);
                 }
                 d.models.push(ModelDecl {
                     name,

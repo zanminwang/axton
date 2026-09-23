@@ -8,9 +8,9 @@ Use this index to find the interface you call or implement. The examples use the
 | --- | --- | --- |
 | `GeneratedClient.open` | Open a local database and optionally start background sync | [Generated client](frontend/client-api.md#open-a-client) |
 | `client.models.<model>` | Read, query, watch and follow relations in local data | [Model APIs](frontend/client-api.md#model-apis) |
-| `client.transaction` | Commit local writes and queued mutations together | [Transactions](frontend/client-api.md#transactions) |
+| `client.transaction` | Commit local reads and direct writes together | [Transactions](frontend/client-api.md#transactions) |
 | `tx.models.<model>` | Create, update or delete local-only records | [Local-only writes](frontend/client-api.md#local-only-writes) |
-| `tx.mutate.<mutation>` | Apply a declared local change and queue its backend operation | [Mutations](frontend/client-api.md#mutations) |
+| `client.mutate.<mutation>` | Apply a declared local change and queue its backend operation atomically | [Mutations](frontend/client-api.md#mutations) |
 | `client.channels` | Subscribe or unsubscribe to a named channel | [Channels](frontend/client-api.md#channels) |
 | `client.connection` | Pause, resume or wake background sync | [Connections](frontend/runtime.md#connection-controls) |
 | `client.status`, `client.close` | Inspect pending work and release resources | [Status and lifecycle](frontend/client-api.md#status-and-lifecycle) |

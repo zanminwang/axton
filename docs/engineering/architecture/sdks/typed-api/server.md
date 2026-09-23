@@ -43,7 +43,7 @@ loaders: {
 }
 ```
 
-Handlers receive generated input types for their mutation version; loaders return generated record types for their independent [model version](../../schema/models.md#9-architecture-decisions). Registration keys use `v1`, `v2`; wire versions remain numbers. Shorthand always means v1, never the latest version. Client calls remain `tx.mutate.edit(...)`, with their generated version fixed in the request.
+Handlers receive generated input types for their mutation version; loaders return generated record types for their independent [model version](../../schema/models.md#9-architecture-decisions). Registration keys use `v1`, `v2`; wire versions remain numbers. Shorthand always means v1, never the latest version. Client calls use `client.mutate.edit(...)`, with their generated version fixed in the request.
 
 Handler registration implements this decision. Generated `Handlers<Tx>` holds one key per mutation, `lowerFirst(name)`, whose value carries a `v<n>` member for every retained version; a mutation retaining only v1 also accepts the bare function. The runtime refuses at startup: a bare function whenever the retained versions are not exactly v1, a missing version, an unknown `v<n>` key and a non-function value, each naming the mutation and version. Dispatch stays keyed by name and version, so a request never falls back to another version.
 

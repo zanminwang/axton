@@ -1,5 +1,6 @@
 import type {Handlers,Loaders,EntryV1} from './backend.ts';
 import type {GeneratedClient} from './client.ts';
+import type {Transaction as RawTransaction} from '../../packages/client-js/index.mts';
 import {CreateEntry,EditEntry,RemoveEntries,decodeEntry,encodeEntry,EntryModel,EntryLiveModel,GeneratedTransaction,Mutate,type Entry,type ReadPort,type LivePort,type WritePort,type MutationName,type SyncState} from './generated.ts';
 const row:Entry={id:'123e4567-e89b-42d3-a456-426614174000',title:'hello',note:null,at:new Date('2026-01-01T00:00:00Z'),tags:['x'],status:'active'};
 function check(v:unknown,m:string){if(!v)throw Error(m)}
@@ -29,9 +30,18 @@ if(false){
  const unknown:SyncState['pending'][number]={ordinal:1,name:'NoSuchMutation',phase:'queued',prerequisites:[]};
  // Mutations run outside a transaction through any port that can enqueue one.
  const direct:Promise<number>=new Mutate({async mutate(){return 1}}).editEntry({entry:{identity:{id:row.id},values:{note:null}}});
- const writes:WritePort={...reads,async mutate(){return 1},async direct(){}};
+ const writes:WritePort={...reads,async direct(){}};
  // @ts-expect-error watch is not available inside a transaction
  new GeneratedTransaction(writes).models.entry.watch({},()=>{});
+ // @ts-expect-error named mutations are unavailable in local transactions
+ new GeneratedTransaction(writes).mutate;
+ // @ts-expect-error actions are unavailable in local transactions
+ new GeneratedTransaction(writes).actions;
+ const rawTx={} as RawTransaction;
+ // @ts-expect-error raw transactions cannot enqueue named mutations
+ rawTx.mutate;
+ // @ts-expect-error raw transactions have no action namespace
+ rawTx.actions;
 
  // @ts-expect-error identity is immutable in patch
  EditEntry({entry:{identity:{id:row.id},values:{id:'bad'}}});
@@ -80,8 +90,8 @@ if(false){
  // @ts-expect-error the v1 contract has no tags
  const extra:EntryV1={...v1Row,tags:[]};
 }
-const tx=new GeneratedTransaction({...reads,async mutate(m){check(JSON.stringify(m)===JSON.stringify(create),'forwarding');return 1},async direct(op){check(JSON.stringify(op)===JSON.stringify({model:'Entry',op:'delete',identity:{id:row.id}}),'local write');}});
-async function main(){check((await tx.models.entry.get({id:row.id}))?.at instanceof Date,'read decode');check((await tx.models.entry.query()).length===1,'query facade');check(await tx.mutate.createEntry({entry:row})===1,'mutate facade');await tx.models.entry.delete({id:row.id});}
+const tx=new GeneratedTransaction({...reads,async direct(op){check(JSON.stringify(op)===JSON.stringify({model:'Entry',op:'delete',identity:{id:row.id}}),'local write');}});
+async function main(){check((await tx.models.entry.get({id:row.id}))?.at instanceof Date,'read decode');check((await tx.models.entry.query()).length===1,'query facade');check(await new Mutate({async mutate(m){check(JSON.stringify(m)===JSON.stringify(create),'forwarding');return 1}}).createEntry({entry:row})===1,'mutate facade');await tx.models.entry.delete({id:row.id});}
 main();
 // The generated client carries the schema check and the rebuild call.
 type Rebuilt=Awaited<ReturnType<GeneratedClient['rebuild']>>;

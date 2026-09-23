@@ -22,20 +22,16 @@ void main(){
   final temp=await Directory.systemTemp.createTemp('generated-api-');
   final client=await GeneratedClient.open(path:'${temp.path}/state.sqlite',libraryPath:Platform.environment['AHEAD_DART_LIBRARY'] ?? '../../target/debug/libahead_dart.dylib');
   try{
-   expect(await client.transaction((tx)=>tx.mutate.createEntry(entry:row)),1);
+   expect(await client.mutate.createEntry(entry:row),1);
    expect((await client.models.entry.get(const EntryIdentity(id:id)))?.title,'hello');
-   await client.transaction((tx)async{
-    await tx.mutate.editEntry(entry:const EditEntryEntryUpdate(identity:EntryIdentity(id:id),note:Present('changed')));
-    await tx.mutate.editEntry(entry:const EditEntryEntryUpdate(identity:EntryIdentity(id:id),note:Present(null)));
-    expect((await tx.models.entry.get(const EntryIdentity(id:id)))?.note,isNull);
-   });
+   await client.mutate.editEntry(entry:const EditEntryEntryUpdate(identity:EntryIdentity(id:id),note:Present('changed')));
+   await client.mutate.editEntry(entry:const EditEntryEntryUpdate(identity:EntryIdentity(id:id),note:Present(null)));
+   expect((await client.models.entry.get(const EntryIdentity(id:id)))?.note,isNull,reason:'independent mutations apply locally in order');
    final loaded=(await client.models.entry.query()).single;
    expect(loaded.note,isNull);expect(loaded.title,'hello');expect(loaded.at,row.at);
    expect((await client.models.entry.query(where:EntryFilter(at:Present(DateTime.parse('2026-01-01T01:00:00+01:00')),note:const Present(null)),orderBy:const [EntryOrder(EntryOrderField.byTitle,descending:true)],limit:1)).length,1);
-   await client.transaction((tx)async{
-    await tx.mutate.addBook(book:const Book(id:'b',title:'Book'));
-    await tx.mutate.addComment(comment:const Comment(id:'c',bookId:'b',text:'Comment'));
-   });
+   await client.mutate.addBook(book:const Book(id:'b',title:'Book'));
+   await client.mutate.addComment(comment:const Comment(id:'c',bookId:'b',text:'Comment'));
    expect((await client.models.comment.book(const CommentIdentity(id:'c')))?.id,'b');
    expect((await client.models.book.comments(const BookIdentity(id:'b'))).length,1);
    await client.transaction((tx)async{

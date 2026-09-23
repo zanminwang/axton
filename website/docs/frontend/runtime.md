@@ -96,16 +96,14 @@ TypeScript's `readSql` takes an optional positional second argument; Dart uses n
 
     ```ts
     await client.transaction(async tx => {
-      await tx.mutate.edit({
-        entry: { identity: { id: 'entry-1' }, values: { text: 'Draft' } },
-      });
+      await tx.models.entry.update({ id: 'entry-1' }, { text: 'Draft' });
       try {
         await (tx.transaction as Transaction).savepoint(async () => {
           await tx.models.entry.update({ id: 'entry-1' }, { note: 'Temporary' });
           throw new Error('Discard this note');
         });
       } catch {
-        // The note rolls back; the earlier edit can still commit.
+        // The note rolls back; the earlier local update can still commit.
       }
     });
     ```
@@ -114,10 +112,9 @@ TypeScript's `readSql` takes an optional positional second argument; Dart uses n
 
     ```dart
     await client.transaction((tx) async {
-      await tx.mutate.edit(
-        entry: const EditEntryUpdate(
-          identity: EntryIdentity(id: 'entry-1'), text: Present('Draft'),
-        ),
+      await tx.models.entry.update(
+        const EntryIdentity(id: 'entry-1'),
+        const EntryPatch(text: Present('Draft')),
       );
       try {
         await tx.transaction.savepoint(() async {
@@ -128,12 +125,12 @@ TypeScript's `readSql` takes an optional positional second argument; Dart uses n
           throw StateError('Discard this note');
         });
       } catch (_) {
-        // The note rolls back; the earlier edit can still commit.
+        // The note rolls back; the earlier local update can still commit.
       }
     });
     ```
 
-Await every call and nested callback. Savepoints must be properly nested, not run concurrently. An escaped transaction, unfinished operation or overlapping savepoint fails. Inside the transaction use `tx` reads; an outer `client` read can wait behind the current transaction.
+Await every call and nested callback. Savepoints must be properly nested, not run concurrently. An escaped transaction, unfinished operation or overlapping savepoint fails. Inside the transaction use `tx` reads; an outer `client` read can wait behind the current transaction. A captured `client.mutate` call fails promptly with `transaction_active`.
 
 ## Server connection
 

@@ -98,8 +98,8 @@ async function scenario(body) {
  }
 }
 
-const addTodo = (client, todo) => client.transaction(tx => tx.mutate.addTodo({ todo }));
-const setDone = (client, id, done) => client.transaction(tx => tx.mutate.setTodoDone({ todo: { identity: { id }, values: { done } } }));
+const addTodo = (client, todo) => client.mutate.addTodo({ todo });
+const setDone = (client, id, done) => client.mutate.setTodoDone({ todo: { identity: { id }, values: { done } } });
 
 test('seeds reach both participants and survive a restart without resetting edits', async () => {
  await scenario(async ctx => {

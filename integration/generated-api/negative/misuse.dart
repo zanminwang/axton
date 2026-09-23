@@ -13,16 +13,22 @@ void misuse(GeneratedClient client, GeneratedTransaction tx, Entry row) {
   client.models.entry.query(where: const EntryFilter(at: Present('2026-01-01')));
   // watch is not available inside a transaction
   tx.models.entry.watch();
+  // generated transactions expose neither named mutations nor actions
+  tx.mutate;
+  tx.actions;
+  // raw transactions expose neither named mutations nor actions
+  tx.transaction.mutate;
+  tx.transaction.actions;
   // identity is immutable in patch
-  tx.mutate.editEntry(entry: EditEntryEntryUpdate(identity: EntryIdentity(id: row.id), id: 'bad'));
+  client.mutate.editEntry(entry: EditEntryEntryUpdate(identity: EntryIdentity(id: row.id), id: 'bad'));
   // mutation forbids tags
-  tx.mutate.editEntry(entry: EditEntryEntryUpdate(identity: EntryIdentity(id: row.id), tags: const Present(['x'])));
+  client.mutate.editEntry(entry: EditEntryEntryUpdate(identity: EntryIdentity(id: row.id), tags: const Present(['x'])));
   // nonnullable title
-  tx.mutate.editEntry(entry: EditEntryEntryUpdate(identity: EntryIdentity(id: row.id), title: const Present(null)));
+  client.mutate.editEntry(entry: EditEntryEntryUpdate(identity: EntryIdentity(id: row.id), title: const Present(null)));
   // enum typo
   final Entry bad = Entry(id: row.id, title: row.title, note: row.note, at: row.at, tags: row.tags, status: Status.typo);
   // deprecated enum value, field and slot are reported with their reasons
   final Status old = Status.archived;
   final int? index = const Counter(id: 'c', index: 1).index;
-  tx.mutate.removeEntries(entries: const [], maybe: EntryIdentity(id: row.id));
+  client.mutate.removeEntries(entries: const [], maybe: EntryIdentity(id: row.id));
 }

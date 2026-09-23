@@ -17,8 +17,12 @@ export class Transaction {
   constructor(send: (request: RecordValue) => Promise<any>) {
     this.#send = send;
   }
-  runCallback<T>(body: () => Promise<T>): Promise<T> {
-    return this.#publicContext.run(this.#publicToken, body);
+  async runCallback<T>(body: () => Promise<T>): Promise<T> {
+    try {
+      return await this.#publicContext.run(this.#publicToken, body);
+    } finally {
+      this.#publicContext.disable();
+    }
   }
   inCallback(): boolean {
     return this.#publicContext.getStore() === this.#publicToken;

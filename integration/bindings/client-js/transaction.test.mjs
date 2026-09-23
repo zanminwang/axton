@@ -1,6 +1,38 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {Transaction,strictJson} from '../../../packages/client-js/transaction.mts';
+test('public callback context is disabled only after settlement, including rejection and finish failure',async()=>{
+ const originalRun=AsyncLocalStorage.prototype.run;
+ const originalDisable=AsyncLocalStorage.prototype.disable;
+ const ran=[];const disabled=[];
+ AsyncLocalStorage.prototype.run=function(...args){ran.push(this);return originalRun.apply(this,args);};
+ AsyncLocalStorage.prototype.disable=function(...args){disabled.push(this);return originalDisable.apply(this,args);};
+ try {
+  for(const outcome of ['success','rejection','finish failure']){
+   const tx=new Transaction(async()=>{throw Error('finish failed');});
+   let release,entered;const gate=new Promise(resolve=>{release=resolve;});const started=new Promise(resolve=>{entered=resolve;});
+   const callback=tx.runCallback(async()=>{assert.equal(tx.inCallback(),true);entered();await gate;assert.equal(tx.inCallback(),true);if(outcome==='rejection')throw Error('callback failed');return 'done';});
+   await started;
+   const context=ran.at(-1);
+   assert.ok(context);
+   assert.equal(tx.inCallback(),false);
+   assert.equal(disabled.includes(context),false);
+   release();
+   if(outcome==='rejection')await assert.rejects(callback,/callback failed/);
+   else assert.equal(await callback,'done');
+   assert.equal(disabled.filter(store=>store===context).length,1);
+   if(outcome==='finish failure'){
+    await assert.rejects(tx.direct({}),/finish failed/);
+    await assert.rejects(tx.finish(),/finish failed/);
+   }else await tx.finish();
+   assert.equal(disabled.filter(store=>store===context).length,1);
+  }
+ }finally{
+  AsyncLocalStorage.prototype.run=originalRun;
+  AsyncLocalStorage.prototype.disable=originalDisable;
+ }
+});
 test('raw transactions do not expose named mutation enqueue',()=>{
  const tx=new Transaction(async()=>{});
  assert.equal('mutate' in tx,false);

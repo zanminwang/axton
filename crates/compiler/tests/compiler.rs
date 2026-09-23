@@ -903,3 +903,76 @@ action Rename(child Child.update<title>)
     assert_eq!(snapshot["prerequisites"][0]["name"], "Uploaded");
     assert_eq!(snapshot["sequence"], action["sequence"]);
 }
+
+#[test]
+fn action_typescript_emits_flattened_operands_and_separate_client_contract() {
+    let v = compile("model Todo { id String title String @@id(id) } action AddTodo(todo Todo.create, patch Todo.update<title>?, gone Todo.delete[], label String?) { related Todo? matches Todo[] count Int }").unwrap();
+    let ts = ahead_compiler::typescript(&v);
+    assert!(ts.contains("export type TodoCreate = Todo;"), "{ts}");
+    assert!(ts.contains("export type TodoUpdate<K extends keyof TodoPatch = keyof TodoPatch> = TodoIdentity & Partial<Pick<TodoPatch, K>>;"), "{ts}");
+    assert!(
+        ts.contains("export type TodoDelete = TodoIdentity;"),
+        "{ts}"
+    );
+    assert!(ts.contains("export interface AddTodoInput"), "{ts}");
+    assert!(ts.contains("label: string | null;"), "{ts}");
+    assert!(ts.contains("export interface ActionCall<T>"), "{ts}");
+    assert!(ts.contains("export interface ActionClientContract"), "{ts}");
+    assert!(
+        ts.contains("addTodo(args: AddTodoInput): Promise<ActionCall<AddTodoOutput>>"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("addTodo(args: AddTodoInput): Promise<AddTodoOutput>"),
+        "{ts}"
+    );
+    assert!(!ts.contains("class GeneratedClient {"), "{ts}");
+}
+
+#[test]
+fn action_backend_emits_versioned_handler_identity_contracts_without_factory() {
+    let v = compile("model Todo { id String title String @@id(id) } action AddTodo(todo Todo.create) { relatedTodo Todo? }").unwrap();
+    let mut retained = v.clone();
+    let mut old = retained["actions"][0].clone();
+    old["outputs"].as_array_mut().unwrap().pop();
+    old["input"] = serde_json::json!({"models": [v["schema"]["models"][0].clone()], "enums": []});
+    old["outputEnums"] = serde_json::json!([]);
+    let mut current = v["actions"][0].clone();
+    current["version"] = serde_json::json!(2);
+    retained["actions"] = serde_json::json!([old, current]);
+    let ts = ahead_compiler::backend_typescript(&retained, "@ahead/server");
+    assert!(
+        ts.contains("export type AddTodoV1HandlerOutput = void;"),
+        "{ts}"
+    );
+    assert!(ts.contains("export interface AddTodoHandlerOutput"), "{ts}");
+    assert!(ts.contains("relatedTodo: TodoIdentity | null;"), "{ts}");
+    assert!(
+        ts.contains(
+            "v1(call: ActionHandlerCall<Ctx, AddTodoV1Input>): Promise<AddTodoV1HandlerOutput>"
+        ),
+        "{ts}"
+    );
+    assert!(
+        ts.contains(
+            "v2(call: ActionHandlerCall<Ctx, AddTodoInput>): Promise<AddTodoHandlerOutput>"
+        ),
+        "{ts}"
+    );
+    assert!(!ts.contains("export function createBackend"), "{ts}");
+}
+
+#[test]
+fn mixed_action_and_legacy_backend_keeps_handler_context_in_scope() {
+    let v = compile("model Todo { id String @@id(id) } mutation Legacy { todo Todo.delete } action New(todo Todo.delete)").unwrap();
+    let ts = ahead_compiler::backend_typescript(&v, "@ahead/server");
+    assert!(
+        ts.contains("legacy: { v1(call: HandlerCall<Ctx, LegacyInput>)"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("new: { v1(call: ActionHandlerCall<Ctx, NewInput>)"),
+        "{ts}"
+    );
+    assert!(!ts.contains("export function createBackend"), "{ts}");
+}

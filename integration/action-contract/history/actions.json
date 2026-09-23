@@ -1,0 +1,586 @@
+{
+  "actions": {
+    "AddTodo": {
+      "1": {
+        "input": {
+          "enums": [
+            {
+              "name": "Status",
+              "values": [
+                "open",
+                "closed"
+              ]
+            },
+            {
+              "name": "Status",
+              "values": [
+                "open",
+                "closed"
+              ]
+            }
+          ],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "title",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "state",
+                  "nullable": false,
+                  "type": {
+                    "kind": "enum",
+                    "name": "Status"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Todo"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Todo",
+            "name": "todo",
+            "operation": "create"
+          },
+          {
+            "allowedPatchFields": [
+              "title"
+            ],
+            "cardinality": "optional",
+            "kind": "model",
+            "model": "Todo",
+            "name": "patch",
+            "operation": "update"
+          },
+          {
+            "cardinality": "list",
+            "kind": "model",
+            "model": "Todo",
+            "name": "gone",
+            "operation": "delete"
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "status",
+            "nullable": true,
+            "required": true,
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          },
+          {
+            "cardinality": "list",
+            "kind": "value",
+            "list": true,
+            "name": "tags",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "name": "AddTodo",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "todo",
+            "source": {
+              "inputIdentity": "todo"
+            }
+          },
+          {
+            "cardinality": "optional",
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "patch",
+            "source": {
+              "inputIdentity": "patch"
+            }
+          },
+          {
+            "cardinality": "list",
+            "kind": "deleteIdentity",
+            "model": "Todo",
+            "name": "gone",
+            "source": {
+              "inputIdentity": "gone"
+            }
+          },
+          {
+            "cardinality": "optional",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "relatedTodo",
+            "source": "handlerIdentity"
+          },
+          {
+            "cardinality": "list",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "matches",
+            "source": "handlerIdentity"
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "count",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "int"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      },
+      "2": {
+        "input": {
+          "enums": [
+            {
+              "name": "Status",
+              "values": [
+                "open",
+                "closed",
+                "archived"
+              ]
+            },
+            {
+              "name": "Status",
+              "values": [
+                "open",
+                "closed",
+                "archived"
+              ]
+            }
+          ],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "title",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "state",
+                  "nullable": false,
+                  "type": {
+                    "kind": "enum",
+                    "name": "Status"
+                  }
+                },
+                {
+                  "name": "note",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Todo"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Todo",
+            "name": "todo",
+            "operation": "create"
+          },
+          {
+            "allowedPatchFields": [
+              "title"
+            ],
+            "cardinality": "optional",
+            "kind": "model",
+            "model": "Todo",
+            "name": "patch",
+            "operation": "update"
+          },
+          {
+            "cardinality": "list",
+            "kind": "model",
+            "model": "Todo",
+            "name": "gone",
+            "operation": "delete"
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "status",
+            "nullable": true,
+            "required": true,
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          },
+          {
+            "cardinality": "list",
+            "kind": "value",
+            "list": true,
+            "name": "tags",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "name": "AddTodo",
+        "outputEnums": [
+          {
+            "name": "Status",
+            "values": [
+              "open",
+              "closed",
+              "archived"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 2,
+            "name": "todo",
+            "source": {
+              "inputIdentity": "todo"
+            }
+          },
+          {
+            "cardinality": "optional",
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 2,
+            "name": "patch",
+            "source": {
+              "inputIdentity": "patch"
+            }
+          },
+          {
+            "cardinality": "list",
+            "kind": "deleteIdentity",
+            "model": "Todo",
+            "name": "gone",
+            "source": {
+              "inputIdentity": "gone"
+            }
+          },
+          {
+            "cardinality": "optional",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 2,
+            "name": "relatedTodo",
+            "source": "handlerIdentity"
+          },
+          {
+            "cardinality": "list",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 2,
+            "name": "matches",
+            "source": "handlerIdentity"
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "count",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "int"
+            }
+          },
+          {
+            "cardinality": "optional",
+            "kind": "value",
+            "name": "state",
+            "source": "handlerValue",
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 2
+      }
+    },
+    "Link": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "tenantId",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "title",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "tenantId",
+                "id"
+              ],
+              "name": "Project"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Project",
+            "name": "project",
+            "operation": "create"
+          }
+        ],
+        "name": "Link",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Project",
+            "modelReadVersion": 1,
+            "name": "project",
+            "source": {
+              "inputIdentity": "project"
+            }
+          },
+          {
+            "cardinality": "optional",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "tenantId",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Project"
+            },
+            "kind": "model",
+            "model": "Project",
+            "modelReadVersion": 1,
+            "name": "relatedProject",
+            "source": "handlerIdentity"
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      }
+    },
+    "Ping": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [],
+        "name": "Ping",
+        "outputEnums": [],
+        "outputs": [],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      }
+    },
+    "RemoveTodo": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Todo"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Todo",
+            "name": "todo",
+            "operation": "delete"
+          }
+        ],
+        "name": "RemoveTodo",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "deleteIdentity",
+            "model": "Todo",
+            "name": "todo",
+            "source": {
+              "inputIdentity": "todo"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      }
+    }
+  },
+  "formatVersion": 1
+}

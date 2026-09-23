@@ -1,0 +1,137 @@
+{
+  "formatVersion": 1,
+  "models": {
+    "Project": {
+      "1": {
+        "enums": [],
+        "fields": [
+          {
+            "name": "tenantId",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "tenantId",
+          "id"
+        ],
+        "name": "Project",
+        "version": 1
+      }
+    },
+    "Todo": {
+      "1": {
+        "enums": [
+          {
+            "name": "Status",
+            "values": [
+              "open",
+              "closed"
+            ]
+          }
+        ],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "state",
+            "nullable": false,
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Todo",
+        "version": 1
+      },
+      "2": {
+        "enums": [
+          {
+            "name": "Status",
+            "values": [
+              "open",
+              "closed",
+              "archived"
+            ]
+          }
+        ],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "state",
+            "nullable": false,
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          },
+          {
+            "name": "note",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Todo",
+        "version": 2
+      }
+    }
+  }
+}

@@ -335,6 +335,12 @@ fn validate_action_slot(
     inputs: &[ActionInputDecl],
     models: &[Model],
 ) -> Result<Slot, String> {
+    if s.deprecated.is_some() {
+        return Err(at(
+            s.pos,
+            format!("unsupported @deprecated on Action Model operand {}", s.name),
+        ));
+    }
     let model = models.iter().find(|m| m.name == s.model).ok_or_else(|| {
         at(
             s.pos,
@@ -1034,10 +1040,16 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
             .ok_or_else(|| at(qpos, "sequence after must be list"))?;
         let mut calls = vec![];
         for call in after {
+            let target_name = call["name"].as_str().unwrap_or_default();
             let target = actions
                 .iter()
-                .find(|a| call["name"].as_str() == Some(a.name.as_str()))
-                .ok_or_else(|| at(qpos, format!("unknown sequence Action on {}", decl.name)))?;
+                .find(|a| a.name == target_name)
+                .ok_or_else(|| {
+                    at(
+                        qpos,
+                        format!("unknown sequence Action {target_name} on {}", decl.name),
+                    )
+                })?;
             let args = call["arguments"]
                 .as_object()
                 .ok_or_else(|| at(qpos, "sequence requires invocation"))?;

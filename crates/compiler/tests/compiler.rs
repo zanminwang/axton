@@ -86,6 +86,98 @@ fn action_model_operands_imply_bound_outputs() {
 }
 
 #[test]
+fn action_model_operand_deprecation_is_rejected_at_the_operand() {
+    let source = "model Todo { id String @@id(id) }\naction Edit(todo Todo.update @deprecated(reason: \"use other\"))";
+    let err = validate(&parse(source).unwrap()).unwrap_err();
+    assert!(err.starts_with("2:"), "{err}");
+    assert!(err.contains("todo") && err.contains("deprecated"), "{err}");
+}
+
+#[test]
+fn action_void_and_explicit_model_outputs_keep_their_shapes() {
+    let schema = parse("model Todo { id String @@id(id) @@version(3) } action Void() action Load() { one Todo maybe Todo? many Todo[] }").unwrap();
+    let valid = validate(&schema).unwrap();
+    assert!(valid.actions[0].outputs.is_empty());
+    let outputs = &valid.actions[1].outputs;
+    assert_eq!(
+        outputs.iter().map(|x| x.cardinality).collect::<Vec<_>>(),
+        [
+            Cardinality::Single,
+            Cardinality::Optional,
+            Cardinality::List
+        ]
+    );
+    assert!(
+        outputs
+            .iter()
+            .all(|x| x.ty == ActionOutputType::Model("Todo".into())
+                && x.source == ActionOutputSource::HandlerModelIdentity
+                && x.model_read_version == Some(3))
+    );
+}
+
+#[test]
+fn action_model_operations_keep_each_operand_cardinality() {
+    for operation in ["create", "update", "delete"] {
+        for (suffix, expected) in [
+            ("", Cardinality::Single),
+            ("?", Cardinality::Optional),
+            ("[]", Cardinality::List),
+        ] {
+            let source = format!(
+                "model Todo {{ id String title String @@id(id) }} action Do(todo Todo.{operation}{suffix})"
+            );
+            let valid = validate(&parse(&source).unwrap()).unwrap();
+            let action = &valid.actions[0];
+            let ActionInput::Model { slot } = &action.inputs[0] else {
+                panic!("expected Model operand")
+            };
+            assert_eq!(slot.cardinality, expected, "{source}");
+            assert_eq!(action.outputs[0].cardinality, expected, "{source}");
+            assert_eq!(
+                action.outputs[0].source,
+                ActionOutputSource::InputIdentity {
+                    input: "todo".into()
+                },
+                "{source}"
+            );
+            assert_eq!(
+                action.outputs[0].ty,
+                if operation == "delete" {
+                    ActionOutputType::DeleteIdentity("Todo".into())
+                } else {
+                    ActionOutputType::Model("Todo".into())
+                },
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn action_sequence_can_match_all_prior_instances_or_a_list_target() {
+    let source = "model Todo { id String @@id(id) } @sequence(after: [Prior()]) action Any(todo Todo.update) @sequence(after: [Prior(todos: todo)]) action One(todo Todo.update) action Prior(todos Todo.create[])";
+    let valid = validate(&parse(source).unwrap()).unwrap();
+    assert!(
+        valid.actions[0].sequence.as_ref().unwrap().after[0]
+            .bindings
+            .is_empty()
+    );
+    assert_eq!(
+        valid.actions[1].sequence.as_ref().unwrap().after[0].bindings[0].path,
+        ["todo"]
+    );
+}
+
+#[test]
+fn action_sequence_unknown_target_names_the_target() {
+    let source = "model Todo { id String @@id(id) }\n@sequence(after: [Missing()]) action Later(todo Todo.create)";
+    let err = validate(&parse(source).unwrap()).unwrap_err();
+    assert!(err.starts_with("2:"), "{err}");
+    assert!(err.contains("Missing"), "{err}");
+}
+
+#[test]
 fn action_semantic_errors_name_the_member_and_location() {
     for (source, name) in [
         ("action Search(query Object)", "Object"),

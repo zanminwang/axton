@@ -39,7 +39,11 @@ async function clientContract(client: ActionClientContract) {
   const removed = await client.actions.call.removeTodo({ todo: { id: 't' } });
   const removedId: string = removed.todo.id;
   const noOutput: PingOutput = await client.actions.call.ping({});
-  void [status, final, removedId, noOutput];
+  await client.actions.call.deleteTodo({ todo: deletion });
+  await client.actions.sendEmail({ to: 'team@example.test', subject: 'Todo', body: 'Created' });
+  const selected = await client.actions.call.getTodos({});
+  const rows: readonly { id: string }[] = selected.todos;
+  void [status, final, removedId, noOutput, rows];
 }
 
 type Ctx = { db: unknown };
@@ -51,6 +55,9 @@ const handlers: Handlers<Ctx> = {
   ping: { async v1({ ctx, args }) { void ctx.db; void args; } },
   removeTodo: { async v1({ args }) { void args.todo.id; } },
   search: { async v1({ args }) { void args.query; } },
+  deleteTodo: { async v1({ args }) { void args.todo.id; } },
+  sendEmail: { async v1({ args }) { void args.to; void args.subject; void args.body; } },
+  getTodos: { async v1() { return { todos: [{ id: 't' }] }; } },
 };
 const loaders: Loaders<Ctx> = {
   todo: { async v1() { return []; }, async v2() { return []; } },

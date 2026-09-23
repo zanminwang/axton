@@ -960,6 +960,8 @@ fn action_backend_emits_versioned_handler_identity_contracts_without_factory() {
         "{ts}"
     );
     assert!(!ts.contains("export function createBackend"), "{ts}");
+    assert!(!ts.contains("createRuntimeBackend"), "{ts}");
+    assert!(!ts.contains("BackendOptions"), "{ts}");
 }
 
 #[test]

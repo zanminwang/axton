@@ -237,6 +237,26 @@ class AddTodoHandlerOutput {
  final Status? state;
  const AddTodoHandlerOutput({required this.relatedTodo,required this.matches,required this.count,required this.state});
 }
+class DeleteTodoInput {
+ final TodoDelete todo;
+ const DeleteTodoInput({required this.todo});
+}
+class DeleteTodoOutput {
+ final TodoIdentity todo;
+ const DeleteTodoOutput({required this.todo});
+}
+typedef DeleteTodoHandlerOutput = void;
+class GetTodosInput {
+ const GetTodosInput();
+}
+class GetTodosOutput {
+ final List<Todo> todos;
+ const GetTodosOutput({required this.todos});
+}
+class GetTodosHandlerOutput {
+ final List<TodoIdentity> todos;
+ const GetTodosHandlerOutput({required this.todos});
+}
 class LinkInput {
  final ProjectCreate project;
  const LinkInput({required this.project});
@@ -270,6 +290,14 @@ class SearchInput {
 }
 typedef SearchOutput = void;
 typedef SearchHandlerOutput = void;
+class SendEmailInput {
+ final String to;
+ final String subject;
+ final String body;
+ const SendEmailInput({required this.to,required this.subject,required this.body});
+}
+typedef SendEmailOutput = void;
+typedef SendEmailHandlerOutput = void;
 abstract interface class ActionTxModels {
  ActionTodoModel get todo;
  ActionProjectModel get project;
@@ -302,29 +330,44 @@ abstract interface class ActionTransactionContract { ActionTxModels get models; 
 abstract interface class ActionClientContract { ActionModels get models; Future<T> transaction<T>(Future<T> Function(ActionTransactionContract tx) body); ActionActionsContract get actions; }
 abstract interface class ActionActionsContract { ActionDirectCallsContract get call;
  Future<ActionCall<AddTodoOutput>> addTodo({required TodoCreate todo, AddTodoPatchUpdate? patch, required List<TodoDelete> gone, required Status? status, required List<String> tags});
+ Future<ActionCall<DeleteTodoOutput>> deleteTodo({required TodoDelete todo});
+ Future<ActionCall<GetTodosOutput>> getTodos();
  Future<ActionCall<LinkOutput>> link({required ProjectCreate project});
  Future<ActionCall<PingOutput>> ping();
  Future<ActionCall<RemoveTodoOutput>> removeTodo({required TodoDelete todo});
  Future<ActionCall<SearchOutput>> search({required String? query});
+ Future<ActionCall<SendEmailOutput>> sendEmail({required String to, required String subject, required String body});
 }
 abstract interface class ActionDirectCallsContract {
  Future<AddTodoOutput> addTodo({required TodoCreate todo, AddTodoPatchUpdate? patch, required List<TodoDelete> gone, required Status? status, required List<String> tags});
+ Future<DeleteTodoOutput> deleteTodo({required TodoDelete todo});
+ Future<GetTodosOutput> getTodos();
  Future<LinkOutput> link({required ProjectCreate project});
  Future<PingOutput> ping();
  Future<RemoveTodoOutput> removeTodo({required TodoDelete todo});
  Future<SearchOutput> search({required String? query});
+ Future<SendEmailOutput> sendEmail({required String to, required String subject, required String body});
 }
 abstract interface class ActionHandlerCall<Ctx, Args> { Ctx get ctx; Args get args; }
 abstract interface class ActionHandlers<Ctx> {
  ActionAddTodoHandlers<Ctx> get addTodo;
+ ActionDeleteTodoHandlers<Ctx> get deleteTodo;
+ ActionGetTodosHandlers<Ctx> get getTodos;
  ActionLinkHandlers<Ctx> get link;
  ActionPingHandlers<Ctx> get ping;
  ActionRemoveTodoHandlers<Ctx> get removeTodo;
  ActionSearchHandlers<Ctx> get search;
+ ActionSendEmailHandlers<Ctx> get sendEmail;
 }
 abstract interface class ActionAddTodoHandlers<Ctx> {
  Future<AddTodoV1HandlerOutput> v1(ActionHandlerCall<Ctx, AddTodoV1Input> call);
  Future<AddTodoHandlerOutput> v2(ActionHandlerCall<Ctx, AddTodoInput> call);
+}
+abstract interface class ActionDeleteTodoHandlers<Ctx> {
+ Future<DeleteTodoHandlerOutput> v1(ActionHandlerCall<Ctx, DeleteTodoInput> call);
+}
+abstract interface class ActionGetTodosHandlers<Ctx> {
+ Future<GetTodosHandlerOutput> v1(ActionHandlerCall<Ctx, GetTodosInput> call);
 }
 abstract interface class ActionLinkHandlers<Ctx> {
  Future<LinkHandlerOutput> v1(ActionHandlerCall<Ctx, LinkInput> call);
@@ -337,6 +380,9 @@ abstract interface class ActionRemoveTodoHandlers<Ctx> {
 }
 abstract interface class ActionSearchHandlers<Ctx> {
  Future<SearchHandlerOutput> v1(ActionHandlerCall<Ctx, SearchInput> call);
+}
+abstract interface class ActionSendEmailHandlers<Ctx> {
+ Future<SendEmailHandlerOutput> v1(ActionHandlerCall<Ctx, SendEmailInput> call);
 }
 class Mutate { final MutatePort port; Mutate(this.port);
 

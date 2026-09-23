@@ -6,8 +6,8 @@ Validate refuses schemas the runtimes could not execute consistently and schema 
 
 ## 3. Context and Scope
 
-- Input: the `Declarations` tree from [Parse](parse.md), which carries the source position of every model, field, mutation, slot, `@@unique`, `@@sequence` and prerequisite field; when present, the previous `history/mutations.json`, the previous `history/models.json` and the previous `schema.json` (the fence).
-- Output: `Validated`, a typed schema for [Generate](generate.md): enums; models with resolved field types (scalar, enum, list), identity, read-contract version, unique field sets and relations; inverses resolved to the reference they mirror; requirements and prerequisites; mutations with resolved slot bindings, the allowed patch fields of every update slot and the sequence. It contains no JSON and no source positions. The two reconciled histories are a second output, computed from the descriptors (step 6).
+- Input: the `Declarations` tree from [Parse](parse.md), with positions for Model, Mutation and Action declarations and members; when present, the retained mutation, Model and Action histories and previous `schema.json` fence.
+- Output: `Validated`, a typed schema for [Generate](generate.md): resolved Models, relations and requirements; legacy Mutations; and Actions with resolved ordinary inputs, Model operand bindings/restrictions/sequence and outputs. It contains no JSON and no source positions. Three reconciled histories are computed from descriptors after validation.
 - Errors: `line:col: message`, where the position is the declaration the rule is about (a field for relation, type and `@requires` errors; a slot for binding and patch-field errors; the `@@sequence` directive for sequence errors; the model for identity and reserved-name errors). Positions are never written into descriptors.
 
 ## 5. Building Block View
@@ -19,12 +19,14 @@ Checks run in this order:
 3. **Unique constraints.** Every `@@unique` names existing, distinct fields.
 4. **Descriptor.** `Schema::from_value` applies the same rules the runtimes apply at load time, so a schema the compiler accepts is one both runtimes accept. Validate renders the client descriptor through [Generate](generate.md) (`generate::schema`) purely for this check; it assembles no descriptor itself. This pass is a backstop: any rule it refuses that step 1 did not catch reports the end of the input.
 5. **Mutations.** Unique names, at least one slot, unique slots, existing models, valid patch fields.
-6. **History.** Version and compatibility rules per mutation ([Mutations](../schema/mutations.md)) and per model ([Models](../schema/models.md)); this checks history compatibility at compile time. Each rule compares retained descriptor snapshots with the current descriptors, so both run on the descriptor value from [Generate](generate.md), after `validate` returns, rather than on `Validated`. Both histories are reconciled before any file is written, so a refusal from either leaves every output and both histories untouched.
+6. **History.** Version and compatibility rules for Mutations, Models and Actions compare retained descriptor snapshots with current descriptors. Action history retains inputs and outputs, including Model read versions. Same-version output shape changes require a new Action version; the first version of a new Action must be 1. All histories reconcile before any output is written, so validation or history refusal leaves outputs and histories untouched.
 7. **Fence.** Every previously published model must still exist, and every published field name of a model whose version did not change. A model whose version increased is judged by its history instead.
 
 CLI policy, the same for `--mutation-history` and `--model-history`: initializing a history refuses to overwrite one and requires every declaration at version 1; a named history file that is missing is an error unless initializing.
 
-Code: `validate` and the `Validated` types in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); `reconcile_history`, `reconcile_model_history` and `check_fence` in [compiler/history.rs](../../../../crates/compiler/src/history.rs), called by [compiler/main.rs](../../../../crates/compiler/src/main.rs) on the descriptors.
+Actions require ordinary nullable arguments to be present with a value or `null`; an optional Model operand may be absent or `null`. Explicit Model outputs select an identity object, while implicit create/update outputs are bound to the operand identity and delete outputs confirm that identity. Nullable lists, nested lists, duplicate Action/implicit output names, reserved `call`, unsupported annotations and incompatible same-version changes are refused with source locations. `--action-history` and `--initialize-action-history` follow the explicit initialization policy for Action schemas. Schemas without Actions do not acquire Action history.
+
+Code: `validate` and the `Validated` types in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); `reconcile_history`, `reconcile_model_history`, `reconcile_action_history` and `check_fence` in [compiler/history.rs](../../../../crates/compiler/src/history.rs), called by [compiler/main.rs](../../../../crates/compiler/src/main.rs) on the descriptors.
 
 ## 10. Quality Requirements
 

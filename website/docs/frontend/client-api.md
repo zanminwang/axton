@@ -149,6 +149,24 @@ For a `Comment.book` relationship, `client.models.comment.book(commentIdentity)`
 
 A single mutation does not need an explicit transaction: `client.mutate.edit(args)` runs in its own local transaction and returns the ordinal.
 
+## Action contract (execution pending #142)
+
+The compiler emits `ActionClientContract` and backend handler types for the [Action schema](../schema/reference.md#action-contracts-execution-pending-142). These are type-level examples; today's runnable `GeneratedClient` still uses the mutation methods below. For a schema declaring `AddTodo`, `DeleteTodo`, `SendEmail` and `GetTodos`, the generated contract has this shape:
+
+```typescript
+const call = await client.actions.addTodo({ todo, removed: [], note: null });
+const outcome = await call.wait();
+if (outcome.error === null) console.log(outcome.result.todo.title);
+const todos = await client.actions.call.getTodos({});
+console.log(todos.todos);
+await client.actions.call.deleteTodo({ todo: { id: 'todo-1' } });
+await client.actions.call.sendEmail({ to: 'team@example.test', body: 'Done' });
+```
+
+The default route accepts work locally and returns a handle with only `status` and `wait()`. Initial local validation or commit failure rejects before a handle exists. A successful `wait()` outcome contains the final output in `result`; a terminal business failure contains `ActionError` in the outcome, while a pending network retry remains pending. `actions.call` is a separate request-response route: it has no queue or automatic optimism and rejects with `ActionError` on execution failure. Neither route belongs inside an application-owned local transaction. Standalone `client.models` create/update/delete are local-only, and a transaction exposes local reads and CRUD without Actions or watch.
+
+An implicit create/update Model result is bound to its input identity; a delete result confirms an identity. An explicit Model result comes from an identity object chosen by the handler. Optional Model operands produce null when absent, lists preserve order and duplicates, nullable fields remain present with null, and an Action without outputs returns void. #142 will resolve Model results through a shared Loader path and preserve each call's snapshot, distinct from the batch-final records used to settle local state and from the current local view after later optimism. #116 will define ephemeral output policy. These behaviors are specified by the generated contracts and descriptors; runtime verification belongs to those follow-up issues.
+
 ## Mutations
 
 The backend result of your own mutation arrives in its receipt: the records the handler changed are read back by your loader and replace the optimistic values, with or without a subscription. Subscribe to a channel to receive changes made elsewhere. See [receiving mutation results](sync.md#receive-mutation-results).

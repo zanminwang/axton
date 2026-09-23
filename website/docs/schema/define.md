@@ -34,7 +34,30 @@ cargo run -p ahead-compiler -- compile \
 
 The runtime import paths are relative to the generated output directory. Adjust them when generating into another directory; [examples/todo/generate.sh](https://github.com/zanminwang/ahead/blob/main/examples/todo/generate.sh) also emits the React Native client from the same schema. Follow [getting started](../getting-started.md) to build the required native artifacts. Packages are not currently published; the default package specifiers are not a registry installation guide.
 
-The compiler writes TypeScript and Dart clients, typed backend interfaces, descriptors and retained mutation history. See the [compiler reference](reference.md) for every output and option. Do not edit generated files by hand.
+The compiler writes TypeScript and Dart clients, typed backend interfaces, descriptors and retained history. See the [compiler reference](reference.md) for every output and option. Do not edit generated files by hand.
+
+## Declare an Action contract
+
+The compiler accepts Action declarations with ordinary values, Model operands and named outputs. This complete schema illustrates the generated contract; Action invocation and backend registration become executable with #142.
+
+```text
+model Todo {
+  id String
+  title String
+  note String?
+  @@id(id)
+}
+action AddTodo(todo Todo.create, removed Todo.delete[], note String?) {
+  relatedTodo Todo?
+  labels String[]
+}
+action DeleteTodo(todo Todo.delete)
+action SendEmail(to String, body String)
+action GetTodos() { todos Todo[] }
+action FindTodo(id String) { found Todo? }
+```
+
+`AddTodo` implicitly returns the created `todo` as a full `Todo` and confirms each deleted identity in `removed`. Its handler supplies `relatedTodo` as a `TodoIdentity` object or `null`, plus `labels`; `FindTodo` likewise selects `found` by identity. `GetTodos` selects a list of identities, which #142 will resolve through the same Loader as the implicit result. `DeleteTodo` returns a delete identity confirmation. `SendEmail` has no output and therefore returns void. The required `note` argument accepts a string or `null`; omitting it is invalid. The Action contracts appear in generated TypeScript and Dart, while the runnable `mutation Edit` example above remains the current runtime path.
 
 ## Connect the generated layers
 

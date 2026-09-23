@@ -4,6 +4,7 @@ const todo = Todo(id: 't', title: 'Task', state: Status.open, note: null);
 const identity = TodoIdentity(id: 't');
 const created = TodoCreate(id: 't', title: 'Task', state: Status.open, note: null);
 const changed = AddTodoPatchUpdate(id: 't', title: Present('Renamed'));
+const clearNote = TodoPatch(note: Present<String?>(null));
 const deleted = TodoDelete(id: 't');
 const composite = ProjectIdentity(tenantId: 'tenant', id: 'project');
 const oldInput = AddTodoV1Input(
@@ -20,6 +21,7 @@ const handlerOutput = AddTodoHandlerOutput(
 const linkOutput = LinkHandlerOutput(
   relatedProject: ProjectIdentity(tenantId: 'tenant', id: 'project'),
 );
+const getTodosOutput = GetTodosHandlerOutput(todos: [TodoIdentity(id: 't')]);
 
 Future<AddTodoHandlerOutput> handle(
   ActionHandlerCall<Object, AddTodoInput> call,
@@ -36,6 +38,7 @@ Future<AddTodoHandlerOutput> handle(
 Future<void> useClient(ActionClientContract client) async {
   await client.models.todo.create(todo);
   await client.models.todo.update(identity, const TodoPatch(title: Present('New')));
+  await client.models.todo.update(identity, clearNote);
   await client.models.todo.delete(identity);
   final Todo? found = await client.models.todo.get(identity);
   final List<Todo> rows = await client.models.todo.query();
@@ -71,12 +74,17 @@ Future<void> useClient(ActionClientContract client) async {
   await client.actions.call.ping();
   await client.actions.search(query: null);
   await client.actions.call.search(query: 'term');
+  await client.actions.call.deleteTodo(todo: deleted);
+  await client.actions.sendEmail(to: 'team@example.test', subject: 'Todo', body: 'Created');
+  final GetTodosOutput todos = await client.actions.call.getTodos();
+  final List<Todo> selected = todos.todos;
   found?.id;
   rows.length;
   stream.hashCode;
   status.name;
   direct.count;
   removedId.length;
+  selected.length;
 }
 
 void main() {
@@ -84,6 +92,7 @@ void main() {
   oldInput.todo.id;
   oldOutput.count;
   linkOutput.relatedProject?.id;
+  getTodosOutput.todos.length;
   handle;
   useClient;
 }

@@ -138,6 +138,17 @@ export interface AddTodoOutput {
  count: number;
  state: Status | null;
 }
+export interface DeleteTodoInput {
+ todo: TodoDelete;
+}
+export interface DeleteTodoOutput {
+ todo: TodoIdentity;
+}
+export interface GetTodosInput {
+}
+export interface GetTodosOutput {
+ todos: Todo[];
+}
 export interface LinkInput {
  project: ProjectCreate;
 }
@@ -158,6 +169,12 @@ export interface SearchInput {
  query: string | null;
 }
 export type SearchOutput = void;
+export interface SendEmailInput {
+ to: string;
+ subject: string;
+ body: string;
+}
+export type SendEmailOutput = void;
 export interface ActionTxModels {
  todo: Pick<TodoTxModel, 'get' | 'query' | 'create' | 'update' | 'delete'>;
  project: Pick<ProjectTxModel, 'get' | 'query' | 'create' | 'update' | 'delete'>;
@@ -172,16 +189,22 @@ export interface ActionClientContract {
  transaction<T>(body: (tx: ActionTransactionContract) => Promise<T>): Promise<T>;
  readonly actions: {
   addTodo(args: AddTodoInput): Promise<ActionCall<AddTodoOutput>>;
+  deleteTodo(args: DeleteTodoInput): Promise<ActionCall<DeleteTodoOutput>>;
+  getTodos(args: GetTodosInput): Promise<ActionCall<GetTodosOutput>>;
   link(args: LinkInput): Promise<ActionCall<LinkOutput>>;
   ping(args: PingInput): Promise<ActionCall<PingOutput>>;
   removeTodo(args: RemoveTodoInput): Promise<ActionCall<RemoveTodoOutput>>;
   search(args: SearchInput): Promise<ActionCall<SearchOutput>>;
+  sendEmail(args: SendEmailInput): Promise<ActionCall<SendEmailOutput>>;
   call: {
    addTodo(args: AddTodoInput): Promise<AddTodoOutput>;
+   deleteTodo(args: DeleteTodoInput): Promise<DeleteTodoOutput>;
+   getTodos(args: GetTodosInput): Promise<GetTodosOutput>;
    link(args: LinkInput): Promise<LinkOutput>;
    ping(args: PingInput): Promise<PingOutput>;
    removeTodo(args: RemoveTodoInput): Promise<RemoveTodoOutput>;
    search(args: SearchInput): Promise<SearchOutput>;
+   sendEmail(args: SendEmailInput): Promise<SendEmailOutput>;
   };
  };
 }

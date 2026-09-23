@@ -20,6 +20,8 @@ cargo run -p ahead-compiler -- compile INPUT_DIR OUTPUT_DIR \
 | `--initialize-mutation-history` | Allow a missing explicitly selected mutation history file; only version 1 declarations |
 | `--model-history FILE` | Override the retained model history path; default `INPUT_DIR/history/models.json` |
 | `--initialize-model-history` | Allow a missing explicitly selected model history file; only version 1 declarations |
+| `--action-history FILE` | Override retained Action history; default `INPUT_DIR/history/actions.json` for Action schemas |
+| `--initialize-action-history` | Allow a missing explicitly selected Action history; new Actions must start at version 1 |
 | `--schema-fence FILE` | Published schema to check; default existing output `schema.json` |
 
 For source-checkout use, supply runtime paths relative to the output directory; see the [working command](define.md#generate-from-a-source-checkout). Default package names are not evidence of published packages. Unknown syntax or incompatible contracts fail with a diagnostic that names the file and line of the offending declaration. Validation runs before generated artifacts are replaced.
@@ -29,13 +31,13 @@ For source-checkout use, supply runtime paths relative to the output directory; 
 | File | Contents |
 | --- | --- |
 | `schema.json` | Client schema descriptor (each model with the read-contract version the client expects), requirements and mutation policies |
-| `backend.json` | Backend descriptor including supported mutation inputs and every retained model read contract |
+| `backend.json` | Backend descriptor including retained mutation inputs, Action input/output contracts and Model read contracts |
 | `generated.ts` | TypeScript records, identities, patches, model facades and mutation builders |
 | `client.ts` | Schema-bound `GeneratedClient`, channels and runtime re-exports |
-| `backend.ts` | Typed `Handlers`, `Loaders`, inputs, record references and bound `createBackend` |
+| `backend.ts` | Typed `Handlers`, `Loaders`, inputs and record references; legacy-only schemas include bound `createBackend` |
 | `generated.dart` | Dart models, patches, mutation builders and generated client |
 
-History is not generated output: `INPUT_DIR/history/mutations.json` holds the retained mutation versions and input contracts, and `INPUT_DIR/history/models.json` the retained model read contracts, both beside your `.model` files. `--mutation-history FILE` and `--model-history FILE` override the paths. A compile that is refused by either history writes nothing.
+History is not generated output: `INPUT_DIR/history/mutations.json` retains legacy mutation inputs, `INPUT_DIR/history/models.json` retains Model reads, and `INPUT_DIR/history/actions.json` retains both Action inputs and outputs when Actions exist. A refused compile leaves all histories and outputs untouched. An Action schema currently emits type contracts without a callable backend factory or executable client Action methods; #142 binds these routes. Legacy mutation schemas remain runnable.
 
 Dart output imports `package:ahead/ahead.dart`. Commit the history used to generate released clients; regenerating from an empty history loses compatibility information. A history left at the superseded `OUTPUT_DIR/mutation-history.json` is read once, rewritten at the new default and reported on stderr; the old file stays where it is and you can delete it after committing the new one.
 
@@ -96,7 +98,19 @@ mutation Edit {
 
 Builders emit operations in declared slot order. Slot bindings can connect operations; prerequisites and `@@sequence` specify dependencies. A prerequisite argument must be `self` (the annotated field's value); no other expression is accepted, and prerequisites are satisfied on the client, never seen by the backend. See [advanced declarations](define.md#relations-prerequisites-and-ordering) and [compiler tests](https://github.com/zanminwang/ahead/blob/main/crates/compiler/tests/compiler.rs). The generator does not implement your backend business logic or host prerequisite callbacks.
 
+## Action contracts (execution pending #142)
+
+`action Name(inputs) { outputs }` defines one generated input/output pair for queued and direct calls. Braces may be omitted when there are no explicit outputs. Ordinary inputs use scalar or enum types; `String?` is a required argument whose value can be null. Model operands use `Model.create`, `Model.update<fields>` or `Model.delete`, optionally followed by `?` or `[]`. An optional Model operand may be omitted or null; a list has zero or more elements. Omitted update fields stay omitted, while explicit null clears a nullable field. TypeScript flattens operands into `ModelCreate`, `ModelUpdate<K>` and `ModelDelete`; Dart uses `Present<T>` to represent supplied patch fields.
+
+Create/update operands imply full Model result fields bound to their input identities. Delete operands imply identity confirmations. The versioned backend handler receives `{ ctx, args }`, separating trusted framework context from caller-supplied values. Explicit scalar/enum outputs are supplied by the handler; explicit Model outputs are selected with identity objects containing exactly the Model's `@@id` fields. For a composite identity, every key field is required. A nullable output field is present with null when absent; a list preserves order and duplicates; an Action with no outputs returns void. Nullable lists, nested lists, nullable list elements and output names colliding with implicit fields are invalid. `call` is reserved in the Action namespace.
+
+The generated TypeScript and Dart contract describes `client.actions.name(args)` returning an `ActionCall<Output>` after local acceptance, and `client.actions.call.name(args)` returning the final `Output`. The handle exposes only `status` and `wait()`. Under the #142 runtime design, local submission errors reject before a handle exists, terminal business failures appear in `wait()` as `ActionError`, and direct-call failures reject with `ActionError`. Direct calls do not queue or apply automatic optimism. Neither Action route is allowed inside an application-owned local transaction. Standalone `client.models` CRUD is local-only; `tx.models` has local reads and CRUD without Action calls or watch.
+
+Model results will be resolved through the shared Loader path in #142. A returned Model is the snapshot for that invocation, even if a later call in the same batch changes the row or local optimism changes the current `client.models` view. Batch-final records settle the local authoritative base and cannot reconstruct an earlier per-call result. #142 must persist each backend outcome atomically with business writes; live handles keep business results in memory, while pending and completion state remains durable. Per-output ephemeral policy belongs to #116.
+
 ## History and compatibility
+
+Actions retain every version's input and output contract, including the Model read version selected for each Model output. A new Action starts at version 1. Changing an output's name, type, cardinality or identity source requires a newer Action version; an incompatible input change also requires a bump. Earlier versions stay in `history/actions.json` and the generated backend handler interfaces. A schema with no Actions does not need Action history.
 
 Backend descriptors retain declared mutation versions with their input schemas and known field sets. The generated `Handlers` interface groups them under one key per mutation, such as `edit: { v1, v2 }`; input types keep names such as `EditInput` for the latest version and `EditV1Input` for older ones.
 

@@ -24,3 +24,6 @@ action Link(project Project.create) { relatedProject Project? }
 action Ping()
 action RemoveTodo(todo Todo.delete)
 action Search(query String?)
+action DeleteTodo(todo Todo.delete)
+action SendEmail(to String, subject String, body String)
+action GetTodos() { todos Todo[] }

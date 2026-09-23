@@ -1,0 +1,96 @@
+{
+  "clientPolicies": [],
+  "enums": [
+    {
+      "name": "Status",
+      "values": [
+        "open",
+        "closed",
+        "archived"
+      ]
+    }
+  ],
+  "models": [
+    {
+      "fields": [
+        {
+          "name": "id",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "state",
+          "nullable": false,
+          "type": {
+            "kind": "enum",
+            "name": "Status"
+          }
+        },
+        {
+          "name": "note",
+          "nullable": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "identity": [
+        "id"
+      ],
+      "name": "Todo",
+      "relations": [],
+      "unique": [],
+      "version": 2
+    },
+    {
+      "fields": [
+        {
+          "name": "tenantId",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "id",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "identity": [
+        "tenantId",
+        "id"
+      ],
+      "name": "Project",
+      "relations": [],
+      "unique": [],
+      "version": 1
+    }
+  ],
+  "prerequisites": [],
+  "requirements": []
+}

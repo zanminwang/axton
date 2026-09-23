@@ -13,7 +13,7 @@ Use this index to find the interface you call or implement. The examples use the
 | `client.mutate.<mutation>` | Apply a declared local change and queue its backend operation atomically | [Mutations](frontend/client-api.md#mutations) |
 | `client.channels` | Subscribe or unsubscribe to a named channel | [Channels](frontend/client-api.md#channels) |
 | `client.connection` | Pause, resume or wake background sync | [Connections](frontend/runtime.md#connection-controls) |
-| `client.status`, `client.close` | Inspect pending work and release resources | [Status and lifecycle](frontend/client-api.md#status-and-lifecycle) |
+| `client.syncState`, `client.close` | Inspect pending work and release resources | [Status and lifecycle](frontend/client-api.md#status-and-lifecycle) |
 | Model, Identity, Patch, Filter and Order types | Pass typed data to generated methods | [Generated data types](frontend/client-api.md#generated-data-types) |
 | `Handlers<Tx>`, `HandlerCall` | Implement each mutation's authoritative business logic | [Handlers](backend/api.md#handlers) |
 | `Loaders<Tx>`, `LoaderCall` | Return current records for synchronization | [Loaders](backend/api.md#loaders) |
@@ -42,3 +42,14 @@ Use this index to find the interface you call or implement. The examples use the
 | Compiler command and `.model` declarations | Generate and evolve the interface contract | [Schema compiler](schema/reference.md) |
 
 The generated application API is the normal entry point. Raw backend protocol methods marked `@internal` in the implementation are not a supported application integration surface; use `listen`, handlers, loaders and transaction-bound notifications.
+
+## Generated Action contracts (execution pending #142)
+
+| Contract | Intended use | Reference |
+| --- | --- | --- |
+| `ActionClientContract.models`, `ActionTransactionContract.models` | Local Model reads and CRUD; only the standalone client also has watch | [Action contract](frontend/client-api.md#action-contract-execution-pending-142) |
+| `client.actions.<name>` / `ActionCall<Output>` | Queue an Action locally, then inspect `status` or await its final outcome | [Action contract](frontend/client-api.md#action-contract-execution-pending-142) |
+| `client.actions.call.<name>` | Request a direct final result | [Action contract](frontend/client-api.md#action-contract-execution-pending-142) |
+| `Handlers<Ctx>`, `Loaders<Ctx>`, `ActionBackendContract<Ctx>` | Type retained Action handlers and Model Loader versions; callable factory arrives with #142 | [Action schema](schema/reference.md#action-contracts-execution-pending-142) |
+
+The existing `GeneratedClient` and `client.mutate` entries above describe the runnable legacy mutation API. The Action entries describe generated interfaces only; #142 supplies both execution routes and the shared Loader result path. Ephemeral outputs remain #116 work.

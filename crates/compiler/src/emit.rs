@@ -1092,6 +1092,462 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
     }
     o
 }
+fn dart_action_type(ty_value: &Value) -> String {
+    ty(ty_value, true)
+}
+fn dart_snapshot_type(ty_value: &Value, prefix: &str, enums: &Value) -> String {
+    if ty_value["kind"] == "list" {
+        return format!(
+            "List<{}>",
+            dart_snapshot_type(&ty_value["element"], prefix, enums)
+        );
+    }
+    if ty_value["kind"] == "enum"
+        && enums
+            .as_array()
+            .is_some_and(|items| items.iter().any(|e| e["name"] == ty_value["name"]))
+    {
+        return format!("{prefix}{}", s(ty_value, "name"));
+    }
+    dart_action_type(ty_value)
+}
+fn dart_snapshot_field(field: &Value, prefix: &str, enums: &Value) -> String {
+    let base = dart_snapshot_type(&field["type"], prefix, enums);
+    if field["nullable"] == true {
+        format!("{base}?")
+    } else {
+        base
+    }
+}
+fn dart_action_cardinality(base: &str, cardinality: &str) -> String {
+    match cardinality {
+        "optional" => format!("{base}?"),
+        "list" => format!("List<{base}>"),
+        _ => base.to_string(),
+    }
+}
+fn dart_action_input_type(
+    arg: &Value,
+    prefix: &str,
+    restriction_prefix: &str,
+    enums: &Value,
+    restricted: bool,
+) -> String {
+    if arg["kind"] == "value" {
+        let base = dart_snapshot_type(&arg["type"], prefix, enums);
+        return if arg["list"] == true {
+            format!("List<{base}>")
+        } else if arg["nullable"] == true {
+            format!("{base}?")
+        } else {
+            base
+        };
+    }
+    let model = s(arg, "model");
+    let base = match s(arg, "operation") {
+        "create" => format!("{prefix}{model}Create"),
+        "delete" => format!("{prefix}{model}Delete"),
+        "update" if restricted => format!("{restriction_prefix}{}Update", upper(s(arg, "name"))),
+        "update" => format!("{prefix}{model}Update"),
+        _ => unreachable!(),
+    };
+    dart_action_cardinality(&base, s(arg, "cardinality"))
+}
+fn dart_action_output_type(
+    field: &Value,
+    identity: bool,
+    output_prefix: &str,
+    output_enums: &Value,
+    models: &[Value],
+) -> String {
+    let base = match s(field, "kind") {
+        "value" => dart_snapshot_type(&field["type"], output_prefix, output_enums),
+        "deleteIdentity" => format!("{}Identity", s(field, "model")),
+        "model" if identity => {
+            let model = s(field, "model");
+            let current = models
+                .iter()
+                .find(|m| m["name"] == model)
+                .and_then(|m| m["version"].as_u64());
+            let read = field["modelReadVersion"].as_u64();
+            if read.is_some() && read != current {
+                format!("{model}V{}Identity", read.unwrap())
+            } else {
+                format!("{model}Identity")
+            }
+        }
+        "model" => s(field, "model").to_string(),
+        _ => unreachable!(),
+    };
+    dart_action_cardinality(&base, s(field, "cardinality"))
+}
+
+fn dart_data_class(o: &mut String, name: &str, fields: &[(String, String, bool)]) {
+    writeln!(o, "class {name} {{").unwrap();
+    for (field, ty, _) in fields {
+        writeln!(o, " final {ty} {field};").unwrap();
+    }
+    let params = fields
+        .iter()
+        .map(|(field, _, required)| {
+            format!("{}this.{field}", if *required { "required " } else { "" })
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    writeln!(
+        o,
+        " const {name}({});\n}}",
+        if fields.is_empty() {
+            String::new()
+        } else {
+            format!("{{{params}}}")
+        }
+    )
+    .unwrap();
+}
+fn dart_action_update(
+    o: &mut String,
+    name: &str,
+    model: &Value,
+    allowed: Option<&Vec<Value>>,
+    prefix: &str,
+    enums: &Value,
+) {
+    let mut fields = vec![];
+    for field in arr(model, "fields") {
+        let key = s(field, "name");
+        if arr(model, "identity").contains(&field["name"]) {
+            fields.push((
+                key.to_string(),
+                dart_snapshot_field(field, prefix, enums),
+                true,
+            ));
+        } else if allowed.is_none_or(|a| a.contains(&field["name"])) {
+            fields.push((
+                key.to_string(),
+                format!("Present<{}>?", dart_snapshot_field(field, prefix, enums)),
+                false,
+            ));
+        }
+    }
+    dart_data_class(o, name, &fields);
+}
+fn dart_actions(v: &Value, o: &mut String) {
+    let actions = arr(v, "actions");
+    if actions.is_empty() {
+        return;
+    }
+    o.push_str(
+        "/// Type-level Action contracts; runtime binding arrives with the Action engine.\n",
+    );
+    o.push_str("enum ActionStatus { pending, succeeded, failed }\nabstract interface class ActionError implements Exception { String get code; }\nsealed class ActionOutcome<T> { const ActionOutcome(); }\nfinal class ActionSuccess<T> extends ActionOutcome<T> { final T result; const ActionSuccess(this.result); }\nfinal class ActionFailure<T> extends ActionOutcome<T> { final ActionError error; const ActionFailure(this.error); }\nabstract interface class ActionCall<T> { ActionStatus get status; Future<ActionOutcome<T>> wait(); }\n");
+    let models = arr(&v["schema"], "models");
+    for model in models {
+        let n = s(model, "name");
+        writeln!(
+            o,
+            "typedef {n}Create = {n};\ntypedef {n}Delete = {n}Identity;"
+        )
+        .unwrap();
+        dart_action_update(o, &format!("{n}Update"), model, None, "", &Value::Null);
+    }
+    let mut emitted_reads = std::collections::BTreeSet::new();
+    for model in v
+        .get("backendModels")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let name = s(model, "name");
+        let version = model["version"].as_u64().unwrap_or(1);
+        let current = models
+            .iter()
+            .find(|m| m["name"] == name)
+            .and_then(|m| m["version"].as_u64());
+        if Some(version) == current || !emitted_reads.insert((name.to_string(), version)) {
+            continue;
+        }
+        let fields = arr(model, "fields")
+            .iter()
+            .filter(|field| arr(model, "identity").contains(&field["name"]))
+            .map(|field| (s(field, "name").to_string(), ft(field, true), true))
+            .collect::<Vec<_>>();
+        dart_data_class(o, &format!("{name}V{version}Identity"), &fields);
+    }
+    let mut latest = std::collections::BTreeMap::new();
+    for action in actions {
+        latest
+            .entry(s(action, "name"))
+            .and_modify(|n: &mut u64| *n = (*n).max(action["version"].as_u64().unwrap()))
+            .or_insert(action["version"].as_u64().unwrap());
+    }
+    for action in actions {
+        let name = s(action, "name");
+        let is_latest = action["version"].as_u64() == Some(latest[name]);
+        let prefix = action_type_name(action, latest[name], "");
+        let historical = if is_latest { "" } else { prefix.as_str() };
+        let input_enums = if is_latest {
+            &Value::Null
+        } else {
+            &action["input"]["enums"]
+        };
+        if !is_latest {
+            let mut seen = std::collections::BTreeSet::new();
+            for en in input_enums.as_array().into_iter().flatten() {
+                let name = s(en, "name");
+                if seen.insert(name) {
+                    writeln!(
+                        o,
+                        "enum {prefix}{name} {{ {} }}",
+                        arr(en, "values")
+                            .iter()
+                            .map(Value::as_str)
+                            .map(Option::unwrap)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                    .unwrap();
+                }
+            }
+            for model in arr(&action["input"], "models") {
+                let model_name = s(model, "name");
+                for (suffix, identity_only) in
+                    [("Create", false), ("Identity", true), ("Delete", true)]
+                {
+                    let fields = arr(model, "fields")
+                        .iter()
+                        .filter(|field| {
+                            !identity_only || arr(model, "identity").contains(&field["name"])
+                        })
+                        .map(|field| {
+                            (
+                                s(field, "name").to_string(),
+                                dart_snapshot_field(field, &prefix, input_enums),
+                                true,
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    dart_data_class(o, &format!("{prefix}{model_name}{suffix}"), &fields);
+                }
+                dart_action_update(
+                    o,
+                    &format!("{prefix}{model_name}Update"),
+                    model,
+                    None,
+                    &prefix,
+                    input_enums,
+                );
+            }
+        }
+        for arg in arr(action, "inputs") {
+            if arg["kind"] == "model"
+                && arg["operation"] == "update"
+                && arg["allowedPatchFields"].is_array()
+            {
+                let model = arr(&action["input"], "models")
+                    .iter()
+                    .chain(models.iter())
+                    .find(|m| m["name"] == arg["model"])
+                    .unwrap();
+                dart_action_update(
+                    o,
+                    &format!("{prefix}{}Update", upper(s(arg, "name"))),
+                    model,
+                    arg["allowedPatchFields"].as_array(),
+                    historical,
+                    input_enums,
+                );
+            }
+        }
+        let inputs = arr(action, "inputs")
+            .iter()
+            .map(|arg| {
+                let optional = arg["kind"] == "model" && arg["cardinality"] == "optional";
+                (
+                    s(arg, "name").to_string(),
+                    dart_action_input_type(
+                        arg,
+                        historical,
+                        &prefix,
+                        input_enums,
+                        arg["allowedPatchFields"].is_array(),
+                    ),
+                    !optional,
+                )
+            })
+            .collect::<Vec<_>>();
+        dart_data_class(o, &format!("{prefix}Input"), &inputs);
+        let outputs = arr(action, "outputs");
+        let output_prefix = if is_latest {
+            String::new()
+        } else {
+            format!("{prefix}Output")
+        };
+        let output_enums = if is_latest {
+            &Value::Null
+        } else {
+            &action["outputEnums"]
+        };
+        if !is_latest {
+            let mut seen = std::collections::BTreeSet::new();
+            for en in output_enums.as_array().into_iter().flatten() {
+                let name = s(en, "name");
+                if seen.insert(name) {
+                    writeln!(
+                        o,
+                        "enum {output_prefix}{name} {{ {} }}",
+                        arr(en, "values")
+                            .iter()
+                            .map(Value::as_str)
+                            .map(Option::unwrap)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        if is_latest {
+            if outputs.is_empty() {
+                writeln!(o, "typedef {prefix}Output = void;").unwrap();
+            } else {
+                let fields = outputs
+                    .iter()
+                    .map(|field| {
+                        (
+                            s(field, "name").to_string(),
+                            dart_action_output_type(field, false, "", &Value::Null, models),
+                            true,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                dart_data_class(o, &format!("{prefix}Output"), &fields);
+            }
+        }
+        let explicit = outputs
+            .iter()
+            .filter(|field| !field["source"].is_object())
+            .collect::<Vec<_>>();
+        if explicit.is_empty() {
+            writeln!(o, "typedef {prefix}HandlerOutput = void;").unwrap();
+        } else {
+            let fields = explicit
+                .iter()
+                .map(|field| {
+                    (
+                        s(field, "name").to_string(),
+                        dart_action_output_type(field, true, &output_prefix, output_enums, models),
+                        true,
+                    )
+                })
+                .collect::<Vec<_>>();
+            dart_data_class(o, &format!("{prefix}HandlerOutput"), &fields);
+        }
+    }
+    o.push_str("abstract interface class ActionTxModels {\n");
+    for model in models {
+        writeln!(
+            o,
+            " Action{0}Model get {1};",
+            s(model, "name"),
+            lower(s(model, "name"))
+        )
+        .unwrap();
+    }
+    o.push_str("}\nabstract interface class ActionModels {\n");
+    for model in models {
+        writeln!(
+            o,
+            " Action{0}LiveModel get {1};",
+            s(model, "name"),
+            lower(s(model, "name"))
+        )
+        .unwrap();
+    }
+    o.push_str("}\n");
+    for model in models {
+        let n = s(model, "name");
+        writeln!(o, "abstract interface class Action{n}Model {{\n Future<{n}?> get({n}Identity identity);\n Future<List<{n}>> query({{{n}Filter? where, List<{n}Order> orderBy = const [], int? limit}});\n Future<void> create({n} value);\n Future<void> update({n}Identity identity, {n}Patch patch);\n Future<void> delete({n}Identity identity);\n}}\nabstract interface class Action{n}LiveModel implements Action{n}Model {{\n Stream<List<{n}>> watch({{{n}Filter? where}});\n}}").unwrap();
+    }
+    o.push_str("abstract interface class ActionTransactionContract { ActionTxModels get models; }\nabstract interface class ActionClientContract { ActionModels get models; Future<T> transaction<T>(Future<T> Function(ActionTransactionContract tx) body); ActionActionsContract get actions; }\nabstract interface class ActionActionsContract { ActionDirectCallsContract get call;\n");
+    for (name, version) in &latest {
+        let action = actions
+            .iter()
+            .find(|a| s(a, "name") == *name && a["version"].as_u64() == Some(*version))
+            .unwrap();
+        let params = dart_action_params(action);
+        writeln!(
+            o,
+            " Future<ActionCall<{name}Output>> {}({});",
+            lower(name),
+            if params.is_empty() {
+                String::new()
+            } else {
+                format!("{{{params}}}")
+            }
+        )
+        .unwrap();
+    }
+    o.push_str("}\nabstract interface class ActionDirectCallsContract {\n");
+    for (name, version) in &latest {
+        let action = actions
+            .iter()
+            .find(|a| s(a, "name") == *name && a["version"].as_u64() == Some(*version))
+            .unwrap();
+        let params = dart_action_params(action);
+        writeln!(
+            o,
+            " Future<{name}Output> {}({});",
+            lower(name),
+            if params.is_empty() {
+                String::new()
+            } else {
+                format!("{{{params}}}")
+            }
+        )
+        .unwrap();
+    }
+    o.push_str("}\nabstract interface class ActionHandlerCall<Ctx, Args> { Ctx get ctx; Args get args; }\nabstract interface class ActionHandlers<Ctx> {\n");
+    for (name, _) in &latest {
+        writeln!(o, " Action{}Handlers<Ctx> get {};", name, lower(name)).unwrap();
+    }
+    o.push_str("}\n");
+    for (name, version) in &latest {
+        writeln!(o, "abstract interface class Action{name}Handlers<Ctx> {{").unwrap();
+        for action in actions.iter().filter(|a| s(a, "name") == *name) {
+            let prefix = action_type_name(action, *version, "");
+            writeln!(
+                o,
+                " Future<{prefix}HandlerOutput> v{}(ActionHandlerCall<Ctx, {prefix}Input> call);",
+                action["version"]
+            )
+            .unwrap();
+        }
+        o.push_str("}\n");
+    }
+}
+fn dart_action_params(action: &Value) -> String {
+    arr(action, "inputs")
+        .iter()
+        .map(|arg| {
+            let optional = arg["kind"] == "model" && arg["cardinality"] == "optional";
+            format!(
+                "{}{} {}",
+                if optional { "" } else { "required " },
+                dart_action_input_type(
+                    arg,
+                    "",
+                    s(action, "name"),
+                    &Value::Null,
+                    arg["allowedPatchFields"].is_array()
+                ),
+                s(arg, "name")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub fn dart(v: &Value) -> String {
     let mut o = String::from(
         "// Generated by ahead. Do not edit.\nimport 'dart:convert';\nimport 'package:ahead/ahead.dart';\nexport 'package:ahead/ahead.dart' show RuntimeConnection, SyncServer;\nclass Present<T> { final T value; const Present(this.value); }\n",
@@ -1376,6 +1832,7 @@ pub fn dart(v: &Value) -> String {
     }
     dart_query_types(v, &mut o);
     dart_models(v, &mut o);
+    dart_actions(v, &mut o);
     writeln!(
         o,
         "class Mutate {{ final MutatePort port; Mutate(this.port);\n{}\n}}",

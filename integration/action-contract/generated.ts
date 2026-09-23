@@ -154,6 +154,10 @@ export interface RemoveTodoInput {
 export interface RemoveTodoOutput {
  todo: TodoIdentity;
 }
+export interface SearchInput {
+ query: string | null;
+}
+export type SearchOutput = void;
 export interface ActionTxModels {
  todo: Pick<TodoTxModel, 'get' | 'query' | 'create' | 'update' | 'delete'>;
  project: Pick<ProjectTxModel, 'get' | 'query' | 'create' | 'update' | 'delete'>;
@@ -171,11 +175,13 @@ export interface ActionClientContract {
   link(args: LinkInput): Promise<ActionCall<LinkOutput>>;
   ping(args: PingInput): Promise<ActionCall<PingOutput>>;
   removeTodo(args: RemoveTodoInput): Promise<ActionCall<RemoveTodoOutput>>;
+  search(args: SearchInput): Promise<ActionCall<SearchOutput>>;
   call: {
    addTodo(args: AddTodoInput): Promise<AddTodoOutput>;
    link(args: LinkInput): Promise<LinkOutput>;
    ping(args: PingInput): Promise<PingOutput>;
    removeTodo(args: RemoveTodoInput): Promise<RemoveTodoOutput>;
+   search(args: SearchInput): Promise<SearchOutput>;
   };
  };
 }

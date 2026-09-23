@@ -50,6 +50,7 @@ const handlers: Handlers<Ctx> = {
   link: { async v1({ args }) { return { relatedProject: { tenantId: args.project.tenantId, id: args.project.id } }; } },
   ping: { async v1({ ctx, args }) { void ctx.db; void args; } },
   removeTodo: { async v1({ args }) { void args.todo.id; } },
+  search: { async v1({ args }) { void args.query; } },
 };
 const loaders: Loaders<Ctx> = {
   todo: { async v1() { return []; }, async v2() { return []; } },

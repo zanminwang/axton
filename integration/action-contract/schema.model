@@ -23,3 +23,4 @@ action AddTodo(todo Todo.create, patch Todo.update<title>?, gone Todo.delete[], 
 action Link(project Project.create) { relatedProject Project? }
 action Ping()
 action RemoveTodo(todo Todo.delete)
+action Search(query String?)

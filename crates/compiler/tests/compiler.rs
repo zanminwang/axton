@@ -976,3 +976,48 @@ fn mixed_action_and_legacy_backend_keeps_handler_context_in_scope() {
     );
     assert!(!ts.contains("export function createBackend"), "{ts}");
 }
+
+#[test]
+fn action_dart_emits_type_only_client_and_versioned_handler_contracts() {
+    let v = compile("model Todo { id String title String @@id(id) } action Search(query String?) { relatedTodo Todo? } action Ping()").unwrap();
+    let dart = ahead_compiler::dart(&v);
+    for expected in [
+        "abstract interface class ActionCall<T>",
+        "ActionStatus get status;",
+        "Future<ActionOutcome<T>> wait();",
+        "required String? query",
+        "class TodoIdentity",
+        "required this.relatedTodo",
+        "TodoIdentity? relatedTodo",
+        "Todo? relatedTodo",
+        "abstract interface class ActionClientContract",
+        "ActionActionsContract get actions;",
+        "ActionDirectCallsContract get call;",
+        "Future<ActionCall<SearchOutput>> search(",
+        "Future<SearchOutput> search(",
+        "abstract interface class ActionTransactionContract",
+        "typedef PingOutput = void;",
+    ] {
+        assert!(dart.contains(expected), "missing {expected}: {dart}");
+    }
+    assert!(!dart.contains("class GeneratedClient extends ActionClientContract"));
+}
+
+#[test]
+fn action_dart_retains_output_read_version_and_enum_snapshot() {
+    let mut v = compile("enum Status { open closed } model Todo { id String title String @@id(id) @@version(2) } action Add() { related Todo? state Status }").unwrap();
+    let mut old = v["actions"][0].clone();
+    old["version"] = serde_json::json!(1);
+    old["outputs"][0]["modelReadVersion"] = serde_json::json!(1);
+    old["outputEnums"] = serde_json::json!([{"name":"Status","values":["open"]}]);
+    old["input"] = serde_json::json!({"models":[],"enums":[]});
+    let mut current = v["actions"][0].clone();
+    current["version"] = serde_json::json!(2);
+    v["actions"] = serde_json::json!([old, current]);
+    v["backendModels"] = serde_json::json!([{"name":"Todo","version":1,"identity":["id"],"fields":[{"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false},{"name":"title","type":{"kind":"scalar","name":"string"},"nullable":false}]}]);
+    let dart = ahead_compiler::dart(&v);
+    assert!(dart.contains("class TodoV1Identity"), "{dart}");
+    assert!(dart.contains("TodoV1Identity? related"), "{dart}");
+    assert!(dart.contains("enum AddV1OutputStatus { open }"), "{dart}");
+    assert!(dart.contains("AddV1OutputStatus state"), "{dart}");
+}

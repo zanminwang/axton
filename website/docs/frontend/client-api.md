@@ -151,16 +151,17 @@ A single mutation does not need an explicit transaction: `client.mutate.edit(arg
 
 ## Action contract (execution pending #142)
 
-The compiler emits `ActionClientContract` and backend handler types for the [Action schema](../schema/reference.md#action-contracts-execution-pending-142). These are type-level examples; today's runnable `GeneratedClient` still uses the mutation methods below. For a schema declaring `AddTodo`, `DeleteTodo`, `SendEmail` and `GetTodos`, the generated contract has this shape:
+The compiler emits `ActionClientContract` and backend handler types for the [Action schema](../schema/reference.md#action-contracts-execution-pending-142). These are type-level examples; today's runnable `GeneratedClient` still uses the mutation methods below. This example uses the [integration Action schema](https://github.com/zanminwang/ahead/blob/main/integration/action-contract/schema.model) and its generated `ActionClientContract` and `TodoCreate` types. The [standalone declaration example](../schema/define.md#declare-an-action-contract) defines a different, smaller schema.
 
-```typescript
-const call = await client.actions.addTodo({ todo, removed: [], note: null });
+```typescript title="action-contract"
+const todo: TodoCreate = { id: 'todo-1', title: 'Done', state: 'open', note: null };
+const call = await client.actions.addTodo({ todo, gone: [], status: null, tags: [] });
 const outcome = await call.wait();
 if (outcome.error === null) console.log(outcome.result.todo.title);
 const todos = await client.actions.call.getTodos({});
 console.log(todos.todos);
 await client.actions.call.deleteTodo({ todo: { id: 'todo-1' } });
-await client.actions.call.sendEmail({ to: 'team@example.test', body: 'Done' });
+await client.actions.call.sendEmail({ to: 'team@example.test', subject: 'Todo update', body: 'Done' });
 ```
 
 The default route accepts work locally and returns a handle with only `status` and `wait()`. Initial local validation or commit failure rejects before a handle exists. A successful `wait()` outcome contains the final output in `result`; a terminal business failure contains `ActionError` in the outcome, while a pending network retry remains pending. `actions.call` is a separate request-response route: it has no queue or automatic optimism and rejects with `ActionError` on execution failure. Neither route belongs inside an application-owned local transaction. Standalone `client.models` create/update/delete are local-only, and a transaction exposes local reads and CRUD without Actions or watch.

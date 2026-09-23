@@ -48,6 +48,35 @@ await client.close();
         ])
         self.assertEqual(dart, [('guide.md:14', 'final entry = await client.models.entry.get(id);\n')])
 
+    def test_routes_typescript_alias_and_action_contract_marker(self):
+        markdown = '''```ts
+await client.close();
+```
+```typescript
+await client.transaction(async tx => {});
+```
+```typescript title="action-contract"
+await client.actions.call.getTodos({});
+```
+```ts title="action-contract"
+await client.actions.call.sendEmail({ to: 'a', subject: 'b', body: 'c' });
+```
+'''
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'guide.md').write_text(markdown)
+            with patch('check_examples.ROOT', root):
+                ordinary = snippets('ts', ['guide.md'])
+                action = snippets('ts', ['guide.md'], context='action')
+        self.assertEqual([code for _, code in ordinary], [
+            'await client.close();\n',
+            'await client.transaction(async tx => {});\n',
+        ])
+        self.assertEqual([code for _, code in action], [
+            'await client.actions.call.getTodos({});\n',
+            "await client.actions.call.sendEmail({ to: 'a', subject: 'b', body: 'c' });\n",
+        ])
+
 
 if __name__ == '__main__':
     unittest.main()

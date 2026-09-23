@@ -38,7 +38,7 @@ The compiler writes TypeScript and Dart clients, typed backend interfaces, descr
 
 ## Declare an Action contract
 
-The compiler accepts Action declarations with ordinary values, Model operands and named outputs. This complete schema illustrates the generated contract; Action invocation and backend registration become executable with #142.
+The compiler accepts Action declarations with ordinary values, Model operands and named outputs. This standalone schema is a small declaration example, separate from the [integration Action schema](https://github.com/zanminwang/ahead/blob/main/integration/action-contract/schema.model) used in the [frontend Action example](../frontend/client-api.md#action-contract-execution-pending-142). Action invocation and backend registration become executable with #142.
 
 ```text
 model Todo {

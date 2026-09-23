@@ -3,6 +3,40 @@ use ahead_compiler::{check_fence, compile, reconcile_history};
 use serde_json::json;
 
 #[test]
+fn new_action_names_must_start_at_version_one() {
+    let model = "model Todo { id String @@id(id) }";
+    let first_at_v2 = compile(&format!(
+        "{model} @version(2) action Send(to String) {{ id String }}"
+    ))
+    .unwrap();
+    let error = reconcile_action_history(&first_at_v2, None).unwrap_err();
+    assert!(error.contains("begin at version 1"), "{error}");
+
+    let existing = compile(&format!("{model} action Save(to String) {{ id String }}")).unwrap();
+    let history = reconcile_action_history(&existing, None).unwrap();
+    let second_at_v2 = compile(&format!(
+        "{model} action Save(to String) {{ id String }} @version(2) action Send(to String) {{ id String }}"
+    ))
+    .unwrap();
+    let error = reconcile_action_history(&second_at_v2, Some(&history)).unwrap_err();
+    assert!(
+        error.contains("Send") && error.contains("begin at version 1"),
+        "{error}"
+    );
+
+    let second_at_v1 = compile(&format!(
+        "{model} action Save(to String) {{ id String }} action Send(to String) {{ id String }}"
+    ))
+    .unwrap();
+    let next = reconcile_action_history(&second_at_v1, Some(&history)).unwrap();
+    assert_eq!(
+        next["actions"]["Save"]["1"],
+        history["actions"]["Save"]["1"]
+    );
+    assert_eq!(next["actions"]["Send"]["1"]["version"], 1);
+}
+
+#[test]
 fn actions_retain_output_shapes_and_model_read_versions() {
     let first =
         compile("model Todo { id String @@id(id) } action Find(query String?) { related Todo? }")

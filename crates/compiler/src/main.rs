@@ -121,15 +121,6 @@ fn run() -> Result<(), String> {
         if explicit_action_history && !action_history_path.exists() && !initialize_actions {
             return Err("missing Action history; restore it or initialize explicitly".into());
         }
-        if initialize_actions
-            && config["actions"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|a| a["version"] != 1)
-        {
-            return Err("initial Action history must begin at version 1".into());
-        }
     }
     if initialize
         && config["mutations"]

@@ -78,6 +78,60 @@ fn cli_action_history_versions_outputs_and_refuses_edits_atomically() {
 }
 
 #[test]
+fn cli_rejects_new_action_names_above_v1_without_init_flags() {
+    let (root, input) = workspace("new-action-version");
+    let out = root.join("out");
+    let model = input.join("test.model");
+    let base = "model Todo { id String @@id(id) }";
+    fs::write(
+        &model,
+        format!("{base} @version(2) action Send(to String) {{ id String }}"),
+    )
+    .unwrap();
+    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("begin at version 1"));
+    assert!(!input.join("history/actions.json").exists());
+    assert!(!out.exists());
+
+    fs::write(
+        &model,
+        format!("{base} action Save(to String) {{ id String }}"),
+    )
+    .unwrap();
+    let first = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let paths = [
+        input.join("history/actions.json"),
+        input.join("history/models.json"),
+        input.join("history/mutations.json"),
+        out.join("backend.json"),
+        out.join("schema.json"),
+        out.join("generated.ts"),
+    ];
+    let before: Vec<_> = paths.iter().map(|path| fs::read(path).unwrap()).collect();
+    fs::write(
+        &model,
+        format!("{base} action Save(to String) {{ id String }} @version(2) action Send(to String) {{ id String }}"),
+    )
+    .unwrap();
+    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(!rejected.status.success());
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(
+        stderr.contains("Send") && stderr.contains("begin at version 1"),
+        "{stderr}"
+    );
+    let after: Vec<_> = paths.iter().map(|path| fs::read(path).unwrap()).collect();
+    assert_eq!(after, before);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn cli_action_history_options_require_explicit_initialization() {
     let (root, input) = workspace("action-options");
     let out = root.join("out");

@@ -33,6 +33,11 @@ pub fn reconcile_action_history(current: &Value, history: Option<&Value>) -> Res
             .or_insert(json!({}))
             .as_object_mut()
             .ok_or("invalid Action history versions")?;
+        if versions.is_empty() && version != 1 {
+            return Err(format!(
+                "{name}: initial Action history must begin at version 1"
+            ));
+        }
         let latest = versions
             .keys()
             .map(|v| {

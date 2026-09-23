@@ -1,7 +1,7 @@
 import * as actionBackend from "./backend.ts";
 import type { GeneratedClient } from "./client.ts";
 import type { ActionCall, ActionClientContract, AddTodoInput, AddTodoOutput, Todo, TodoIdentity, TodoUpdate, ProjectIdentity, PingOutput } from './generated.ts';
-import type { AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, LinkHandlerOutput, PingHandlerOutput, RemoveTodoHandlerOutput, Handlers } from './backend.ts';
+import type { AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, LinkHandlerOutput, PingHandlerOutput, RemoveTodoHandlerOutput, Handlers, StateListHandlerOutput } from './backend.ts';
 
 declare const client: ActionClientContract;
 declare const concrete: GeneratedClient;
@@ -65,3 +65,9 @@ actionBackend.createBackend;
 // @ts-expect-error All versioned Action handlers are required.
 const missingHandler: Handlers<{}> = { link: { async v1() { return { relatedProject: null }; } }, ping: { async v1() {} } };
 void [missingNullable, badPatch, badProject, bare, full, wrongModel, missingCount, badList, badComposite, fullComposite, wrongScalar, oldEnum, oldModel, oldOutput, badPing, badPingHandler, badRemoveHandler, missingV2, missingHandler];
+
+// @ts-expect-error enum-list output rejects a scalar
+const stateListScalar: StateListHandlerOutput = { states: 'open' };
+// @ts-expect-error enum-list output rejects an invalid member
+const stateListInvalid: StateListHandlerOutput = { states: ['invalid'] };
+void [stateListScalar, stateListInvalid];

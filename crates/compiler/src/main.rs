@@ -191,6 +191,7 @@ fn run() -> Result<(), String> {
     if let Some(action_history) = &action_history {
         config["actions"] = serde_json::json!(retained(action_history, "actions"));
     }
+    ahead_compiler::check_action_names(&config)?;
     let mut backend = config.clone();
     backend["mutations"] = serde_json::json!(historical);
     backend["models"] = config["backendModels"].clone();

@@ -175,6 +175,11 @@ export interface SendEmailInput {
  body: string;
 }
 export type SendEmailOutput = void;
+export interface StateListInput {
+}
+export interface StateListOutput {
+ states: Status[];
+}
 export interface ActionTxModels {
  todo: Pick<TodoTxModel, 'get' | 'query' | 'create' | 'update' | 'delete'>;
  project: Pick<ProjectTxModel, 'get' | 'query' | 'create' | 'update' | 'delete'>;
@@ -196,6 +201,7 @@ export interface ActionClientContract {
   removeTodo(args: RemoveTodoInput): Promise<ActionCall<RemoveTodoOutput>>;
   search(args: SearchInput): Promise<ActionCall<SearchOutput>>;
   sendEmail(args: SendEmailInput): Promise<ActionCall<SendEmailOutput>>;
+  stateList(args: StateListInput): Promise<ActionCall<StateListOutput>>;
   call: {
    addTodo(args: AddTodoInput): Promise<AddTodoOutput>;
    deleteTodo(args: DeleteTodoInput): Promise<DeleteTodoOutput>;
@@ -205,6 +211,7 @@ export interface ActionClientContract {
    removeTodo(args: RemoveTodoInput): Promise<RemoveTodoOutput>;
    search(args: SearchInput): Promise<SearchOutput>;
    sendEmail(args: SendEmailInput): Promise<SendEmailOutput>;
+   stateList(args: StateListInput): Promise<StateListOutput>;
   };
  };
 }

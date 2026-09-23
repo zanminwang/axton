@@ -21,6 +21,7 @@ const handlerOutput = AddTodoHandlerOutput(
 const linkOutput = LinkHandlerOutput(
   relatedProject: ProjectIdentity(tenantId: 'tenant', id: 'project'),
 );
+const stateListOutput = StateListHandlerOutput(states: [Status.open, Status.closed, Status.archived]);
 const getTodosOutput = GetTodosHandlerOutput(todos: [TodoIdentity(id: 't')]);
 
 Future<AddTodoHandlerOutput> handle(
@@ -93,6 +94,7 @@ void main() {
   oldOutput.count;
   linkOutput.relatedProject?.id;
   getTodosOutput.todos.length;
+  stateListOutput.states.length;
   handle;
   useClient;
 }

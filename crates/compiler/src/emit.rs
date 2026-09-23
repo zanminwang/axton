@@ -599,7 +599,12 @@ fn backend_action_output_type(field: &Value, action: &Value, models: &[Value]) -
             format!("{model}Identity")
         }
     };
-    action_cardinality(&base, s(field, "cardinality"))
+    if field["kind"] == "value" && field["type"]["kind"] == "enum" && field["cardinality"] == "list"
+    {
+        format!("({base})[]")
+    } else {
+        action_cardinality(&base, s(field, "cardinality"))
+    }
 }
 fn ts_actions(v: &Value, o: &mut String) {
     let actions = arr(v, "actions");
@@ -1154,7 +1159,11 @@ fn dart_action_input_type(
     let base = match s(arg, "operation") {
         "create" => format!("{prefix}{model}Create"),
         "delete" => format!("{prefix}{model}Delete"),
-        "update" if restricted => format!("{restriction_prefix}{}Update", upper(s(arg, "name"))),
+        "update" if restricted => format!(
+            "{restriction_prefix}{}{}Update",
+            upper(s(arg, "name")),
+            if prefix.is_empty() { "" } else { "Slot" }
+        ),
         "update" => format!("{prefix}{model}Update"),
         _ => unreachable!(),
     };
@@ -1359,7 +1368,11 @@ fn dart_actions(v: &Value, o: &mut String) {
                     .unwrap();
                 dart_action_update(
                     o,
-                    &format!("{prefix}{}Update", upper(s(arg, "name"))),
+                    &format!(
+                        "{prefix}{}{}Update",
+                        upper(s(arg, "name")),
+                        if is_latest { "" } else { "Slot" }
+                    ),
                     model,
                     arg["allowedPatchFields"].as_array(),
                     historical,

@@ -747,3 +747,121 @@ fn cli_refuses_misuse_of_the_model_history() {
     assert!(String::from_utf8_lossy(&again.stderr).contains("model history already exists"));
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn cli_rejects_retained_action_identifier_collisions_before_writes() {
+    let (root, input) = workspace("retained-action-name-collision");
+    let out = root.join("out");
+    let model = input.join("test.model");
+    fs::write(&model, "model Todo { id String @@id(id) } action Fetch()").unwrap();
+    let first = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let files = [
+        input.join("history/actions.json"),
+        input.join("history/models.json"),
+        input.join("history/mutations.json"),
+        out.join("generated.ts"),
+        out.join("generated.dart"),
+        out.join("backend.ts"),
+    ];
+    let before: Vec<_> = files.iter().map(|path| fs::read(path).unwrap()).collect();
+    fs::write(&model, "model Todo { id String @@id(id) } model FetchV1Input { id String @@id(id) } @version(2) action Fetch()").unwrap();
+    let second = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(!second.status.success());
+    let error = String::from_utf8_lossy(&second.stderr);
+    assert!(
+        error.contains("FetchV1Input")
+            && error.contains("Action Fetch v1")
+            && error.contains("model FetchV1Input"),
+        "{error}"
+    );
+    let after: Vec<_> = files.iter().map(|path| fs::read(path).unwrap()).collect();
+    assert_eq!(before, after);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_disambiguates_retained_operand_helper() {
+    let (root, input) = workspace("retained-action-operand-name-collision");
+    let out = root.join("out");
+    let model = input.join("test.model");
+    let v1 = "model Todo { id String title String @@id(id) } action Edit(todo Todo.update<title>)";
+    fs::write(&model, v1).unwrap();
+    let first = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    fs::write(&model, v1.replace("action Edit", "@version(2) action Edit")).unwrap();
+    let second = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let dart = fs::read_to_string(out.join("generated.dart")).unwrap();
+    assert_eq!(dart.matches("class EditV1TodoUpdate ").count(), 1);
+    assert!(dart.contains("class EditV1TodoSlotUpdate "));
+    assert!(dart.contains("EditV1TodoSlotUpdate todo"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_rejects_collision_between_retained_and_new_action_symbols() {
+    let (root, input) = workspace("retained-action-action-collision");
+    let out = root.join("out");
+    let model = input.join("test.model");
+    fs::write(&model, "model Todo { id String @@id(id) } action Fetch()").unwrap();
+    assert!(
+        ahead(&[input.as_os_str(), out.as_os_str()])
+            .status
+            .success()
+    );
+    let history = fs::read(input.join("history/actions.json")).unwrap();
+    fs::write(
+        &model,
+        "model Todo { id String @@id(id) } @version(2) action Fetch() action FetchV1()",
+    )
+    .unwrap();
+    let refused = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(!refused.status.success());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        error.contains("FetchV1Input")
+            && error.contains("Action Fetch v1")
+            && error.contains("Action FetchV1 v1"),
+        "{error}"
+    );
+    assert_eq!(
+        fs::read(input.join("history/actions.json")).unwrap(),
+        history
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_rejects_retained_model_record_name_used_by_action_schema() {
+    let (root, input) = workspace("retained-model-record-name-collision");
+    let out = root.join("out");
+    let model = input.join("test.model");
+    fs::write(&model, "model Todo { id String @@id(id) } action Fetch()").unwrap();
+    assert!(
+        ahead(&[input.as_os_str(), out.as_os_str()])
+            .status
+            .success()
+    );
+    fs::write(&model, "@version(2) model Todo { id String title String @@id(id) } model TodoV1 { id String @@id(id) } @version(2) action Fetch()").unwrap();
+    let refused = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(!refused.status.success());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        error.contains("TodoV1") && error.contains("model Todo"),
+        "{error}"
+    );
+    fs::remove_dir_all(root).unwrap();
+}

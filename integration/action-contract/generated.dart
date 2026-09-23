@@ -188,14 +188,14 @@ class AddTodoV1TodoUpdate {
  final Present<AddTodoV1Status>? state;
  const AddTodoV1TodoUpdate({required this.id,this.title,this.state});
 }
-class AddTodoV1PatchUpdate {
+class AddTodoV1PatchSlotUpdate {
  final String id;
  final Present<String>? title;
- const AddTodoV1PatchUpdate({required this.id,this.title});
+ const AddTodoV1PatchSlotUpdate({required this.id,this.title});
 }
 class AddTodoV1Input {
  final AddTodoV1TodoCreate todo;
- final AddTodoV1PatchUpdate? patch;
+ final AddTodoV1PatchSlotUpdate? patch;
  final List<AddTodoV1TodoDelete> gone;
  final AddTodoV1Status? status;
  final List<String> tags;
@@ -298,6 +298,17 @@ class SendEmailInput {
 }
 typedef SendEmailOutput = void;
 typedef SendEmailHandlerOutput = void;
+class StateListInput {
+ const StateListInput();
+}
+class StateListOutput {
+ final List<Status> states;
+ const StateListOutput({required this.states});
+}
+class StateListHandlerOutput {
+ final List<Status> states;
+ const StateListHandlerOutput({required this.states});
+}
 abstract interface class ActionTxModels {
  ActionTodoModel get todo;
  ActionProjectModel get project;
@@ -337,6 +348,7 @@ abstract interface class ActionActionsContract { ActionDirectCallsContract get c
  Future<ActionCall<RemoveTodoOutput>> removeTodo({required TodoDelete todo});
  Future<ActionCall<SearchOutput>> search({required String? query});
  Future<ActionCall<SendEmailOutput>> sendEmail({required String to, required String subject, required String body});
+ Future<ActionCall<StateListOutput>> stateList();
 }
 abstract interface class ActionDirectCallsContract {
  Future<AddTodoOutput> addTodo({required TodoCreate todo, AddTodoPatchUpdate? patch, required List<TodoDelete> gone, required Status? status, required List<String> tags});
@@ -347,6 +359,7 @@ abstract interface class ActionDirectCallsContract {
  Future<RemoveTodoOutput> removeTodo({required TodoDelete todo});
  Future<SearchOutput> search({required String? query});
  Future<SendEmailOutput> sendEmail({required String to, required String subject, required String body});
+ Future<StateListOutput> stateList();
 }
 abstract interface class ActionHandlerCall<Ctx, Args> { Ctx get ctx; Args get args; }
 abstract interface class ActionHandlers<Ctx> {
@@ -358,6 +371,7 @@ abstract interface class ActionHandlers<Ctx> {
  ActionRemoveTodoHandlers<Ctx> get removeTodo;
  ActionSearchHandlers<Ctx> get search;
  ActionSendEmailHandlers<Ctx> get sendEmail;
+ ActionStateListHandlers<Ctx> get stateList;
 }
 abstract interface class ActionAddTodoHandlers<Ctx> {
  Future<AddTodoV1HandlerOutput> v1(ActionHandlerCall<Ctx, AddTodoV1Input> call);
@@ -383,6 +397,9 @@ abstract interface class ActionSearchHandlers<Ctx> {
 }
 abstract interface class ActionSendEmailHandlers<Ctx> {
  Future<SendEmailHandlerOutput> v1(ActionHandlerCall<Ctx, SendEmailInput> call);
+}
+abstract interface class ActionStateListHandlers<Ctx> {
+ Future<StateListHandlerOutput> v1(ActionHandlerCall<Ctx, StateListInput> call);
 }
 class Mutate { final MutatePort port; Mutate(this.port);
 

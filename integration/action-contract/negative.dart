@@ -39,3 +39,6 @@ final oldArchived = AddTodoV1Input(
 Future<void> missingSearchQuery(ActionClientContract client) async {
   await client.actions.search();
 }
+
+final stateListScalar = StateListHandlerOutput(states: Status.open);
+final stateListInvalid = StateListHandlerOutput(states: [Status.invalid]);

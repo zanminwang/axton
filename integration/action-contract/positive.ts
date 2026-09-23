@@ -1,5 +1,5 @@
 import type { ActionCall, ActionClientContract, ActionOutcome, AddTodoInput, AddTodoOutput, TodoCreate, TodoUpdate, TodoDelete, TodoIdentity, ProjectIdentity, PingOutput } from './generated.ts';
-import type { AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, PingHandlerOutput, RemoveTodoHandlerOutput, Handlers, Loaders } from './backend.ts';
+import type { AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, PingHandlerOutput, RemoveTodoHandlerOutput, Handlers, Loaders, StateListHandlerOutput } from './backend.ts';
 
 const created: TodoCreate = { id: 't', title: 'Task', state: 'open', note: null };
 const patch: TodoUpdate<'title'> = { id: 't', title: 'Renamed' };
@@ -9,6 +9,7 @@ const identity: TodoIdentity = { id: 't' };
 const composite: ProjectIdentity = { tenantId: 'tenant', id: 'project' };
 const oldInput: AddTodoV1Input = { todo: { id: 'old', title: 'Old', state: 'closed' }, gone: [], status: 'open', tags: [] };
 const oldOutput: AddTodoV1HandlerOutput = { relatedTodo: { id: 'old' }, matches: [], count: 1 };
+const stateListOutput: StateListHandlerOutput = { states: ['open', 'closed', 'archived'] };
 const handlerOutput: AddTodoHandlerOutput = { relatedTodo: identity, matches: [identity], count: 1, state: null };
 
 async function clientContract(client: ActionClientContract) {
@@ -58,6 +59,7 @@ const handlers: Handlers<Ctx> = {
   deleteTodo: { async v1({ args }) { void args.todo.id; } },
   sendEmail: { async v1({ args }) { void args.to; void args.subject; void args.body; } },
   getTodos: { async v1() { return { todos: [{ id: 't' }] }; } },
+  stateList: { async v1() { return stateListOutput; } },
 };
 const loaders: Loaders<Ctx> = {
   todo: { async v1() { return []; }, async v2() { return []; } },

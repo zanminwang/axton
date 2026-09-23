@@ -1023,3 +1023,111 @@ fn action_dart_retains_output_read_version_and_enum_snapshot() {
     assert!(dart.contains("enum AddV1OutputStatus { open }"), "{dart}");
     assert!(dart.contains("AddV1OutputStatus state"), "{dart}");
 }
+
+#[test]
+fn action_generated_identifiers_reject_current_collisions_with_positions() {
+    let cases = [
+        (
+            "model FetchInput { id String @@id(id) } action Fetch()",
+            "FetchInput",
+        ),
+        (
+            "model FetchOutput { id String @@id(id) } action Fetch()",
+            "FetchOutput",
+        ),
+        (
+            "model FetchHandlerOutput { id String @@id(id) } action Fetch()",
+            "FetchHandlerOutput",
+        ),
+        (
+            "model Todo { id String @@id(id) } mutation Fetch { todo Todo.create } action Fetch()",
+            "FetchInput",
+        ),
+        (
+            "enum ActionOutcome { open } model Todo { id String @@id(id) } action Fetch()",
+            "ActionOutcome",
+        ),
+        (
+            "model ActionSuccess { id String @@id(id) } action Fetch()",
+            "ActionSuccess",
+        ),
+        (
+            "model ActionFailure { id String @@id(id) } action Fetch()",
+            "ActionFailure",
+        ),
+        (
+            "model ActionBackendContract { id String @@id(id) } action Fetch()",
+            "ActionBackendContract",
+        ),
+        (
+            "model Todo { id String @@id(id) } model ActionTodoModel { id String @@id(id) } action Fetch()",
+            "ActionTodoModel",
+        ),
+        (
+            "model Todo { id String title String @@id(id) } model FetchTodoUpdate { id String @@id(id) } action Fetch(todo Todo.update<title>)",
+            "FetchTodoUpdate",
+        ),
+    ];
+    for (source, name) in cases {
+        let error = compile(source).unwrap_err();
+        assert!(
+            error.contains(name) && error.contains("Action") && error.starts_with("1:"),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[test]
+fn action_generated_identifiers_reject_other_actions_without_overbanning() {
+    assert!(
+        compile("model Todo { id String @@id(id) } action Fetch() action FetchInput()").is_ok()
+    );
+    assert!(compile("model FetchV1Input { id String @@id(id) } action Fetch()").is_ok());
+}
+
+#[test]
+fn backend_enum_list_handler_outputs_typecheck_latest_and_retained() {
+    let old = compile("enum Status { open closed } model Todo { id String @@id(id) } action Fetch() { states Status[] }").unwrap();
+    let history = ahead_compiler::reconcile_action_history(&old, None).unwrap();
+    let mut latest = compile("enum Status { open closed archived } model Todo { id String @@id(id) } @version(2) action Fetch() { states Status[] }").unwrap();
+    let history = ahead_compiler::reconcile_action_history(&latest, Some(&history)).unwrap();
+    latest["actions"] = serde_json::Value::Array(
+        history["actions"]["Fetch"]
+            .as_object()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect(),
+    );
+    let emitted = ahead_compiler::backend_typescript(&latest, "@ahead/server");
+    let interface = |name: &str| {
+        let marker = format!("export interface {name} {{");
+        let body = emitted
+            .split_once(&marker)
+            .unwrap()
+            .1
+            .split_once("}\n")
+            .unwrap()
+            .0;
+        format!("interface {name} {{{body}}}\n")
+    };
+    let proof = format!(
+        "{}{}const oldValid: FetchV1HandlerOutput = {{ states: ['open', 'closed'] }};\nconst newValid: FetchHandlerOutput = {{ states: ['open', 'archived'] }};\n// @ts-expect-error scalar is not a list\nconst oldScalar: FetchV1HandlerOutput = {{ states: 'open' }};\n// @ts-expect-error scalar is not a list\nconst newScalar: FetchHandlerOutput = {{ states: 'open' }};\n// @ts-expect-error retained v1 excludes the new enum case\nconst oldNewCase: FetchV1HandlerOutput = {{ states: ['archived'] }};\n// @ts-expect-error invalid member\nconst newInvalid: FetchHandlerOutput = {{ states: ['invalid'] }};\nvoid [oldValid, newValid, oldScalar, newScalar, oldNewCase, newInvalid];\n",
+        interface("FetchV1HandlerOutput"),
+        interface("FetchHandlerOutput")
+    );
+    let path =
+        std::env::temp_dir().join(format!("ahead-action-enum-list-{}.ts", std::process::id()));
+    std::fs::write(&path, proof).unwrap();
+    let result = std::process::Command::new("tsc")
+        .args(["--strict", "--noEmit", "--skipLibCheck"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stdout)
+    );
+}

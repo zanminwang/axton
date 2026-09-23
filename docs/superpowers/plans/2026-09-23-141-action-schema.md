@@ -4,14 +4,14 @@
 
 **Goal:** Compile unified Model/Action declarations and generate accurate TypeScript, Dart and backend contracts for local Models and both Action delivery modes.
 
-**Architecture:** Parse and validate Actions into one typed representation, then derive runtime metadata and language interfaces from it. Publish generated Action contracts as type-level interfaces while existing mutation execution stays operational; #142 later binds those interfaces to real durable/direct runtime implementations, and #116 implements Loader Model results.
+**Architecture:** Parse and validate Actions into one typed representation, then derive runtime metadata and language interfaces from it. Publish generated Action contracts as type-level interfaces while existing mutation execution stays operational; #142 later binds those interfaces to real durable/direct runtime implementations, including the shared Loader result path; #116 adds ephemeral policy and dedicated mixed-output acceptance.
 
 **Tech Stack:** Rust compiler (`parse`, `validate`, `generate`, `emit`, `history`), TypeScript, Dart, generated API fixtures.
 
 ## Global Constraints
 
 - Before code changes, update/rebase `codex/141-action-schema` onto the completed #145 branch, inspect its new public transaction contract, then adjust file paths and tests below to that baseline. Resolve conflicts in this worktree only.
-- #141 owns compiler, descriptors, generated interfaces, type tests, diagnostics, fixtures and docs; #142 owns new execution, #116 owns Model output materialization. Do not add a callable stub or make #141's gate depend on unfinished #142/#116.
+- #141 owns compiler, descriptors, generated interfaces, type tests, diagnostics, fixtures and docs; #142 owns execution and the shared Loader/materialization path; #116 owns ephemeral policy and dedicated output acceptance. Do not add a callable stub or make #141's gate depend on unfinished #142/#116.
 - Preserve a working existing optimistic mutation path during the staged compiler transition. Internal compatibility metadata is temporary development scaffolding, not a user migration contract.
 - No `@tool`, `@local`, `@synced`, new invocation dependencies, cross-Action atomic groups, nested or nullable lists.
 - Follow red/green cycles, inspect each task's diff, and commit coherent changes. Read compiler architecture and testing guides before edits.

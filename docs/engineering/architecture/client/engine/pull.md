@@ -13,7 +13,7 @@ Pages come from two paths and go through one gate:
 | HTTP catch-up or WebSocket frame, via the live session | `receive_downlink(page, request?)` | `DownlinkProgress {disposition: covered/recover/applied, gaps, continues, report}` |
 | Direct callers (tests, simulation) | `apply_page(page)` | `ApplyReport {applied, stale, cursors, reports}` |
 
-`downlink_request()` builds the one request for every subscribed channel (`None` when nothing is subscribed). Pull owns the ledger: `ahead_subscription` (channel → cursor) and `ahead_record` (the stamp last applied per record, retained across deletion and unsubscription). It writes records through the authority applier shared with [Settlement](settlement.md); the only queue state it touches is the *diverged* mark on a mutation whose replay failed.
+`downlink_request()` builds the one request for every subscribed channel (`None` when nothing is subscribed). Pull owns the ledger: `axton_subscription` (channel → cursor) and `axton_record` (the stamp last applied per record, retained across deletion and unsubscription). It writes records through the authority applier shared with [Settlement](settlement.md); the only queue state it touches is the *diverged* mark on a mutation whose replay failed.
 
 ## 5. Building Block View
 
@@ -31,13 +31,13 @@ A page is one SQLite transaction: gate every channel; apply every change by stam
 
 ## 9. Architecture Decisions
 
-**Channels deliver; they do not own ([#55](https://github.com/zanminwang/ahead/issues/55), [#116](https://github.com/zanminwang/ahead/issues/116)).** The earlier design kept a claim per `(channel, record)` and deleted a record when its last claim was released by an unsubscribe or a confirmed deletion. That made a subscription the owner of local data and forced a delete to wait for every channel's confirmation. Now unsubscribing stops delivery and resets the cursor, and nothing else; retained data is readable but not promised fresh without an update source, and cache eviction is a separate concern ([#61](https://github.com/zanminwang/ahead/issues/61)). Stamp rows are retained for deleted records as the evidence that keeps stale content from resurrecting them; reclaiming them is [#61](https://github.com/zanminwang/ahead/issues/61) too.
+**Channels deliver; they do not own ([#55](https://github.com/zanminwang/axton/issues/55), [#116](https://github.com/zanminwang/axton/issues/116)).** The earlier design kept a claim per `(channel, record)` and deleted a record when its last claim was released by an unsubscribe or a confirmed deletion. That made a subscription the owner of local data and forced a delete to wait for every channel's confirmation. Now unsubscribing stops delivery and resets the cursor, and nothing else; retained data is readable but not promised fresh without an update source, and cache eviction is a separate concern ([#61](https://github.com/zanminwang/axton/issues/61)). Stamp rows are retained for deleted records as the evidence that keeps stale content from resurrecting them; reclaiming them is [#61](https://github.com/zanminwang/axton/issues/61) too.
 
 **One applier for every path.** A page change and a receipt record are the same authority, and the same function stages them ([Settlement §9](settlement.md#9-architecture-decisions)).
 
-**A page is one unit ([#95](https://github.com/zanminwang/ahead/issues/95)).** Changes carry no cursor, so a cursor can only move to a page's end; applying the whole page in one transaction makes that exact, and the stamp makes a re-pull harmless. The earlier per-change transactions existed only because each change had its own cursor.
+**A page is one unit ([#95](https://github.com/zanminwang/axton/issues/95)).** Changes carry no cursor, so a cursor can only move to a page's end; applying the whole page in one transaction makes that exact, and the stamp makes a re-pull harmless. The earlier per-change transactions existed only because each change had its own cursor.
 
-**Nothing is silent ([#51](https://github.com/zanminwang/ahead/issues/51), [#122](https://github.com/zanminwang/ahead/issues/122)).** Skipping a change the client cannot use keeps one bad record from blocking a channel, but the application is told. A divergence shows the authoritative base rather than guessing a merge; the queued operation still reaches the server, whose handler decides.
+**Nothing is silent ([#51](https://github.com/zanminwang/axton/issues/51), [#122](https://github.com/zanminwang/axton/issues/122)).** Skipping a change the client cannot use keeps one bad record from blocking a channel, but the application is told. A divergence shows the authoritative base rather than guessing a merge; the queued operation still reaches the server, whose handler decides.
 
 ## 10. Quality Requirements
 
@@ -48,12 +48,12 @@ A page is one SQLite transaction: gate every channel; apply every change by stam
 - **Unsubscribing retains rows, stamps, before images and pending edits** (guarantee D6). Evidence: `unsubscribing_retains_records_and_later_pages_are_dropped`, `another_channel_updates_retained_content_and_restart_keeps_it`.
 - **Random runs: an unapplied change never moves a stamp or rewrites content, and a page moves a channel to its end or not at all.** Evidence: [sim.rs](../../../../../crates/sim/src/sim.rs) delivery checks under [crates/sim/tests/invariants.rs](../../../../../crates/sim/tests/invariants.rs).
 
-Executed 2026-09-16: `cargo test -p ahead-client -p ahead-sqlite -p ahead-sim --locked`; `SIM_SEEDS=300 SIM_STEPS=200 cargo test -p ahead-sim --locked --test invariants`.
+Executed 2026-09-16: `cargo test -p axton-client -p axton-sqlite -p axton-sim --locked`; `SIM_SEEDS=300 SIM_STEPS=200 cargo test -p axton-sim --locked --test invariants`.
 
 ## 11. Risks and Technical Debt
 
 **Accepted limitation.** The subscription epoch and the issued-pull memory live in the process. A page for a pull that was not issued through the client is judged by the cursor gate alone.
 
-**Accepted limitation.** A record whose change was skipped or could not be read stays as it was until it is delivered again (a later publication, or an explicit fetch, [#116](https://github.com/zanminwang/ahead/issues/116)); nothing retries it on its own.
+**Accepted limitation.** A record whose change was skipped or could not be read stays as it was until it is delivered again (a later publication, or an explicit fetch, [#116](https://github.com/zanminwang/axton/issues/116)); nothing retries it on its own.
 
-**Accepted limitation.** Stamp rows are never reclaimed and retained content is never evicted ([#61](https://github.com/zanminwang/ahead/issues/61)). Applying a large page holds one write transaction for its duration; the threading model that keeps that off the host thread is [#134](https://github.com/zanminwang/ahead/issues/134).
+**Accepted limitation.** Stamp rows are never reclaimed and retained content is never evicted ([#61](https://github.com/zanminwang/axton/issues/61)). Applying a large page holds one write transaction for its duration; the threading model that keeps that off the host thread is [#134](https://github.com/zanminwang/axton/issues/134).

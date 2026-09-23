@@ -1,6 +1,6 @@
 mod common;
-use ahead_client::*;
-use ahead_sqlite::SqliteStore;
+use axton_client::*;
+use axton_sqlite::SqliteStore;
 use common::*;
 use serde_json::json;
 use std::collections::BTreeSet;
@@ -20,7 +20,7 @@ fn open_creates_tables_persists_identity_and_survives_reopen() {
     let mut c = open(&path);
     assert_eq!(c.client_id(), id);
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
-    assert_eq!(table_count(&mut c, "ahead_before_Entry"), 0);
+    assert_eq!(table_count(&mut c, "axton_before_Entry"), 0);
 }
 
 #[test]
@@ -36,7 +36,7 @@ fn optimistic_edit_holds_truth_once_and_rejection_rebuilds_from_it() {
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "C");
     assert_eq!(c.before_image_count().unwrap(), 1);
     assert_eq!(
-        c.read_sql("SELECT text FROM ahead_before_Entry", &[])
+        c.read_sql("SELECT text FROM axton_before_Entry", &[])
             .unwrap(),
         vec![json!({"text":"A"})]
     );
@@ -91,7 +91,7 @@ fn watch_fires_only_for_declared_tables() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
     let entry = c.watch(BTreeSet::from(["Entry".to_string()]));
-    let queue = c.watch(BTreeSet::from(["ahead_mutation".to_string()]));
+    let queue = c.watch(BTreeSet::from(["axton_mutation".to_string()]));
     seed(&mut c, "A");
     assert!(entry.try_recv().is_ok());
     assert!(queue.try_recv().is_err());
@@ -100,7 +100,7 @@ fn watch_fires_only_for_declared_tables() {
     assert!(entry.try_recv().is_err());
     assert_eq!(
         c.last_changed(),
-        &BTreeSet::from(["ahead_client".to_string(), "ahead_subscription".to_string()])
+        &BTreeSet::from(["axton_client".to_string(), "axton_subscription".to_string()])
     );
 }
 
@@ -187,7 +187,7 @@ fn schema_cascade_is_optimistic_same_fate_and_not_extra_wire_operations() {
     })
     .unwrap();
     assert!(c.query("Comment", &json!({})).unwrap().is_empty());
-    assert_eq!(table_count(&mut c, "ahead_before_Comment"), 1);
+    assert_eq!(table_count(&mut c, "axton_before_Comment"), 1);
     let request = PushRequest::decode(&c.freeze().unwrap().unwrap()).unwrap();
     assert_eq!(
         request.raw["mutations"][0]["operations"]
@@ -199,7 +199,7 @@ fn schema_cascade_is_optimistic_same_fate_and_not_extra_wire_operations() {
     let ack = rejecting(&mut c, 1, &[1], "denied", vec![]);
     c.acknowledge(1, ack).unwrap();
     assert_eq!(c.query("Comment", &json!({})).unwrap().len(), 1);
-    assert_eq!(table_count(&mut c, "ahead_before_Comment"), 0);
+    assert_eq!(table_count(&mut c, "axton_before_Comment"), 0);
 }
 
 #[test]
@@ -291,7 +291,7 @@ fn unsubscribe_retains_records_and_restarts_from_zero() {
         "O",
         "a record only the unsubscribed channel delivered is retained"
     );
-    assert_eq!(table_count(&mut c, "ahead_record"), 2);
+    assert_eq!(table_count(&mut c, "axton_record"), 2);
     assert_eq!(c.record_stamp(&only_a).unwrap(), 2);
     subscribe(&mut c, "a");
     assert_eq!(c.cursor("a").unwrap(), 0, "resubscribing starts over");

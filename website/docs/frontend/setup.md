@@ -2,7 +2,7 @@
 
 Read, watch and update local data through the generated client. TypeScript and Flutter share the same model and mutation contract, backed by the Rust engine and SQLite. Select a language above each example; Flutter examples use Dart.
 
-Examples use the `Entry` model and `Edit` mutation of the [round-trip fixture](https://github.com/zanminwang/ahead/blob/main/integration/e2e/fixtures/round-trip/models/entry.model); the [To-do example](../getting-started.md) uses the same generated API with its own names. [Generate your interfaces](../schema/define.md) before importing them.
+Examples use the `Entry` model and `Edit` mutation of the [round-trip fixture](https://github.com/zanminwang/axton/blob/main/integration/e2e/fixtures/round-trip/models/entry.model); the [To-do example](../getting-started.md) uses the same generated API with its own names. [Generate your interfaces](../schema/define.md) before importing them.
 
 ## Set up the runtime
 
@@ -24,13 +24,13 @@ bash scripts/build.sh
 
     ```yaml
     dependencies:
-      ahead:
-        path: /absolute/path/to/ahead/packages/dart
+      axton:
+        path: /absolute/path/to/axton/packages/dart
     ```
 
-    Run `flutter pub get`, or `dart pub get` in a Dart application. The package currently requires Dart 3.12 or newer. Generated code imports `package:ahead/ahead.dart`.
+    Run `flutter pub get`, or `dart pub get` in a Dart application. The package currently requires Dart 3.12 or newer. Generated code imports `package:axton/axton.dart`.
 
-    For desktop development, `libraryPath` points to `target/debug/libahead_dart.dylib` on macOS or `libahead_dart.so` on Linux. Outside iOS it is required; on iOS, omitting it uses process-linked native symbols. Mobile packaging needs platform-specific native build/link steps; see [platform setup](platforms.md). Choose a writable application directory for the SQLite file.
+    For desktop development, `libraryPath` points to `target/debug/libaxton_dart.dylib` on macOS or `libaxton_dart.so` on Linux. Outside iOS it is required; on iOS, omitting it uses process-linked native symbols. Mobile packaging needs platform-specific native build/link steps; see [platform setup](platforms.md). Choose a writable application directory for the SQLite file.
 
 ## Open local storage
 
@@ -51,7 +51,7 @@ bash scripts/build.sh
 
     final client = await GeneratedClient.open(
       path: 'local.sqlite',
-      libraryPath: '/absolute/path/to/ahead/target/debug/libahead_dart.dylib',
+      libraryPath: '/absolute/path/to/axton/target/debug/libaxton_dart.dylib',
     );
     final entry = await client.models.entry.get(const EntryIdentity(id: 'entry-1'));
     print(entry?.text);
@@ -86,7 +86,7 @@ Start the fixture backend with `bash integration/e2e/fixtures/round-trip/run.sh`
 
     final client = await GeneratedClient.open(
       path: 'local.sqlite',
-      libraryPath: '/absolute/path/to/ahead/target/debug/libahead_dart.dylib',
+      libraryPath: '/absolute/path/to/axton/target/debug/libaxton_dart.dylib',
       server: SyncServer(
         url: 'http://127.0.0.1:4242',
         token: () => 'demo-user',
@@ -96,7 +96,7 @@ Start the fixture backend with `bash integration/e2e/fixtures/round-trip/run.sh`
     await client.channels.subscribe('book:demo');
     ```
 
-Configure the server once. Ahead submits mutations over HTTP, catches up from saved channel cursors over HTTP, and receives ongoing record changes over WebSocket. Every received page passes through the Rust engine into local SQLite and updates `watch` subscriptions.
+Configure the server once. AXTON submits mutations over HTTP, catches up from saved channel cursors over HTTP, and receives ongoing record changes over WebSocket. Every received page passes through the Rust engine into local SQLite and updates `watch` subscriptions.
 
 Subscribing wakes the connection; it does not wait for initial records. A client with no subscribed channels can still push mutations, but acceptance does not preserve their optimistic records. [Subscribe to receive mutation results](sync.md#receive-mutation-results) when your UI needs to keep displaying them. Subscription changes update live synchronization automatically. Replace the demo URL and token with your application's endpoint and credentials. On a physical device, localhost refers to that device; use a reachable development-server address.
 

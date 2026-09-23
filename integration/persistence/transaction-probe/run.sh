@@ -11,7 +11,7 @@ cd "$root/integration/bindings/node"
 npm ci
 npm run generate
 # Tests deliberately write probe tables. Always create a disposable local cluster.
-probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/ahead-node-pg.XXXXXX")"
+probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/axton-node-pg.XXXXXX")"
 cleanup() {
   pg_ctl -D "$probe_dir/data" -m immediate stop >/dev/null 2>&1 || true
   rm -rf -- "$probe_dir"

@@ -14,7 +14,7 @@ Parse turns one or more `.model` files into structured declarations with token p
 
 - **Lexer.** Identifiers and digit runs, double-quoted strings with backslash escapes, the punctuation `{ } ( ) [ ] ? , . @ < > :`, and `//` line comments. Anything else is an error. Every token carries its line and column.
 - **Grammar.** Four declarations: `enum`, `model`, `mutation`, `prerequisite`. Directives are `@@name(args)` at declaration level and `@name(args)` on fields, enum values or slots; arguments are positional or `key: value`, and values are identifiers, dotted paths, strings, lists or nested invocations. `@deprecated` takes nothing or `(reason: "text")`, on a field, an enum value or a slot, at most once each.
-- **CLI.** `ahead compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--model-history FILE] [--initialize-model-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]`.
+- **CLI.** `axton compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--model-history FILE] [--initialize-model-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]`.
 
 Code: `lex`, `Parser`, `parse` and the `Declarations` types in [compiler/parse.rs](../../../../crates/compiler/src/parse.rs); file handling in [compiler/main.rs](../../../../crates/compiler/src/main.rs).
 
@@ -29,4 +29,4 @@ Code: `lex`, `Parser`, `parse` and the `Declarations` types in [compiler/parse.r
 
 ## 11. Risks and Technical Debt
 
-- **Accepted limitation:** there are no numeric or boolean literals outside `@@version` (on mutations and models); this is the parsing half of the missing field default ([#27](https://github.com/zanminwang/ahead/issues/27)).
+- **Accepted limitation:** there are no numeric or boolean literals outside `@@version` (on mutations and models); this is the parsing half of the missing field default ([#27](https://github.com/zanminwang/axton/issues/27)).

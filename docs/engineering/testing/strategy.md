@@ -11,7 +11,7 @@ Start with the behavior a change must preserve. Read the owning component's arch
 | [Integration](integration/README.md) | Real storage, language and network boundaries satisfy the contracts the core relies on. |
 | [End-to-end](end-to-end.md) | The assembled system completes a user-visible path. |
 
-These are Ahead's testing responsibilities. Component, integration and end-to-end describe test scope; simulation provides a controlled environment for exercising the Rust core across components.
+These are AXTON's testing responsibilities. Component, integration and end-to-end describe test scope; simulation provides a controlled environment for exercising the Rust core across components.
 
 Choose by the property, not the test file's directory. Client engine tests currently use the SQLite crate as a harness; a mocked WebSocket test cannot establish actual socket behavior. Several test areas may support one guarantee or component contract when each checks a different failure mode.
 
@@ -32,4 +32,4 @@ Use named scenarios for known cases and generated sequences to explore interacti
 
 [Coverage review](review.md) records the starting gaps for the next testing issue. That work must inspect assertions and define required checks per change; measured run times should be recorded only after execution.
 
-Background: [ISTQB's test levels](https://astqb.org/2-2-test-levels-and-test-types/) distinguish component and system scopes; [FoundationDB's testing approach](https://apple.github.io/foundationdb/testing.html) combines simulation with live performance and hardware failure tests. Ahead's directory groups are a project-specific choice.
+Background: [ISTQB's test levels](https://astqb.org/2-2-test-levels-and-test-types/) distinguish component and system scopes; [FoundationDB's testing approach](https://apple.github.io/foundationdb/testing.html) combines simulation with live performance and hardware failure tests. AXTON's directory groups are a project-specific choice.

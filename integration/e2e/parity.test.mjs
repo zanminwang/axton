@@ -60,7 +60,7 @@ async function dartScript(url,directory){
  const root=fileURLToPath(new URL('../..',import.meta.url));
  let output='';
  const code=await new Promise((resolve,reject)=>{
-  const child=spawn('dart',[`--packages=${join(root,'packages/dart/.dart_tool/package_config.json')}`,join(root,'integration/e2e/parity_client.dart'),url,directory],{cwd:join(root,'packages/dart'),env:{...process.env,AHEAD_LIBRARY:process.env.AHEAD_LIBRARY ?? join(root,`target/debug/libahead_dart.${process.platform==='darwin'?'dylib':'so'}`)},stdio:['ignore','pipe','inherit']});
+  const child=spawn('dart',[`--packages=${join(root,'packages/dart/.dart_tool/package_config.json')}`,join(root,'integration/e2e/parity_client.dart'),url,directory],{cwd:join(root,'packages/dart'),env:{...process.env,AXTON_LIBRARY:process.env.AXTON_LIBRARY ?? join(root,`target/debug/libaxton_dart.${process.platform==='darwin'?'dylib':'so'}`)},stdio:['ignore','pipe','inherit']});
   child.stdout.on('data',data=>{output+=data;});
   child.on('error',reject);child.on('exit',resolve);
  });
@@ -71,7 +71,7 @@ async function dartScript(url,directory){
 }
 
 test('the Node and Dart clients reach identical local state from one script against one server',{timeout:60000},async()=>{
- const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'ahead-parity-'));let server;
+ const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'axton-parity-'));let server;
  try{
   await app.initialize();server=await app.listen(0);
   await reseed(app);

@@ -1,7 +1,7 @@
 use std::{fs, process::Command};
 #[test]
 fn cli_retains_history_and_does_not_overwrite_on_break() {
-    let root = std::env::temp_dir().join(format!("ahead-compiler-cli-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("axton-compiler-cli-{}", std::process::id()));
     let input = root.join("input");
     let out = root.join("out");
     fs::create_dir_all(&input).unwrap();
@@ -12,7 +12,7 @@ fn cli_retains_history_and_does_not_overwrite_on_break() {
     )
     .unwrap();
     let compile = || {
-        Command::new(env!("CARGO_BIN_EXE_ahead"))
+        Command::new(env!("CARGO_BIN_EXE_axton"))
             .arg("compile")
             .arg(&input)
             .arg(&out)
@@ -73,7 +73,7 @@ fn cli_reads_the_superseded_history_location_and_writes_the_new_default() {
     )
     .unwrap();
     assert!(
-        ahead(&[input.as_os_str(), out.as_os_str()])
+        axton(&[input.as_os_str(), out.as_os_str()])
             .status
             .success()
     );
@@ -88,7 +88,7 @@ fn cli_reads_the_superseded_history_location_and_writes_the_new_default() {
         "model A { id UUID title String count Int @@id(id) } mutation Save { a A.create @@version(2) }",
     )
     .unwrap();
-    let moved = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let moved = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(moved.status.success());
     let notice = String::from_utf8_lossy(&moved.stderr);
     assert!(
@@ -116,10 +116,10 @@ fn cli_reads_the_superseded_history_location_and_writes_the_new_default() {
         "the old file is left in place, unchanged"
     );
     // A second run reads the new default and no longer reports a move.
-    let again = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let again = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(again.status.success());
     assert_eq!(String::from_utf8_lossy(&again.stderr), "");
-    let refused = ahead(&[
+    let refused = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--initialize-mutation-history".as_ref(),
@@ -138,7 +138,7 @@ fn cli_initializes_the_history_at_the_new_default_when_neither_location_exists()
         "model A { id UUID title String @@id(id) } mutation Save { a A.create }",
     )
     .unwrap();
-    let first = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let first = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(first.status.success());
     assert_eq!(String::from_utf8_lossy(&first.stderr), "");
     let history: serde_json::Value =
@@ -151,7 +151,7 @@ fn cli_initializes_the_history_at_the_new_default_when_neither_location_exists()
 }
 #[test]
 fn cli_writes_backend_ts_with_the_requested_runtime_import() {
-    let root = std::env::temp_dir().join(format!("ahead-compiler-backend-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("axton-compiler-backend-{}", std::process::id()));
     let input = root.join("input");
     let out = root.join("out");
     fs::create_dir_all(&input).unwrap();
@@ -160,7 +160,7 @@ fn cli_writes_backend_ts_with_the_requested_runtime_import() {
         "model A { id UUID title String @@id(id) } mutation Save { a A.create }",
     )
     .unwrap();
-    let status = Command::new(env!("CARGO_BIN_EXE_ahead"))
+    let status = Command::new(env!("CARGO_BIN_EXE_axton"))
         .arg("compile")
         .arg(&input)
         .arg(&out)
@@ -183,15 +183,15 @@ fn cli_writes_backend_ts_with_the_requested_runtime_import() {
 }
 
 fn workspace(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-    let root = std::env::temp_dir().join(format!("ahead-compiler-{tag}-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("axton-compiler-{tag}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let input = root.join("input");
     fs::create_dir_all(&input).unwrap();
     (root, input)
 }
 
-fn ahead(args: &[&std::ffi::OsStr]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ahead"))
+fn axton(args: &[&std::ffi::OsStr]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_axton"))
         .arg("compile")
         .args(args)
         .output()
@@ -212,7 +212,7 @@ fn cli_relocates_errors_into_the_file_that_declares_them() {
         "model Child {\n id UUID\n parent Parent @reference(via: [missing])\n @@id(id)\n}\n",
     )
     .unwrap();
-    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let rejected = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!rejected.status.success());
     let stderr = String::from_utf8_lossy(&rejected.stderr);
     assert!(
@@ -225,7 +225,7 @@ fn cli_relocates_errors_into_the_file_that_declares_them() {
         "model Child {\n id UUID\n @@id(id)\n}\nbogus Stuff {}\n",
     )
     .unwrap();
-    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let rejected = axton(&[input.as_os_str(), out.as_os_str()]);
     let stderr = String::from_utf8_lossy(&rejected.stderr);
     assert!(
         stderr.contains(&format!("{}:5:", input.join("b.model").display())),
@@ -248,12 +248,12 @@ fn cli_output_is_deterministic() {
     let first = root.join("first");
     let second = root.join("second");
     assert!(
-        ahead(&[input.as_os_str(), first.as_os_str()])
+        axton(&[input.as_os_str(), first.as_os_str()])
             .status
             .success()
     );
     assert!(
-        ahead(&[input.as_os_str(), second.as_os_str()])
+        axton(&[input.as_os_str(), second.as_os_str()])
             .status
             .success()
     );
@@ -270,7 +270,7 @@ fn cli_output_is_deterministic() {
         {
             fs::remove_file(input.join("history").join("models.json")).unwrap();
             assert!(
-                ahead(&[input.as_os_str(), first.as_os_str()])
+                axton(&[input.as_os_str(), first.as_os_str()])
                     .status
                     .success()
             );
@@ -298,7 +298,7 @@ fn cli_refuses_misuse_of_the_mutation_history() {
     )
     .unwrap();
     let history = root.join("history.json");
-    let missing = ahead(&[
+    let missing = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--mutation-history".as_ref(),
@@ -307,7 +307,7 @@ fn cli_refuses_misuse_of_the_mutation_history() {
     assert!(!missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stderr).contains("missing mutation history"));
     assert!(!out.exists(), "a refused compile must not write outputs");
-    let not_first = ahead(&[
+    let not_first = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--mutation-history".as_ref(),
@@ -322,7 +322,7 @@ fn cli_refuses_misuse_of_the_mutation_history() {
     )
     .unwrap();
     assert!(
-        ahead(&[
+        axton(&[
             input.as_os_str(),
             out.as_os_str(),
             "--mutation-history".as_ref(),
@@ -333,7 +333,7 @@ fn cli_refuses_misuse_of_the_mutation_history() {
         .success()
     );
     assert!(history.exists());
-    let again = ahead(&[
+    let again = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--mutation-history".as_ref(),
@@ -358,7 +358,7 @@ fn cli_retains_model_history_and_refuses_a_breaking_read_change_without_a_bump()
     )
     .unwrap();
     assert!(
-        ahead(&[input.as_os_str(), out.as_os_str()])
+        axton(&[input.as_os_str(), out.as_os_str()])
             .status
             .success()
     );
@@ -399,7 +399,7 @@ fn cli_retains_model_history_and_refuses_a_breaking_read_change_without_a_bump()
         "enum Status { open closed archived } model Task { id UUID title String note String? status Status @@id(id) } mutation Save { t Task.update<title> } mutation Rename { t Task.update<status> }",
     )
     .unwrap();
-    let refused = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let refused = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!refused.status.success());
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains("Task v1"), "{stderr}");
@@ -417,7 +417,7 @@ fn cli_retains_model_history_and_refuses_a_breaking_read_change_without_a_bump()
         "enum Status { open closed archived } model Task { id UUID title String status Status @@id(id) @@version(2) } mutation Save { t Task.update<title> } mutation Rename { t Task.update<status> }",
     )
     .unwrap();
-    let accepted = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let accepted = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
         accepted.status.success(),
         "{}",
@@ -469,7 +469,7 @@ fn cli_refuses_misuse_of_the_model_history() {
     )
     .unwrap();
     let history = root.join("models.json");
-    let missing = ahead(&[
+    let missing = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--model-history".as_ref(),
@@ -482,7 +482,7 @@ fn cli_refuses_misuse_of_the_model_history() {
         !input.join("history").exists(),
         "a refused compile must not write a history"
     );
-    let not_first = ahead(&[
+    let not_first = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--model-history".as_ref(),
@@ -496,7 +496,7 @@ fn cli_refuses_misuse_of_the_model_history() {
     );
     fs::write(input.join("test.model"), "model A { id UUID @@id(id) }").unwrap();
     assert!(
-        ahead(&[
+        axton(&[
             input.as_os_str(),
             out.as_os_str(),
             "--model-history".as_ref(),
@@ -515,7 +515,7 @@ fn cli_refuses_misuse_of_the_model_history() {
         input.join("history").join("mutations.json").exists(),
         "the mutation history keeps its default"
     );
-    let again = ahead(&[
+    let again = axton(&[
         input.as_os_str(),
         out.as_os_str(),
         "--model-history".as_ref(),

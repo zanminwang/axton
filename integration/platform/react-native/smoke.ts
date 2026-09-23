@@ -43,7 +43,7 @@ export async function runSmoke(show: (message: string) => void) {
     show(`${user}: ${phase}`);
     const native = requireNativeModule<{
       clientCall(input: string): Promise<string>;
-    }>("AheadNative");
+    }>("AxtonNative");
     let invalidRejected = false;
     try {
       await native.clientCall("{");

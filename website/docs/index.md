@@ -4,11 +4,11 @@ hide:
   - toc
 ---
 
-# Ahead
+# AXTON
 
-Ahead is a schema-driven framework for building local-first apps with your own backend.
+AXTON is a schema-driven framework for building local-first apps with your own backend.
 
-Define your records and mutations once. Ahead generates typed client calls and backend interfaces, keeps local state in SQLite, and synchronizes through your handlers and loaders.
+Define your records and mutations once. AXTON generates typed client calls and backend interfaces, keeps local state in SQLite, and synchronizes through your handlers and loaders.
 
 - **Schema-driven.** Describe your models and local mutations in one contract.
 - **Typed end to end.** Generate client APIs and backend read/write interfaces together.
@@ -38,8 +38,8 @@ Define your records and mutations once. Ahead generates typed client calls and b
 
 The TypeScript client and backend currently run on Node.js. Clients use native Rust bindings; browser support is not implemented. See [platform validation](frontend/platforms.md) for tested environments and mobile setup.
 
-Packages are currently used from source. Follow the tutorial's repository commands rather than installing an unpublished package. Need another language, runtime or database adapter? [Request support](https://github.com/zanminwang/ahead/issues/new).
+Packages are currently used from source. Follow the tutorial's repository commands rather than installing an unpublished package. Need another language, runtime or database adapter? [Request support](https://github.com/zanminwang/axton/issues/new).
 
 ## Project
 
-[GitHub](https://github.com/zanminwang/ahead) · [Framework comparison](https://github.com/zanminwang/ahead/blob/main/README.md#how-ahead-compares-with-other-sync-frameworks) · [Issues](https://github.com/zanminwang/ahead/issues) · [Contribute to the documentation](https://github.com/zanminwang/ahead/blob/main/docs/writing/guides.md)
+[GitHub](https://github.com/zanminwang/axton) · [Framework comparison](https://github.com/zanminwang/axton/blob/main/README.md#how-axton-compares-with-other-sync-frameworks) · [Issues](https://github.com/zanminwang/axton/issues) · [Contribute to the documentation](https://github.com/zanminwang/axton/blob/main/docs/writing/guides.md)

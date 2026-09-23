@@ -5,7 +5,7 @@
 //! An incompatible schema gets a fresh file `<path>.<n>` and the sidecar moves
 //! to it once the new file is initialised; the old file is never deleted.
 use crate::store::ClientStore;
-use ahead_core::{Result, Schema, canonical_json, invalid};
+use axton_core::{Result, Schema, canonical_json, invalid};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -124,7 +124,7 @@ pub fn descriptor_text(schema: &Schema) -> Result<String> {
 
 /// The schema this database was built for, if it recorded one.
 pub fn read_descriptor<S: ClientStore>(store: &mut S) -> Result<Option<Schema>> {
-    let rows = store.query("SELECT descriptor FROM ahead_schema LIMIT 1", &[])?;
+    let rows = store.query("SELECT descriptor FROM axton_schema LIMIT 1", &[])?;
     match rows.rows.first().and_then(|r| r[0].as_str()) {
         Some(text) => Ok(Some(Schema::from_value(serde_json::from_str::<Value>(
             text,
@@ -135,9 +135,9 @@ pub fn read_descriptor<S: ClientStore>(store: &mut S) -> Result<Option<Schema>> 
 
 /// Record `schema` as the one this database is built for (replacing any).
 pub fn write_descriptor<S: ClientStore>(store: &mut S, schema: &Schema) -> Result<()> {
-    store.execute("DELETE FROM ahead_schema", &[])?;
+    store.execute("DELETE FROM axton_schema", &[])?;
     store.execute(
-        "INSERT INTO ahead_schema (descriptor, created_at) VALUES (?, ?)",
+        "INSERT INTO axton_schema (descriptor, created_at) VALUES (?, ?)",
         &[
             json!(descriptor_text(schema)?),
             json!(chrono::Utc::now().to_rfc3339()),

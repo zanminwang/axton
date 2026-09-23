@@ -1,9 +1,9 @@
 //! The one schema every simulation uses: an Entry with Comment children. Two models
 //! and one cascading relation reach every distribution scenario; more would add
 //! time, not information.
-use ahead_client::{Mutation, Operation, OperationKind};
-use ahead_core::{RecordKey, Schema};
-use ahead_server::Config;
+use axton_client::{Mutation, Operation, OperationKind};
+use axton_core::{RecordKey, Schema};
+use axton_server::Config;
 use serde_json::{Value, json};
 
 pub fn schema() -> Schema {

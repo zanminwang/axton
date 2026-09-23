@@ -3,7 +3,7 @@ pub mod error;
 pub mod host;
 pub mod live;
 mod readback;
-use ahead_core::{
+use axton_core::{
     AuthorityRecord, CursorRange, PullPage, PullRequest, PushReceipt, PushRequest, RecordKey,
     Rejection, Schema, limits, read_counter,
 };
@@ -42,9 +42,9 @@ pub struct ModelContract {
     pub name: String,
     pub version: u64,
     pub identity: Vec<String>,
-    pub fields: Vec<ahead_core::FieldDescriptor>,
+    pub fields: Vec<axton_core::FieldDescriptor>,
     #[serde(default)]
-    pub enums: Vec<ahead_core::EnumDescriptor>,
+    pub enums: Vec<axton_core::EnumDescriptor>,
     /// The contract as a one-model schema, for normalizing loader rows.
     #[serde(skip)]
     contract: Option<Schema>,
@@ -53,7 +53,7 @@ impl ModelContract {
     fn schema(&self) -> Schema {
         Schema {
             enums: self.enums.clone(),
-            models: vec![ahead_core::ModelDescriptor {
+            models: vec![axton_core::ModelDescriptor {
                 name: self.name.clone(),
                 version: self.version,
                 identity: self.identity.clone(),
@@ -186,7 +186,7 @@ impl Config {
                         .iter()
                         .filter(|e| {
                             m.fields.iter().any(|f| {
-                                matches!(&f.value_type, ahead_core::ValueType::Enum { name } if *name == e.name)
+                                matches!(&f.value_type, axton_core::ValueType::Enum { name } if *name == e.name)
                             })
                         })
                         .cloned()
@@ -284,7 +284,7 @@ fn request_invalid(e: impl std::fmt::Display) -> Error {
 fn version(body: &Value) -> Option<u64> {
     read_counter(body.get("version").unwrap_or(&json!(1)), true).ok()
 }
-fn invalid<T>(r: ahead_core::Result<T>) -> Result<T> {
+fn invalid<T>(r: axton_core::Result<T>) -> Result<T> {
     r.map_err(|_| Error::code("mutation.invalid"))
 }
 pub fn decode_arguments(config: &Value, body: &Value) -> Result<Value> {
@@ -506,7 +506,7 @@ pub async fn process_push(
     }
     let mut rejections = vec![];
     // The last successful authority per record, in canonical key order.
-    let mut results: BTreeMap<String, ahead_core::AuthorityRecord> = BTreeMap::new();
+    let mut results: BTreeMap<String, axton_core::AuthorityRecord> = BTreeMap::new();
     for m in &request.mutations {
         // A mutation naming a version this backend does not serve rejects
         // only itself; its handler never runs.

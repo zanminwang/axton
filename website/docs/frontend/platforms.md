@@ -1,6 +1,6 @@
 # Supported platforms
 
-Ahead clients use the native Rust engine and SQLite. Building the application package and validating it on the target platform are separate steps.
+AXTON clients use the native Rust engine and SQLite. Building the application package and validating it on the target platform are separate steps.
 
 | Platform | Available support |
 | --- | --- |
@@ -12,7 +12,7 @@ Ahead clients use the native Rust engine and SQLite. Building the application pa
 
 ## Desktop setup
 
-Build the native libraries with `bash scripts/build.sh`. TypeScript uses the Node addon. Dart takes an explicit `libraryPath`: `target/debug/libahead_dart.dylib` on macOS or `target/debug/libahead_dart.so` on Linux. See [client setup](setup.md) for language-specific examples.
+Build the native libraries with `bash scripts/build.sh`. TypeScript uses the Node addon. Dart takes an explicit `libraryPath`: `target/debug/libaxton_dart.dylib` on macOS or `target/debug/libaxton_dart.so` on Linux. See [client setup](setup.md) for language-specific examples.
 
 ## Flutter native integration
 
@@ -28,14 +28,14 @@ The harness builds the native library and Flutter app, creates a disposable simu
 
 ## React Native
 
-The repository includes a React Native TypeScript adapter, reusable Expo native module, and a two-simulator integration harness. Use a native Expo build; Expo Go does not contain Ahead's Rust library. This integration currently targets arm64 iOS simulators and is consumed from a repository checkout.
+The repository includes a React Native TypeScript adapter, reusable Expo native module, and a two-simulator integration harness. Use a native Expo build; Expo Go does not contain AXTON's Rust library. This integration currently targets arm64 iOS simulators and is consumed from a repository checkout.
 
-[`databasePath(name = "ahead.sqlite"): Promise<string>`](https://github.com/zanminwang/ahead/blob/main/packages/client-react-native/README.md) resolves a basename under persistent Application Support storage, creates the parent directory, and rejects invalid path names. Keep that path stable across launches so local records, queued mutations and client identity can be reopened.
+[`databasePath(name = "axton.sqlite"): Promise<string>`](https://github.com/zanminwang/axton/blob/main/packages/client-react-native/README.md) resolves a basename under persistent Application Support storage, creates the parent directory, and rejects invalid path names. Keep that path stable across launches so local records, queued mutations and client identity can be reopened.
 
 Generated read/watch/mutation/transaction APIs are shared with Node. React Native's runtime transaction does not expose nested savepoints. Native WebSocket failures do not expose a structured HTTP status; HTTP 401 refresh and application-managed socket credentials are documented separately in the package guide. Background execution while iOS suspends the app is not promised.
 
-The runnable demo is the [To-do example](https://github.com/zanminwang/ahead/blob/main/examples/todo/README.md): two simulators, local writes, offline work and synchronization through the example backend ([getting started](../getting-started.md)). See the [package guide](https://github.com/zanminwang/ahead/blob/main/packages/client-react-native/README.md) for installation and API limits, and the [SDK integration harness](https://github.com/zanminwang/ahead/blob/main/integration/platform/react-native/README.md) for exact build/run steps and runtime evidence. The simulator sequence uses embedded JavaScript and actual network interruption; host tests or native linking alone do not establish completion.
+The runnable demo is the [To-do example](https://github.com/zanminwang/axton/blob/main/examples/todo/README.md): two simulators, local writes, offline work and synchronization through the example backend ([getting started](../getting-started.md)). See the [package guide](https://github.com/zanminwang/axton/blob/main/packages/client-react-native/README.md) for installation and API limits, and the [SDK integration harness](https://github.com/zanminwang/axton/blob/main/integration/platform/react-native/README.md) for exact build/run steps and runtime evidence. The simulator sequence uses embedded JavaScript and actual network interruption; host tests or native linking alone do not establish completion.
 
 ## Verification
 
-`bash scripts/test.sh` runs the macOS/Linux host checks with real SQLite, native bindings and a disposable PostgreSQL backend. Platform-specific simulator checks run separately. See [testing](https://github.com/zanminwang/ahead/blob/main/docs/engineering/testing/running.md) for the full workflow.
+`bash scripts/test.sh` runs the macOS/Linux host checks with real SQLite, native bindings and a disposable PostgreSQL backend. Platform-specific simulator checks run separately. See [testing](https://github.com/zanminwang/axton/blob/main/docs/engineering/testing/running.md) for the full workflow.

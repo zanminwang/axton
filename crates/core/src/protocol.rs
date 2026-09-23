@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Limits both sides enforce without negotiating them on the wire. Every
 /// consumer reads them from here; making them configurable is
-/// [#11](https://github.com/zanminwang/ahead/issues/11). Host resource
+/// [#11](https://github.com/zanminwang/axton/issues/11). Host resource
 /// limits (HTTP body and WebSocket frame sizes, page buffers) are not
 /// protocol rules and stay with each transport.
 pub mod limits {

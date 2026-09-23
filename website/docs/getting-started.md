@@ -17,7 +17,7 @@ Run all commands below from the repository root. Packages have not been publishe
 
 ## 1. Read the schema
 
-The whole application contract is [models/todo.model](https://github.com/zanminwang/ahead/blob/main/examples/todo/models/todo.model):
+The whole application contract is [models/todo.model](https://github.com/zanminwang/axton/blob/main/examples/todo/models/todo.model):
 
 ```text
 model User {
@@ -44,8 +44,8 @@ mutation SetTodoDone { todo Todo.update<done> }
 ## 2. Start the backend
 
 ```sh
-git clone https://github.com/zanminwang/ahead.git
-cd ahead
+git clone https://github.com/zanminwang/axton.git
+cd axton
 bash examples/todo/run.sh
 ```
 
@@ -59,7 +59,7 @@ The backend uses development authentication: the bearer token `alice` or `bob` i
 
 ## 3. Run two phones
 
-Build the Rust simulator slice and the Expo app once, then install the same app on two simulators. Without configuration the app is Alice; a `config.json` in the second installation's Documents directory makes it Bob. The exact commands are in the [example README](https://github.com/zanminwang/ahead/blob/main/examples/todo/README.md#run-two-phones).
+Build the Rust simulator slice and the Expo app once, then install the same app on two simulators. Without configuration the app is Alice; a `config.json` in the second installation's Documents directory makes it Bob. The exact commands are in the [example README](https://github.com/zanminwang/axton/blob/main/examples/todo/README.md#run-two-phones).
 
 Each installation keeps its own database and client identity, so the two simulators behave as two phones. Expo Go cannot load the native module; use the native build.
 
@@ -75,12 +75,12 @@ The backend trims titles, rejects empty ones (`todo.title_empty`), requires the 
 
 | File | Role |
 | --- | --- |
-| [models/todo.model](https://github.com/zanminwang/ahead/blob/main/examples/todo/models/todo.model) | Record schema and mutation contract |
-| [generate.sh](https://github.com/zanminwang/ahead/blob/main/examples/todo/generate.sh) | Compiles the schema into `generated/node` and `generated/mobile` |
-| [server.mts](https://github.com/zanminwang/ahead/blob/main/examples/todo/server.mts) | Handlers, loaders, development authentication and database setup |
-| [seed.mts](https://github.com/zanminwang/ahead/blob/main/examples/todo/seed.mts) | Create-if-missing demo users and tasks |
-| [mobile/src/todo.ts](https://github.com/zanminwang/ahead/blob/main/examples/todo/mobile/src/todo.ts) | Opens the generated client per user, subscribes to `todo:demo`, exposes `watch`, `add` and `setDone` |
-| [mobile/src/TodoScreen.tsx](https://github.com/zanminwang/ahead/blob/main/examples/todo/mobile/src/TodoScreen.tsx) | The one screen, rendered from watch callbacks |
+| [models/todo.model](https://github.com/zanminwang/axton/blob/main/examples/todo/models/todo.model) | Record schema and mutation contract |
+| [generate.sh](https://github.com/zanminwang/axton/blob/main/examples/todo/generate.sh) | Compiles the schema into `generated/node` and `generated/mobile` |
+| [server.mts](https://github.com/zanminwang/axton/blob/main/examples/todo/server.mts) | Handlers, loaders, development authentication and database setup |
+| [seed.mts](https://github.com/zanminwang/axton/blob/main/examples/todo/seed.mts) | Create-if-missing demo users and tasks |
+| [mobile/src/todo.ts](https://github.com/zanminwang/axton/blob/main/examples/todo/mobile/src/todo.ts) | Opens the generated client per user, subscribes to `todo:demo`, exposes `watch`, `add` and `setDone` |
+| [mobile/src/TodoScreen.tsx](https://github.com/zanminwang/axton/blob/main/examples/todo/mobile/src/TodoScreen.tsx) | The one screen, rendered from watch callbacks |
 
 Next, [define your own schema](schema/define.md), browse the [API reference](api-index.md), or use the [client setup guide](frontend/setup.md).
 

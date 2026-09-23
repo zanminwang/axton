@@ -1,4 +1,4 @@
-use ahead_compiler::{check_fence, compile, reconcile_history};
+use axton_compiler::{check_fence, compile, reconcile_history};
 #[test]
 fn versions_retain_original_inputs() {
     let v1 =
@@ -34,7 +34,7 @@ fn nullable_addition_compatible_and_fence_blocks_removal() {
 }
 
 mod models {
-    use ahead_compiler::{check_fence, compile, reconcile_model_history};
+    use axton_compiler::{check_fence, compile, reconcile_model_history};
     use serde_json::{Value, json};
 
     fn task(fields: &str, version: &str) -> Value {

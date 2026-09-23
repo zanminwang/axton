@@ -2,7 +2,7 @@
 use crate::ddl::{before_table, quote};
 use crate::engine::{Engine, as_u64};
 use crate::store::ClientStore;
-use ahead_core::{ModelDescriptor, Result, ScalarType, ValueType, invalid};
+use axton_core::{ModelDescriptor, Result, ScalarType, ValueType, invalid};
 use serde_json::{Map, Value};
 
 pub fn columns_sql(model: &ModelDescriptor) -> String {

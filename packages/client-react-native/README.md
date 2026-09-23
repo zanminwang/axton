@@ -1,12 +1,12 @@
-# Ahead for React Native
+# AXTON for React Native
 
 React Native host integration for the existing Rust/SQLite client. The generated TypeScript models and mutation API are shared with Node. Native calls, transaction scope, and HTTP/WebSocket transport use the mobile environment.
 
-The package is currently used from an Ahead repository checkout. It is not a published standalone npm distribution. The initial native target is an arm64 iOS simulator with an Expo native build. Android, browser/WASM, physical-device execution and app-store packaging are not verified by this integration.
+The package is currently used from an AXTON repository checkout. It is not a published standalone npm distribution. The initial native target is an arm64 iOS simulator with an Expo native build. Android, browser/WASM, physical-device execution and app-store packaging are not verified by this integration.
 
 ## Install and build
 
-Use the [integration app](../../integration/platform/react-native/README.md) for a complete, locked example. From an Expo app in this repository, add file dependencies on this package and [the native module](native-module/README.md), then rebuild the native app. Expo Go does not contain the Ahead module.
+Use the [integration app](../../integration/platform/react-native/README.md) for a complete, locked example. From an Expo app in this repository, add file dependencies on this package and [the native module](native-module/README.md), then rebuild the native app. Expo Go does not contain the AXTON module.
 
 Build the Rust library before installing CocoaPods for a local file dependency:
 
@@ -17,10 +17,10 @@ bash packages/client-react-native/native-module/scripts/build-ios.sh simulator
 
 The integration app's Metro configuration includes the repository source and `.mts` modules, and resolves React Native/Expo dependencies from the app. Its Babel configuration applies the TypeScript transform to `.mts` files, which the Expo preset otherwise treats as plain JavaScript. Reuse both configurations when consuming these local packages. Do not substitute Node polyfills or import `packages/client-js/index.mts` in a mobile bundle.
 
-Generate the application's client with `--client-runtime` pointing to this package's `index.ts`, or to `@ahead/client-react-native` when package resolution is configured. The compiler owns generated files.
+Generate the application's client with `--client-runtime` pointing to this package's `index.ts`, or to `@axton/client-react-native` when package resolution is configured. The compiler owns generated files.
 
 ```ts
-import { databasePath } from '@ahead/client-react-native';
+import { databasePath } from '@axton/client-react-native';
 import { GeneratedClient } from './generated/client';
 
 const client = await GeneratedClient.open({
@@ -33,7 +33,7 @@ await client.channels.subscribe('book:demo');
 
 The URL above is for a simulator using a backend on its host. Configure a reachable address and the application's real authentication for other environments. Local HTTP permission belongs to the development app configuration.
 
-`databasePath(name = 'ahead.sqlite'): Promise<string>` resolves a basename in Application Support and creates the parent directory. It rejects paths and invalid basenames. Keep the same filename when reopening a client; the engine persists client identity and queued work there. Different installations have separate app containers.
+`databasePath(name = 'axton.sqlite'): Promise<string>` resolves a basename in Application Support and creates the parent directory. It rejects paths and invalid basenames. Keep the same filename when reopening a client; the engine persists client identity and queued work there. Different installations have separate app containers.
 
 ## Client behavior
 

@@ -1,8 +1,8 @@
 //! Transition tests for the per-socket live controller
 //! ([Server / Connection / Controller](../../../docs/engineering/architecture/server/connection/controller.md)).
 //! Pure state: no host, no socket, no database.
-use ahead_core::{AuthorityRecord, CursorRange, PullPage, limits};
-use ahead_server::live::{LiveAction, LiveEvent, Negotiation, Subscriptions};
+use axton_core::{AuthorityRecord, CursorRange, PullPage, limits};
+use axton_server::live::{LiveAction, LiveEvent, Negotiation, Subscriptions};
 use serde_json::json;
 use std::collections::BTreeMap;
 
@@ -238,29 +238,29 @@ fn invalid_page_progression_is_an_error() {
     let wrong_cursor = subscriptions
         .handle(pulled(&page(&[("a", 4, 5, 5)])))
         .unwrap_err();
-    assert_eq!(wrong_cursor.code, ahead_server::code::LIVE_INVALID_PAGE);
+    assert_eq!(wrong_cursor.code, axton_server::code::LIVE_INVALID_PAGE);
     let (mut subscriptions, _) = Subscriptions::open(negotiation(&[("a", 3)]));
     let wrong_scope = subscriptions
         .handle(pulled(&page(&[("b", 3, 5, 5)])))
         .unwrap_err();
-    assert_eq!(wrong_scope.code, ahead_server::code::LIVE_INVALID_PAGE);
+    assert_eq!(wrong_scope.code, axton_server::code::LIVE_INVALID_PAGE);
     let (mut subscriptions, _) = Subscriptions::open(negotiation(&[("a", 3)]));
     let malformed = subscriptions.handle(pulled("{")).unwrap_err();
-    assert_eq!(malformed.code, ahead_server::code::LIVE_INVALID_PAGE);
+    assert_eq!(malformed.code, axton_server::code::LIVE_INVALID_PAGE);
 }
 
 #[test]
 fn an_unknown_scope_or_an_unrequested_page_is_a_host_defect() {
     let (mut subscriptions, _) = Subscriptions::open(negotiation(&[("a", 0)]));
     let unknown = subscriptions.handle(committed("zzz")).unwrap_err();
-    assert_eq!(unknown.code, ahead_server::code::LIVE_INVALID_EVENT);
+    assert_eq!(unknown.code, axton_server::code::LIVE_INVALID_EVENT);
     subscriptions
         .handle(pulled(&page(&[("a", 0, 0, 0)])))
         .unwrap();
     let unrequested = subscriptions
         .handle(pulled(&page(&[("a", 0, 0, 0)])))
         .unwrap_err();
-    assert_eq!(unrequested.code, ahead_server::code::LIVE_INVALID_EVENT);
+    assert_eq!(unrequested.code, axton_server::code::LIVE_INVALID_EVENT);
 }
 
 #[test]

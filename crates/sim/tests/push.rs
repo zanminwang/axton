@@ -1,7 +1,7 @@
 //! Guarantees P1–P6 on the simulation, and the receipt's completion semantics:
 //! duplicated, lost and retried receipts, overlapping records, rejected siblings.
-use ahead_core::PushReceipt;
-use ahead_sim::{Action, MutationSpec, Sim, schema::entry_key};
+use axton_core::PushReceipt;
+use axton_sim::{Action, MutationSpec, Sim, schema::entry_key};
 
 fn setup(seed: u64) -> Sim {
     let mut sim = Sim::new(seed, 1);
@@ -79,8 +79,8 @@ fn p2_contiguous_sequence_and_server_refuses_gap_and_overlap() {
     // Hand-built gap and overlap against the host directly.
     let id = sim.client(0).client_id().to_string();
     let batch = |seq: u64| {
-        let body = serde_json::json!({"clientId":id,"batchSequence":seq,"models":ahead_sim::schema::declared_models(),"mutations":[{"ordinal":99,"name":"Edit","version":1,"operations":[{"model":"Entry","op":"update","identity":{"id":"e1"},"values":{"text":"z"}}]}]});
-        ahead_core::PushRequest::decode(ahead_core::canonical_json(&body).unwrap().as_bytes())
+        let body = serde_json::json!({"clientId":id,"batchSequence":seq,"models":axton_sim::schema::declared_models(),"mutations":[{"ordinal":99,"name":"Edit","version":1,"operations":[{"model":"Entry","op":"update","identity":{"id":"e1"},"values":{"text":"z"}}]}]});
+        axton_core::PushRequest::decode(axton_core::canonical_json(&body).unwrap().as_bytes())
             .unwrap()
             .encode()
             .unwrap()
@@ -120,10 +120,10 @@ fn p3_lifecycle_dependent_waits_for_the_parent_receipt() {
     sim.apply(Action::Freeze { client: 0 }).unwrap();
     assert_eq!(sim.net.len(), 1);
     let bytes = match sim.net.pop().unwrap() {
-        ahead_sim::net::Message::Push { bytes, .. } => bytes,
+        axton_sim::net::Message::Push { bytes, .. } => bytes,
         _ => unreachable!(),
     };
-    let first = ahead_core::PushRequest::decode(&bytes).unwrap();
+    let first = axton_core::PushRequest::decode(&bytes).unwrap();
     assert_eq!(
         first.mutations.len(),
         1,
@@ -141,7 +141,7 @@ fn p3_lifecycle_dependent_waits_for_the_parent_receipt() {
         "freeze retries the parent's unacknowledged push rather than sending nothing"
     );
     let retried = match sim.net.pop().unwrap() {
-        ahead_sim::net::Message::Push { bytes, .. } => bytes,
+        axton_sim::net::Message::Push { bytes, .. } => bytes,
         _ => unreachable!(),
     };
     assert_eq!(
@@ -150,7 +150,7 @@ fn p3_lifecycle_dependent_waits_for_the_parent_receipt() {
         "the retry is byte-identical to the parent's push; the child never entered a batch"
     );
     // Re-send the parent and let it through.
-    sim.net.send(ahead_sim::net::Message::Push {
+    sim.net.send(axton_sim::net::Message::Push {
         client: 0,
         bytes: first.encode().unwrap(),
     });
@@ -213,7 +213,7 @@ fn p5_rejection_rolls_back_and_rejects_dependents() {
         "parent rolled back"
     );
     assert_eq!(
-        sim.read_text(0, &ahead_sim::schema::comment_key("c1")),
+        sim.read_text(0, &axton_sim::schema::comment_key("c1")),
         None,
         "dependent rolled back"
     );
@@ -273,10 +273,10 @@ fn p6_a_broken_transaction_fails_the_delivery_and_the_retry_executes_once() {
     edit(&mut sim, "x");
     sim.apply(Action::Freeze { client: 0 }).unwrap();
     let bytes = match sim.net.pop().unwrap() {
-        ahead_sim::net::Message::Push { bytes, .. } => bytes,
+        axton_sim::net::Message::Push { bytes, .. } => bytes,
         _ => unreachable!(),
     };
-    sim.net.send(ahead_sim::net::Message::Push {
+    sim.net.send(axton_sim::net::Message::Push {
         client: 0,
         bytes: bytes.clone(),
     });

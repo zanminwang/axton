@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
-import 'package:ahead/ahead.dart';
+import 'package:axton/axton.dart';
 import 'package:test/test.dart';
 
 /// One client over a fresh temporary file with the Entry schema, plus a way to
@@ -25,7 +25,7 @@ class Fixture {
   Future<Client> open() => Client.open(
     path: path,
     schema: schema,
-    libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+    libraryPath: Platform.environment['AXTON_LIBRARY']!,
   );
 
   Future<void> dispose() => dir.delete(recursive: true);
@@ -71,7 +71,7 @@ void main() {
     late Fixture fixture;
     late Client client;
     setUp(() async {
-      fixture = await Fixture.create('ahead-dart-test-');
+      fixture = await Fixture.create('axton-dart-test-');
       client = await fixture.open();
       await seed(client);
     });
@@ -273,7 +273,7 @@ void main() {
   test(
     'client close waits for connection setup and remains idempotent',
     () async {
-      final fixture = await Fixture.create('ahead-dart-close-');
+      final fixture = await Fixture.create('axton-dart-close-');
       final client = await fixture.open();
       final errors = <Object>[];
       try {
@@ -302,7 +302,7 @@ void main() {
   test(
     'an incompatible schema keeps unsent work in the old file until rebuild is asked to leave it',
     () async {
-      final fixture = await Fixture.create('ahead-dart-rebuild-');
+      final fixture = await Fixture.create('axton-dart-rebuild-');
       final breaking =
           jsonDecode(jsonEncode(fixture.schema)) as Map<String, dynamic>;
       (breaking['models'][0]['fields'] as List).add({
@@ -324,7 +324,7 @@ void main() {
         client = await Client.open(
           path: fixture.path,
           schema: breaking,
-          libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+          libraryPath: Platform.environment['AXTON_LIBRARY']!,
         );
         var status = await client.syncState();
         expect(status['schema']['rebuilt'], false);

@@ -7,7 +7,7 @@ import {createBackend,MutationRejected,EngineError,RECORD} from '../../../packag
 import {prisma,prismaDriver} from '../../../packages/postgres/index.mts';
 const require=createRequire(import.meta.url);
 const {PrismaClient}=require('../../bindings/node/generated/client');
-const native=require('../../../bindings/node/ahead-node.node');
+const native=require('../../../bindings/node/axton-node.node');
 const db=new PrismaClient();
 // The server suite runs on the Prisma shim (its handlers use Prisma's raw API); driver-conformance.test.mjs proves every shim.
 const database=()=>prisma(db);
@@ -47,9 +47,9 @@ const pull=(scope='shared',fromCursor=0)=>backend.pull('alice',pullBody({[scope]
 const to=(page,scope='shared')=>page.cursors[scope].to;
 const count=async table=>Number((await db.$queryRawUnsafe(`SELECT count(*) AS count FROM ${table}`))[0].count);
 const key=id=>`{"id":"${id}"}`;
-const recordStamp=async id=>{const rows=await db.$queryRawUnsafe('SELECT stamp FROM ahead_record WHERE model=$1 AND identity_key=$2','Task',key(id));return rows.length?Number(rows[0].stamp):null;};
-const invalidations=async id=>(await db.$queryRawUnsafe('SELECT channel, cursor, stamp FROM ahead_invalidation WHERE identity_key=$1 ORDER BY channel',key(id))).map(r=>[r.channel,Number(r.cursor),Number(r.stamp)]);
-const head=async channel=>{const rows=await db.$queryRawUnsafe('SELECT head FROM ahead_channel WHERE channel=$1',channel);return rows.length?Number(rows[0].head):0;};
+const recordStamp=async id=>{const rows=await db.$queryRawUnsafe('SELECT stamp FROM axton_record WHERE model=$1 AND identity_key=$2','Task',key(id));return rows.length?Number(rows[0].stamp):null;};
+const invalidations=async id=>(await db.$queryRawUnsafe('SELECT channel, cursor, stamp FROM axton_invalidation WHERE identity_key=$1 ORDER BY channel',key(id))).map(r=>[r.channel,Number(r.cursor),Number(r.stamp)]);
+const head=async channel=>{const rows=await db.$queryRawUnsafe('SELECT head FROM axton_channel WHERE channel=$1',channel);return rows.length?Number(rows[0].head):0;};
 before(async()=>{for(const sql of (await readFile(new URL('../../../packages/postgres/migration.sql',import.meta.url),'utf8')).split(';').map(x=>x.trim()).filter(Boolean))await db.$executeRawUnsafe(sql);await db.$executeRawUnsafe('CREATE TABLE business_task(id text PRIMARY KEY,title text NOT NULL)');});
 after(()=>db.$disconnect());
 test('native exports production runtime',()=>{assert.equal(typeof native.processPush,'function');assert.equal(typeof native.processPull,'function');assert.equal(typeof native.settleExternal,'function');assert.equal(native.publish,undefined);assert.equal(typeof native.validateConfig,'function');
@@ -100,11 +100,11 @@ test('push commits business + compacted publication + exact durable receipt toge
  const request=push('dedup',1,[mutation(1,'first')]);const receipt=await backend.push('alice',request);const calls=called;
  assert.equal(receipt,'{"batchSequence":1,"clientId":"dedup","records":[{"identity":{"id":"a"},"model":"Task","stamp":1,"state":{"title":"first"}}],"rejections":[]}','the receipt is canonical JSON: keys sorted, the loader\'s authority for every changed record');
  // Replay is keyed by (clientId, batchSequence): the same frozen bytes and a changed body both return the stored receipt without a handler call, a business write, a publication or a subscriber wake.
- let wakes=0;const unsubscribe=backend.onCommitted('shared',()=>{wakes++;});const rows=await count('ahead_invalidation');
+ let wakes=0;const unsubscribe=backend.onCommitted('shared',()=>{wakes++;});const rows=await count('axton_invalidation');
  assert.equal(await backend.push('alice',request),receipt);assert.equal(called,calls);
  assert.equal(await backend.push('alice',push('dedup',1,[mutation(1,'changed')])),receipt);assert.equal(called,calls);
  await new Promise(resolve=>setImmediate(resolve));unsubscribe();assert.equal(wakes,0,'replayed receipts must not wake subscribers');
- assert.deepEqual(await db.$queryRawUnsafe("SELECT title FROM business_task WHERE id='a'"),[{title:'first'}]);assert.equal(await count('ahead_invalidation'),rows);
+ assert.deepEqual(await db.$queryRawUnsafe("SELECT title FROM business_task WHERE id='a'"),[{title:'first'}]);assert.equal(await count('axton_invalidation'),rows);
  await assert.rejects(()=>backend.push('bob',request),/owner_mismatch/);
  await assert.rejects(()=>backend.push('alice',push('dedup',3,[mutation(1,'gap')])),/gap/);
  const page=await pull();assert.deepEqual(page,{cursors:{shared:{from:0,to:1,head:1}},changes:[{model:'Task',identity:{id:'a'},stamp:1,state:{title:'first'}}]});assert.equal(prepared,2,'the push readback and the pull each prepared the loader once; the replays did not');
@@ -131,7 +131,7 @@ test('a handler that throws rejects only its mutation and reaches onError',async
  assert.deepEqual(result.rejections,[{ordinal:2,code:'handler.failed'}]);
  assert.deepEqual(result.records,[authority('e',1,{title:'before'}),authority('g',1,{title:'after'})]);
  assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='f'")).length,0,'the failed mutation rolled back its write');
- assert.equal((await db.$queryRawUnsafe("SELECT * FROM ahead_client WHERE client_id='crash'")).length,1,'the batch as a whole still committed');
+ assert.equal((await db.$queryRawUnsafe("SELECT * FROM axton_client WHERE client_id='crash'")).length,1,'the batch as a whole still committed');
  assert.equal(errors.length,1);assert.equal(errors[0].message,'business crash');
 });
 test('a handler whose SQL fails leaves an aborted transaction that the savepoint rollback recovers into one rejection',async()=>{
@@ -170,7 +170,7 @@ test('a handler that breaks the transaction still fails the delivery',async()=>{
  // delivery failure, not a per-mutation one, whatever shape the error takes.
  await assert.rejects(()=>breakingBackend.push('alice',push('broken',1,[mutation(1,'break','broken-a')])));
  assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='broken-a'")).length,0,'nothing committed');
- assert.equal((await db.$queryRawUnsafe("SELECT * FROM ahead_client WHERE client_id='broken'")).length,0);
+ assert.equal((await db.$queryRawUnsafe("SELECT * FROM axton_client WHERE client_id='broken'")).length,0);
  const receipt=JSON.parse(await breakingBackend.push('alice',push('broken',1,[mutation(1,'break','broken-a')])));
  assert.deepEqual(receipt.rejections,[]);
  assert.equal(called,before+2,'the retry ran the handler again');
@@ -251,7 +251,7 @@ test('loader defects fail only their records; the page is served and the cursor 
 test('registered translator rejects one mutation; malformed translator code aborts transaction',async()=>{
  const make=code=>createBackend({config,database:database(),authenticate,translateRejection:()=>code,handlers:{async edit({tx}){await tx.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('translated','temporary')");throw new Error('product refusal');}},loaders:{async task(){return []}}});
  const receipt=JSON.parse(await make('product.denied').push('alice',push('translated',1,[mutation(1,'x')])));assert.deepEqual(receipt.rejections,[{ordinal:1,code:'product.denied'}]);assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='translated'")).length,0);
- await assert.rejects(()=>make('Not a machine code').push('alice',push('bad-translator',1,[mutation(1,'x')])),/stable machine code/);assert.equal((await db.$queryRawUnsafe("SELECT * FROM ahead_client WHERE client_id='bad-translator'")).length,0);
+ await assert.rejects(()=>make('Not a machine code').push('alice',push('bad-translator',1,[mutation(1,'x')])),/stable machine code/);assert.equal((await db.$queryRawUnsafe("SELECT * FROM axton_client WHERE client_id='bad-translator'")).length,0);
 });
 
 test('HTTP adapter authenticates and serves the real native persistence path',async()=>{
@@ -274,7 +274,7 @@ test('an undefined loader entry fails only its record, reaches onError and never
 test('publication failures poison push and roll back business writes',async()=>{
  const broken=createBackend({config,database:database(),authenticate,handlers:{async edit({tx,publish}){await tx.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('caught','bad')");publish({channel:'shared',records:[{model:'Unknown',identity:{id:'caught'}}]});}},loaders:{async task({ids}){return ids.map(()=>null)}}});
  await assert.rejects(()=>broken.push('alice',push('caught',1,[mutation(1,'x')])),/unregistered loader/);
- assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='caught'")).length,0);assert.equal((await db.$queryRawUnsafe("SELECT * FROM ahead_client WHERE client_id='caught'")).length,0);
+ assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='caught'")).length,0);assert.equal((await db.$queryRawUnsafe("SELECT * FROM axton_client WHERE client_id='caught'")).length,0);
 });
 test('a nonfinite loader value fails its record rather than clearing to null',async()=>{
  const expanded=structuredClone(config);expanded.schema.models[0].fields.push({name:'score',type:{kind:'scalar',name:'float'},nullable:true});
@@ -422,10 +422,10 @@ test('slot arguments are tagged so changes.add and publish accept them directly'
  assert.equal(RECORD in {...lastInput.task},false);
 });
 test('a handler that publishes nothing still returns readback records and touches no channel',async()=>{
- const channels=await count('ahead_channel');
+ const channels=await count('axton_channel');
  const receipt=JSON.parse(await backend.push('alice',push('quiet',1,[mutation(1,'quiet','quiet-a')])));
  assert.deepEqual(receipt,{batchSequence:1,clientId:'quiet',records:[authority('quiet-a',1,{title:'quiet'})],rejections:[]});
- assert.equal(await recordStamp('quiet-a'),1);assert.deepEqual(await invalidations('quiet-a'),[]);assert.equal(await count('ahead_channel'),channels);
+ assert.equal(await recordStamp('quiet-a'),1);assert.deepEqual(await invalidations('quiet-a'),[]);assert.equal(await count('axton_channel'),channels);
  const again=JSON.parse(await backend.push('alice',push('quiet',2,[mutation(2,'quiet','quiet-a')])));assert.deepEqual(again.records,[authority('quiet-a',2,{title:'quiet'})],'every successful change advances the stamp, published or not');
 });
 test('publish({channel}) publishes the final change set, an addition made after the call included',async()=>{
@@ -454,7 +454,7 @@ test('a loader refusal during push rejects only that mutation; so does a thrown 
  assert.deepEqual(JSON.parse(await translated.push('alice',push('loader-translated',1,[mutation(1,'x','ld-translated')]))).rejections,[{ordinal:1,code:'task.translated'}]);
  const crashing=JSON.parse(await make(async()=>{throw new Error('loader crash');}).push('alice',push('loader-crash',1,[mutation(1,'x','ld-crash')])));
  assert.deepEqual(crashing.rejections,[{ordinal:1,code:'loader.failed'}]);
- assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='ld-crash'")).length,0);assert.equal((await db.$queryRawUnsafe("SELECT * FROM ahead_client WHERE client_id='loader-crash'")).length,1,'the batch still commits');
+ assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='ld-crash'")).length,0);assert.equal((await db.$queryRawUnsafe("SELECT * FROM axton_client WHERE client_id='loader-crash'")).length,1,'the batch still commits');
 });
 test('publish validates channel and records; the invalid call rejects only that mutation as a failure',async()=>{
  const badchan=JSON.parse(await backend.push('alice',push('badchan',1,[mutation(1,'empty-channel','bad-a')])));assert.equal(badchan.rejections[0].code,'handler.failed');
@@ -481,7 +481,7 @@ test('an all-rejected batch settles with no records',async()=>{
 test('advanceStamp increments without a channel: no invalidation, no channel head',async()=>{
  const stamps=await db.$transaction(async tx=>{const storage=store(tx);const ref={model:'Task',identityKey:key('stamped')};return [await storage.call({op:'advanceStamp',...ref}),await storage.call({op:'advanceStamp',...ref})];});
  assert.deepEqual(stamps,[1,2]);assert.equal(await recordStamp('stamped'),2);assert.deepEqual(await invalidations('stamped'),[]);
- assert.equal((await db.$queryRawUnsafe("SELECT * FROM ahead_channel WHERE channel LIKE 'stamp%'")).length,0);
+ assert.equal((await db.$queryRawUnsafe("SELECT * FROM axton_channel WHERE channel LIKE 'stamp%'")).length,0);
 });
 test('one push publishing to two channels carries the same stamp to both and advances each head once',async()=>{
  const before=[await head('shared'),await head('other')];
@@ -503,7 +503,7 @@ test('concurrent first publications initialise one stamp of 1 and never overwrit
  // loser that sees the winner's row only after its snapshot retries and reads 1.
  
  assert.deepEqual(await Promise.all([run(ensure),run(ensure),run(ensure)]),[1,1,1]);
- assert.equal((await db.$queryRawUnsafe('SELECT * FROM ahead_record WHERE identity_key=$1',key('ensure-race'))).length,1);
+ assert.equal((await db.$queryRawUnsafe('SELECT * FROM axton_record WHERE identity_key=$1',key('ensure-race'))).length,1);
  await db.$transaction(tx=>store(tx).call({op:'advanceStamp',model:'Task',identityKey:key('ensure-race')}));
  assert.equal(await db.$transaction(ensure),2,'ensureStamp keeps an advanced stamp');
 });
@@ -525,7 +525,7 @@ test('scan pairs the invalidation cursor with the current record stamp; a missin
  assert.deepEqual(page.changes[0],{model:'Task',identity:{id:'join-a'},stamp:2,state:{title:'quiet'}},'the original cursor with the current stamp and content');
  const rows=await db.$transaction(tx=>store(tx).call({op:'scan',channel:'shared',after:cursor-1,limit:1}));assert.deepEqual(rows.map(r=>[r.cursor,r.stamp]),[[cursor,2]]);
  await db.$transaction(async tx=>{const storage=store(tx);const stamp=await storage.call({op:'ensureStamp',model:'Task',identityKey:key('orphan')});await storage.call({op:'publish',channel:'orphan',model:'Task',identity:{id:'orphan'},identityKey:key('orphan'),stamp});});
- await db.$executeRawUnsafe('DELETE FROM ahead_record WHERE identity_key=$1',key('orphan'));
+ await db.$executeRawUnsafe('DELETE FROM axton_record WHERE identity_key=$1',key('orphan'));
  await assert.rejects(()=>db.$transaction(tx=>store(tx).call({op:'scan',channel:'orphan',after:0,limit:50})),/Record metadata missing/);
  await assert.rejects(()=>pull('orphan',0),/Record metadata missing/);
 });
@@ -653,21 +653,21 @@ test('the Prisma driver retries only serialization failures, a bounded number of
  assert.deepEqual(attempts.map(o=>o.timeout),[5,5],'prisma() passes retries and timeout to the runner');
 });
 test('a RepeatableRead conflict on the real database retries the whole body once and commits it exactly once',async()=>{
- await db.$executeRawUnsafe("INSERT INTO ahead_channel(channel,head) VALUES('serial',0) ON CONFLICT(channel) DO UPDATE SET head=0");
+ await db.$executeRawUnsafe("INSERT INTO axton_channel(channel,head) VALUES('serial',0) ON CONFLICT(channel) DO UPDATE SET head=0");
  let bodies=0;let entered,release;const inside=new Promise(resolve=>{entered=resolve;});const gate=new Promise(resolve=>{release=resolve;});
- const first=run(async tx=>{bodies++;const [{head}]=await tx.$queryRawUnsafe("SELECT head FROM ahead_channel WHERE channel='serial'");if(bodies===1){entered();await gate;}
-  await tx.$executeRawUnsafe("UPDATE ahead_channel SET head=head+1 WHERE channel='serial'");return Number(head);});
+ const first=run(async tx=>{bodies++;const [{head}]=await tx.$queryRawUnsafe("SELECT head FROM axton_channel WHERE channel='serial'");if(bodies===1){entered();await gate;}
+  await tx.$executeRawUnsafe("UPDATE axton_channel SET head=head+1 WHERE channel='serial'");return Number(head);});
  await inside;
- await db.$executeRawUnsafe("UPDATE ahead_channel SET head=head+10 WHERE channel='serial'");
+ await db.$executeRawUnsafe("UPDATE axton_channel SET head=head+10 WHERE channel='serial'");
  release();
  assert.equal(await first,10,'the retried body read the snapshot taken after the concurrent commit');
  assert.equal(bodies,2,'the first attempt failed with a serialization error after the concurrent update and the body ran again');
- assert.equal(Number((await db.$queryRawUnsafe("SELECT head FROM ahead_channel WHERE channel='serial'"))[0].head),11,'the rolled-back attempt left nothing behind and the retry committed once');
+ assert.equal(Number((await db.$queryRawUnsafe("SELECT head FROM axton_channel WHERE channel='serial'"))[0].head),11,'the rolled-back attempt left nothing behind and the retry committed once');
  const exhausted=prismaDriver(db,{retries:0}).transaction;bodies=0;let entered2,release2;const inside2=new Promise(resolve=>{entered2=resolve;});const gate2=new Promise(resolve=>{release2=resolve;});
- const second=exhausted(async tx=>{bodies++;await tx.$queryRawUnsafe("SELECT head FROM ahead_channel WHERE channel='serial'");entered2();await gate2;await tx.$executeRawUnsafe("UPDATE ahead_channel SET head=head+1 WHERE channel='serial'");});
- await inside2;await db.$executeRawUnsafe("UPDATE ahead_channel SET head=head+10 WHERE channel='serial'");release2();
+ const second=exhausted(async tx=>{bodies++;await tx.$queryRawUnsafe("SELECT head FROM axton_channel WHERE channel='serial'");entered2();await gate2;await tx.$executeRawUnsafe("UPDATE axton_channel SET head=head+1 WHERE channel='serial'");});
+ await inside2;await db.$executeRawUnsafe("UPDATE axton_channel SET head=head+10 WHERE channel='serial'");release2();
  await assert.rejects(second,error=>error.code==='P2034'||(error.code==='P2010'&&error.meta?.code==='40001'));
- assert.equal(bodies,1);assert.equal(Number((await db.$queryRawUnsafe("SELECT head FROM ahead_channel WHERE channel='serial'"))[0].head),21,'with no retries the conflict is reported and the transaction leaves no trace');
+ assert.equal(bodies,1);assert.equal(Number((await db.$queryRawUnsafe("SELECT head FROM axton_channel WHERE channel='serial'"))[0].head),21,'with no retries the conflict is reported and the transaction leaves no trace');
 });
 test('an upgrade whose authentication completes after close begins is refused with 503; missing and invalid credentials are refused with 401',async()=>{
  let release;const gate=new Promise(resolve=>{release=resolve;});const seen=[];
@@ -701,25 +701,25 @@ test('a version dispatches only to its own handler and a function registers v1',
  assert.deepEqual(seen.slice(2),[['v1','from v1'],['v2','from v2']],'no fallback between versions');
 });
 test('concurrent same-client delivery with different bodies commits at most one under the PostgreSQL lock',async()=>{
- const before=called;const shared=async()=>Number((await db.$queryRawUnsafe("SELECT head FROM ahead_channel WHERE channel='shared'"))[0].head);
+ const before=called;const shared=async()=>Number((await db.$queryRawUnsafe("SELECT head FROM axton_channel WHERE channel='shared'"))[0].head);
  // A concurrent delivery of the same sequence with a different body commits at most one of the two: the loser waits on the row lock, then replays the winner's receipt.
  const head=await shared();const changed=push('race-body',1,[mutation(1,'winner','race-body')]);const other=push('race-body',1,[mutation(1,'loser','race-body')]);
  const pair=await Promise.all([backend.push('alice',changed),backend.push('alice',other)]);assert.equal(pair[0],pair[1]);assert.equal(called,before+1);
  assert.equal(await shared(),head+1,'exactly one publication');const [row]=await db.$queryRawUnsafe("SELECT title FROM business_task WHERE id='race-body'");assert.ok(['winner','loser'].includes(row.title));
- const [client]=await db.$queryRawUnsafe("SELECT sequence, receipt FROM ahead_client WHERE client_id='race-body'");assert.equal(Number(client.sequence),1);assert.equal(client.receipt,pair[0]);
+ const [client]=await db.$queryRawUnsafe("SELECT sequence, receipt FROM axton_client WHERE client_id='race-body'");assert.equal(Number(client.sequence),1);assert.equal(client.receipt,pair[0]);
 });
 test('fresh framework tables omit request_hash; a table that still carries the column keeps replaying receipts',async()=>{
- const columns=async()=>(await db.$queryRawUnsafe("SELECT column_name FROM information_schema.columns WHERE table_name='ahead_client'")).map(row=>row.column_name).sort();
+ const columns=async()=>(await db.$queryRawUnsafe("SELECT column_name FROM information_schema.columns WHERE table_name='axton_client'")).map(row=>row.column_name).sort();
  assert.deepEqual(await columns(),['client_id','owner_id','receipt','sequence']);
  const migration=(await readFile(new URL('../../../packages/postgres/migration.sql',import.meta.url),'utf8')).split(';').map(x=>x.trim()).filter(Boolean);
  const before=called;const request=push('legacy-column',1,[mutation(1,'legacy','legacy-column')]);let receipt;
- await db.$executeRawUnsafe('ALTER TABLE ahead_client ADD COLUMN request_hash text');
+ await db.$executeRawUnsafe('ALTER TABLE axton_client ADD COLUMN request_hash text');
  try{
   for(const sql of migration)await db.$executeRawUnsafe(sql);
   assert.deepEqual(await columns(),['client_id','owner_id','receipt','request_hash','sequence'],'re-applying migration.sql leaves an existing table untouched');
   receipt=await backend.push('alice',request);assert.equal(await backend.push('alice',push('legacy-column',1,[mutation(1,'changed','legacy-column')])),receipt);assert.equal(called,before+1);
-  const [row]=await db.$queryRawUnsafe("SELECT request_hash, sequence FROM ahead_client WHERE client_id='legacy-column'");assert.equal(row.request_hash,null);assert.equal(Number(row.sequence),1);
- }finally{await db.$executeRawUnsafe('ALTER TABLE ahead_client DROP COLUMN request_hash');}
+  const [row]=await db.$queryRawUnsafe("SELECT request_hash, sequence FROM axton_client WHERE client_id='legacy-column'");assert.equal(row.request_hash,null);assert.equal(Number(row.sequence),1);
+ }finally{await db.$executeRawUnsafe('ALTER TABLE axton_client DROP COLUMN request_hash');}
  assert.deepEqual(await columns(),['client_id','owner_id','receipt','sequence']);
  assert.equal(await backend.push('alice',request),receipt,'the stored receipt survives dropping the unused column');assert.equal(called,before+1);
  await assert.rejects(()=>backend.push('alice',push('legacy-column',3,[mutation(2,'gap','legacy-column')])),/gap/);

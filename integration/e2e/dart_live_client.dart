@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:ahead/ahead.dart';
+import 'package:axton/axton.dart';
 
 Future<void> main(List<String> args) async {
   final schema =
@@ -10,12 +10,12 @@ Future<void> main(List<String> args) async {
   final client = await Client.open(
     path: '${args[1]}/dart-live.sqlite',
     schema: schema,
-    libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+    libraryPath: Platform.environment['AXTON_LIBRARY']!,
   );
   final writer = await Client.open(
     path: '${args[1]}/dart-writer.sqlite',
     schema: schema,
-    libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+    libraryPath: Platform.environment['AXTON_LIBRARY']!,
   );
   final errors = <Object>[];
   Future<void> wait(Future<bool> Function() predicate) async {

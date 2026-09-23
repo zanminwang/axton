@@ -5,7 +5,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$root/scripts/env.sh"
 bash "$root/scripts/build.sh"
 (cd "$root/examples/todo" && npm ci && PRISMA_GENERATE_SKIP_AUTOINSTALL=true npm run generate)
-cluster="$(mktemp -d "${TMPDIR:-/tmp}/ahead-todo-e2e-pg.XXXXXX")"
+cluster="$(mktemp -d "${TMPDIR:-/tmp}/axton-todo-e2e-pg.XXXXXX")"
 cleanup(){ pg_ctl -D "$cluster/data" -m immediate stop >/dev/null 2>&1 || true; rm -rf -- "$cluster"; }
 trap cleanup EXIT
 port="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"

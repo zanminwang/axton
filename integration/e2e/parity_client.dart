@@ -3,7 +3,7 @@
 // normalized state on the last line, prefixed with PARITY.
 import 'dart:convert';
 import 'dart:io';
-import 'package:ahead/ahead.dart';
+import 'package:axton/axton.dart';
 
 Future<void> waitFor(Future<bool> Function() condition, String label) async {
   for (var i = 0; i < 1000; i++) {
@@ -32,7 +32,7 @@ Future<void> main(List<String> args) async {
   final client = await Client.open(
     path: '${args[1]}/parity-dart.sqlite',
     schema: schema,
-    libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+    libraryPath: Platform.environment['AXTON_LIBRARY']!,
   );
   try {
     await client.subscribe('book:demo');

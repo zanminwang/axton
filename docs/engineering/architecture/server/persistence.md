@@ -6,7 +6,7 @@ Persistence stores the framework's four tables in the application's own database
 
 ## 3. Context and Scope
 
-`@ahead/postgres` ([packages/postgres](../../../../packages/postgres)) owns every SQL statement Ahead runs, the migration, and the driver interface a PostgreSQL access tool binds. `packages/server` knows no SQL: `createBackend({database})` takes a `Database<T>`, a `transaction(body)` runner plus a `persistence(tx)` factory whose `call(request)` answers the host operations below, and `@ahead/postgres` builds that object from a driver.
+`@axton/postgres` ([packages/postgres](../../../../packages/postgres)) owns every SQL statement AXTON runs, the migration, and the driver interface a PostgreSQL access tool binds. `packages/server` knows no SQL: `createBackend({database})` takes a `Database<T>`, a `transaction(body)` runner plus a `persistence(tx)` factory whose `call(request)` answers the host operations below, and `@axton/postgres` builds that object from a driver.
 
 ```ts
 interface PostgresDriver<Tx> {
@@ -20,13 +20,13 @@ interface PostgresDriver<Tx> {
 | `claim {owner, clientId}` | create the client row if new, lock it, return owner, sequence and stored receipt |
 | `saveReceipt {owner, clientId, sequence, receipt}` | record the batch outcome |
 | `head {channel}` | current cursor of a channel (0 if unknown) |
-| `scan {channel, after, limit}` | invalidation rows after a cursor, in order, each joined with the record's current stamp from `ahead_record`; a row whose record has no stamp is a storage defect |
+| `scan {channel, after, limit}` | invalidation rows after a cursor, in order, each joined with the record's current stamp from `axton_record`; a row whose record has no stamp is a storage defect |
 | `advanceStamp {model, identityKey}` | allocate the record's next stamp (1 for a record without one) and return it |
 | `ensureStamp {model, identityKey}` | return the record's current stamp, initializing it at 1 only when it has none |
 | `publish {channel, model, identity, identityKey, stamp}` | allocate the channel's next cursor and upsert the invalidation row at the given stamp, which must be the record's current one; return both |
 | `savepoint`, `rollback`, `release {ordinal}` | per-mutation savepoints |
 
-Tables: `ahead_client`, `ahead_channel`, `ahead_record`, `ahead_invalidation` ([migration.sql](../../../../packages/postgres/migration.sql)).
+Tables: `axton_client`, `axton_channel`, `axton_record`, `axton_invalidation` ([migration.sql](../../../../packages/postgres/migration.sql)).
 
 ## 5. Building Block View
 
@@ -45,7 +45,7 @@ Code: [packages/postgres/index.mts](../../../../packages/postgres/index.mts); th
 
 ## 9. Architecture Decisions
 
-**One package for PostgreSQL, a two-method driver per tool ([#103](https://github.com/zanminwang/ahead/issues/103), decided 2026-09-16).** Modelled on River: the database is fixed, the driver is small, the transaction is the application's. Every statement lives once, in `sql.mts`, and a tool shim only binds `transaction` and `query`, so supporting another PostgreSQL tool is thirty lines and the same conformance suite; handlers and loaders keep receiving their tool's own transaction. A different database would be a different package, not a driver, and is not planned. The former `persistence-prisma` package became the `prisma` shim.
+**One package for PostgreSQL, a two-method driver per tool ([#103](https://github.com/zanminwang/axton/issues/103), decided 2026-09-16).** Modelled on River: the database is fixed, the driver is small, the transaction is the application's. Every statement lives once, in `sql.mts`, and a tool shim only binds `transaction` and `query`, so supporting another PostgreSQL tool is thirty lines and the same conformance suite; handlers and loaders keep receiving their tool's own transaction. A different database would be a different package, not a driver, and is not planned. The former `persistence-prisma` package became the `prisma` shim.
 
 ## 10. Quality Requirements
 
@@ -59,6 +59,6 @@ Executed 2026-09-16: `bash integration/persistence/server/run.sh` (conformance 2
 
 ## 11. Risks and Technical Debt
 
-**Accepted limitation (legacy column).** `ahead_client` once defined a `request_hash text` column that nothing wrote or read; receipt replay is keyed by client and sequence ([Server Push §9](engine/push.md#9-architecture-decisions)). Databases installed before its removal keep the column: `CREATE TABLE IF NOT EXISTS` never alters an existing table, and the statements name their columns, so the extra one is ignored. Removing it is optional and safe, `ALTER TABLE ahead_client DROP COLUMN request_hash`, and touches no receipts or business data.
+**Accepted limitation (legacy column).** `axton_client` once defined a `request_hash text` column that nothing wrote or read; receipt replay is keyed by client and sequence ([Server Push §9](engine/push.md#9-architecture-decisions)). Databases installed before its removal keep the column: `CREATE TABLE IF NOT EXISTS` never alters an existing table, and the statements name their columns, so the extra one is ignored. Removing it is optional and safe, `ALTER TABLE axton_client DROP COLUMN request_hash`, and touches no receipts or business data.
 
-**Accepted limitations.** PostgreSQL is the only database. The framework tables are installed from a raw SQL file with no migration tooling. Rows are never pruned: client rows live forever and invalidation rows grow with records × channels ([#61](https://github.com/zanminwang/ahead/issues/61)). The isolation requirement on a driver's runner is stated in the interface's doc comment and checked by the conformance retry test, not enforced at runtime.
+**Accepted limitations.** PostgreSQL is the only database. The framework tables are installed from a raw SQL file with no migration tooling. Rows are never pruned: client rows live forever and invalidation rows grow with records × channels ([#61](https://github.com/zanminwang/axton/issues/61)). The isolation requirement on a driver's runner is stated in the interface's doc comment and checked by the conformance retry test, not enforced at runtime.

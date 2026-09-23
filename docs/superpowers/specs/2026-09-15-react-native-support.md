@@ -1,12 +1,12 @@
 # React Native Support Specification (#100)
 
-**Dependency:** [React Native support #100](https://github.com/zanminwang/ahead/issues/100) blocks [To-do demo #31](https://github.com/zanminwang/ahead/issues/31).
+**Dependency:** [React Native support #100](https://github.com/zanminwang/axton/issues/100) blocks [To-do demo #31](https://github.com/zanminwang/axton/issues/31).
 
 **Status:** Implemented and verified on an arm64 iOS simulator on 2026-09-15; see the harness README for evidence. See the [plan](../plans/2026-09-15-react-native-support.md) and [handoff](../handoffs/2026-09-15-react-native-support.md).
 
 ## Goal and scope
 
-Enable an Expo React Native application written in TypeScript to use Ahead's generated client with the existing Rust/SQLite engine. Prove persistence and two-client synchronization before #31 consumes the SDK.
+Enable an Expo React Native application written in TypeScript to use AXTON's generated client with the existing Rust/SQLite engine. Prove persistence and two-client synchronization before #31 consumes the SDK.
 
 Keep it simple: reuse the engine, generated API and application-owned backend. The first acceptance target is an arm64 iOS simulator with embedded JavaScript. The harness lockfile selects Expo 57.0.22, React Native 0.86.3 and React 19.2.3.
 
@@ -26,18 +26,18 @@ Generated TypeScript client → mobile SDK → Expo Swift module → Rust Runtim
 | `integration/platform/react-native/` | Diagnostic app, generated fixture and disposable backend |
 | `integration/platform/run_react_native_ios_smoke.sh` | Two independent simulator installations and restart assertions |
 
-The Expo module is named `AheadNative`:
+The Expo module is named `AxtonNative`:
 
 ```ts
-interface AheadNativeModule {
+interface AxtonNativeModule {
   clientCall(request: string): Promise<string>;
   databasePath(name: string): Promise<string>;
 }
 ```
 
-The C ABI exports `char *ahead_mobile_call(const char *input)` and `void ahead_mobile_free(char *output)`. Swift executes on a serial background queue, copies the output, frees it exactly once, unwraps `{ok,result,error}` and returns serialized `result`. Invalid input and runtime failures reject promises; pointers never reach JavaScript.
+The C ABI exports `char *axton_mobile_call(const char *input)` and `void axton_mobile_free(char *output)`. Swift executes on a serial background queue, copies the output, frees it exactly once, unwraps `{ok,result,error}` and returns serialized `result`. Invalid input and runtime failures reject promises; pointers never reach JavaScript.
 
-The public helper is `databasePath(name = 'ahead.sqlite'): Promise<string>`. It accepts a basename, creates Application Support as needed and resolves the same path across launches. Separate installations have separate client databases and identities.
+The public helper is `databasePath(name = 'axton.sqlite'): Promise<string>`. It accepts a basename, creates Application Support as needed and resolves the same path across launches. Separate installations have separate client databases and identities.
 
 Generate mobile code with the compiler's `--client-runtime` option; do not hand-edit generated files. Preserve the [binding contract](../../engineering/architecture/sdks/bindings.md), [typed client responsibilities](../../engineering/architecture/sdks/typed-api/client.md) and [engine guarantees](../../engineering/guarantees.md).
 

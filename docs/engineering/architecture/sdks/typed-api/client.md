@@ -18,7 +18,7 @@ What an application sees:
 | `client.syncState()`, `client.models.<model>.syncState(identity)` | the client's and one record's sync state; the record form is typed by model and mutation names |
 | `clientId`, `connect()`, `pendingTasks()`, `setReadiness()`, `runPrerequisites()`, `drop()`, `dismissRejection()`, `querySpec()`, `readSql()`, `close()` | identity, connection, recovery and escape hatches, on the same object |
 
-Every call becomes one command through the [bindings](../bindings.md). Generated code depends on the runtime package (`@ahead/client`, `package:ahead`); the generic runtime depends on nothing generated.
+Every call becomes one command through the [bindings](../bindings.md). Generated code depends on the runtime package (`@axton/client`, `package:axton`); the generic runtime depends on nothing generated.
 
 ## 5. Building Block View
 
@@ -34,9 +34,9 @@ Code: [React Native adapter](../../../../../packages/client-react-native/index.t
 
 ## 9. Architecture Decisions
 
-**One client object ([#133](https://github.com/zanminwang/ahead/issues/133)).** The generated client is the only client an application sees. It keeps the `models` / `mutate` / `channels` namespaces (mutation names are schema-chosen and may span models, so they never share a namespace with model built-ins) and carries the runtime members directly; the runtime `Client` is an internal handle (`client.client`) used by the framework's own tests. The per-record sync state lives beside `get` and `query` on each model and is typed by that model's identity; its pending names are a union of the schema's mutations (TypeScript) or strings (Dart).
+**One client object ([#133](https://github.com/zanminwang/axton/issues/133)).** The generated client is the only client an application sees. It keeps the `models` / `mutate` / `channels` namespaces (mutation names are schema-chosen and may span models, so they never share a namespace with model built-ins) and carries the runtime members directly; the runtime `Client` is an internal handle (`client.client`) used by the framework's own tests. The per-record sync state lives beside `get` and `query` on each model and is typed by that model's identity; its pending names are a union of the schema's mutations (TypeScript) or strings (Dart).
 
-**Automatic model-version declaration ([#91](https://github.com/zanminwang/ahead/issues/91)).** Generated client configuration identifies the [model versions](../../schema/models.md#9-architecture-decisions) expected by its generated types: the schema embedded in `generated.ts` and `generated.dart` carries each model's `version`, and `open` passes it to the Rust runtime unchanged. The runtime declares those read contracts to the server as `models` on every pull and on the subscribe frame ([Protocol / Pull](../../protocol/pull.md)); application code does not supply versions on each `channels.subscribe(...)` call. HTTP catch-up and WebSocket delivery must use the same selected contracts. This adds no protocol policy to the SDK: generated metadata passes through bindings to the runtime. Wire placement and validation remain to be designed; read-error behavior follows [failure isolation](../../server/engine/pull.md#9-architecture-decisions).
+**Automatic model-version declaration ([#91](https://github.com/zanminwang/axton/issues/91)).** Generated client configuration identifies the [model versions](../../schema/models.md#9-architecture-decisions) expected by its generated types: the schema embedded in `generated.ts` and `generated.dart` carries each model's `version`, and `open` passes it to the Rust runtime unchanged. The runtime declares those read contracts to the server as `models` on every pull and on the subscribe frame ([Protocol / Pull](../../protocol/pull.md)); application code does not supply versions on each `channels.subscribe(...)` call. HTTP catch-up and WebSocket delivery must use the same selected contracts. This adds no protocol policy to the SDK: generated metadata passes through bindings to the runtime. Wire placement and validation remain to be designed; read-error behavior follows [failure isolation](../../server/engine/pull.md#9-architecture-decisions).
 
 ## 10. Quality Requirements
 
@@ -48,8 +48,8 @@ Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-**Accepted limitation (planned change).** `watch` re-runs its query on every commit, whatever table changed; the binding already reports touched tables but neither client uses them, and there are no status streams. Scoped notifications are [#16](https://github.com/zanminwang/ahead/issues/16).
+**Accepted limitation (planned change).** `watch` re-runs its query on every commit, whatever table changed; the binding already reports touched tables but neither client uses them, and there are no status streams. Scoped notifications are [#16](https://github.com/zanminwang/axton/issues/16).
 
-**Accepted limitation.** `Client.open` and the generated `open` still accept a `migration` option that the runtime ignores; its future is part of [#20](https://github.com/zanminwang/ahead/issues/20).
+**Accepted limitation.** `Client.open` and the generated `open` still accept a `migration` option that the runtime ignores; its future is part of [#20](https://github.com/zanminwang/axton/issues/20).
 
 **To confirm.** No test runs one script through the Rust, TypeScript and Dart clients and compares state; the two clients are separate implementations of the same session logic ([Live session](../../client/connection/controller/live-session.md)), sharing the Rust engine alone does not establish equivalent behavior across SDK boundaries. The shared scenarios in `fixtures/scenarios` are prose READMEs, not an executable cross-language runner.

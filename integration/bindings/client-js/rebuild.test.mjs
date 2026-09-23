@@ -11,7 +11,7 @@ breaking.models[0].fields.push({ name: 'due', nullable: false, type: { kind: 'sc
 const exists = p => stat(p).then(() => true, () => false);
 
 test('an incompatible schema keeps unsent work in the old file until it is sent, then rebuild switches files', async () => {
- const dir = await mkdtemp(join(tmpdir(), 'ahead-rebuild-'));
+ const dir = await mkdtemp(join(tmpdir(), 'axton-rebuild-'));
  const path = join(dir, 'client.sqlite');
  try {
   let client = await Client.open({ path, schema });

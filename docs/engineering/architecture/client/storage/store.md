@@ -35,4 +35,4 @@ Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-**Potential risk: two writers on one file.** *Condition:* two handles (two processes, or a stale handle) try to write within the same second. *Consequence:* the second sees `database is locked` after the one-second busy timeout; correctness is protected by the generation fence in [Frontend interface](../frontend-interface.md), availability is not. *Evidence:* the busy-timeout pragma and the test above. Multiple-writer support and the lock timeout are [#57](https://github.com/zanminwang/ahead/issues/57).
+**Potential risk: two writers on one file.** *Condition:* two handles (two processes, or a stale handle) try to write within the same second. *Consequence:* the second sees `database is locked` after the one-second busy timeout; correctness is protected by the generation fence in [Frontend interface](../frontend-interface.md), availability is not. *Evidence:* the busy-timeout pragma and the test above. Multiple-writer support and the lock timeout are [#57](https://github.com/zanminwang/axton/issues/57).

@@ -1,5 +1,5 @@
 import {
-  AheadReport,
+  AxtonReport,
   startConnection,
   startLiveLane,
   type Connection,
@@ -360,7 +360,7 @@ export function createClient<
           )) as ReportDetails[];
           // What the receipt or page could not apply; the client stays
           // consistent and the application hears about each one.
-          for (const report of reports) onError?.(new AheadReport(report));
+          for (const report of reports) onError?.(new AxtonReport(report));
         }
       };
       this.#syncing = run().finally(() => {

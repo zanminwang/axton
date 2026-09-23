@@ -2,7 +2,7 @@
 set -euo pipefail
 
 module_dir="$(cd "$(dirname "$0")/.." && pwd)"
-workspace_dir="${AHEAD_WORKSPACE_DIR:-}"
+workspace_dir="${AXTON_WORKSPACE_DIR:-}"
 if [[ -z "$workspace_dir" ]]; then
   candidate="$module_dir"
   while [[ "$candidate" != "/" ]]; do
@@ -14,7 +14,7 @@ if [[ -z "$workspace_dir" ]]; then
   done
 fi
 if [[ -z "$workspace_dir" || ! -f "$workspace_dir/bindings/mobile/Cargo.toml" ]]; then
-  echo "Ahead workspace not found; set AHEAD_WORKSPACE_DIR" >&2
+  echo "AXTON workspace not found; set AXTON_WORKSPACE_DIR" >&2
   exit 1
 fi
 configuration="${CONFIGURATION:-Release}"
@@ -36,10 +36,10 @@ case "${1:-simulator}" in
     ;;
 esac
 
-build_args=(build -p ahead-mobile --target "$rust_target" --locked)
+build_args=(build -p axton-mobile --target "$rust_target" --locked)
 if [[ "$profile" == "release" ]]; then
   build_args+=(--release)
 fi
 cargo "${build_args[@]}" --manifest-path "$workspace_dir/Cargo.toml"
 mkdir -p "$module_dir/ios/lib"
-cp "$workspace_dir/target/$rust_target/$profile/libahead_mobile.a" "$module_dir/ios/lib/libahead_mobile.a"
+cp "$workspace_dir/target/$rust_target/$profile/libaxton_mobile.a" "$module_dir/ios/lib/libaxton_mobile.a"

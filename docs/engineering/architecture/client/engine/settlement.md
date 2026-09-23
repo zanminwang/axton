@@ -14,7 +14,7 @@ Settlement is triggered by one event and works entirely inside the engine's tran
 | --- | --- | --- |
 | A receipt for the batch in flight ([Protocol / Push](../../protocol/push.md)) | rejections and the final authority of every record the accepted operations changed | stages the authority beneath the queue, records rejections, removes the completed operations, replays what remains, remembers the completion |
 
-State it owns: `ahead_client.last_completed_push` (the sequence of the last completed batch), `ahead_client.push_models` (the read contracts the batch in flight declared) and `ahead_rejection` (the durable inbox of rejected mutations). It deletes rows from the queue tables owned by [Queue](push/queue.md) and rewrites records through the authority applier and the replay logic of [Local operations](local-operations/README.md).
+State it owns: `axton_client.last_completed_push` (the sequence of the last completed batch), `axton_client.push_models` (the read contracts the batch in flight declared) and `axton_rejection` (the durable inbox of rejected mutations). It deletes rows from the queue tables owned by [Queue](push/queue.md) and rewrites records through the authority applier and the replay logic of [Local operations](local-operations/README.md).
 
 ## 5. Building Block View
 
@@ -67,13 +67,13 @@ Unsubscribing no longer touches settlement: it deletes the subscription row and 
 
 ## 9. Architecture Decisions
 
-**Completion from the receipt, not from a channel ([#55](https://github.com/zanminwang/ahead/issues/55); supersedes [#52](https://github.com/zanminwang/ahead/issues/52)).** The earlier contract stored the channel positions a receipt named and settled a batch only once subscribed channels reached them, dropping positions on unsubscribed channels. Acceptance without a subscribed channel therefore reverted an update and removed a create until some channel delivered the result, and settlement had to run in batch order behind waiting batches. Now the server reads every changed record back in the handler's transaction and the receipt carries it, so the batch completes on arrival with the server's content, with or without subscriptions, and no ordering rule is needed: one batch is in flight at a time. The stamp rule is shared with pages, so the receipt and the channel never disagree about which content is newer. The proposals of adding a per-operation required stamp, keeping accepted operations waiting for the channel, or flagging receipt-confirmed predictions as provisional were withdrawn.
+**Completion from the receipt, not from a channel ([#55](https://github.com/zanminwang/axton/issues/55); supersedes [#52](https://github.com/zanminwang/axton/issues/52)).** The earlier contract stored the channel positions a receipt named and settled a batch only once subscribed channels reached them, dropping positions on unsubscribed channels. Acceptance without a subscribed channel therefore reverted an update and removed a create until some channel delivered the result, and settlement had to run in batch order behind waiting batches. Now the server reads every changed record back in the handler's transaction and the receipt carries it, so the batch completes on arrival with the server's content, with or without subscriptions, and no ordering rule is needed: one batch is in flight at a time. The stamp rule is shared with pages, so the receipt and the channel never disagree about which content is newer. The proposals of adding a per-operation required stamp, keeping accepted operations waiting for the channel, or flagging receipt-confirmed predictions as provisional were withdrawn.
 
 **Stage before removing, replay once.** Authority is staged while the queue still identifies which records hold a base, and the visible rows are rebuilt only after the completed operations are gone. Replaying before removal would put the completed edit back on top of the server's row; removing before staging would lose track of a pending create's absent base. The applier never replays on its own for this reason; page application, whose queue state does not change, stages and replays in one step.
 
 **A refused receipt is not partially applied.** Membership of the rejections, coverage of the accepted targets and the receipt's client and batch are checked before any row is touched, and the whole transition is one transaction. Such a receipt is a defect on the wire, and the honest outcome is a batch that stays in flight.
 
-**A record that does not fit fails alone ([#95](https://github.com/zanminwang/ahead/issues/95)).** The server stores a receipt and replays the same bytes on every retry, so refusing a whole receipt because one record's state does not fit would hold the queue forever. The record is skipped and reported instead, never silently: the application hears about it through `onError`, and the record is corrected the next time it is published.
+**A record that does not fit fails alone ([#95](https://github.com/zanminwang/axton/issues/95)).** The server stores a receipt and replays the same bytes on every retry, so refusing a whole receipt because one record's state does not fit would hold the queue forever. The record is skipped and reported instead, never silently: the application hears about it through `onError`, and the record is corrected the next time it is published.
 
 ## 10. Quality Requirements
 
@@ -86,7 +86,7 @@ Unsubscribing no longer touches settlement: it deletes the subscription row and 
 
 - **A receipt whose authority lands under a pending edit that no longer replays reports the divergence; the edit stays queued and is still sent** (guarantee D8). Evidence: `divergence_is_reported_from_a_receipt_too`, `a_pending_update_over_a_deleted_base_diverges_and_is_still_sent`.
 
-Executed 2026-09-16: `cargo test -p ahead-sqlite --locked` and `cargo test -p ahead-binding --locked` passed with the suites above.
+Executed 2026-09-16: `cargo test -p axton-sqlite --locked` and `cargo test -p axton-binding --locked` passed with the suites above.
 
 ## 11. Risks and Technical Debt
 
@@ -94,6 +94,6 @@ Executed 2026-09-16: `cargo test -p ahead-sqlite --locked` and `cargo test -p ah
 
 **Accepted limitation.** The server reads back the change set it knows about: uploaded targets and `changes.add`. A server-side cascade the handler does not register (a database `ON DELETE CASCADE`, for example) is not in the receipt; a locally cascaded child whose parent's receipt state is `null` is deleted with it, but a child the server removed while the parent survived is corrected only when a channel delivers it.
 
-**Resolved ([#122](https://github.com/zanminwang/ahead/issues/122)): a replay failure is no longer silent.** When staged authority leaves a pending operation with nothing to apply to (an update over a deleted base, a create over an existing one), the visible row is the base, the mutation stays queued and is sent, `record_status` marks it `diverged` until it completes or is rejected, and the receipt's `ApplyReport` (or the page's) carries a `diverged` report with the ordinal ([Pull](pull.md)).
+**Resolved ([#122](https://github.com/zanminwang/axton/issues/122)): a replay failure is no longer silent.** When staged authority leaves a pending operation with nothing to apply to (an update over a deleted base, a create over an existing one), the visible row is the base, the mutation stays queued and is sent, `record_status` marks it `diverged` until it completes or is rejected, and the receipt's `ApplyReport` (or the page's) carries a `diverged` report with the ordinal ([Pull](pull.md)).
 
 **Accepted consequence.** A record's authority in the receipt is an optional extra for records with no pending operation: it is written directly. The applier has no way to tell a record the client never held from one it deleted, and does not need one, because deleted records keep their stamp ([Pull](pull.md)).

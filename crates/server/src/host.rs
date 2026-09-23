@@ -9,9 +9,9 @@
 //! the mutation back to its savepoint and records the code as that
 //! mutation's rejection; a failure carries a thrown application error as
 //! data. Every other thrown host error still aborts the whole delivery
-//! ([#95](https://github.com/zanminwang/ahead/issues/95) narrows nothing more).
+//! ([#95](https://github.com/zanminwang/axton/issues/95) narrows nothing more).
 use crate::{Error, Host, Result, code, valid_code};
-use ahead_core::read_counter;
+use axton_core::read_counter;
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{fmt::Display, future::Future, pin::Pin};

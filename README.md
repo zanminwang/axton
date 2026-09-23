@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="assets/branding/ahead-logo.png" alt="Ahead" width="560">
+  <img src="assets/branding/axton-logo.png" alt="AXTON" width="560">
 </h1>
 
 <p align="center">
@@ -7,22 +7,22 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/zanminwang/ahead/actions/workflows/verify.yml"><img src="https://github.com/zanminwang/ahead/actions/workflows/verify.yml/badge.svg?branch=main" alt="Verify"></a>
-  <a href="https://github.com/zanminwang/ahead/actions/workflows/docs.yml"><img src="https://github.com/zanminwang/ahead/actions/workflows/docs.yml/badge.svg?branch=main" alt="Documentation"></a>
+  <a href="https://github.com/zanminwang/axton/actions/workflows/verify.yml"><img src="https://github.com/zanminwang/axton/actions/workflows/verify.yml/badge.svg?branch=main" alt="Verify"></a>
+  <a href="https://github.com/zanminwang/axton/actions/workflows/docs.yml"><img src="https://github.com/zanminwang/axton/actions/workflows/docs.yml/badge.svg?branch=main" alt="Documentation"></a>
 </p>
 
 <p align="center">
-  <a href="#build-with-ahead">Quick start</a> ·
+  <a href="#build-with-axton">Quick start</a> ·
   <a href="website/docs/schema/reference.md">Schema</a> ·
   <a href="website/docs/frontend/setup.md">Client</a> ·
   <a href="website/docs/backend/setup.md">Backend</a>
 </p>
 
-## Why Ahead?
+## Why AXTON?
 
-- **Schema-driven.** Define your models and local mutations in a schema. Ahead handles the local state changes.
+- **Schema-driven.** Define your models and local mutations in a schema. AXTON handles the local state changes.
 - **Type-safe end to end.** Get typed client calls and backend read/write interfaces from the same schema.
-- **Works offline.** Read and write local SQLite without a connection. Ahead persists changes and syncs in the background.
+- **Works offline.** Read and write local SQLite without a connection. AXTON persists changes and syncs in the background.
 - **Your backend.** Implement your own read and write logic and choose your database. No vendor cloud service required.
 
 ## Why local-first?
@@ -31,11 +31,11 @@ Local-first apps read and write data on the device, so everyday interactions don
 
 ## How it works
 
-![Ahead architecture: local state and background sync](website/docs/assets/architecture.svg)
+![AXTON architecture: local state and background sync](website/docs/assets/architecture.svg)
 
-Clients push mutations over HTTP. On connection, they catch up from saved progress over HTTP, then receive ongoing record updates over WebSocket. Ahead manages this as one connection.
+Clients push mutations over HTTP. On connection, they catch up from saved progress over HTTP, then receive ongoing record updates over WebSocket. AXTON manages this as one connection.
 
-On your server, **handlers** process writes and **loaders** read records to send to clients. After a handler runs, Ahead reads the changed records back through your loaders and returns them to the client in the receipt. A **channel** groups record changes for other clients to subscribe to; `publish` sends a mutation's changes there.
+On your server, **handlers** process writes and **loaders** read records to send to clients. After a handler runs, AXTON reads the changed records back through your loaders and returns them to the client in the receipt. A **channel** groups record changes for other clients to subscribe to; `publish` sends a mutation's changes there.
 
 Writes update local SQLite immediately, so reads see changes before sync completes. Changes to local data update query subscriptions (`watch`). If the backend rejects a mutation, its local changes roll back.
 
@@ -49,9 +49,9 @@ Writes update local SQLite immediately, so reads see changes before sync complet
 
 The TypeScript client and backend currently run on Node.js. The clients use native runtimes; browser support is not yet implemented. See [platform validation](website/docs/frontend/platforms.md) for tested environments.
 
-Need another language, runtime, or database adapter? [Request support](https://github.com/zanminwang/ahead/issues/new). More integrations can be added.
+Need another language, runtime, or database adapter? [Request support](https://github.com/zanminwang/axton/issues/new). More integrations can be added.
 
-## Build with Ahead
+## Build with AXTON
 
 ### 1. Define your models and mutations
 
@@ -109,7 +109,7 @@ await client.transaction(async (tx) => {
 await client.channels.subscribe("todos");
 ```
 
-Ahead sends queued writes when the network allows, retries failed sync requests, and fetches changed records from your subscribed channels.
+AXTON sends queued writes when the network allows, retries failed sync requests, and fetches changed records from your subscribed channels.
 
 ### 3. Implement handlers and loaders for your backend
 
@@ -167,25 +167,25 @@ await backend.listen({ port: 4242 });
 
 </details>
 
-## How Ahead compares with other sync frameworks
+## How AXTON compares with other sync frameworks
 
-Ahead generates local operations from your schema and gives you typed interfaces to implement backend reads and writes.
+AXTON generates local operations from your schema and gives you typed interfaces to implement backend reads and writes.
 
 | Project | How local updates work | How backend writes work | How you define the read / sync path | Required backend database |
 | --- | --- | --- | --- | --- |
-| **Ahead** | Generated local operations from your schema | You implement the business logic through a generated, typed write interface | You mark changes and define the read path through a generated typed read interface. | No fixed database |
+| **AXTON** | Generated local operations from your schema | You implement the business logic through a generated, typed write interface | You mark changes and define the read path through a generated typed read interface. | No fixed database |
 | [Replicache](https://doc.replicache.dev/byob/local-mutations) | You write local update functions | Your write API runs the requested operations | You implement a [read API](https://doc.replicache.dev/reference/server-pull) that returns data changes | No fixed database |
 | [Zero](https://zero.rocicorp.dev/docs/mutators) | You write local update functions | Your server functions handle each write | You define [queries](https://zero.rocicorp.dev/docs/queries); Zero syncs matching database rows | PostgreSQL with database replication enabled |
 | [PowerSync](https://docs.powersync.com/intro/powersync-philosophy) | You update local SQLite | Your write API processes the changes | You define sync rules to select which database records reach each client | A supported database with change tracking enabled |
 | [Electric](https://electric.ax/docs/sync/guides/writes) | You choose how to update local state | You choose how writes reach your backend | You define [shapes](https://electric.ax/docs/sync/guides/shapes) to select Postgres rows for sync | PostgreSQL with database replication enabled |
 | [InstantDB](https://www.instantdb.com/docs) | You update records through the SDK | Instant applies writes using your permission rules | You query through the SDK; Instant keeps the results up to date | Instant's database backend |
 
-Ahead needs a database adapter that provides consistent transactions and stores sync metadata. Replicache also requires [consistent transaction snapshots](https://doc.replicache.dev/byob/remote-database).
+AXTON needs a database adapter that provides consistent transactions and stores sync metadata. Replicache also requires [consistent transaction snapshots](https://doc.replicache.dev/byob/remote-database).
 
 Instant Cloud is closed to new signups and will shut down on August 31, 2027. You can still host Instant yourself. See the [official announcement](https://www.instantdb.com/essays/instant_team_joins_openai).
 
 ## Project status
 
-Ahead is an early alpha. Packages have not been published, and a license has not yet been added.
+AXTON is an early alpha. Packages have not been published, and a license has not yet been added. Existing integrations must follow the [AXTON rename notes](docs/engineering/brand-rename.md) before upgrading from a pre-rename build.
 
 [Schema guide](website/docs/schema/reference.md) · [Client guide](website/docs/frontend/setup.md) · [Backend guide](website/docs/backend/setup.md)

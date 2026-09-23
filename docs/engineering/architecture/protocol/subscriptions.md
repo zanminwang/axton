@@ -34,8 +34,8 @@ HTTP catches up; the WebSocket carries only what is new. On the acknowledgement 
 - Only one subscribe frame is accepted and channels are normalized; the acknowledgement carries heads; commits on several channels share one pull and a frame names only what moved. Evidence: [server/tests/runtime.rs](../../../../crates/server/tests/runtime.rs) `live_subscribe_requires_one_subscribe_frame_and_normalizes_channels`, `live_page_progression_checks_every_channel_it_asked_for`; [server/tests/live.rs](../../../../crates/server/tests/live.rs) `open_registers_every_scope_before_the_acknowledgement_then_pulls_all_once_from_their_heads`, `a_channel_below_its_head_continues_and_one_at_its_head_ends_the_drain`, `commits_on_several_scopes_share_one_pull_and_the_frame_names_only_what_moved`.
 - A client whose cursors equal the heads does not catch up; one that is behind pulls once and then streams. Evidence: [sqlite/tests/live.rs](../../../../crates/sqlite/tests/live.rs) `heads_equal_to_the_cursors_mean_no_catch_up_at_all`, `a_session_subscribes_pulls_only_when_behind_and_then_streams`; both SDKs' live suites ([live.test.mjs](../../../../integration/bindings/client-js/live.test.mjs), [dart/test/live_test.dart](../../../../packages/dart/test/live_test.dart)).
 
-Executed 2026-09-16: `cargo test -p ahead-core -p ahead-server -p ahead-sqlite --locked`, the JS and Dart live suites.
+Executed 2026-09-16: `cargo test -p axton-core -p axton-server -p axton-sqlite --locked`, the JS and Dart live suites.
 
 ## 11. Risks and Technical Debt
 
-- **Resolved ([#63](https://github.com/zanminwang/ahead/issues/63)).** The acknowledgement's vestigial `rejections` array is gone with the new frame.
+- **Resolved ([#63](https://github.com/zanminwang/axton/issues/63)).** The acknowledgement's vestigial `rejections` array is gone with the new frame.

@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:ahead/ahead.dart';
-import 'package:ahead/src/live.dart' show ServerSession, SocketEvents;
+import 'package:axton/axton.dart';
+import 'package:axton/src/live.dart' show ServerSession, SocketEvents;
 import 'package:test/test.dart';
 
 final subscribeFrame = jsonEncode({
@@ -246,7 +246,7 @@ void main() {
     'unsubscribe invalidates a pending token before a held transaction drains',
     () async {
       final dir = await Directory.systemTemp.createTemp(
-        'ahead-dart-token-generation-',
+        'axton-dart-token-generation-',
       );
       final schema =
           jsonDecode(
@@ -256,7 +256,7 @@ void main() {
       final client = await Client.open(
         path: '${dir.path}/db',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       var requests = 0;
@@ -310,7 +310,7 @@ void main() {
   test(
     'native live client retries failed authentication refresh and closes without leaks',
     () async {
-      final dir = await Directory.systemTemp.createTemp('ahead-dart-live-');
+      final dir = await Directory.systemTemp.createTemp('axton-dart-live-');
       final schema =
           jsonDecode(
                 await File('../../fixtures/schemas/entry.json').readAsString(),
@@ -319,7 +319,7 @@ void main() {
       final client = await Client.open(
         path: '${dir.path}/db',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       var token = 'expired', refreshes = 0;
@@ -387,7 +387,7 @@ void main() {
     'native subscription changes discard old pages and HTTP recovers live gaps',
     () async {
       final dir = await Directory.systemTemp.createTemp(
-        'ahead-dart-generation-',
+        'axton-dart-generation-',
       );
       final schema =
           jsonDecode(
@@ -397,7 +397,7 @@ void main() {
       final client = await Client.open(
         path: '${dir.path}/db',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sockets = <WebSocket>[];
@@ -554,7 +554,7 @@ void main() {
   test(
     'HTTP catch-up pages after ack, queues overlap, and rejects obsolete HTTP completion',
     () async {
-      final dir = await Directory.systemTemp.createTemp('ahead-dart-http-');
+      final dir = await Directory.systemTemp.createTemp('axton-dart-http-');
       final schema =
           jsonDecode(
                 await File('../../fixtures/schemas/entry.json').readAsString(),
@@ -563,7 +563,7 @@ void main() {
       final client = await Client.open(
         path: '${dir.path}/db',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sockets = <WebSocket>[];
@@ -699,7 +699,7 @@ void main() {
   test(
     'shared live factory isolates cancellation and pushes with no subscribed channels',
     () async {
-      final dir = await Directory.systemTemp.createTemp('ahead-shared-live-');
+      final dir = await Directory.systemTemp.createTemp('axton-shared-live-');
       final schema =
           jsonDecode(
                 await File('../../fixtures/schemas/entry.json').readAsString(),
@@ -708,12 +708,12 @@ void main() {
       final first = await Client.open(
         path: '${dir.path}/first',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       final second = await Client.open(
         path: '${dir.path}/second',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       var requests = 0;
@@ -877,7 +877,7 @@ void moreTests() {
   test(
     'push completes from its receipt while the WebSocket upgrade is refused; HTTP catch-up runs only once the upgrade is allowed',
     () async {
-      final dir = await Directory.systemTemp.createTemp('ahead-dart-blocked-');
+      final dir = await Directory.systemTemp.createTemp('axton-dart-blocked-');
       final schema =
           jsonDecode(
                 await File('../../fixtures/schemas/entry.json').readAsString(),
@@ -886,7 +886,7 @@ void moreTests() {
       final client = await Client.open(
         path: '${dir.path}/db',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sockets = <WebSocket>[];
@@ -1025,7 +1025,7 @@ void moreTests() {
   test(
     'bounded receive buffer (128 pages) overflows into recovery without restarting the in-flight HTTP catch-up',
     () async {
-      final dir = await Directory.systemTemp.createTemp('ahead-dart-overflow-');
+      final dir = await Directory.systemTemp.createTemp('axton-dart-overflow-');
       final schema =
           jsonDecode(
                 await File('../../fixtures/schemas/entry.json').readAsString(),
@@ -1034,7 +1034,7 @@ void moreTests() {
       final client = await Client.open(
         path: '${dir.path}/db',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sockets = <WebSocket>[];
@@ -1148,7 +1148,7 @@ void moreTests() {
   test(
     'a 401 on both lanes at once shares one refreshAuth; both lanes recover with the new token',
     () async {
-      final dir = await Directory.systemTemp.createTemp('ahead-dart-refresh-');
+      final dir = await Directory.systemTemp.createTemp('axton-dart-refresh-');
       final schema =
           jsonDecode(
                 await File('../../fixtures/schemas/entry.json').readAsString(),
@@ -1157,7 +1157,7 @@ void moreTests() {
       final client = await Client.open(
         path: '${dir.path}/db',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       var token = 'expired', refreshes = 0, unauthorized = 0, pushes = 0;
@@ -1298,7 +1298,7 @@ void moreTests() {
     'a socket the server closes is reconnected after the backoff, resubscribed, and streaming resumes',
     () async {
       final dir = await Directory.systemTemp.createTemp(
-        'ahead-dart-reconnect-',
+        'axton-dart-reconnect-',
       );
       final schema =
           jsonDecode(
@@ -1308,7 +1308,7 @@ void moreTests() {
       final client = await Client.open(
         path: '${dir.path}/db',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final started = DateTime.now();
@@ -1418,7 +1418,7 @@ void moreTests() {
   test(
     'bounded receive buffer (8 MiB) overflows on ten large pages without restarting the in-flight HTTP catch-up',
     () async {
-      final dir = await Directory.systemTemp.createTemp('ahead-dart-bytes-');
+      final dir = await Directory.systemTemp.createTemp('axton-dart-bytes-');
       final schema =
           jsonDecode(
                 await File('../../fixtures/schemas/entry.json').readAsString(),
@@ -1427,7 +1427,7 @@ void moreTests() {
       final client = await Client.open(
         path: '${dir.path}/db',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sockets = <WebSocket>[];
@@ -1552,7 +1552,7 @@ void moreTests() {
     'an owner-mismatch refusal reaches onError and leaves the batch frozen for a resend',
     () async {
       final dir = await Directory.systemTemp.createTemp(
-        'ahead-owner-mismatch-',
+        'axton-owner-mismatch-',
       );
       final schema =
           jsonDecode(
@@ -1562,7 +1562,7 @@ void moreTests() {
       final client = await Client.open(
         path: '${dir.path}/client.sqlite',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final bodies = <Map>[];
@@ -1628,9 +1628,9 @@ void moreTests() {
   );
 
   test(
-    'what a page cannot apply reaches onError as an AheadReport: read failures, skipped changes and divergence',
+    'what a page cannot apply reaches onError as an AxtonReport: read failures, skipped changes and divergence',
     () async {
-      final dir = await Directory.systemTemp.createTemp('ahead-dart-reports-');
+      final dir = await Directory.systemTemp.createTemp('axton-dart-reports-');
       final schema =
           jsonDecode(
                 await File('../../fixtures/schemas/entry.json').readAsString(),
@@ -1639,7 +1639,7 @@ void moreTests() {
       final client = await Client.open(
         path: '${dir.path}/db',
         schema: schema,
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sockets = <WebSocket>[];
@@ -1735,7 +1735,7 @@ void moreTests() {
           }),
         );
         await until(() => errors.length == 2);
-        final reports = errors.cast<AheadReport>();
+        final reports = errors.cast<AxtonReport>();
         expect(reports[0].kind, 'readFailed');
         expect(reports[0].code, 'loader.failed');
         expect(reports[0].identity, {'id': 'live'});
@@ -1769,8 +1769,8 @@ void moreTests() {
             'changes': [record('live', 2, null)],
           }),
         );
-        await until(() => errors.whereType<AheadReport>().isNotEmpty);
-        final diverged = errors.whereType<AheadReport>().first;
+        await until(() => errors.whereType<AxtonReport>().isNotEmpty);
+        final diverged = errors.whereType<AxtonReport>().first;
         expect(diverged.kind, 'diverged');
         expect(diverged.ordinal, isA<int>());
         expect(diverged.identity, {'id': 'live'});
@@ -1803,7 +1803,7 @@ void moreTests() {
           ],
         });
         await until(() async => (await client.syncState())['pending'] == 0);
-        final skipped = errors.whereType<AheadReport>().single;
+        final skipped = errors.whereType<AxtonReport>().single;
         expect(skipped.kind, 'skipped');
         expect(skipped.identity, {'id': 'odd'});
         expect((skipped.detail as Map)['batch'], isA<int>());

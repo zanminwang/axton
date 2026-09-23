@@ -59,7 +59,7 @@ A server may normalize the title or reject the edit. Rejections are retained in 
 
 A **Stamp** orders content for one record across every path that delivers it: the receipt, catch-up pages and the live stream. Every successful change to a record allocates a newer stamp; publishing the same version to several channels carries that one stamp to all of them. The client applies a newer value and ignores delayed older content, regardless of which path delivers it. Equal stamps are idempotent; inconsistent content for the same stamp is a diagnostic condition.
 
-A newer deletion withdraws the record across channels, and the client keeps the deleted record's stamp so that older content arriving later cannot bring it back. A channel is a delivery path, not an owner: unsubscribing stops its delivery and removes nothing the client already holds. Stamps are required on pull changes; they are separate from each channel's cursor. See the [stamp acceptance tests](https://github.com/zanminwang/ahead/blob/main/crates/sqlite/tests/stamp_scenarios.rs) for the ordering cases.
+A newer deletion withdraws the record across channels, and the client keeps the deleted record's stamp so that older content arriving later cannot bring it back. A channel is a delivery path, not an owner: unsubscribing stops its delivery and removes nothing the client already holds. Stamps are required on pull changes; they are separate from each channel's cursor. See the [stamp acceptance tests](https://github.com/zanminwang/axton/blob/main/crates/sqlite/tests/stamp_scenarios.rs) for the ordering cases.
 
 ## Local reads and sync reads
 
@@ -67,7 +67,7 @@ A newer deletion withdraws the record across channels, and the client keeps the 
 
 The backend's loader is the sync read path: it supplies the current authorized content of the records a mutation changed, for the receipt, and of the records a publication identified, for a page. It never sees which path is asking. A record the loader cannot read fails alone: the rest of the page is delivered, and the client keeps its copy and reports the failure. This separation lets your local record schema differ from your backend database layout.
 
-Ahead uses one connection: HTTP submits mutations and catches up missing records in one pull for all channels; WebSocket delivers ongoing changes. Initial connection, reconnection and gap recovery use saved channel cursors. Received records pass through the Rust engine into SQLite.
+AXTON uses one connection: HTTP submits mutations and catches up missing records in one pull for all channels; WebSocket delivers ongoing changes. Initial connection, reconnection and gap recovery use saved channel cursors. Received records pass through the Rust engine into SQLite.
 
 ## Current limits
 

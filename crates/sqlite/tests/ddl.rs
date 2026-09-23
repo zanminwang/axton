@@ -1,7 +1,7 @@
-use ahead_client::ClientStore;
-use ahead_client::ddl::{FRAMEWORK_DDL, FRAMEWORK_TABLES, reconcile};
-use ahead_core::Schema;
-use ahead_sqlite::SqliteStore;
+use axton_client::ClientStore;
+use axton_client::ddl::{FRAMEWORK_DDL, FRAMEWORK_TABLES, reconcile};
+use axton_core::Schema;
+use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 
 fn schema(fields: Value) -> Schema {
@@ -26,7 +26,7 @@ fn columns(s: &mut SqliteStore, table: &str) -> Vec<(String, String, i64)> {
         })
         .collect()
 }
-fn open(dir: &tempfile::TempDir, schema: &Schema) -> ahead_core::Result<SqliteStore> {
+fn open(dir: &tempfile::TempDir, schema: &Schema) -> axton_core::Result<SqliteStore> {
     let mut s = SqliteStore::open(dir.path().join("db")).unwrap();
     s.execute_batch(FRAMEWORK_DDL).unwrap();
     s.begin().unwrap();
@@ -55,7 +55,7 @@ fn creates_model_before_and_framework_tables() {
         ]
     );
     assert_eq!(
-        columns(&mut s, "ahead_before_Task"),
+        columns(&mut s, "axton_before_Task"),
         columns(&mut s, "Task")
     );
     for table in FRAMEWORK_TABLES {
@@ -90,7 +90,7 @@ fn adds_missing_columns_to_both_tables_and_keeps_unknown_ones() {
     let mut s = open(&dir, &schema(Value::Array(fields))).unwrap();
     let names: Vec<String> = columns(&mut s, "Task").into_iter().map(|c| c.0).collect();
     assert_eq!(names, vec!["id", "title", "done", "legacy", "note", "rank"]);
-    let before: Vec<String> = columns(&mut s, "ahead_before_Task")
+    let before: Vec<String> = columns(&mut s, "axton_before_Task")
         .into_iter()
         .map(|c| c.0)
         .collect();
@@ -129,7 +129,7 @@ fn rejects_non_nullable_column_without_default_identity_change_and_type_change()
 
 /// A database laid out by the checkpoint-era runtime is refused before
 /// anything is written, and the refusal leaves it exactly as found
-/// ([#55](https://github.com/zanminwang/ahead/issues/55)).
+/// ([#55](https://github.com/zanminwang/axton/issues/55)).
 #[test]
 fn a_database_from_the_checkpoint_era_is_refused_untouched() {
     let dir = tempfile::tempdir().unwrap();
@@ -138,10 +138,10 @@ fn a_database_from_the_checkpoint_era_is_refused_untouched() {
     )
     .unwrap();
     let refused = |path: &std::path::Path| {
-        let err = ahead_client::Client::open(SqliteStore::open(path).unwrap(), entry.clone())
+        let err = axton_client::Client::open(SqliteStore::open(path).unwrap(), entry.clone())
             .err()
             .expect("an earlier layout is refused");
-        assert!(err.to_string().contains("earlier Ahead runtime"), "{err}");
+        assert!(err.to_string().contains("earlier AXTON runtime"), "{err}");
     };
     let count = |path: &std::path::Path, sql: &str| -> i64 {
         let mut s = SqliteStore::open(path).unwrap();
@@ -156,8 +156,8 @@ fn a_database_from_the_checkpoint_era_is_refused_untouched() {
         let mut s = SqliteStore::open(&checkpoint).unwrap();
         s.execute_batch(FRAMEWORK_DDL).unwrap();
         s.execute_batch(
-            "CREATE TABLE ahead_push_checkpoint (push INTEGER NOT NULL, channel TEXT NOT NULL, cursor INTEGER NOT NULL, PRIMARY KEY (push, channel));
-             INSERT INTO ahead_push_checkpoint VALUES (1, 'book', 2);",
+            "CREATE TABLE axton_push_checkpoint (push INTEGER NOT NULL, channel TEXT NOT NULL, cursor INTEGER NOT NULL, PRIMARY KEY (push, channel));
+             INSERT INTO axton_push_checkpoint VALUES (1, 'book', 2);",
         )
         .unwrap();
     }
@@ -165,19 +165,19 @@ fn a_database_from_the_checkpoint_era_is_refused_untouched() {
     assert_eq!(
         count(
             &checkpoint,
-            "SELECT COUNT(*) FROM ahead_push_checkpoint WHERE push = 1 AND channel = 'book' AND cursor = 2"
+            "SELECT COUNT(*) FROM axton_push_checkpoint WHERE push = 1 AND channel = 'book' AND cursor = 2"
         ),
         1,
         "the checkpoint row is left untouched"
     );
 
-    // An `ahead_client` table without the completion column.
+    // An `axton_client` table without the completion column.
     let narrow = dir.path().join("narrow");
     {
         let mut s = SqliteStore::open(&narrow).unwrap();
         s.execute_batch(
-            "CREATE TABLE ahead_client (client_id TEXT PRIMARY KEY, next_ordinal INTEGER NOT NULL, next_push INTEGER NOT NULL, generation INTEGER NOT NULL);
-             INSERT INTO ahead_client VALUES ('old', 3, 2, 1);",
+            "CREATE TABLE axton_client (client_id TEXT PRIMARY KEY, next_ordinal INTEGER NOT NULL, next_push INTEGER NOT NULL, generation INTEGER NOT NULL);
+             INSERT INTO axton_client VALUES ('old', 3, 2, 1);",
         )
         .unwrap();
     }
@@ -185,24 +185,24 @@ fn a_database_from_the_checkpoint_era_is_refused_untouched() {
     assert_eq!(
         count(
             &narrow,
-            "SELECT COUNT(*) FROM ahead_client WHERE client_id = 'old' AND next_ordinal = 3 AND next_push = 2 AND generation = 1"
+            "SELECT COUNT(*) FROM axton_client WHERE client_id = 'old' AND next_ordinal = 3 AND next_push = 2 AND generation = 1"
         ),
         1,
         "the client row is left untouched"
     );
     assert_eq!(
-        columns(&mut SqliteStore::open(&narrow).unwrap(), "ahead_client").len(),
+        columns(&mut SqliteStore::open(&narrow).unwrap(), "axton_client").len(),
         4,
         "no column was added"
     );
 
     // A database this runtime created reopens.
     let fresh = dir.path().join("fresh");
-    drop(ahead_client::Client::open(SqliteStore::open(&fresh).unwrap(), entry.clone()).unwrap());
-    ahead_client::Client::open(SqliteStore::open(&fresh).unwrap(), entry).unwrap();
+    drop(axton_client::Client::open(SqliteStore::open(&fresh).unwrap(), entry.clone()).unwrap());
+    axton_client::Client::open(SqliteStore::open(&fresh).unwrap(), entry).unwrap();
 }
 
-/// A database from before the divergence column ([#122](https://github.com/zanminwang/ahead/issues/122))
+/// A database from before the divergence column ([#122](https://github.com/zanminwang/axton/issues/122))
 /// gets the column in place: its queued work stays and is still sendable.
 #[test]
 fn a_queue_without_the_divergence_column_gains_it_in_place() {
@@ -214,13 +214,13 @@ fn a_queue_without_the_divergence_column_gains_it_in_place() {
     .unwrap();
     {
         let mut c =
-            ahead_client::Client::open(SqliteStore::open(&path).unwrap(), entry.clone()).unwrap();
+            axton_client::Client::open(SqliteStore::open(&path).unwrap(), entry.clone()).unwrap();
         c.transaction(|tx| {
-            tx.enqueue(ahead_client::Mutation::new(
+            tx.enqueue(axton_client::Mutation::new(
                 "Create",
-                vec![ahead_client::Operation {
+                vec![axton_client::Operation {
                     model: "Entry".into(),
-                    op: ahead_client::OperationKind::Create,
+                    op: axton_client::OperationKind::Create,
                     identity: json!({"id":"e"}),
                     values: Some(json!({"text":"queued","note":null})),
                 }],
@@ -230,14 +230,14 @@ fn a_queue_without_the_divergence_column_gains_it_in_place() {
     }
     SqliteStore::open(&path)
         .unwrap()
-        .execute_batch("ALTER TABLE ahead_mutation DROP COLUMN diverged")
+        .execute_batch("ALTER TABLE axton_mutation DROP COLUMN diverged")
         .unwrap();
-    let mut c = ahead_client::Client::open(SqliteStore::open(&path).unwrap(), entry).unwrap();
+    let mut c = axton_client::Client::open(SqliteStore::open(&path).unwrap(), entry).unwrap();
     assert_eq!(c.pending_count().unwrap(), 1, "the queued mutation is kept");
     assert!(c.freeze().unwrap().is_some(), "and it is still sent");
     let mut s = SqliteStore::open(&path).unwrap();
     assert!(
-        columns(&mut s, "ahead_mutation")
+        columns(&mut s, "axton_mutation")
             .iter()
             .any(|(name, _, _)| name == "diverged")
     );

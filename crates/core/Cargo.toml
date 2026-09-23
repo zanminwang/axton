@@ -1,5 +1,5 @@
 [package]
-name = "ahead-core"
+name = "axton-core"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

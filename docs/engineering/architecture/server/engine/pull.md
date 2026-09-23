@@ -31,11 +31,11 @@ Code: `process_pull` in [server/lib.rs](../../../../../crates/server/src/lib.rs)
 
 ## 9. Architecture Decisions
 
-**One pull covers every channel ([#95](https://github.com/zanminwang/ahead/issues/95)).** Records are applied by stamp and never carry a channel, so there is no reason to fetch channels one request at a time. One request moves every cursor, and a record shared by channels is loaded and sent once.
+**One pull covers every channel ([#95](https://github.com/zanminwang/axton/issues/95)).** Records are applied by stamp and never carry a channel, so there is no reason to fetch channels one request at a time. One request moves every cursor, and a record shared by channels is loaded and sent once.
 
 **Loader failure isolation ([D7](../../../guarantees.md#d-distribution)).** A failure attributable to one read is that record's `error` change; the page and the other records proceed and every cursor still advances. There is no durable loader-failure queue: the record is corrected the next time it is published or explicitly fetched. The per-identity retry keeps the loader API unchanged (one call per model) and costs extra calls only on failure; a loader that wants to refuse exactly one row refuses when called with that row. Inside a push the same refusal is that mutation's rejection ([Push §9](push.md#9-architecture-decisions)).
 
-**Loaders name no channel ([#55](https://github.com/zanminwang/ahead/issues/55)).** The record a page delivers is the record a receipt delivers at the same stamp (guarantee D4); a channel selects which records are delivered, never alternate contents. A loader that needs to hide a record from a user returns `null` for it or refuses the read.
+**Loaders name no channel ([#55](https://github.com/zanminwang/axton/issues/55)).** The record a page delivers is the record a receipt delivers at the same stamp (guarantee D4); a channel selects which records are delivered, never alternate contents. A loader that needs to hide a record from a user returns `null` for it or refuses the read.
 
 ## 10. Quality Requirements
 
@@ -45,12 +45,12 @@ Code: `process_pull` in [server/lib.rs](../../../../../crates/server/src/lib.rs)
 - **Every change carries the record's current stamp; compaction delivers the latest state once; loaders receive no channel; head, scan and load stay coherent.** Evidence: `scan pairs the invalidation cursor with the current record stamp; a missing record row is a storage defect`, `compaction materializes latest state; deletion is aligned null`, `loaders receive no channel`, `repeatable-read runner keeps head, scan, and loader coherent across concurrent publication`.
 - **A pull is served at the declared model version.** Evidence: [server/tests/stamp.rs](../../../../../crates/server/tests/stamp.rs) `pull_normalizes_loader_rows_with_the_retained_contract_of_the_served_version`; `a pull reaches the loader of the declared model version and normalizes rows with that contract`.
 
-Executed 2026-09-16: `cargo test -p ahead-server --locked`, `bash integration/persistence/server/run.sh`.
+Executed 2026-09-16: `cargo test -p axton-server --locked`, `bash integration/persistence/server/run.sh`.
 
 ## 11. Risks and Technical Debt
 
 **Problem: a model the client did not declare still fails the whole pull.** A client older than the server (the server added a model) is refused with `model_version_unsupported` for any page holding that model. Reporting it as a per-record `error` like a loader failure is the natural next step; not done here.
 
-**Accepted limitation (planned changes).** The per-channel limit is the fixed 50 ([#11](https://github.com/zanminwang/ahead/issues/11)); bootstrap is a cursor walk from zero over every model ([#14](https://github.com/zanminwang/ahead/issues/14) proposes snapshots).
+**Accepted limitation (planned changes).** The per-channel limit is the fixed 50 ([#11](https://github.com/zanminwang/axton/issues/11)); bootstrap is a cursor walk from zero over every model ([#14](https://github.com/zanminwang/axton/issues/14) proposes snapshots).
 
 **Accepted limitation, worth stating.** The loader is the only visibility control: a loader that ignores `userId` exposes every record it is asked for to any authenticated user, on every channel that delivers it.

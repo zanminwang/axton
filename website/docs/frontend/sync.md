@@ -27,7 +27,7 @@ Use channel names that your backend publishes to, and subscribe when the client 
 
 ## Receive mutation results
 
-**A subscription is not required to see your own result.** A mutation's local changes are an optimistic prediction. Its receipt confirms that the backend accepted the operation and carries the final content of every record the handler changed, read back by your loader in the handler's transaction. Ahead replaces the prediction with that content as soon as the receipt arrives: a normalized value shows up, and a record the backend refused to create disappears with the rejection. Your loader must return the resulting record for that user, exactly as it would for a page.
+**A subscription is not required to see your own result.** A mutation's local changes are an optimistic prediction. Its receipt confirms that the backend accepted the operation and carries the final content of every record the handler changed, read back by your loader in the handler's transaction. AXTON replaces the prediction with that content as soon as the receipt arrives: a normalized value shows up, and a record the backend refused to create disappears with the rejection. Your loader must return the resulting record for that user, exactly as it would for a page.
 
 Subscribe with `client.channels.subscribe(channel)` as above when the client needs changes made elsewhere: by other users, by background jobs, or by handlers that touch records without reporting them. Subscription starts synchronization; it does not wait for initial data. Use `watch` to observe the records, and wait for an existing record to be available locally before updating it.
 
@@ -70,7 +70,7 @@ You can close and reopen the same local database without losing queued changes. 
 
 After a local mutation, the connection pushes its frozen request. A successful receipt completes the batch at once: the runtime applies the server's content for every record the accepted mutations changed, removes the completed mutations and replays remaining local changes, in one local transaction. This lets a handler's normalized result replace the optimistic value without waiting for any channel. One batch is in flight at a time, so later mutations complete after earlier ones.
 
-If a handler rejects the mutation, Ahead removes that mutation's optimistic contribution and retains its rejection code locally. Later valid pending work may still affect the displayed record, so rollback is not necessarily a return to the value the user saw before all edits.
+If a handler rejects the mutation, AXTON removes that mutation's optimistic contribution and retains its rejection code locally. Later valid pending work may still affect the displayed record, so rollback is not necessarily a return to the value the user saw before all edits.
 
 === "TypeScript"
 
@@ -96,11 +96,11 @@ If a handler rejects the mutation, Ahead removes that mutation's optimistic cont
 
 ## Recover from connection failures
 
-Provide `onError` to record background failures, and `refreshAuth` if your credentials can expire. Records that could not be applied also reach `onError`, as an `AheadReport` with a `kind`: `readFailed` when the server could not read the record, `skipped` when the local schema refused it, `conflict`, or `diverged` when a pending edit no longer applies to newer server state. A diverged edit is still sent, and `models.<name>.syncState(identity)` marks it `diverged` until the server answers it. Let the runtime retry frozen work; do not generate a new mutation merely because the original request timed out. The backend may already have committed it and retained its receipt.
+Provide `onError` to record background failures, and `refreshAuth` if your credentials can expire. Records that could not be applied also reach `onError`, as an `AxtonReport` with a `kind`: `readFailed` when the server could not read the record, `skipped` when the local schema refused it, `conflict`, or `diverged` when a pending edit no longer applies to newer server state. A diverged edit is still sent, and `models.<name>.syncState(identity)` marks it `diverged` until the server answers it. Let the runtime retry frozen work; do not generate a new mutation merely because the original request timed out. The backend may already have committed it and retained its receipt.
 
 Use `wake()` after an application event that should prompt another scheduling check. Use `resume()` after explicitly pausing. A closed connection cannot resume; create a new one with `client.connect` or reopen the client.
 
-On connection or reconnection, Ahead establishes the WebSocket subscription and receives the current position of each channel. If every saved cursor is already there, it streams at once. Otherwise it sends one HTTP pull for all channels, holding changes that arrive meanwhile, then continues with WebSocket updates. Both sources use the same Rust page processing: each page applies as one transaction, covered pages are discarded, overlapping pages apply their unseen changes, and gaps trigger HTTP recovery from saved progress. Subscription changes replace the session; pages from replaced or canceled sessions cannot update local data.
+On connection or reconnection, AXTON establishes the WebSocket subscription and receives the current position of each channel. If every saved cursor is already there, it streams at once. Otherwise it sends one HTTP pull for all channels, holding changes that arrive meanwhile, then continues with WebSocket updates. Both sources use the same Rust page processing: each page applies as one transaction, covered pages are discarded, overlapping pages apply their unseen changes, and gaps trigger HTTP recovery from saved progress. Subscription changes replace the session; pages from replaced or canceled sessions cannot update local data.
 
 ## Authentication and account changes
 

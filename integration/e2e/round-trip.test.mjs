@@ -10,7 +10,7 @@ import {Client} from '../../packages/client-js/index.mts';
 import {syncProtocol,declaredModels} from './protocol-fixture.mjs';
 
 test('Node SDK -> native Rust -> HTTP -> Rust backend -> Prisma -> SQLite, then Dart',async()=>{
- const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'ahead-e2e-'));let client;let server;
+ const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'axton-e2e-'));let client;let server;
  try{
   await app.initialize();server=await app.listen(0);const url=server.url;
   const transport=async(kind,body)=>{const response=await fetch(`${url}/sync/${kind==='push'?'mutations':'pull'}`,{method:'POST',headers:{authorization:'Bearer demo-user','content-type':'application/json'},body});if(!response.ok)throw Error(`HTTP ${response.status}: ${await response.text()}`);return response.text();};
@@ -32,14 +32,14 @@ test('Node SDK -> native Rust -> HTTP -> Rust backend -> Prisma -> SQLite, then 
   const waitSettled=async()=>{for(let i=0;i<200;i++){if((await client.syncState()).pending===0)return;await new Promise(r=>setTimeout(r,10));}throw Error('background sync did not settle');};
   try{await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'  background  '}}]});await waitSettled();assert.equal((await client.read('Entry',{id:'entry-1'})).text,'background');await background.pause();await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'  resumed  '}}]});await new Promise(r=>setTimeout(r,30));assert.equal((await client.syncState()).pending,1);await background.resume();await waitSettled();assert.equal((await client.read('Entry',{id:'entry-1'})).text,'resumed');}finally{await background.close();}
   const root=fileURLToPath(new URL('../..',import.meta.url));
-  await new Promise((resolve,reject)=>{const child=spawn('dart',[`--packages=${join(root,'packages/dart/.dart_tool/package_config.json')}`,'../../integration/e2e/dart_client.dart',url,directory],{cwd:join(root,'packages/dart'),env:{...process.env,AHEAD_LIBRARY:process.env.AHEAD_LIBRARY ?? join(root,`target/debug/libahead_dart.${process.platform === 'darwin' ? 'dylib' : 'so'}`)},stdio:'inherit'});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`Dart E2E exited ${code}`)));});
+  await new Promise((resolve,reject)=>{const child=spawn('dart',[`--packages=${join(root,'packages/dart/.dart_tool/package_config.json')}`,'../../integration/e2e/dart_client.dart',url,directory],{cwd:join(root,'packages/dart'),env:{...process.env,AXTON_LIBRARY:process.env.AXTON_LIBRARY ?? join(root,`target/debug/libaxton_dart.${process.platform === 'darwin' ? 'dylib' : 'so'}`)},stdio:'inherit'});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`Dart E2E exited ${code}`)));});
   assert.equal((await app.db.entry.findUnique({where:{id:'entry-1'}})).text,'from Dart');
  }finally{await client?.close();await server?.close();await app.close();await rm(directory,{recursive:true,force:true});}
 });
 
 test('documented CLI keeps offline edits local and syncs them on online', { timeout: 30000 }, async () => {
  const app = await createExample();
- const directory = await mkdtemp(join(tmpdir(), 'ahead-cli-'));
+ const directory = await mkdtemp(join(tmpdir(), 'axton-cli-'));
  let child;
  let output = '';
  let ended;
@@ -50,7 +50,7 @@ test('documented CLI keeps offline edits local and syncs them on online', { time
   const root = fileURLToPath(new URL('../..', import.meta.url));
   child = spawn(process.execPath, ['integration/e2e/fixtures/round-trip/client.mts'], {
    cwd: root,
-   env: { ...process.env, AHEAD_URL: server.url, AHEAD_DATABASE: join(directory, 'client.sqlite') },
+   env: { ...process.env, AXTON_URL: server.url, AXTON_DATABASE: join(directory, 'client.sqlite') },
    stdio: ['pipe', 'pipe', 'pipe'],
   });
   const exited = new Promise((resolve, reject) => {
@@ -92,7 +92,7 @@ test('documented CLI keeps offline edits local and syncs them on online', { time
 
 test('built-in live catch-up pages, dependent pushes, watches, offline reconnect, and Dart live client', {timeout:45000}, async()=>{
  const fetchOriginal=globalThis.fetch;const pullRequests=[];
- const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'ahead-live-e2e-'));let reader,writer;
+ const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'axton-live-e2e-'));let reader,writer;
  const errors=[];
  const wait=async(predicate,label)=>{const deadline=Date.now()+10000;while(Date.now()<deadline){if(await predicate())return;await new Promise(r=>setTimeout(r,5));}throw Error(`${label}: ${errors.map(String)}`);};
  try{
@@ -142,7 +142,7 @@ test('built-in live catch-up pages, dependent pushes, watches, offline reconnect
   // A client with no subscription at all: its push's response alone corrects the
   // local row, leaves nothing pending, and the result survives a reopen. The reader,
   // subscribed to the channel, receives the same record at the same stamp.
-  const stampOf=async(client,id)=>{const rows=await client.readSql('SELECT stamp FROM ahead_record WHERE model = ? AND identity = ?',['Entry',JSON.stringify({id})]);assert.equal(rows.length,1,`${id} has stamp evidence`);return rows[0].stamp;};
+  const stampOf=async(client,id)=>{const rows=await client.readSql('SELECT stamp FROM axton_record WHERE model = ? AND identity = ?',['Entry',JSON.stringify({id})]);assert.equal(rows.length,1,`${id} has stamp evidence`);return rows[0].stamp;};
   const lonePath=join(directory,'lone.sqlite');
   let lone=await Client.open({path:lonePath,schema:app.schema});
   let loneStamp;
@@ -178,6 +178,6 @@ test('built-in live catch-up pages, dependent pushes, watches, offline reconnect
   assert.equal(errors.length,0);
   unwatch();await connection.close();
   const root=fileURLToPath(new URL('../..',import.meta.url));
-  await new Promise((resolve,reject)=>{const child=spawn('dart',[`--packages=${join(root,'packages/dart/.dart_tool/package_config.json')}`,join(root,'integration/e2e/dart_live_client.dart'),server.url,directory],{cwd:join(root,'packages/dart'),env:{...process.env,AHEAD_LIBRARY:join(root,`target/debug/libahead_dart.${process.platform==='darwin'?'dylib':'so'}`)},stdio:'inherit'});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`Dart live exited ${code}`)));});
+  await new Promise((resolve,reject)=>{const child=spawn('dart',[`--packages=${join(root,'packages/dart/.dart_tool/package_config.json')}`,join(root,'integration/e2e/dart_live_client.dart'),server.url,directory],{cwd:join(root,'packages/dart'),env:{...process.env,AXTON_LIBRARY:join(root,`target/debug/libaxton_dart.${process.platform==='darwin'?'dylib':'so'}`)},stdio:'inherit'});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`Dart live exited ${code}`)));});
  }finally{globalThis.fetch=fetchOriginal;await reader?.close();await writer?.close();await app.close();await rm(directory,{recursive:true,force:true});}
 });

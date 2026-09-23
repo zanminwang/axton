@@ -4,7 +4,7 @@ Engine behavior: [Client Pull](../client/engine/pull.md), [Server Pull](../serve
 
 ## 3. Context and Scope
 
-- Request, `POST /sync/pull`: `{models, cursors}`. `cursors` maps every channel the client follows to its durable cursor (`0` on first contact): one request covers all of them. `models` declares the read contracts the client expects, `{"Entry": 2, "Comment": 1}`: every model of its schema with the version its generated types read ([#91](https://github.com/zanminwang/ahead/issues/91)); a client still on `Entry` v1 sends `{"Entry": 1}` and never sees fields v2 added. The SDK fills both; application code never writes them. There is no client id: the owner comes from authentication.
+- Request, `POST /sync/pull`: `{models, cursors}`. `cursors` maps every channel the client follows to its durable cursor (`0` on first contact): one request covers all of them. `models` declares the read contracts the client expects, `{"Entry": 2, "Comment": 1}`: every model of its schema with the version its generated types read ([#91](https://github.com/zanminwang/axton/issues/91)); a client still on `Entry` v1 sends `{"Entry": 1}` and never sees fields v2 added. The SDK fills both; application code never writes them. There is no client id: the owner comes from authentication.
 - Response, a page: `{cursors: {channel: {from, to, head}}, changes: [...]}`. The same page shape is streamed over the WebSocket, naming only the channels that moved ([Subscriptions](subscriptions.md)).
 - A change is `{model, identity, stamp, state}`: the same authority record a push receipt carries ([Push](push.md)). `state` is the whole record or `null` for a deletion. A record the server could not read is `{model, identity, stamp, state: null, error}` where `error` is a code: `loader.failed` for a thrown loader, or the loader's own refusal code.
 - Errors: `400 request.invalid` when a cursor is ahead of its channel head, `models` or `cursors` is missing or malformed, or the body is malformed; `409 model_version_unsupported` with `{model, version}` when a declared model is unknown or its version is not retained; `500 server` for infrastructure failures. A loader failure is not a request error.
@@ -38,9 +38,9 @@ Code: [core/protocol.rs](../../../../crates/core/src/protocol.rs) (`PullRequest`
 - One pull covers every channel, a shared record arrives once, and a full channel continues on its own. Evidence: [server/tests/stamp.rs](../../../../crates/server/tests/stamp.rs) `one_pull_covers_every_channel_and_delivers_a_shared_record_once`, `a_full_channel_continues_independently_of_the_others`, `a_cursor_ahead_of_its_channel_head_is_refused`; [runtime.test.mjs](../../../../integration/persistence/server/runtime.test.mjs) `a pull covers every channel in one request and delivers a record shared by two channels once`.
 - A record that cannot be read is an `error` change and the page is served. Evidence: `a_loader_refusal_isolates_one_record_after_a_per_identity_retry`, `a_loader_failure_is_an_error_change_and_a_single_record_needs_no_retry`; `a loader that throws for one id fails only that record and reaches onError`, `a loader refusal for one id is an error change carrying the refusal code`.
 
-Executed 2026-09-16: `cargo test -p ahead-core -p ahead-server --locked`, `bash integration/persistence/server/run.sh`.
+Executed 2026-09-16: `cargo test -p axton-core -p axton-server --locked`, `bash integration/persistence/server/run.sh`.
 
 ## 11. Risks and Technical Debt
 
-- **Accepted limitation (planned change).** The per-channel limit is the fixed 50 ([#11](https://github.com/zanminwang/ahead/issues/11)); bootstrap is a cursor walk from zero ([#14](https://github.com/zanminwang/ahead/issues/14)).
-- **Accepted limitation.** An `error` change is not retried by the protocol; the record is corrected the next time it is published or explicitly fetched ([#116](https://github.com/zanminwang/ahead/issues/116)).
+- **Accepted limitation (planned change).** The per-channel limit is the fixed 50 ([#11](https://github.com/zanminwang/axton/issues/11)); bootstrap is a cursor walk from zero ([#14](https://github.com/zanminwang/axton/issues/14)).
+- **Accepted limitation.** An `error` change is not retried by the protocol; the record is corrected the next time it is published or explicitly fetched ([#116](https://github.com/zanminwang/axton/issues/116)).

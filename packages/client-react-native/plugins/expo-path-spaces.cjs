@@ -10,7 +10,7 @@ function configPlugins() {
 // breaks when the repository path contains spaces. Both corrections are
 // idempotent and are re-applied on every prebuild.
 
-const marker = '  # Ahead: quote Expo Constants script paths that may contain spaces.\n';
+const marker = '  # AXTON: quote Expo Constants script paths that may contain spaces.\n';
 const correction = `${marker}  installer.pods_project.targets.each do |target|\n` +
   `    next unless target.name == 'EXConstants'\n` +
   `    target.shell_script_build_phases.each do |phase|\n` +

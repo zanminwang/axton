@@ -34,7 +34,7 @@ Code: compiler checks in [compiler/validate.rs](../../../../crates/compiler/src/
 - **Rust picks the next task, fails an unhandled one with a reason, keeps a reported failure's reason and does not retry a failed task.** Evidence: `next_task_walks_pending_tasks_fails_unhandled_ones_and_records_reasons` in the same file.
 - **The SDK loop records a callback failure with its reason, an explicit reset unlocks the push, and a run without the handler fails the task instead of stopping.** Evidence: [prerequisite.test.mjs](../../../../integration/bindings/client-js/prerequisite.test.mjs); [prerequisite_test.dart](../../../../packages/dart/test/prerequisite_test.dart).
 
-Verified 2026-09-15: `cargo test -p ahead-sqlite --test push --locked`, `node --test integration/bindings/client-js/prerequisite.test.mjs`, `dart test test/prerequisite_test.dart` in `packages/dart`.
+Verified 2026-09-15: `cargo test -p axton-sqlite --test push --locked`, `node --test integration/bindings/client-js/prerequisite.test.mjs`, `dart test test/prerequisite_test.dart` in `packages/dart`.
 
 ## 11. Risks and Technical Debt
 

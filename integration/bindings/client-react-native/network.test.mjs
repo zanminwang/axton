@@ -15,7 +15,7 @@ import { createServerConnection } from '../../../packages/client-react-native/li
 class NativeSocket extends WebSocket {
   constructor(url, protocols, options) { super(url,protocols,options); this.on('error',()=>{}); }
 }
-const native=createRequire(import.meta.url)('../../../bindings/node/ahead-node.node');
+const native=createRequire(import.meta.url)('../../../bindings/node/axton-node.node');
 const Client=createClient(native,Transaction,options=>createServerConnection(options,NativeSocket));
 async function until(predicate){
   const deadline=Date.now()+5000;
@@ -24,7 +24,7 @@ async function until(predicate){
 }
 
 test('mobile transport authenticates real HTTP/WS and streams without polling',async()=>{
-  const directory=await mkdtemp(join(tmpdir(),'ahead-rn-network-'));
+  const directory=await mkdtemp(join(tmpdir(),'axton-rn-network-'));
   const schema=JSON.parse(await readFile(new URL('../../../fixtures/schemas/entry.json',import.meta.url),'utf8'));
   const client=await Client.open({path:join(directory,'client.sqlite'),schema});
   const requests=[];

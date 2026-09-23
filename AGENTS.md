@@ -1,6 +1,6 @@
-# Working on Ahead
+# Working on AXTON
 
-Ahead is a schema-driven framework for local-first applications with an application-owned backend. See [README](README.md) for the product overview and [documentation](docs/README.md) for the full index.
+AXTON is a schema-driven framework for local-first applications with an application-owned backend. See [README](README.md) for the product overview and [documentation](docs/README.md) for the full index.
 
 ## Workspace
 

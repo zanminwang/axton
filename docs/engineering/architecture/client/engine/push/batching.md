@@ -28,7 +28,7 @@
 
 ## 11. Risks and Technical Debt
 
-**Resolved ([#56](https://github.com/zanminwang/ahead/issues/56)): there is no more "batch the server keeps failing" from content alone.** A frozen batch either gets a receipt or is never accepted; nothing about a mutation's content can leave it permanently failing. [Server Push §9](../../../server/engine/push.md#9-architecture-decisions) implements every content problem as that mutation's rejection instead of a whole-delivery failure. The outcomes a client actually sees:
+**Resolved ([#56](https://github.com/zanminwang/axton/issues/56)): there is no more "batch the server keeps failing" from content alone.** A frozen batch either gets a receipt or is never accepted; nothing about a mutation's content can leave it permanently failing. [Server Push §9](../../../server/engine/push.md#9-architecture-decisions) implements every content problem as that mutation's rejection instead of a whole-delivery failure. The outcomes a client actually sees:
 
 | Outcome | Client behavior |
 | --- | --- |
@@ -38,5 +38,5 @@
 | Identity/order refusal (401/403/409) | report through `onError` with the code; keep the batch frozen; no local mutation is dropped, because the server did not run it. 401 goes through the existing auth refresh first |
 
 Sent mutations still cannot be dropped ([Client::drop_mutation](../../../../../../crates/client/src/lib.rs)), but that is no longer a liveness risk from handler content: an identity/order refusal is the only case left where a frozen batch is neither completed nor retried automatically to a different outcome, and it is reported rather than silent.
-- The count cap (20) and the default byte budget (256 KiB) are the protocol's `limits` ([Common](../../../protocol/common.md)). Limit configuration is tracked in [#11](https://github.com/zanminwang/ahead/issues/11).
-- Each size check re-encodes the candidate batch. Its cost grows with batch size; measurement belongs to [#12](https://github.com/zanminwang/ahead/issues/12).
+- The count cap (20) and the default byte budget (256 KiB) are the protocol's `limits` ([Common](../../../protocol/common.md)). Limit configuration is tracked in [#11](https://github.com/zanminwang/axton/issues/11).
+- Each size check re-encodes the candidate batch. Its cost grows with batch size; measurement belongs to [#12](https://github.com/zanminwang/axton/issues/12).

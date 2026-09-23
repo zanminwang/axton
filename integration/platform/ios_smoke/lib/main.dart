@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:ahead/ahead.dart';
+import 'package:axton/axton.dart';
 
 const _schema = {
   'enums': <Object>[],
@@ -33,13 +33,13 @@ const _schema = {
 
 Future<void> main() async {
   final storage = Directory.systemTemp;
-  final stageFile = File('${storage.path}/ahead-smoke-stage.txt');
-  final resultFile = File('${storage.path}/ahead-smoke-result.txt');
-  final expectedFile = File('${storage.path}/ahead-smoke-freeze.txt');
-  final databasePath = '${storage.path}/ahead-smoke.sqlite';
+  final stageFile = File('${storage.path}/axton-smoke-stage.txt');
+  final resultFile = File('${storage.path}/axton-smoke-result.txt');
+  final expectedFile = File('${storage.path}/axton-smoke-freeze.txt');
+  final databasePath = '${storage.path}/axton-smoke.sqlite';
 
   void stage(String value) {
-    print('AHEAD_SMOKE_STAGE $value temp=${storage.path}');
+    print('AXTON_SMOKE_STAGE $value temp=${storage.path}');
     stageFile.writeAsStringSync(value, flush: true);
   }
 
@@ -77,7 +77,7 @@ Future<void> main() async {
           frozen != expectedFile.readAsStringSync()) {
         throw StateError('restart state mismatch');
       }
-      result = 'AHEAD_SMOKE_RESTART_OK';
+      result = 'AXTON_SMOKE_RESTART_OK';
     } else {
       await bounded(
         'DIRECT_TX',
@@ -134,7 +134,7 @@ Future<void> main() async {
         throw StateError('close and reopen state mismatch');
       }
       expectedFile.writeAsStringSync(frozen, flush: true);
-      result = 'AHEAD_SMOKE_PHASE1_OK';
+      result = 'AXTON_SMOKE_PHASE1_OK';
     }
   } catch (error, stack) {
     result = 'FAIL: $error\n$stack';

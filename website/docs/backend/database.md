@@ -1,8 +1,8 @@
 # Database
 
-Ahead's backend runs on PostgreSQL. Your business tables, Ahead's four metadata tables and every sync operation share one database transaction, so a push commits business writes, stamps, publications and the receipt together. Local client storage is SQLite regardless.
+AXTON's backend runs on PostgreSQL. Your business tables, AXTON's four metadata tables and every sync operation share one database transaction, so a push commits business writes, stamps, publications and the receipt together. Local client storage is SQLite regardless.
 
-`@ahead/postgres` (`packages/postgres`) holds every statement Ahead runs, the metadata migration and one small driver interface. You pick the shim for the tool your application already uses to talk to PostgreSQL; handlers and loaders receive that tool's own transaction object.
+`@axton/postgres` (`packages/postgres`) holds every statement AXTON runs, the metadata migration and one small driver interface. You pick the shim for the tool your application already uses to talk to PostgreSQL; handlers and loaders receive that tool's own transaction object.
 
 ## Pick a shim
 
@@ -23,7 +23,7 @@ const database = prisma(db, { retries: 3, timeout: 20_000 });
 
 ## Apply the migration
 
-Apply [migration.sql](https://github.com/zanminwang/ahead/blob/main/packages/postgres/migration.sql) to your database with your deployment's migration process before accepting sync traffic. It creates the tables prefixed `ahead_` (`ahead_client`, `ahead_channel`, `ahead_record`, `ahead_invalidation`) and nothing else: your business tables and the database itself are yours to create. The [getting-started runner](../getting-started.md) handles a disposable database for the example.
+Apply [migration.sql](https://github.com/zanminwang/axton/blob/main/packages/postgres/migration.sql) to your database with your deployment's migration process before accepting sync traffic. It creates the tables prefixed `axton_` (`axton_client`, `axton_channel`, `axton_record`, `axton_invalidation`) and nothing else: your business tables and the database itself are yours to create. The [getting-started runner](../getting-started.md) handles a disposable database for the example.
 
 ## The driver interface
 
@@ -42,15 +42,15 @@ For a PostgreSQL tool without a shipped shim, write these two methods and pass `
 
 | Export | Returns |
 | --- | --- |
-| `pg(pool, options?)`, `prisma(client, options?)`, `drizzle(db, options?)` | The `database` option: the tool's transaction runner plus Ahead's persistence bound to each transaction |
+| `pg(pool, options?)`, `prisma(client, options?)`, `drizzle(db, options?)` | The `database` option: the tool's transaction runner plus AXTON's persistence bound to each transaction |
 | `pgDriver`, `prismaDriver`, `drizzleDriver` | The bare `PostgresDriver` of each shim |
 | `persistence(driver)` | The `database` option built on any driver |
 | `PostgresDriver<Tx>`, `DriverOptions` | The interface and the options every shim accepts |
 
-Run the driver conformance suite ([driver-conformance.test.mjs](https://github.com/zanminwang/ahead/blob/main/integration/persistence/server/driver-conformance.test.mjs)) against a new driver: it proves claim locking, receipt replay, stamp allocation, `ensureStamp` under concurrency, publication stamp validation, the scan join, savepoints, serialization retry and rollback on a real database, once per shim.
+Run the driver conformance suite ([driver-conformance.test.mjs](https://github.com/zanminwang/axton/blob/main/integration/persistence/server/driver-conformance.test.mjs)) against a new driver: it proves claim locking, receipt replay, stamp allocation, `ensureStamp` under concurrency, publication stamp validation, the scan join, savepoints, serialization retry and rollback on a real database, once per shim.
 
 ## What the persistence does
 
-The driver runs Ahead's statements; the operations they answer are the persistence half of the [backend interface](https://github.com/zanminwang/ahead/blob/main/docs/engineering/architecture/server/backend-interface.md). `claim` locks the client row with `SELECT … FOR UPDATE`, so retries of one client serialize and a retried `(clientId, sequence)` replays its stored receipt instead of running the handler again. `advanceStamp` and `ensureStamp` allocate a record's stamp with atomic upserts, so concurrent first publications agree on 1 and an established stamp is never overwritten. `publish` allocates the channel cursor the same way, compacts invalidations by channel and record, and refuses a stamp that is not the record's current one. `scan` joins each invalidation with the record's current stamp. Per-mutation savepoints are real `SAVEPOINT` statements. Counters are `bigint` in the database and are narrowed to JavaScript safe integers on the way out.
+The driver runs AXTON's statements; the operations they answer are the persistence half of the [backend interface](https://github.com/zanminwang/axton/blob/main/docs/engineering/architecture/server/backend-interface.md). `claim` locks the client row with `SELECT … FOR UPDATE`, so retries of one client serialize and a retried `(clientId, sequence)` replays its stored receipt instead of running the handler again. `advanceStamp` and `ensureStamp` allocate a record's stamp with atomic upserts, so concurrent first publications agree on 1 and an established stamp is never overwritten. `publish` allocates the channel cursor the same way, compacts invalidations by channel and record, and refuses a stamp that is not the record's current one. `scan` joins each invalidation with the record's current stamp. Per-mutation savepoints are real `SAVEPOINT` statements. Counters are `bigint` in the database and are narrowed to JavaScript safe integers on the way out.
 
-Rows are never pruned: client rows live forever and invalidation rows grow with records × channels ([#61](https://github.com/zanminwang/ahead/issues/61)).
+Rows are never pruned: client rows live forever and invalidation rows grow with records × channels ([#61](https://github.com/zanminwang/axton/issues/61)).

@@ -1,6 +1,6 @@
 # Ambiguous adjacent mutation slots are refused at compile time
 
-Status: implementation specification. Tracking: [#54](https://github.com/zanminwang/ahead/issues/54).
+Status: implementation specification. Tracking: [#54](https://github.com/zanminwang/axton/issues/54).
 
 ## 1. Problem
 
@@ -54,7 +54,7 @@ Version 1 stays in `fixtures/compiler/history/mutations.json` untouched. The gen
 
 ## 5. Done when
 
-- [ ] `cargo test -p ahead-compiler` refuses the three ambiguous shapes above with `ambiguous slot` at the later slot's line and accepts their valid twins.
+- [ ] `cargo test -p axton-compiler` refuses the three ambiguous shapes above with `ambiguous slot` at the later slot's line and accepts their valid twins.
 - [ ] `bash integration/generated-api/verify.sh` passes with the version-2 fixture.
 - [ ] `cargo test --workspace --locked` passes.
 - [ ] Docs match §2 and §3.

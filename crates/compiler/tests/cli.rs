@@ -865,3 +865,101 @@ fn cli_rejects_retained_model_record_name_used_by_action_schema() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn cli_rejects_retained_enum_name_matching_action_input_before_writes() {
+    let (root, input) = workspace("retained-enum-action-input-collision");
+    let out = root.join("out");
+    let model = input.join("test.model");
+    let v1 = "enum Input { a b } model Todo { id String @@id(id) } action Fetch(value Input)";
+    fs::write(&model, v1).unwrap();
+    let first = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let files = [
+        input.join("history/actions.json"),
+        input.join("history/models.json"),
+        out.join("generated.dart"),
+        out.join("backend.ts"),
+    ];
+    let before: Vec<_> = files.iter().map(|path| fs::read(path).unwrap()).collect();
+    fs::write(
+        &model,
+        v1.replace("action Fetch", "@version(2) action Fetch"),
+    )
+    .unwrap();
+    let refused = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(!refused.status.success());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        error.contains("FetchV1Input")
+            && error.contains("Action Fetch v1")
+            && error.contains("enum Input"),
+        "{error}"
+    );
+    let after: Vec<_> = files.iter().map(|path| fs::read(path).unwrap()).collect();
+    assert_eq!(before, after);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_reuses_retained_enum_across_action_members() {
+    let (root, input) = workspace("retained-shared-enum");
+    let out = root.join("out");
+    let model = input.join("test.model");
+    let v1 = "enum Status { open closed } model Todo { id String @@id(id) } action Fetch(first Status, second Status) { firstStatus Status secondStatus Status }";
+    fs::write(&model, v1).unwrap();
+    let first = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    fs::write(
+        &model,
+        v1.replace("action Fetch", "@version(2) action Fetch"),
+    )
+    .unwrap();
+    let second = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let dart = fs::read_to_string(out.join("generated.dart")).unwrap();
+    assert_eq!(dart.matches("enum FetchV1Status ").count(), 1);
+    assert_eq!(dart.matches("enum FetchV1OutputStatus ").count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_rejects_retained_enum_name_matching_handler_output() {
+    let (root, input) = workspace("retained-enum-handler-output-collision");
+    let out = root.join("out");
+    let model = input.join("test.model");
+    let v1 = "enum HandlerOutput { a b } model Todo { id String @@id(id) } action Fetch(value HandlerOutput)";
+    fs::write(&model, v1).unwrap();
+    assert!(
+        ahead(&[input.as_os_str(), out.as_os_str()])
+            .status
+            .success()
+    );
+    fs::write(
+        &model,
+        v1.replace("action Fetch", "@version(2) action Fetch"),
+    )
+    .unwrap();
+    let refused = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(!refused.status.success());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        error.contains("FetchV1HandlerOutput")
+            && error.contains("Action Fetch v1 HandlerOutput")
+            && error.contains("input enum HandlerOutput"),
+        "{error}"
+    );
+    fs::remove_dir_all(root).unwrap();
+}

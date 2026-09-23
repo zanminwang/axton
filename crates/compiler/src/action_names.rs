@@ -175,10 +175,10 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
         };
         let owner = format!("Action {n} v{version}");
         for suffix in ["Input", "HandlerOutput"] {
-            add(format!("{prefix}{suffix}"), owner.clone())?;
+            add(format!("{prefix}{suffix}"), format!("{owner} {suffix}"))?;
         }
         if !retained {
-            add(format!("{prefix}Output"), owner.clone())?;
+            add(format!("{prefix}Output"), format!("{owner} Output"))?;
         } else {
             for model in values(&action["input"], "models") {
                 for suffix in ["Create", "Identity", "Patch", "Update", "Delete"] {
@@ -188,11 +188,23 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
                     )?;
                 }
             }
+            let mut input_enums = std::collections::BTreeSet::new();
             for en in values(&action["input"], "enums") {
-                add(format!("{prefix}{}", name(en)), owner.clone())?;
+                if input_enums.insert(name(en)) {
+                    add(
+                        format!("{prefix}{}", name(en)),
+                        format!("{owner} input enum {}", name(en)),
+                    )?;
+                }
             }
+            let mut output_enums = std::collections::BTreeSet::new();
             for en in values(action, "outputEnums") {
-                add(format!("{prefix}Output{}", name(en)), owner.clone())?;
+                if output_enums.insert(name(en)) {
+                    add(
+                        format!("{prefix}Output{}", name(en)),
+                        format!("{owner} output enum {}", name(en)),
+                    )?;
+                }
             }
         }
         for arg in values(action, "inputs") {

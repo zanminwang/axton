@@ -1,6 +1,6 @@
 # Model and Action schema contracts — design (#141)
 
-Status: approved design from [#141](https://github.com/zanminwang/axton/issues/141); implementation pending. This document specifies compiler and generated contracts. #145 must land before implementation; #142 supplies execution and #116 supplies Model Loader results.
+Status: approved design from [#141](https://github.com/zanminwang/axton/issues/141); implementation pending. This document specifies compiler and generated contracts. #145 must land before implementation; #142 supplies execution and the shared Model Loader path; #116 adds ephemeral policy.
 
 ## Context and ownership
 
@@ -28,4 +28,4 @@ The compiler emits versioned Action descriptors for #142 and result identity/out
 
 ## Acceptance and limits
 
-Compiler and generated type tests must verify syntax, diagnostics, cardinality, implicit and explicit identity sources, scalar/enum/Model/void mappings, `call` reservation, TS/Dart facades and backend `{ ctx, args }`. Regenerated fixtures and examples must label new calls as contract examples until #142 and #116 land. Update compiler and typed API architecture, schema reference and API index when shipped. #141 does not add `@tool`, invocation dependencies, old database migrations, direct-call retry policy or new execution-engine behavior. #142 owns queue/direct dispatch, lifecycle, error storage and reconciliation; #116 owns Loader snapshots and materialization. These ownerships are not completion gates on #141.
+Compiler and generated type tests must verify syntax, diagnostics, cardinality, implicit and explicit identity sources, scalar/enum/Model/void mappings, `call` reservation, TS/Dart facades and backend `{ ctx, args }`. Regenerated fixtures and examples must label new calls as contract examples until #142 lands; ephemeral examples remain deferred to #116. Update compiler and typed API architecture, schema reference and API index when shipped. #141 does not add `@tool`, invocation dependencies, old database migrations, direct-call retry policy or new execution-engine behavior. #142 owns queue/direct dispatch, lifecycle, error storage and reconciliation; #142 owns the common Loader snapshot/materialization implementation; #116 owns ephemeral policy and its dedicated acceptance. These ownerships are not completion gates on #141.

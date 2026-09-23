@@ -10,10 +10,18 @@ export class Transaction {
   #failure: unknown;
   #structural: unknown;
   #context = new AsyncLocalStorage<symbol>();
+  #publicContext = new AsyncLocalStorage<symbol>();
+  #publicToken = Symbol();
   #active: symbol | undefined;
   #scopes = new Set<Promise<unknown>>();
   constructor(send: (request: RecordValue) => Promise<any>) {
     this.#send = send;
+  }
+  runCallback<T>(body: () => Promise<T>): Promise<T> {
+    return this.#publicContext.run(this.#publicToken, body);
+  }
+  inCallback(): boolean {
+    return this.#publicContext.getStore() === this.#publicToken;
   }
   #queue(request: RecordValue): Promise<any> {
     this.#pending++;
@@ -81,9 +89,6 @@ export class Transaction {
   }
   direct(operation: object) {
     return this.#call({ op: "direct", operation });
-  }
-  mutate(mutation: object): Promise<number> {
-    return this.#call({ op: "enqueue", mutation });
   }
   savepoint<T>(body: () => Promise<T>): Promise<T> {
     if (!this.#open) return Promise.reject(Error("transaction_closed"));

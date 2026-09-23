@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Transaction,strictJson} from '../../../packages/client-js/transaction.mts';
+test('raw transactions do not expose named mutation enqueue',()=>{
+ const tx=new Transaction(async()=>{});
+ assert.equal('mutate' in tx,false);
+});
 test('forgotten calls drain before rollback and cannot escape callback lifetime',async()=>{
  const calls=[];let release;const gate=new Promise(r=>release=r);const tx=new Transaction(async r=>{if(r.op==='direct')await gate;calls.push(r.op);});
  void tx.direct({});const ending=tx.finish();assert.deepEqual(calls,[]);release();await assert.rejects(ending,/unawaited/);assert.deepEqual(calls,['direct']);await assert.rejects(tx.direct({}),/closed/);

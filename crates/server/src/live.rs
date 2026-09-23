@@ -3,7 +3,7 @@
 //! commit hub and the database; it feeds [`LiveEvent`]s and executes the
 //! [`LiveAction`]s it gets back, keeping no sync decision of its own.
 use crate::{Error, Host, Result, code, head, principal, process_pull};
-use ahead_core::{CursorRange, PullPage, PullRequest, SubscribeRequest, SubscriptionAck};
+use axton_core::{CursorRange, PullPage, PullRequest, SubscribeRequest, SubscriptionAck};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 

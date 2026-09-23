@@ -1,6 +1,6 @@
 # Empty update patches are no-ops
 
-Status: implementation specification. Tracking: [#49](https://github.com/zanminwang/ahead/issues/49).
+Status: implementation specification. Tracking: [#49](https://github.com/zanminwang/axton/issues/49).
 
 ## 1. Decision
 
@@ -27,11 +27,11 @@ Consequences:
 
 ## 3. Out of scope
 
-- Whether a no-op update should skip the stamp allocation. It does not; a target is a target. Revisit only if [#12](https://github.com/zanminwang/ahead/issues/12) measurements show it matters.
-- Any change to [#54](https://github.com/zanminwang/ahead/issues/54) slot ordering; that is a separate branch.
+- Whether a no-op update should skip the stamp allocation. It does not; a target is a target. Revisit only if [#12](https://github.com/zanminwang/axton/issues/12) measurements show it matters.
+- Any change to [#54](https://github.com/zanminwang/axton/issues/54) slot ordering; that is a separate branch.
 
 ## 4. Done when
 
-- [x] `cargo test -p ahead-server` has a test decoding an update whose `values` is `{}` to `{ identity, patch: {} }`, and one where every supplied field is unknown decodes to `patch: {}`.
-- [x] `cargo test -p ahead-compiler` asserts `Parent.update<>` compiles with `allowedPatchFields: []`.
+- [x] `cargo test -p axton-server` has a test decoding an update whose `values` is `{}` to `{ identity, patch: {} }`, and one where every supplied field is unknown decodes to `patch: {}`.
+- [x] `cargo test -p axton-compiler` asserts `Parent.update<>` compiles with `allowedPatchFields: []`.
 - [x] `docs/engineering/architecture/schema/mutations.md` §5, §9 and §11 match the decision; `docs/engineering/testing/components/schema.md` and `docs/engineering/testing/review.md` no longer call this a defect.

@@ -1,3 +1,3 @@
-# Ahead TypeScript client
+# AXTON TypeScript client
 
 See the [documentation](../../website/docs/frontend/setup.md).

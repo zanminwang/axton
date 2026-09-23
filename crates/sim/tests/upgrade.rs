@@ -1,13 +1,13 @@
 //! An app upgrade reopens a client with a newer schema. Additive changes open in
 //! place; an incompatible one gets a fresh file that converges like a new client,
 //! after the old file's unsent work is sent from it or explicitly left behind.
-use ahead_client::{Operation, OperationKind};
-use ahead_core::Schema;
-use ahead_sim::{Action, MutationSpec, Sim, schema::entry_key};
+use axton_client::{Operation, OperationKind};
+use axton_core::Schema;
+use axton_sim::{Action, MutationSpec, Sim, schema::entry_key};
 use serde_json::json;
 
 fn variant(edit: impl FnOnce(&mut serde_json::Value)) -> Schema {
-    let mut value = serde_json::to_value(ahead_sim::schema::schema()).unwrap();
+    let mut value = serde_json::to_value(axton_sim::schema::schema()).unwrap();
     edit(&mut value);
     Schema::from_value(value).unwrap()
 }

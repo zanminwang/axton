@@ -16,7 +16,7 @@ pub mod schema_store;
 pub mod store;
 pub mod transport;
 
-pub use ahead_core::*;
+pub use axton_core::*;
 pub use connection::*;
 pub use live::*;
 pub use query::{Direction, QueryOrder, QuerySpec};
@@ -68,7 +68,7 @@ fn one() -> u64 {
 /// The read contracts a client of `schema` expects: every model with the
 /// version its generated types read. Declared on every push, pull and
 /// subscribe so receipts, HTTP catch-up and the live stream are served alike
-/// ([#91](https://github.com/zanminwang/ahead/issues/91)).
+/// ([#91](https://github.com/zanminwang/axton/issues/91)).
 pub fn declared_models(schema: &Schema) -> BTreeMap<String, u64> {
     schema
         .models
@@ -99,8 +99,8 @@ pub enum Readiness {
 }
 /// Why one record or one queued mutation could not be applied as delivered.
 /// Every kind leaves the client consistent; the report is for the application
-/// ([#51](https://github.com/zanminwang/ahead/issues/51),
-/// [#122](https://github.com/zanminwang/ahead/issues/122)).
+/// ([#51](https://github.com/zanminwang/axton/issues/51),
+/// [#122](https://github.com/zanminwang/axton/issues/122)).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ReportKind {
@@ -229,7 +229,7 @@ pub struct RebuildReport {
 
 /// Marker a transaction leaves in its changed set when it subscribes or
 /// unsubscribes a channel; stripped before the set reaches watchers.
-const SUBSCRIPTION_MARK: &str = "ahead_subscription:";
+const SUBSCRIPTION_MARK: &str = "axton_subscription:";
 
 /// In-memory memory of the pulls this client issued and of how many times each
 /// channel's subscription changed since open. A page whose request predates the
@@ -324,7 +324,7 @@ impl<S: ClientStore> Client<S> {
         schema.validate()?;
         if let ddl::Layout::Legacy(what) = ddl::check_layout(&mut store)? {
             return Err(invalid(format!(
-                "this database was created by an earlier Ahead runtime ({what}); open it through a path so it can be rebuilt beside"
+                "this database was created by an earlier AXTON runtime ({what}); open it through a path so it can be rebuilt beside"
             )));
         }
         store.execute_batch(ddl::FRAMEWORK_DDL)?;
@@ -333,7 +333,7 @@ impl<S: ClientStore> Client<S> {
         let opened = (|| {
             ddl::reconcile(&mut store, &schema)?;
             schema_store::write_descriptor(&mut store, &schema)?;
-            let row = store.query("SELECT client_id, generation FROM ahead_client", &[])?;
+            let row = store.query("SELECT client_id, generation FROM axton_client", &[])?;
             let (client_id, generation) = match row.rows.first() {
                 Some(r) => (
                     r[0].as_str().unwrap_or("").to_string(),
@@ -341,7 +341,7 @@ impl<S: ClientStore> Client<S> {
                 ),
                 None => {
                     let id = uuid::Uuid::new_v4().to_string();
-                    store.execute("INSERT INTO ahead_client (client_id, next_ordinal, next_push, generation) VALUES (?,1,1,1)", &[Value::from(id.clone())])?;
+                    store.execute("INSERT INTO axton_client (client_id, next_ordinal, next_push, generation) VALUES (?,1,1,1)", &[Value::from(id.clone())])?;
                     (id, 1)
                 }
             };
@@ -399,7 +399,7 @@ impl<S: ClientStore> Client<S> {
         let mut client = match ddl::check_layout(&mut store)? {
             ddl::Layout::Fresh => Self::open(store, schema.clone())?,
             ddl::Layout::Legacy(what) => {
-                let pending = count_rows(&mut store, "ahead_mutation").unwrap_or(0);
+                let pending = count_rows(&mut store, "axton_mutation").unwrap_or(0);
                 drop(store);
                 Self::rebuild_beside(&path, &factory, &file, &schema, &what, pending, 0)?
             }
@@ -412,7 +412,7 @@ impl<S: ClientStore> Client<S> {
                     None => match ddl::incompatibility(&mut store, &schema)? {
                         None => Self::open(store, schema.clone())?,
                         Some(reason) => {
-                            let pending = count_rows(&mut store, "ahead_mutation")?;
+                            let pending = count_rows(&mut store, "axton_mutation")?;
                             drop(store);
                             Self::rebuild_beside(
                                 &path, &factory, &file, &schema, &reason, pending, 0,
@@ -424,7 +424,7 @@ impl<S: ClientStore> Client<S> {
                             Self::open(store, schema.clone())?
                         }
                         Compatibility::Incompatible(reason) => {
-                            let pending = count_rows(&mut store, "ahead_mutation")?;
+                            let pending = count_rows(&mut store, "axton_mutation")?;
                             let direct = count_direct(&mut store, &stored)?;
                             if pending > 0 && !discard_pending {
                                 let mut client = Self::open(store, stored)?;
@@ -477,7 +477,7 @@ impl<S: ClientStore> Client<S> {
         let channels: Vec<String> = match factory(old_file) {
             Ok(mut old) => old
                 .query_committed(
-                    "SELECT channel FROM ahead_subscription ORDER BY channel",
+                    "SELECT channel FROM axton_subscription ORDER BY channel",
                     &[],
                 )
                 .map(|rows| {
@@ -580,7 +580,7 @@ impl<S: ClientStore> Client<S> {
     /// Bump the generation inside the open transaction; a stale writer fails here.
     fn fence(&mut self) -> Result<()> {
         let affected = self.store.execute(
-            "UPDATE ahead_client SET generation = generation + 1 WHERE generation = ?",
+            "UPDATE axton_client SET generation = generation + 1 WHERE generation = ?",
             &[Value::from(self.generation)],
         )?;
         if affected != 1 {
@@ -612,7 +612,7 @@ impl<S: ClientStore> Client<S> {
                     return Err(e);
                 }
                 self.generation += 1;
-                changed.insert("ahead_client".into());
+                changed.insert("axton_client".into());
                 self.notify(changed);
                 Ok(value)
             }
@@ -703,7 +703,7 @@ impl<S: ClientStore> Client<S> {
         }
         self.generation += 1;
         let mut changed = session.changed;
-        changed.insert("ahead_client".into());
+        changed.insert("axton_client".into());
         self.notify(changed);
         Ok(())
     }
@@ -785,7 +785,7 @@ impl<S: ClientStore> Client<S> {
         query::rows_to_objects(rows)
     }
     pub fn pending_count(&mut self) -> Result<usize> {
-        self.view(|e| Ok(e.count("ahead_mutation")? as usize))
+        self.view(|e| Ok(e.count("axton_mutation")? as usize))
     }
     pub fn before_image_count(&mut self) -> Result<usize> {
         let tables: Vec<String> = self
@@ -989,7 +989,7 @@ fn count_direct<S: ClientStore>(store: &mut S, schema: &Schema) -> Result<usize>
         // through a direct write: nothing will ever send it.
         let identity = format!("json_object({})", pairs.join(", "));
         let sql = format!(
-            "SELECT COUNT(*) FROM {} m WHERE NOT EXISTS (SELECT 1 FROM ahead_record r WHERE r.model = ? AND r.identity = {identity}) AND NOT EXISTS (SELECT 1 FROM ahead_mutation_operation o WHERE o.model = ? AND o.identity = {identity})",
+            "SELECT COUNT(*) FROM {} m WHERE NOT EXISTS (SELECT 1 FROM axton_record r WHERE r.model = ? AND r.identity = {identity}) AND NOT EXISTS (SELECT 1 FROM axton_mutation_operation o WHERE o.model = ? AND o.identity = {identity})",
             ddl::quote(&model.name),
         );
         let rows = store.query_committed(&sql, &[json!(model.name), json!(model.name)])?;

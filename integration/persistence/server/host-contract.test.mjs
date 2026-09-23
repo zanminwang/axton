@@ -9,7 +9,7 @@ import {createBackend,MutationRejected} from '../../../packages/server/index.mts
 import {HOST_OPERATIONS} from '../../../packages/server/host-contract.mts';
 import {answer,persistence} from '../../../packages/postgres/index.mts';
 const require=createRequire(import.meta.url);
-const native=require('../../../bindings/node/ahead-node.node');
+const native=require('../../../bindings/node/axton-node.node');
 const fixture=JSON.parse(await readFile(new URL('../../../fixtures/protocol/host-operations.json',import.meta.url),'utf8'));
 const entry=op=>fixture.operations.find(o=>o.op===op);
 const response=(op,variant)=>{

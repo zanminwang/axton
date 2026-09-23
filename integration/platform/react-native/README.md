@@ -1,6 +1,6 @@
 # React Native integration harness
 
-A small test application for [React Native support #100](https://github.com/zanminwang/ahead/issues/100). It exercises generated Entry/AddEntry/Edit APIs and the real native carrier independently of the To-do product demo (#31).
+A small test application for [React Native support #100](https://github.com/zanminwang/axton/issues/100). It exercises generated Entry/AddEntry/Edit APIs and the real native carrier independently of the To-do product demo (#31).
 
 ## Prerequisites and setup
 
@@ -31,18 +31,18 @@ npx expo prebuild --platform ios --no-install
 npm run ios:build
 ```
 
-`ios:build` compiles the Release simulator app without installing it on any simulator; the product is `ios/build/Build/Products/Release-iphonesimulator/aheadrnharness.app`, which the runner uses by default. `npm run ios:release` additionally installs and launches the app on the selected simulator. Set `AHEAD_RN_APP_BUNDLE` when the app is built elsewhere. `expo prebuild` regenerates the whole `ios` directory, so run `pod install` again after it. The `packages/client-react-native/plugins/expo-path-spaces` config plugin quotes the two Expo-generated script phases (Expo Constants and the React Native bundle phase) that otherwise fail when the repository path contains spaces; the build is arm64-only because the vendored Rust library carries that simulator slice. Native projects and compiled libraries are generated artifacts and are not committed. The native module is a local package and must be built before CocoaPods resolves its vendored library.
+`ios:build` compiles the Release simulator app without installing it on any simulator; the product is `ios/build/Build/Products/Release-iphonesimulator/axtonrnharness.app`, which the runner uses by default. `npm run ios:release` additionally installs and launches the app on the selected simulator. Set `AXTON_RN_APP_BUNDLE` when the app is built elsewhere. `expo prebuild` regenerates the whole `ios` directory, so run `pod install` again after it. The `packages/client-react-native/plugins/expo-path-spaces` config plugin quotes the two Expo-generated script phases (Expo Constants and the React Native bundle phase) that otherwise fail when the repository path contains spaces; the build is arm64-only because the vendored Rust library carries that simulator slice. Native projects and compiled libraries are generated artifacts and are not committed. The native module is a local package and must be built before CocoaPods resolves its vendored library.
 
 ## Run
 
 From the repository root:
 
 ```sh
-AHEAD_RN_APP_BUNDLE=/absolute/path/to/aheadrnharness.app \
+AXTON_RN_APP_BUNDLE=/absolute/path/to/axtonrnharness.app \
   bash integration/platform/run_react_native_ios_smoke.sh
 ```
 
-By default the runner creates two disposable simulators on the newest installed iOS runtime with the first iPhone device type, then removes only those simulators. Override `AHEAD_RN_SIM_RUNTIME` and `AHEAD_RN_SIM_DEVICE` with installed identifiers, or supply two dedicated simulator UDIDs as arguments. Existing harness installs on caller-provided simulators are refused to avoid resetting their data, and the runner leaves its installation on caller-provided simulators afterwards; it deletes only simulators it created.
+By default the runner creates two disposable simulators on the newest installed iOS runtime with the first iPhone device type, then removes only those simulators. Override `AXTON_RN_SIM_RUNTIME` and `AXTON_RN_SIM_DEVICE` with installed identifiers, or supply two dedicated simulator UDIDs as arguments. Existing harness installs on caller-provided simulators are refused to avoid resetting their data, and the runner leaves its installation on caller-provided simulators afterwards; it deletes only simulators it created.
 
 The runner creates an isolated PostgreSQL cluster and two per-client proxies. It installs the same bundled application separately, writes test-only configuration into each app's Documents directory, and checks JSON assertion results there. The app reads and writes through the generated client; the files only coordinate the test and record evidence.
 
@@ -59,7 +59,7 @@ The runner prints an evidence directory containing phase assertions, screenshots
 
 ## Evidence
 
-Verified 2026-09-15 on branch `codex/react-native` at commit `c54ff70` (rerun after the review fixes; an earlier run on the pre-review working tree also passed) with Xcode 26.5 (17F42), iOS 26.5 simulator runtime (23F77), two disposable iPhone 17 simulators, Node 26.4.0, cargo 1.98.1, CocoaPods 1.16.2, Expo 57.0.22, React Native 0.86.3, React 19.2.3, arm64 simulator slice of `libahead_mobile.a`.
+Verified 2026-09-15 on branch `codex/react-native` at commit `c54ff70` (rerun after the review fixes; an earlier run on the pre-review working tree also passed) with Xcode 26.5 (17F42), iOS 26.5 simulator runtime (23F77), two disposable iPhone 17 simulators, Node 26.4.0, cargo 1.98.1, CocoaPods 1.16.2, Expo 57.0.22, React Native 0.86.3, React 19.2.3, arm64 simulator slice of `libaxton_mobile.a`.
 
 Commands, from the repository root after the setup above:
 
@@ -70,7 +70,7 @@ node --test packages/client-react-native/plugins/expo-path-spaces.test.cjs
 bash integration/platform/run_react_native_ios_smoke.sh
 ```
 
-Result: `PASS: two real RN clients, lost-response retry, offline writes, process restart and convergence`. The Release app embedded `main.jsbundle` (1.5 MB, no `node:` built-ins, N-API binary or Node `ws` in the bundle) and linked `ahead_mobile_call`. Phase assertions recorded by the app:
+Result: `PASS: two real RN clients, lost-response retry, offline writes, process restart and convergence`. The Release app embedded `main.jsbundle` (1.5 MB, no `node:` built-ins, N-API binary or Node `ws` in the bundle) and linked `axton_mobile_call`. Phase assertions recorded by the app:
 
 | Phase | Result |
 | --- | --- |

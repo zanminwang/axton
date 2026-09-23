@@ -20,9 +20,9 @@ Each [component](architecture.md) defines its own responsibilities, interfaces a
 
 ## Test responsibilities
 
-The sections above define what to verify. This tree assigns responsibilities to Ahead's tests. One guarantee or component contract may need several kinds of evidence: simulation can explore message ordering, while integration tests check real database transactions.
+The sections above define what to verify. This tree assigns responsibilities to AXTON's tests. One guarantee or component contract may need several kinds of evidence: simulation can explore message ordering, while integration tests check real database transactions.
 
-Component, integration and end-to-end describe the scope of a test. Simulation describes a method and environment; Ahead uses it to exercise the Rust client and server together under controlled faults.
+Component, integration and end-to-end describe the scope of a test. Simulation describes a method and environment; AXTON uses it to exercise the Rust client and server together under controlled faults.
 
 - **[Component tests](testing/components/README.md)** — Verify a component's own rules.
   - **[Schema](testing/components/schema.md)** — Valid descriptors, types and relationships.

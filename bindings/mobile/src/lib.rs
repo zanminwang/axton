@@ -1,5 +1,5 @@
 //! C ABI used by mobile platform modules on a dedicated worker queue.
-use ahead_binding::RuntimeHost;
+use axton_binding::RuntimeHost;
 use serde_json::json;
 use std::{
     ffi::{CStr, CString, c_char},
@@ -8,13 +8,13 @@ use std::{
 
 static HOST: OnceLock<Mutex<RuntimeHost>> = OnceLock::new();
 
-/// Calls the process-wide Ahead runtime host.
+/// Calls the process-wide AXTON runtime host.
 ///
 /// # Safety
 /// `input` must point to a valid NUL-terminated UTF-8 string for the duration
 /// of this call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ahead_mobile_call(input: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn axton_mobile_call(input: *const c_char) -> *mut c_char {
     let result = std::panic::catch_unwind(|| {
         if input.is_null() {
             return Err("null input".to_string());
@@ -41,13 +41,13 @@ pub unsafe extern "C" fn ahead_mobile_call(input: *const c_char) -> *mut c_char 
         .into_raw()
 }
 
-/// Frees a response allocated by [`ahead_mobile_call`].
+/// Frees a response allocated by [`axton_mobile_call`].
 ///
 /// # Safety
-/// `output` must be null or a pointer returned by `ahead_mobile_call` that has
+/// `output` must be null or a pointer returned by `axton_mobile_call` that has
 /// not already been freed.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ahead_mobile_free(output: *mut c_char) {
+pub unsafe extern "C" fn axton_mobile_free(output: *mut c_char) {
     if !output.is_null() {
         drop(unsafe { CString::from_raw(output) });
     }
@@ -59,24 +59,24 @@ mod tests {
 
     fn call(input: &str) -> serde_json::Value {
         let input = CString::new(input).unwrap();
-        let output = unsafe { super::ahead_mobile_call(input.as_ptr()) };
+        let output = unsafe { super::axton_mobile_call(input.as_ptr()) };
         assert!(!output.is_null());
         let text = unsafe { CStr::from_ptr(output) }
             .to_str()
             .unwrap()
             .to_owned();
-        unsafe { super::ahead_mobile_free(output) };
+        unsafe { super::axton_mobile_free(output) };
         serde_json::from_str(&text).unwrap()
     }
 
     #[test]
     fn rejects_null_and_malformed_inputs_as_json_errors() {
-        let output = unsafe { super::ahead_mobile_call(std::ptr::null()) };
+        let output = unsafe { super::axton_mobile_call(std::ptr::null()) };
         let value: serde_json::Value = unsafe { CStr::from_ptr(output) }
             .to_str()
             .map(|text| serde_json::from_str(text).unwrap())
             .unwrap();
-        unsafe { super::ahead_mobile_free(output) };
+        unsafe { super::axton_mobile_free(output) };
         assert_eq!(
             value,
             serde_json::json!({"ok": false, "error": "null input"})

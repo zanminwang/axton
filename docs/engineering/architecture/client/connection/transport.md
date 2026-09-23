@@ -34,4 +34,4 @@ Tests read, not executed, except the live suites cited for overflow, run 2026-09
 
 ## 11. Risks and Technical Debt
 
-**Accepted limitation.** The TypeScript transport is Node-only: it depends on the `ws` package and sets an upgrade header browsers cannot set. Browser and WebAssembly support is planned ([#59](https://github.com/zanminwang/ahead/issues/59)).
+**Accepted limitation.** The TypeScript transport is Node-only: it depends on the `ws` package and sets an upgrade header browsers cannot set. Browser and WebAssembly support is planned ([#59](https://github.com/zanminwang/axton/issues/59)).

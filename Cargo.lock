@@ -3,98 +3,6 @@
 version = 4
 
 [[package]]
-name = "ahead-binding"
-version = "0.1.0"
-dependencies = [
- "ahead-client",
- "ahead-core",
- "ahead-sqlite",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "ahead-client"
-version = "0.1.0"
-dependencies = [
- "ahead-core",
- "chrono",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "ahead-compiler"
-version = "0.1.0"
-dependencies = [
- "ahead-core",
- "serde_json",
-]
-
-[[package]]
-name = "ahead-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_jcs",
- "serde_json",
- "thiserror",
- "uuid",
-]
-
-[[package]]
-name = "ahead-dart"
-version = "0.1.0"
-dependencies = [
- "ahead-binding",
- "serde_json",
-]
-
-[[package]]
-name = "ahead-mobile"
-version = "0.1.0"
-dependencies = [
- "ahead-binding",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "ahead-server"
-version = "0.1.0"
-dependencies = [
- "ahead-core",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "ahead-sim"
-version = "0.1.0"
-dependencies = [
- "ahead-client",
- "ahead-core",
- "ahead-server",
- "ahead-sqlite",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "ahead-sqlite"
-version = "0.1.0"
-dependencies = [
- "ahead-client",
- "ahead-core",
- "rusqlite",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -108,6 +16,98 @@ name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
+
+[[package]]
+name = "axton-binding"
+version = "0.1.0"
+dependencies = [
+ "axton-client",
+ "axton-core",
+ "axton-sqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "axton-client"
+version = "0.1.0"
+dependencies = [
+ "axton-core",
+ "chrono",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "axton-compiler"
+version = "0.1.0"
+dependencies = [
+ "axton-core",
+ "serde_json",
+]
+
+[[package]]
+name = "axton-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_jcs",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "axton-dart"
+version = "0.1.0"
+dependencies = [
+ "axton-binding",
+ "serde_json",
+]
+
+[[package]]
+name = "axton-mobile"
+version = "0.1.0"
+dependencies = [
+ "axton-binding",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "axton-server"
+version = "0.1.0"
+dependencies = [
+ "axton-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "axton-sim"
+version = "0.1.0"
+dependencies = [
+ "axton-client",
+ "axton-core",
+ "axton-server",
+ "axton-sqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "axton-sqlite"
+version = "0.1.0"
+dependencies = [
+ "axton-client",
+ "axton-core",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "bitflags"

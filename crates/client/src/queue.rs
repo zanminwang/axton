@@ -2,7 +2,7 @@
 use crate::engine::{Engine, as_u64};
 use crate::store::ClientStore;
 use crate::{Mutation, Operation, OperationKind};
-use ahead_core::{RecordKey, Rejection, Result, invalid};
+use axton_core::{RecordKey, Rejection, Result, invalid};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -78,16 +78,16 @@ fn decode_op(row: &[Value]) -> Result<QueuedOp> {
 impl<S: ClientStore> Engine<'_, S> {
     fn bump(&mut self, column: &str) -> Result<u64> {
         let current = self
-            .scalar(&format!("SELECT {column} FROM ahead_client"), &[])?
+            .scalar(&format!("SELECT {column} FROM axton_client"), &[])?
             .ok_or_else(|| invalid("client row missing"))?;
         let value = as_u64(&current)?;
         let next = value
             .checked_add(1)
-            .filter(|v| *v <= ahead_core::MAX_SAFE_INTEGER)
+            .filter(|v| *v <= axton_core::MAX_SAFE_INTEGER)
             .ok_or_else(|| invalid("counter exhausted"))?;
         self.exec(
-            "ahead_client",
-            &format!("UPDATE ahead_client SET {column}=?"),
+            "axton_client",
+            &format!("UPDATE axton_client SET {column}=?"),
             &[json!(next)],
         )?;
         Ok(value)
@@ -107,8 +107,8 @@ impl<S: ClientStore> Engine<'_, S> {
     ) -> Result<()> {
         let key = self.schema.record_key(&op.model, &op.identity)?;
         self.exec(
-            "ahead_mutation_operation",
-            "INSERT INTO ahead_mutation_operation (ordinal, position, kind, model, identity, op, \"values\") VALUES (?,?,?,?,?,?,?)",
+            "axton_mutation_operation",
+            "INSERT INTO axton_mutation_operation (ordinal, position, kind, model, identity, op, \"values\") VALUES (?,?,?,?,?,?,?)",
             &[
                 json!(ordinal),
                 json!(position),
@@ -126,8 +126,8 @@ impl<S: ClientStore> Engine<'_, S> {
     }
     pub fn insert_mutation(&mut self, ordinal: u64, mutation: &Mutation) -> Result<()> {
         self.exec(
-            "ahead_mutation",
-            "INSERT INTO ahead_mutation (ordinal, name, version, push) VALUES (?,?,?,NULL)",
+            "axton_mutation",
+            "INSERT INTO axton_mutation (ordinal, name, version, push) VALUES (?,?,?,NULL)",
             &[
                 json!(ordinal),
                 json!(mutation.name),
@@ -150,17 +150,17 @@ impl<S: ClientStore> Engine<'_, S> {
             ("sequence", &mutation.sequence_dependencies),
         ] {
             for dep in deps {
-                self.exec("ahead_mutation_dependency", "INSERT OR IGNORE INTO ahead_mutation_dependency (ordinal, depends_on, kind) VALUES (?,?,?)", &[json!(ordinal), json!(dep), json!(kind)])?;
+                self.exec("axton_mutation_dependency", "INSERT OR IGNORE INTO axton_mutation_dependency (ordinal, depends_on, kind) VALUES (?,?,?)", &[json!(ordinal), json!(dep), json!(kind)])?;
             }
         }
         for key in &mutation.prerequisites {
-            self.exec("ahead_mutation_prerequisite", "INSERT OR IGNORE INTO ahead_mutation_prerequisite (ordinal, key, error) VALUES (?,?,NULL)", &[json!(ordinal), json!(key)])?;
+            self.exec("axton_mutation_prerequisite", "INSERT OR IGNORE INTO axton_mutation_prerequisite (ordinal, key, error) VALUES (?,?,NULL)", &[json!(ordinal), json!(key)])?;
         }
         Ok(())
     }
     pub fn add_effect(&mut self, ordinal: u64, op: &Operation) -> Result<()> {
         let next = self.scalar(
-            "SELECT COALESCE(MAX(position), -1) + 1 FROM ahead_mutation_operation WHERE ordinal=?",
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM axton_mutation_operation WHERE ordinal=?",
             &[json!(ordinal)],
         )?;
         let position = as_u64(&next.unwrap_or(json!(0)))?;
@@ -171,7 +171,7 @@ impl<S: ClientStore> Engine<'_, S> {
         filter: &str,
         params: &[Value],
     ) -> Result<BTreeMap<u64, Vec<QueuedOp>>> {
-        let rows = self.rows(&format!("SELECT ordinal, position, kind, model, identity, op, \"values\" FROM ahead_mutation_operation {filter} ORDER BY ordinal, position"), params)?;
+        let rows = self.rows(&format!("SELECT ordinal, position, kind, model, identity, op, \"values\" FROM axton_mutation_operation {filter} ORDER BY ordinal, position"), params)?;
         let mut result: BTreeMap<u64, Vec<QueuedOp>> = BTreeMap::new();
         for row in &rows.rows {
             let op = decode_op(row)?;
@@ -182,7 +182,7 @@ impl<S: ClientStore> Engine<'_, S> {
     fn queued_where(&mut self, filter: &str, params: &[Value]) -> Result<Vec<Queued>> {
         let mutations = self.rows(
             &format!(
-                "SELECT ordinal, name, version, push, diverged FROM ahead_mutation {filter} ORDER BY ordinal"
+                "SELECT ordinal, name, version, push, diverged FROM axton_mutation {filter} ORDER BY ordinal"
             ),
             params,
         )?;
@@ -192,13 +192,13 @@ impl<S: ClientStore> Engine<'_, S> {
         let ops = self.ops_by_ordinal(filter, params)?;
         let deps = self.rows(
             &format!(
-                "SELECT ordinal, depends_on, kind FROM ahead_mutation_dependency {filter} ORDER BY ordinal, depends_on"
+                "SELECT ordinal, depends_on, kind FROM axton_mutation_dependency {filter} ORDER BY ordinal, depends_on"
             ),
             params,
         )?;
         let prerequisites = self.rows(
             &format!(
-                "SELECT ordinal, key FROM ahead_mutation_prerequisite {filter} ORDER BY ordinal, key"
+                "SELECT ordinal, key FROM axton_mutation_prerequisite {filter} ORDER BY ordinal, key"
             ),
             params,
         )?;
@@ -265,8 +265,8 @@ impl<S: ClientStore> Engine<'_, S> {
     /// the row and with it the mark.
     pub fn set_diverged(&mut self, ordinal: u64) -> Result<()> {
         self.exec(
-            "ahead_mutation",
-            "UPDATE ahead_mutation SET diverged=1 WHERE ordinal=?",
+            "axton_mutation",
+            "UPDATE axton_mutation SET diverged=1 WHERE ordinal=?",
             &[json!(ordinal)],
         )?;
         Ok(())
@@ -274,7 +274,7 @@ impl<S: ClientStore> Engine<'_, S> {
     pub fn dirty(&mut self, key: &RecordKey) -> Result<bool> {
         Ok(self
             .scalar(
-                "SELECT 1 FROM ahead_mutation_operation WHERE model=? AND identity=? LIMIT 1",
+                "SELECT 1 FROM axton_mutation_operation WHERE model=? AND identity=? LIMIT 1",
                 &[json!(key.model), json!(key.encoded_identity()?)],
             )?
             .is_some())
@@ -282,15 +282,15 @@ impl<S: ClientStore> Engine<'_, S> {
     pub fn delete_mutations(&mut self, ordinals: &[u64]) -> Result<()> {
         for ordinal in ordinals {
             self.exec(
-                "ahead_mutation",
-                "DELETE FROM ahead_mutation WHERE ordinal=?",
+                "axton_mutation",
+                "DELETE FROM axton_mutation WHERE ordinal=?",
                 &[json!(ordinal)],
             )?;
         }
         for table in [
-            "ahead_mutation_operation",
-            "ahead_mutation_dependency",
-            "ahead_mutation_prerequisite",
+            "axton_mutation_operation",
+            "axton_mutation_dependency",
+            "axton_mutation_prerequisite",
         ] {
             self.changed.insert(table.into());
         }
@@ -299,8 +299,8 @@ impl<S: ClientStore> Engine<'_, S> {
     pub fn assign_push(&mut self, ordinals: &[u64], push: u64) -> Result<()> {
         for ordinal in ordinals {
             self.exec(
-                "ahead_mutation",
-                "UPDATE ahead_mutation SET push=? WHERE ordinal=?",
+                "axton_mutation",
+                "UPDATE axton_mutation SET push=? WHERE ordinal=?",
                 &[json!(push), json!(ordinal)],
             )?;
         }
@@ -311,7 +311,7 @@ impl<S: ClientStore> Engine<'_, S> {
     /// never holds more than one.
     pub fn in_flight(&mut self) -> Result<Option<u64>> {
         let rows = self.rows(
-            "SELECT DISTINCT push FROM ahead_mutation WHERE push IS NOT NULL ORDER BY push",
+            "SELECT DISTINCT push FROM axton_mutation WHERE push IS NOT NULL ORDER BY push",
             &[],
         )?;
         let pushes: Vec<u64> = rows
@@ -328,15 +328,15 @@ impl<S: ClientStore> Engine<'_, S> {
     /// below it is a duplicate and changes nothing.
     pub fn last_completed_push(&mut self) -> Result<u64> {
         let value = self
-            .scalar("SELECT last_completed_push FROM ahead_client", &[])?
+            .scalar("SELECT last_completed_push FROM axton_client", &[])?
             .ok_or_else(|| invalid("client row missing"))?;
         as_u64(&value)
     }
     /// Remember that `push` completed and forget its frozen declaration.
     pub fn set_last_completed_push(&mut self, push: u64) -> Result<()> {
         self.exec(
-            "ahead_client",
-            "UPDATE ahead_client SET last_completed_push=?, push_models=NULL",
+            "axton_client",
+            "UPDATE axton_client SET last_completed_push=?, push_models=NULL",
             &[json!(push)],
         )?;
         Ok(())
@@ -345,21 +345,21 @@ impl<S: ClientStore> Engine<'_, S> {
     /// allocated so a retry sends what the original request sent.
     pub fn push_models(&mut self) -> Result<Option<Value>> {
         Ok(self
-            .scalar("SELECT push_models FROM ahead_client", &[])?
+            .scalar("SELECT push_models FROM axton_client", &[])?
             .and_then(|v| v.as_str().map(serde_json::from_str::<Value>))
             .transpose()?)
     }
     pub fn set_push_models(&mut self, models: &Value) -> Result<()> {
         self.exec(
-            "ahead_client",
-            "UPDATE ahead_client SET push_models=?",
+            "axton_client",
+            "UPDATE axton_client SET push_models=?",
             &[json!(serde_json::to_string(models)?)],
         )?;
         Ok(())
     }
     pub fn prerequisite_keys(&mut self) -> Result<Vec<(String, Option<String>)>> {
         let rows = self.rows(
-            "SELECT key, MAX(error) FROM ahead_mutation_prerequisite GROUP BY key ORDER BY key",
+            "SELECT key, MAX(error) FROM axton_mutation_prerequisite GROUP BY key ORDER BY key",
             &[],
         )?;
         Ok(rows
@@ -370,22 +370,22 @@ impl<S: ClientStore> Engine<'_, S> {
     }
     pub fn resolve_prerequisite(&mut self, key: &str) -> Result<usize> {
         self.exec(
-            "ahead_mutation_prerequisite",
-            "DELETE FROM ahead_mutation_prerequisite WHERE key=?",
+            "axton_mutation_prerequisite",
+            "DELETE FROM axton_mutation_prerequisite WHERE key=?",
             &[json!(key)],
         )
     }
     pub fn fail_prerequisite(&mut self, key: &str, error: &str) -> Result<usize> {
         self.exec(
-            "ahead_mutation_prerequisite",
-            "UPDATE ahead_mutation_prerequisite SET error=? WHERE key=?",
+            "axton_mutation_prerequisite",
+            "UPDATE axton_mutation_prerequisite SET error=? WHERE key=?",
             &[json!(error), json!(key)],
         )
     }
     pub fn reset_prerequisite(&mut self, key: &str) -> Result<usize> {
         self.exec(
-            "ahead_mutation_prerequisite",
-            "UPDATE ahead_mutation_prerequisite SET error=NULL WHERE key=?",
+            "axton_mutation_prerequisite",
+            "UPDATE axton_mutation_prerequisite SET error=NULL WHERE key=?",
             &[json!(key)],
         )
     }
@@ -397,8 +397,8 @@ impl<S: ClientStore> Engine<'_, S> {
         detail: &Value,
     ) -> Result<()> {
         self.exec(
-            "ahead_rejection",
-            "INSERT OR REPLACE INTO ahead_rejection (ordinal, name, code, detail) VALUES (?,?,?,?)",
+            "axton_rejection",
+            "INSERT OR REPLACE INTO axton_rejection (ordinal, name, code, detail) VALUES (?,?,?,?)",
             &[
                 json!(ordinal),
                 json!(name),
@@ -410,7 +410,7 @@ impl<S: ClientStore> Engine<'_, S> {
     }
     pub fn rejections(&mut self) -> Result<Vec<Rejection>> {
         let rows = self.rows(
-            "SELECT ordinal, code FROM ahead_rejection ORDER BY ordinal",
+            "SELECT ordinal, code FROM axton_rejection ORDER BY ordinal",
             &[],
         )?;
         rows.rows
@@ -424,7 +424,7 @@ impl<S: ClientStore> Engine<'_, S> {
             .collect()
     }
     pub fn rejection_details(&mut self) -> Result<Vec<Value>> {
-        let rows = self.rows("SELECT detail FROM ahead_rejection ORDER BY ordinal", &[])?;
+        let rows = self.rows("SELECT detail FROM axton_rejection ORDER BY ordinal", &[])?;
         rows.rows
             .iter()
             .map(|r| Ok(serde_json::from_str(r[0].as_str().unwrap_or("null"))?))
@@ -432,8 +432,8 @@ impl<S: ClientStore> Engine<'_, S> {
     }
     pub fn delete_rejection(&mut self, ordinal: u64) -> Result<()> {
         self.exec(
-            "ahead_rejection",
-            "DELETE FROM ahead_rejection WHERE ordinal=?",
+            "axton_rejection",
+            "DELETE FROM axton_rejection WHERE ordinal=?",
             &[json!(ordinal)],
         )?;
         Ok(())

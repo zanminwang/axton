@@ -1,4 +1,4 @@
-// Every PostgreSQL shim (`pg`, `prisma`, `drizzle`) must give Ahead the same
+// Every PostgreSQL shim (`pg`, `prisma`, `drizzle`) must give AXTON the same
 // persistence behavior through the two-method driver. The assertions read the
 // database through a separate `pg` pool so they do not depend on the tool
 // under test; business writes inside handlers go through `driver.query`, which
@@ -46,12 +46,12 @@ for(const shim of shims){
  const {database}=shim;const {driver}=database;
  const inTx=body=>driver.transaction(tx=>body(tx,(sql,params=[])=>driver.query(tx,sql,params),r=>answer(driver,tx,r)));
  const p=name=>`${shim.name}-${name}`;
- test(`[${shim.name}] a push writes business rows and Ahead metadata in one transaction and a pull reads them back`,async()=>{
+ test(`[${shim.name}] a push writes business rows and AXTON metadata in one transaction and a pull reads them back`,async()=>{
   const backend=createBackend({config,database,authenticate,handlers:{async edit({input,tx,publish}){await driver.query(tx,'INSERT INTO conformance_task(id,title) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET title=$2',[input.task.identity.id,input.task.patch.title]);publish({channel:p('shared')});}},loaders:{async task({ids,tx}){const rows=await driver.query(tx,'SELECT id,title FROM conformance_task WHERE id = ANY($1)',[ids.map(i=>i.id)]);return ids.map(i=>{const r=rows.find(r=>r.id===i.id);return r?{title:r.title}:null;});}}});
   const receipt=JSON.parse(await backend.push('alice',JSON.stringify({clientId:p('c'),batchSequence:1,models:{Task:1},mutations:[{ordinal:1,name:'edit',operations:[{model:'Task',op:'update',identity:{id:p('t')},values:{title:'typed'}}]}]})));
   assert.deepEqual(receipt.records,[{identity:{id:p('t')},model:'Task',stamp:1,state:{title:'typed'}}]);
   assert.deepEqual(await q('SELECT title FROM conformance_task WHERE id=$1',[p('t')]),[{title:'typed'}]);
-  assert.equal(Number((await q('SELECT sequence FROM ahead_client WHERE client_id=$1',[p('c')]))[0].sequence),1);
+  assert.equal(Number((await q('SELECT sequence FROM axton_client WHERE client_id=$1',[p('c')]))[0].sequence),1);
   const page=JSON.parse(await backend.pull('alice',JSON.stringify({cursors:{[p('shared')]:0},models:{Task:1}})));
   assert.equal(page.changes.length,1);assert.deepEqual(page.changes[0].state,{title:'typed'});assert.equal(page.changes[0].stamp,1);
   assert.equal(await backend.push('alice',JSON.stringify({clientId:p('c'),batchSequence:1,models:{Task:1},mutations:[{ordinal:1,name:'edit',operations:[]}]})),JSON.stringify(receipt),'a retry answers from the stored receipt');
@@ -68,12 +68,12 @@ for(const shim of shims){
  test(`[${shim.name}] advanceStamp increments without a channel; ensureStamp initialises once and keeps an advanced stamp`,async()=>{
   const ref={model:'Task',identityKey:key(p('stamp'))};
   assert.deepEqual(await inTx(async(tx,_,a)=>[await a({op:'advanceStamp',...ref}),await a({op:'advanceStamp',...ref})]),[1,2]);
-  assert.deepEqual(await q('SELECT stamp::int AS stamp FROM ahead_record WHERE identity_key=$1',[ref.identityKey]),[{stamp:2}]);
-  assert.deepEqual(await q('SELECT * FROM ahead_invalidation WHERE identity_key=$1',[ref.identityKey]),[]);
+  assert.deepEqual(await q('SELECT stamp::int AS stamp FROM axton_record WHERE identity_key=$1',[ref.identityKey]),[{stamp:2}]);
+  assert.deepEqual(await q('SELECT * FROM axton_invalidation WHERE identity_key=$1',[ref.identityKey]),[]);
   const race={model:'Task',identityKey:key(p('race'))};
   const ensure=()=>inTx((tx,_,a)=>a({op:'ensureStamp',...race}));
   assert.deepEqual(await Promise.all([ensure(),ensure(),ensure()]),[1,1,1],'concurrent first publications agree on 1 (serialization retries)');
-  assert.equal((await q('SELECT * FROM ahead_record WHERE identity_key=$1',[race.identityKey])).length,1);
+  assert.equal((await q('SELECT * FROM axton_record WHERE identity_key=$1',[race.identityKey])).length,1);
   await inTx((tx,_,a)=>a({op:'advanceStamp',...race}));
   assert.equal(await ensure(),2);
  });
@@ -83,22 +83,22 @@ for(const shim of shims){
   const published=await inTx(async(tx,_,a)=>{const stamp=await a({op:'ensureStamp',model:'Task',identityKey:ref.identityKey});return a({op:'publish',channel:p('ch'),...ref,stamp});});
   assert.deepEqual(published,{cursor:1,stamp:1});
   await assert.rejects(()=>inTx((tx,_,a)=>a({op:'publish',channel:p('ch'),...ref,stamp:5})),/names stamp 5 .* is at stamp 1/);
-  assert.deepEqual(await q('SELECT channel,cursor::int AS cursor,stamp::int AS stamp,identity FROM ahead_invalidation WHERE identity_key=$1',[ref.identityKey]),[{channel:p('ch'),cursor:1,stamp:1,identity:{id}}]);
+  assert.deepEqual(await q('SELECT channel,cursor::int AS cursor,stamp::int AS stamp,identity FROM axton_invalidation WHERE identity_key=$1',[ref.identityKey]),[{channel:p('ch'),cursor:1,stamp:1,identity:{id}}]);
   assert.equal(await inTx((tx,_,a)=>a({op:'head',channel:p('ch')})),1);
  });
  test(`[${shim.name}] a thrown body rolls back a first initialisation together with its publication`,async()=>{
   const id=p('undone');
   await assert.rejects(()=>inTx(async(tx,_,a)=>{const stamp=await a({op:'ensureStamp',model:'Task',identityKey:key(id)});await a({op:'publish',channel:p('undone'),model:'Task',identity:{id},identityKey:key(id),stamp});throw new Error('cancel');}),/cancel/);
-  assert.deepEqual(await q('SELECT * FROM ahead_record WHERE identity_key=$1',[key(id)]),[]);
-  assert.deepEqual(await q('SELECT * FROM ahead_invalidation WHERE identity_key=$1',[key(id)]),[]);
-  assert.deepEqual(await q('SELECT * FROM ahead_channel WHERE channel=$1',[p('undone')]),[]);
+  assert.deepEqual(await q('SELECT * FROM axton_record WHERE identity_key=$1',[key(id)]),[]);
+  assert.deepEqual(await q('SELECT * FROM axton_invalidation WHERE identity_key=$1',[key(id)]),[]);
+  assert.deepEqual(await q('SELECT * FROM axton_channel WHERE channel=$1',[p('undone')]),[]);
  });
  test(`[${shim.name}] scan pairs the invalidation cursor with the current record stamp and reports missing metadata`,async()=>{
   const id=p('scan');
   await inTx(async(tx,_,a)=>{const stamp=await a({op:'ensureStamp',model:'Task',identityKey:key(id)});await a({op:'publish',channel:p('scan'),model:'Task',identity:{id},identityKey:key(id),stamp});await a({op:'advanceStamp',model:'Task',identityKey:key(id)});});
   const rows=await inTx((tx,_,a)=>a({op:'scan',channel:p('scan'),after:0,limit:50}));
   assert.deepEqual(rows,[{channel:p('scan'),cursor:1,model:'Task',identityKey:key(id),identity:{id},stamp:2}]);
-  await q('DELETE FROM ahead_record WHERE identity_key=$1',[key(id)]);
+  await q('DELETE FROM axton_record WHERE identity_key=$1',[key(id)]);
   await assert.rejects(()=>inTx((tx,_,a)=>a({op:'scan',channel:p('scan'),after:0,limit:50})),/Record metadata missing/);
  });
  test(`[${shim.name}] savepoints isolate one mutation's writes and the transaction continues after a rollback`,async()=>{
@@ -117,12 +117,12 @@ for(const shim of shims){
  });
  test(`[${shim.name}] a serialization conflict retries the whole body and commits once; with no retries it is reported`,async()=>{
   const channel=p('serial');
-  await q("INSERT INTO ahead_channel(channel,head) VALUES($1,0) ON CONFLICT(channel) DO UPDATE SET head=0",[channel]);
+  await q("INSERT INTO axton_channel(channel,head) VALUES($1,0) ON CONFLICT(channel) DO UPDATE SET head=0",[channel]);
   let bodies=0;let entered,release;const inside=new Promise(r=>{entered=r;});const gate=new Promise(r=>{release=r;});
-  const first=driver.transaction(async tx=>{bodies++;const [{head}]=await driver.query(tx,'SELECT head FROM ahead_channel WHERE channel=$1',[channel]);if(bodies===1){entered();await gate;}await driver.query(tx,'UPDATE ahead_channel SET head=head+1 WHERE channel=$1',[channel]);return Number(head);});
-  await inside;await q('UPDATE ahead_channel SET head=head+10 WHERE channel=$1',[channel]);release();
+  const first=driver.transaction(async tx=>{bodies++;const [{head}]=await driver.query(tx,'SELECT head FROM axton_channel WHERE channel=$1',[channel]);if(bodies===1){entered();await gate;}await driver.query(tx,'UPDATE axton_channel SET head=head+1 WHERE channel=$1',[channel]);return Number(head);});
+  await inside;await q('UPDATE axton_channel SET head=head+10 WHERE channel=$1',[channel]);release();
   assert.equal(await first,10);assert.equal(bodies,2);
-  assert.equal(Number((await q('SELECT head FROM ahead_channel WHERE channel=$1',[channel]))[0].head),11);
+  assert.equal(Number((await q('SELECT head FROM axton_channel WHERE channel=$1',[channel]))[0].head),11);
  });
  test(`[${shim.name}] close`,async()=>{await shim.close();});
 }

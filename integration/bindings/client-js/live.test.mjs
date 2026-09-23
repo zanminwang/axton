@@ -58,7 +58,7 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 async function openClient() {
- const dir = await mkdtemp(join(tmpdir(),'ahead-live-'));
+ const dir = await mkdtemp(join(tmpdir(),'axton-live-'));
  const schema = JSON.parse(await readFile(new URL('../../../fixtures/schemas/entry.json',import.meta.url),'utf8'));
  const client = await runtime.Client.open({path:join(dir,'client.sqlite'),schema});
  return {client, async close() { await client.close(); await rm(dir,{recursive:true,force:true}); }};
@@ -385,7 +385,7 @@ test('an owner-mismatch refusal reaches onError and leaves the batch frozen for 
  }finally{await fixture.close();await new Promise(r=>server.close(r));}
 });
 
-test('what a page cannot apply reaches onError as an AheadReport: read failures, skipped changes and divergence',async()=>{
+test('what a page cannot apply reaches onError as an AxtonReport: read failures, skipped changes and divergence',async()=>{
  const fixture=await openClient();const {client}=fixture;const errors=[];
  const network=await syncFixture((b,res)=>res.end(JSON.stringify(emptyPage(b))));
  // The push lane is refused so the local edit stays queued while authority lands beneath it.
@@ -400,7 +400,7 @@ test('what a page cannot apply reaches onError as an AheadReport: read failures,
    {model:'Entry',identity:{id:'bad'},stamp:2,state:{text:5,note:null}},
   ]}));
   await until(()=>errors.length===2);
-  assert.ok(errors.every(e=>e instanceof runtime.AheadReport));
+  assert.ok(errors.every(e=>e instanceof runtime.AxtonReport));
   assert.equal(errors[0].kind,'readFailed');assert.equal(errors[0].code,'loader.failed');assert.deepEqual(errors[0].identity,{id:'live'});assert.equal(errors[0].stamp,9);
   assert.equal(errors[1].kind,'skipped');assert.deepEqual(errors[1].identity,{id:'bad'});
   assert.equal((await client.read('Entry',{id:'live'})).text,'first','a read failure keeps the local content');
@@ -425,8 +425,8 @@ test('a queued edit whose replay fails over new authority is reported as diverge
   assert.equal((await client.read('Entry',{id:'live'})).text,'edited offline');
   // The server deleted the record: the update cannot replay over nothing.
   sockets[0].send(JSON.stringify({cursors:{scope:{from:1,to:2,head:2}},changes:[{model:'Entry',identity:{id:'live'},stamp:2,state:null}]}));
-  await until(()=>errors.some(e=>e instanceof runtime.AheadReport));
-  const diverged=errors.find(e=>e instanceof runtime.AheadReport);
+  await until(()=>errors.some(e=>e instanceof runtime.AxtonReport));
+  const diverged=errors.find(e=>e instanceof runtime.AxtonReport);
   assert.equal(diverged.kind,'diverged');assert.equal(typeof diverged.ordinal,'number');assert.deepEqual(diverged.identity,{id:'live'});
   assert.equal(await client.read('Entry',{id:'live'}),null,"the server's row (a deletion) is visible");
   const status=await client.syncState();assert.equal(status.pending,1,'the mutation is still queued');
@@ -447,7 +447,7 @@ test('a receipt record the client cannot apply reaches onError and the batch sti
   await client.connect({url:`http://127.0.0.1:${server.address().port}`,token:'secret'},{onError:e=>errors.push(e)});
   await client.mutate({name:'Create',operations:[{model:'Entry',op:'create',identity:{id:'odd'},values:{text:'local',note:null}}]});
   await until(async()=>(await client.syncState()).pending===0);
-  const skipped=errors.find(e=>e instanceof runtime.AheadReport);
+  const skipped=errors.find(e=>e instanceof runtime.AxtonReport);
   assert.ok(skipped,`a report reached onError: ${errors}`);
   assert.equal(skipped.kind,'skipped');assert.deepEqual(skipped.identity,{id:'odd'});
   assert.equal(skipped.detail.batch,1);assert.equal(typeof skipped.detail.error,'string');

@@ -6,7 +6,7 @@ export { Transaction, type QuerySpec } from "./transaction.mts";
 export type { RecordValue } from "./values.mts";
 export type { Connection, ConnectionOptions } from "./connection.mts";
 export {
-  AheadReport,
+  AxtonReport,
   type ReportDetails,
   type ReportKind,
 } from "./connection.mts";
@@ -20,7 +20,7 @@ export type {
   SchemaState,
 } from "./runtime.mts";
 const native = createRequire(import.meta.url)(
-  "../../bindings/node/ahead-node.node",
+  "../../bindings/node/axton-node.node",
 ) as {
   clientCall(request: string): Promise<string>;
 };

@@ -1,14 +1,14 @@
-# Video: build technical trust in Ahead through engineering design
+# Video: build technical trust in AXTON through engineering design
 
 ## Goal
 
-Give developers a reasoned basis for evaluating whether they can depend on Ahead in their applications. Establish trust through concrete mechanisms, verification evidence, design trade-offs, and explicit boundaries.
+Give developers a reasoned basis for evaluating whether they can depend on AXTON in their applications. Establish trust through concrete mechanisms, verification evidence, design trade-offs, and explicit boundaries.
 
 The viewer should leave thinking: "I understand how the difficult cases are handled, what the guarantees depend on, and how to verify whether this fits my application."
 
 ## Audience
 
-Developers who understand Ahead's basic value and want to assess its engineering before adopting it or relying on it more broadly.
+Developers who understand AXTON's basic value and want to assess its engineering before adopting it or relying on it more broadly.
 
 ## Core message
 
@@ -18,7 +18,7 @@ Reliable local-first behavior depends on coordinating persistent local intent wi
 
 1. **Return to the familiar edit.** Reuse the introduction's collaborative To-do scenario, then introduce a delayed message or an additional local edit.
 2. **Expose the relevant state.** Show the distinction between visible local data, pending operations, and authoritative backend state.
-3. **Examine a difficult case.** Show where a straightforward implementation gives an undesirable result, then explain Ahead's chosen mechanism.
+3. **Examine a difficult case.** Show where a straightforward implementation gives an undesirable result, then explain AXTON's chosen mechanism.
 4. **Discuss the trade-off.** State why the choice was made, what complexity or constraint it introduces, and what responsibilities remain with the application.
 5. **Connect the explanation to evidence.** Point to relevant code, meaningful tests or reproducible demonstrations, documented guarantees, and current limits.
 6. **Reassemble the flow.** Return to the full synchronization picture and give viewers links for further evaluation.
@@ -45,7 +45,7 @@ For each selected question, explain the scenario, the simple approach's failure,
 - Use Manim to visualize state, message ordering, and the consequence of each design choice.
 - Reuse the introduction's scenario and shared visual language. The final videos can be published separately.
 - Read claims against `docs/engineering/`, the current implementation, relevant test assertions, and actual verification results. Code inspection alone is not test execution.
-- Link the chosen scenario to the mobile To-do demo in [#31](https://github.com/zanminwang/ahead/issues/31) where applicable. Do not require the web demo for an explanation of the engine.
+- Link the chosen scenario to the mobile To-do demo in [#31](https://github.com/zanminwang/axton/issues/31) where applicable. Do not require the web demo for an explanation of the engine.
 - Store production files under `marketing/videos/engineering/`.
 
 ## Acceptance criteria

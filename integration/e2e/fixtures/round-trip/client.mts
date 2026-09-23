@@ -5,9 +5,9 @@ import { GeneratedClient } from "./generated/client.ts";
 
 // Open the local database and start syncing with the backend.
 const client = await GeneratedClient.open({
-  path: resolve(process.env.AHEAD_DATABASE ?? "example-client.sqlite"),
+  path: resolve(process.env.AXTON_DATABASE ?? "example-client.sqlite"),
   server: {
-    url: process.env.AHEAD_URL ?? "http://127.0.0.1:4242",
+    url: process.env.AXTON_URL ?? "http://127.0.0.1:4242",
     token: "demo-user",
   },
   connection: { onError: (error) => console.error(`sync: ${String(error)}`) },

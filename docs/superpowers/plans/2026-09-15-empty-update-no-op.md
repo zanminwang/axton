@@ -26,7 +26,7 @@
 - Test: `crates/server/tests/runtime.rs`
 
 **Interfaces:**
-- Consumes: `ahead_server::decode_arguments(config: &Value, body: &Value) -> Result<Value>` and the `config()` helper already in `runtime.rs` (mutation `edit`, slot `task`, `allowedPatchFields: ["title"]`, model `Task` with fields `id`, `title`, `note`).
+- Consumes: `axton_server::decode_arguments(config: &Value, body: &Value) -> Result<Value>` and the `config()` helper already in `runtime.rs` (mutation `edit`, slot `task`, `allowedPatchFields: ["title"]`, model `Task` with fields `id`, `title`, `note`).
 - Produces: nothing new; behavior only.
 
 - [x] **Step 1: Write the failing tests**
@@ -36,7 +36,7 @@ Append to `crates/server/tests/runtime.rs`:
 ```rust
 #[test]
 fn empty_patch_decodes_as_a_no_op_update() {
-    let args = ahead_server::decode_arguments(
+    let args = axton_server::decode_arguments(
         &config(),
         &json!({"name":"edit","operations":[{"model":"Task","op":"update","identity":{"id":"a"},"values":{}}]}),
     )
@@ -45,7 +45,7 @@ fn empty_patch_decodes_as_a_no_op_update() {
 }
 #[test]
 fn a_patch_of_only_unknown_fields_decodes_as_a_no_op_update() {
-    let args = ahead_server::decode_arguments(
+    let args = axton_server::decode_arguments(
         &config(),
         &json!({"name":"edit","operations":[{"model":"Task","op":"update","identity":{"id":"a"},"values":{"future":true}}]}),
     )
@@ -54,7 +54,7 @@ fn a_patch_of_only_unknown_fields_decodes_as_a_no_op_update() {
 }
 #[test]
 fn update_values_must_still_be_an_object() {
-    let err = ahead_server::decode_arguments(
+    let err = axton_server::decode_arguments(
         &config(),
         &json!({"name":"edit","operations":[{"model":"Task","op":"update","identity":{"id":"a"},"values":null}]}),
     )
@@ -65,8 +65,8 @@ fn update_values_must_still_be_an_object() {
 
 - [x] **Step 2: Run them to verify the first two fail**
 
-Run: `cargo test -p ahead-server --test runtime no_op_update`
-Expected: `empty_patch_decodes_as_a_no_op_update` and `a_patch_of_only_unknown_fields_decodes_as_a_no_op_update` FAIL with `called Result::unwrap() on an Err value` whose code is `mutation.invalid`. Run `cargo test -p ahead-server --test runtime update_values_must_still_be_an_object` and expect PASS (it pins existing behavior).
+Run: `cargo test -p axton-server --test runtime no_op_update`
+Expected: `empty_patch_decodes_as_a_no_op_update` and `a_patch_of_only_unknown_fields_decodes_as_a_no_op_update` FAIL with `called Result::unwrap() on an Err value` whose code is `mutation.invalid`. Run `cargo test -p axton-server --test runtime update_values_must_still_be_an_object` and expect PASS (it pins existing behavior).
 
 - [x] **Step 3: Remove the empty-patch refusal**
 
@@ -82,7 +82,7 @@ so the block ends with `argument["patch"] = Value::Object(data);`.
 
 - [x] **Step 4: Run the server tests**
 
-Run: `cargo test -p ahead-server`
+Run: `cargo test -p axton-server`
 Expected: all PASS, including the three new tests. If any existing test asserted `mutation.invalid` for an empty patch, it now fails: read it, and if it only pins the old refusal, change its expectation to the decoded `patch: {}`; if it tests something else, report it instead of forcing it green.
 
 - [x] **Step 5: Commit**
@@ -110,7 +110,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 In `relationships_bindings_and_dependency_metadata`, after the existing `assert_eq!(v["prerequisites"][0]["name"], "Uploaded");`, add:
 
 ```rust
-    // `Parent.update<>` is valid: an empty patch is a no-op update ([#49](https://github.com/zanminwang/ahead/issues/49)).
+    // `Parent.update<>` is valid: an empty patch is a no-op update ([#49](https://github.com/zanminwang/axton/issues/49)).
     assert_eq!(v["mutations"][1]["name"], "Rename");
     assert_eq!(
         v["mutations"][1]["slots"][0]["allowedPatchFields"],
@@ -120,7 +120,7 @@ In `relationships_bindings_and_dependency_metadata`, after the existing `assert_
 
 - [x] **Step 2: Run the compiler tests**
 
-Run: `cargo test -p ahead-compiler --test compiler relationships_bindings_and_dependency_metadata`
+Run: `cargo test -p axton-compiler --test compiler relationships_bindings_and_dependency_metadata`
 Expected: PASS. If the index or key name differs (for example the descriptor key is not `allowedPatchFields`), print `v["mutations"]` once with `println!("{}", v["mutations"])`, fix the assertion to the real key, and remove the print.
 
 - [x] **Step 3: Commit**
@@ -161,7 +161,7 @@ an unknown mutation, a wrong shape or a missing required create field is `mutati
 Append to "## 9. Architecture Decisions" (after the deprecation paragraph):
 
 ```
-**An empty update patch is a no-op, not a refusal (decided 2026-09-15, [#49](https://github.com/zanminwang/ahead/issues/49)).** `Model.update<>` is a valid declaration: its allowed list is empty, the generated input has no settable field, and the server decodes the operation to `{identity, patch: {}}`. The record remains a target of the mutation: the handler runs, a stamp is allocated, the loader reads it back into the receipt, and a publication distributes it. No layer special-cases the empty patch. Evidence: [server/tests/runtime.rs](../../../../crates/server/tests/runtime.rs) `empty_patch_decodes_as_a_no_op_update`, `a_patch_of_only_unknown_fields_decodes_as_a_no_op_update`; [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) `relationships_bindings_and_dependency_metadata`.
+**An empty update patch is a no-op, not a refusal (decided 2026-09-15, [#49](https://github.com/zanminwang/axton/issues/49)).** `Model.update<>` is a valid declaration: its allowed list is empty, the generated input has no settable field, and the server decodes the operation to `{identity, patch: {}}`. The record remains a target of the mutation: the handler runs, a stamp is allocated, the loader reads it back into the receipt, and a publication distributes it. No layer special-cases the empty patch. Evidence: [server/tests/runtime.rs](../../../../crates/server/tests/runtime.rs) `empty_patch_decodes_as_a_no_op_update`, `a_patch_of_only_unknown_fields_decodes_as_a_no_op_update`; [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) `relationships_bindings_and_dependency_metadata`.
 ```
 
 - [x] **Step 3: Remove the §11 entry**
@@ -185,13 +185,13 @@ An empty patch is a no-op update, covered by `empty_patch_decodes_as_a_no_op_upd
 In `docs/engineering/testing/review.md`, item 2, replace
 
 ```
-`Model.update<>` compiling but never succeeding ([#49](https://github.com/zanminwang/ahead/issues/49)) needs a focused regression with its fix.
+`Model.update<>` compiling but never succeeding ([#49](https://github.com/zanminwang/axton/issues/49)) needs a focused regression with its fix.
 ```
 
 with
 
 ```
-An empty update patch is a decided no-op with its regression in `server/tests/runtime.rs` ([#49](https://github.com/zanminwang/ahead/issues/49)).
+An empty update patch is a decided no-op with its regression in `server/tests/runtime.rs` ([#49](https://github.com/zanminwang/axton/issues/49)).
 ```
 
 - [x] **Step 5: Check the links**

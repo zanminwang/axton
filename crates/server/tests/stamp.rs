@@ -2,7 +2,7 @@
 //! channel of one request and isolates a record its loader cannot read; an
 //! external notification allocates one stamp per record and publishes it at
 //! that stamp.
-use ahead_server::{Config, Host, host::HostRequest};
+use axton_server::{Config, Host, host::HostRequest};
 use serde_json::{Value, json};
 use std::{
     future::Future,
@@ -56,7 +56,7 @@ impl Host for Fixed {
     fn call(
         &self,
         r: Value,
-    ) -> Pin<Box<dyn Future<Output = ahead_server::HostResult<Value>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = axton_server::HostResult<Value>> + Send + '_>> {
         Box::pin(async move {
             let request: HostRequest = serde_json::from_value(r)
                 .map_err(|error| format!("unsupported host request: {error}"))?;
@@ -89,7 +89,7 @@ fn pull_body() -> Vec<u8> {
 }
 /// A pull on `a` from cursor 0 declaring these read contracts.
 fn pull_body_declaring(models: &[(&str, u64)]) -> Vec<u8> {
-    ahead_core::PullRequest {
+    axton_core::PullRequest {
         cursors: [("a".to_string(), 0)].into(),
         models: models
             .iter()
@@ -110,14 +110,14 @@ fn row(stamp: Value) -> Value {
 #[test]
 fn pull_copies_the_row_stamp_into_the_change() {
     let host = Fixed::new(row(json!(7)), Value::Null);
-    let text = run(ahead_server::process_pull(
+    let text = run(axton_server::process_pull(
         &config(),
         "u",
         &pull_body(),
         &host,
     ))
     .unwrap();
-    let page = ahead_core::PullPage::decode(text.as_bytes()).unwrap();
+    let page = axton_core::PullPage::decode(text.as_bytes()).unwrap();
     assert_eq!(page.changes[0].stamp, 7);
     assert_eq!(
         *host.loaded.lock().unwrap(),
@@ -147,24 +147,24 @@ fn pull_normalizes_loader_rows_with_the_retained_contract_of_the_served_version(
     ]);
     let config = Config::decode(c).unwrap();
     // An old client declares v1: the v1 loader runs and the v1 contract shapes the row.
-    let text = run(ahead_server::process_pull(
+    let text = run(axton_server::process_pull(
         &config,
         "u",
         &pull_body_declaring(&[("Entry", 1)]),
         &host,
     ))
     .unwrap();
-    let page = ahead_core::PullPage::decode(text.as_bytes()).unwrap();
+    let page = axton_core::PullPage::decode(text.as_bytes()).unwrap();
     assert_eq!(page.changes[0].state, json!({"text":"t"}));
     // A new client declares v2 for the same data: the v2 loader and contract.
-    let text = run(ahead_server::process_pull(
+    let text = run(axton_server::process_pull(
         &config,
         "u",
         &pull_body_declaring(&[("Entry", 2)]),
         &host,
     ))
     .unwrap();
-    let page = ahead_core::PullPage::decode(text.as_bytes()).unwrap();
+    let page = axton_core::PullPage::decode(text.as_bytes()).unwrap();
     assert_eq!(page.changes[0].state, json!({"text":"t","note":null}));
     assert_eq!(
         *host.loaded.lock().unwrap(),
@@ -180,7 +180,7 @@ fn pull_normalizes_loader_rows_with_the_retained_contract_of_the_served_version(
             json!({"model":"Ghost","version":1}),
         ),
     ] {
-        let err = run(ahead_server::process_pull(
+        let err = run(axton_server::process_pull(
             &config,
             "u",
             &pull_body_declaring(models),
@@ -189,7 +189,7 @@ fn pull_normalizes_loader_rows_with_the_retained_contract_of_the_served_version(
         .unwrap_err();
         assert_eq!(
             err.code,
-            ahead_server::code::MODEL_VERSION_UNSUPPORTED,
+            axton_server::code::MODEL_VERSION_UNSUPPORTED,
             "{err}"
         );
         assert_eq!(err.details, detail, "{err}");
@@ -217,7 +217,7 @@ fn a_page_holding_a_model_the_client_did_not_declare_is_refused_whole() {
         "mutations":[]
     });
     let config = Config::decode(c).unwrap();
-    let err = run(ahead_server::process_pull(
+    let err = run(axton_server::process_pull(
         &config,
         "u",
         &pull_body_declaring(&[("Note", 1)]),
@@ -226,7 +226,7 @@ fn a_page_holding_a_model_the_client_did_not_declare_is_refused_whole() {
     .unwrap_err();
     assert_eq!(
         err.code,
-        ahead_server::code::MODEL_VERSION_UNSUPPORTED,
+        axton_server::code::MODEL_VERSION_UNSUPPORTED,
         "{err}"
     );
     assert_eq!(err.details, json!({"model":"Entry"}));
@@ -237,7 +237,7 @@ fn a_page_holding_a_model_the_client_did_not_declare_is_refused_whole() {
 fn pull_rejects_rows_without_a_positive_stamp() {
     for bad in [Value::Null, json!(0), json!(-1), json!(9007199254740992u64)] {
         let host = Fixed::new(row(bad.clone()), Value::Null);
-        let err = run(ahead_server::process_pull(
+        let err = run(axton_server::process_pull(
             &config(),
             "u",
             &pull_body(),
@@ -245,7 +245,7 @@ fn pull_rejects_rows_without_a_positive_stamp() {
         ))
         .unwrap_err();
         assert!(err.message.contains("stamp"), "{bad}: {err}");
-        assert_eq!(err.code, ahead_server::code::STORAGE_INVALID);
+        assert_eq!(err.code, axton_server::code::STORAGE_INVALID);
     }
 }
 
@@ -256,7 +256,7 @@ fn an_external_settlement_advances_one_stamp_per_record_and_distributes_it_at_th
         "publications":[{"channel":"a"},{"channel":"b"}]
     });
     let ok = Fixed::new(json!([]), json!({"cursor":3,"stamp":9}));
-    let answer = run(ahead_server::settle_external(&config(), &settlement, &ok)).unwrap();
+    let answer = run(axton_server::settle_external(&config(), &settlement, &ok)).unwrap();
     assert_eq!(
         answer,
         json!([{"model":"Entry","identity":{"id":"e"},"stamp":9}]),
@@ -277,7 +277,7 @@ fn an_external_settlement_advances_one_stamp_per_record_and_distributes_it_at_th
         "changes":[],
         "publications":[{"channel":"a","records":[{"model":"Entry","identity":{"id":"e"}}]}]
     });
-    run(ahead_server::settle_external(
+    run(axton_server::settle_external(
         &config(),
         &publication_only,
         &ensure,
@@ -297,8 +297,8 @@ fn an_external_settlement_advances_one_stamp_per_record_and_distributes_it_at_th
         json!({"cursor":3,"stamp":8}),
     ] {
         let host = Fixed::new(json!([]), bad.clone());
-        let err = run(ahead_server::settle_external(&config(), &settlement, &host)).unwrap_err();
-        assert_eq!(err.code, ahead_server::code::HOST_INVALID, "{bad}: {err}");
+        let err = run(axton_server::settle_external(&config(), &settlement, &host)).unwrap_err();
+        assert_eq!(err.code, axton_server::code::HOST_INVALID, "{bad}: {err}");
     }
     // A rejection or a malformed settlement is refused before any host call.
     for bad in [
@@ -307,10 +307,10 @@ fn an_external_settlement_advances_one_stamp_per_record_and_distributes_it_at_th
         json!({"channels":["a"]}),
     ] {
         let host = Fixed::new(json!([]), json!({"cursor":3,"stamp":9}));
-        let err = run(ahead_server::settle_external(&config(), &bad, &host)).unwrap_err();
+        let err = run(axton_server::settle_external(&config(), &bad, &host)).unwrap_err();
         assert_eq!(
             err.code,
-            ahead_server::code::PUBLISH_INVALID,
+            axton_server::code::PUBLISH_INVALID,
             "{bad}: {err}"
         );
         assert!(host.published.lock().unwrap().is_empty());
@@ -320,7 +320,7 @@ fn an_external_settlement_advances_one_stamp_per_record_and_distributes_it_at_th
 #[test]
 fn live_negotiation_establishes_current_heads_and_rejects_cursor_modes() {
     let host = Fixed::new(json!([]), Value::Null);
-    let result = run(ahead_server::live::negotiate(
+    let result = run(axton_server::live::negotiate(
         &config(),
         "u",
         br#"{"type":"subscribe","channels":["a"],"models":{"Entry":1}}"#,
@@ -337,18 +337,18 @@ fn live_negotiation_establishes_current_heads_and_rejects_cursor_modes() {
     for (frame, code) in [
         (
             r#"{"type":"subscribe","channels":["a"]}"#,
-            ahead_server::code::REQUEST_INVALID,
+            axton_server::code::REQUEST_INVALID,
         ),
         (
             r#"{"type":"subscribe","channels":["a"],"models":{"Entry":2}}"#,
-            ahead_server::code::MODEL_VERSION_UNSUPPORTED,
+            axton_server::code::MODEL_VERSION_UNSUPPORTED,
         ),
         (
             r#"{"type":"subscribe","channels":["a"],"models":{"Ghost":1}}"#,
-            ahead_server::code::MODEL_VERSION_UNSUPPORTED,
+            axton_server::code::MODEL_VERSION_UNSUPPORTED,
         ),
     ] {
-        let err = run(ahead_server::live::negotiate(
+        let err = run(axton_server::live::negotiate(
             &config(),
             "u",
             frame.as_bytes(),
@@ -373,7 +373,7 @@ fn live_negotiation_establishes_current_heads_and_rejects_cursor_modes() {
         let request =
             json!({"type":"subscribe","channels":["a"],"models":{"Entry":1},"cursors":cursors});
         assert!(
-            run(ahead_server::live::negotiate(
+            run(axton_server::live::negotiate(
                 &config(),
                 "u",
                 request.to_string().as_bytes(),
@@ -398,7 +398,7 @@ impl Host for Multi {
     fn call(
         &self,
         r: Value,
-    ) -> Pin<Box<dyn Future<Output = ahead_server::HostResult<Value>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = axton_server::HostResult<Value>> + Send + '_>> {
         Box::pin(async move {
             let request: HostRequest = serde_json::from_value(r)
                 .map_err(|error| format!("unsupported host request: {error}"))?;
@@ -446,15 +446,15 @@ fn multi(scans: &[(&str, Vec<Value>, u64)], loads: Vec<Value>) -> Multi {
         log: Mutex::new(vec![]),
     }
 }
-fn pull_all(host: &Multi, cursors: &[(&str, u64)]) -> ahead_server::Result<ahead_core::PullPage> {
-    let request = ahead_core::PullRequest {
+fn pull_all(host: &Multi, cursors: &[(&str, u64)]) -> axton_server::Result<axton_core::PullPage> {
+    let request = axton_core::PullRequest {
         cursors: cursors.iter().map(|(c, n)| (c.to_string(), *n)).collect(),
         models: [("Entry".to_string(), 1)].into(),
     }
     .encode()
     .unwrap();
-    run(ahead_server::process_pull(&config(), "u", &request, host))
-        .map(|text| ahead_core::PullPage::decode(text.as_bytes()).unwrap())
+    run(axton_server::process_pull(&config(), "u", &request, host))
+        .map(|text| axton_core::PullPage::decode(text.as_bytes()).unwrap())
 }
 
 /// One pull covers every channel: each channel scans after its own cursor and
@@ -476,7 +476,7 @@ fn one_pull_covers_every_channel_and_delivers_a_shared_record_once() {
     let page = pull_all(&host, &[("a", 0), ("b", 5)]).unwrap();
     assert_eq!(
         page.cursors["a"],
-        ahead_core::CursorRange {
+        axton_core::CursorRange {
             from: 0,
             to: 2,
             head: 2
@@ -484,7 +484,7 @@ fn one_pull_covers_every_channel_and_delivers_a_shared_record_once() {
     );
     assert_eq!(
         page.cursors["b"],
-        ahead_core::CursorRange {
+        axton_core::CursorRange {
             from: 5,
             to: 9,
             head: 9
@@ -515,7 +515,7 @@ fn a_full_channel_continues_independently_of_the_others() {
     let page = pull_all(&host, &[("a", 0), ("b", 3)]).unwrap();
     assert_eq!(
         page.cursors["a"],
-        ahead_core::CursorRange {
+        axton_core::CursorRange {
             from: 0,
             to: 50,
             head: 80
@@ -524,7 +524,7 @@ fn a_full_channel_continues_independently_of_the_others() {
     assert!(page.cursors["a"].continues());
     assert_eq!(
         page.cursors["b"],
-        ahead_core::CursorRange {
+        axton_core::CursorRange {
             from: 3,
             to: 3,
             head: 3
@@ -658,7 +658,7 @@ fn a_thrown_host_error_still_fails_the_pull() {
         fn call(
             &self,
             r: Value,
-        ) -> Pin<Box<dyn Future<Output = ahead_server::HostResult<Value>> + Send + '_>> {
+        ) -> Pin<Box<dyn Future<Output = axton_server::HostResult<Value>> + Send + '_>> {
             Box::pin(async move {
                 let request: HostRequest = serde_json::from_value(r).map_err(|e| e.to_string())?;
                 Ok(match request {
@@ -670,20 +670,20 @@ fn a_thrown_host_error_still_fails_the_pull() {
             })
         }
     }
-    let request = ahead_core::PullRequest {
+    let request = axton_core::PullRequest {
         cursors: [("a".to_string(), 0)].into(),
         models: [("Entry".to_string(), 1)].into(),
     }
     .encode()
     .unwrap();
-    let err = run(ahead_server::process_pull(
+    let err = run(axton_server::process_pull(
         &config(),
         "u",
         &request,
         &Throws,
     ))
     .unwrap_err();
-    assert_eq!(err.code, ahead_server::code::HOST);
+    assert_eq!(err.code, axton_server::code::HOST);
 }
 
 /// A cursor past a channel's head is refused, naming the channel.
@@ -691,6 +691,6 @@ fn a_thrown_host_error_still_fails_the_pull() {
 fn a_cursor_ahead_of_its_channel_head_is_refused() {
     let host = multi(&[("a", vec![], 2), ("b", vec![], 9)], vec![]);
     let err = pull_all(&host, &[("a", 3), ("b", 0)]).unwrap_err();
-    assert_eq!(err.code, ahead_server::code::REQUEST_INVALID);
+    assert_eq!(err.code, axton_server::code::REQUEST_INVALID);
     assert!(err.message.contains("on a"), "{err}");
 }

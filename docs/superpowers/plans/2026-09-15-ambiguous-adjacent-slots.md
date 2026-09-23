@@ -17,7 +17,7 @@
 - Do not edit `fixtures/compiler/history/mutations.json` by hand; only the compiler writes history.
 - Diagnostic text must contain `ambiguous slot`.
 - Run `cargo fmt --all` before each commit. Commit messages end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
-- Before the generated-API runner: `npm ci` at the repo root, then `bash scripts/build.sh` (installs `packages/server` and `packages/client-js` deps and builds the Node addon). Dart needs `AHEAD_LIBRARY` and `AHEAD_DART_LIBRARY` exported to `$PWD/target/debug/libahead_dart.dylib` after `cargo build -p ahead-dart`.
+- Before the generated-API runner: `npm ci` at the repo root, then `bash scripts/build.sh` (installs `packages/server` and `packages/client-js` deps and builds the Node addon). Dart needs `AXTON_LIBRARY` and `AXTON_DART_LIBRARY` exported to `$PWD/target/debug/libaxton_dart.dylib` after `cargo build -p axton-dart`.
 
 ---
 
@@ -70,7 +70,7 @@ In `semantic_errors_report_the_offending_declaration`, append to `cases` (each i
 
 - [x] **Step 3: Run the two tests to verify they fail**
 
-Run: `cargo test -p ahead-compiler --test compiler structural_refusals_a_schema_author_is_likely_to_hit semantic_errors_report_the_offending_declaration`
+Run: `cargo test -p axton-compiler --test compiler structural_refusals_a_schema_author_is_likely_to_hit semantic_errors_report_the_offending_declaration`
 Expected: both FAIL. The structural test panics on the first new case with `the valid twin was refused` is NOT expected; it must fail with `expected "ambiguous slot" in ...` because `compile(invalid)` returns `Ok`. If a valid twin is refused, the twin is wrong: fix the twin, not the rule.
 
 - [x] **Step 4: Implement the check**
@@ -82,7 +82,7 @@ In `crates/compiler/src/validate.rs`, in the final loop `for (m, decl) in valida
         // slot order and a non-single slot takes what it can. A later slot of
         // the same kind, with no single slot fixing a position in between, is
         // unreachable or takes an operation meant for the earlier one
-        // ([#54](https://github.com/zanminwang/ahead/issues/54)).
+        // ([#54](https://github.com/zanminwang/axton/issues/54)).
         for j in 1..m.slots.len() {
             let later = &m.slots[j];
             for i in (0..j).rev() {
@@ -108,7 +108,7 @@ In `crates/compiler/src/validate.rs`, in the final loop `for (m, decl) in valida
 
 - [x] **Step 5: Run the compiler tests**
 
-Run: `cargo test -p ahead-compiler`
+Run: `cargo test -p axton-compiler`
 Expected: the two edited tests PASS. The tests that compile `fixtures/compiler/example.model` (search `example.model` in `crates/compiler/tests/`) now FAIL with `ambiguous slot: maybe cannot be told apart from entries`; that is expected and fixed in Task 2. Anything else failing is a bug in the check: re-read the rule table in the spec §2.
 
 - [x] **Step 6: Commit the check and tests**
@@ -149,7 +149,7 @@ mutation RemoveEntries { entries Entry.delete[] maybe Entry.update<note>? @depre
 
 - [x] **Step 2: Run the compiler tests again**
 
-Run: `cargo test -p ahead-compiler`
+Run: `cargo test -p axton-compiler`
 Expected: all PASS. If a test asserts the old `maybe` shape (a `delete` optional) in generated output, update that assertion to the update slot; the `@deprecated` slot notice must still appear.
 
 - [x] **Step 3: Regenerate the generated-API fixtures**
@@ -157,7 +157,7 @@ Expected: all PASS. If a test asserts the old `maybe` shape (a `delete` optional
 Run (from the worktree root, after `npm ci && bash scripts/build.sh` once):
 
 ```bash
-cargo run -p ahead-compiler -- compile fixtures/compiler integration/generated-api --backend-runtime ../../packages/server/index.mts --client-runtime ../../packages/client-js/index.mts
+cargo run -p axton-compiler -- compile fixtures/compiler integration/generated-api --backend-runtime ../../packages/server/index.mts --client-runtime ../../packages/client-js/index.mts
 git status --short
 ```
 
@@ -183,9 +183,9 @@ Open `integration/generated-api/backend-complete.ts` and `integration/generated-
 - [x] **Step 6: Run the whole generated-API runner**
 
 ```bash
-cargo build -p ahead-dart
-export AHEAD_LIBRARY="$PWD/target/debug/libahead_dart.dylib"
-export AHEAD_DART_LIBRARY="$AHEAD_LIBRARY"
+cargo build -p axton-dart
+export AXTON_LIBRARY="$PWD/target/debug/libaxton_dart.dylib"
+export AXTON_DART_LIBRARY="$AXTON_LIBRARY"
 bash integration/generated-api/verify.sh
 ```
 
@@ -222,7 +222,7 @@ A later slot with the same `(model, op)` as an earlier non-single slot, with no 
 Append to "## 9. Architecture Decisions":
 
 ```
-**Ambiguous adjacent slots are refused at compile time (decided 2026-09-15, [#54](https://github.com/zanminwang/ahead/issues/54)).** Operations carry no slot name, so two slots of one `(model, op)` are only distinguishable when a single slot fixes a position between them or the earlier one is itself single. The compiler reports the later slot; the wire format and the decoders in [server/lib.rs](../../../../crates/server/src/lib.rs) and [client/policies.rs](../../../../crates/client/src/policies.rs) are unchanged, and retained history versions keep decoding as they always did. Evidence: [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) `structural_refusals_a_schema_author_is_likely_to_hit`, `semantic_errors_report_the_offending_declaration`.
+**Ambiguous adjacent slots are refused at compile time (decided 2026-09-15, [#54](https://github.com/zanminwang/axton/issues/54)).** Operations carry no slot name, so two slots of one `(model, op)` are only distinguishable when a single slot fixes a position between them or the earlier one is itself single. The compiler reports the later slot; the wire format and the decoders in [server/lib.rs](../../../../crates/server/src/lib.rs) and [client/policies.rs](../../../../crates/client/src/policies.rs) are unchanged, and retained history versions keep decoding as they always did. Evidence: [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) `structural_refusals_a_schema_author_is_likely_to_hit`, `semantic_errors_report_the_offending_declaration`.
 ```
 
 - [x] **Step 3: §11 removal**
@@ -243,7 +243,7 @@ with
 Adjacent slots with the same model and operation are refused by the compiler ([Mutations §9](../../architecture/schema/mutations.md#9-architecture-decisions)); the fixture's `RemoveEntries` v2 is unambiguous.
 ```
 
-In `docs/engineering/testing/review.md`, item 1, remove the clause `greedy decoding of adjacent slots ([#54](https://github.com/zanminwang/ahead/issues/54), [Mutations §11](../architecture/schema/mutations.md))` and fix the sentence's punctuation.
+In `docs/engineering/testing/review.md`, item 1, remove the clause `greedy decoding of adjacent slots ([#54](https://github.com/zanminwang/axton/issues/54), [Mutations §11](../architecture/schema/mutations.md))` and fix the sentence's punctuation.
 
 If `validate.md` or `components/compiler.md` list refusals, add one line for `ambiguous slot` in the same style as their `duplicate slot` entry.
 

@@ -2,11 +2,11 @@ import type { DriverOptions, PostgresDriver } from "./driver.mts";
 import { RETRYABLE_SQLSTATES, withRetries } from "./driver.mts";
 import { persistence } from "./persistence.mts";
 
-/** The part of a Prisma interactive transaction Ahead uses; `Prisma.TransactionClient` satisfies it. */
+/** The part of a Prisma interactive transaction AXTON uses; `Prisma.TransactionClient` satisfies it. */
 export interface PrismaTransaction {
   $queryRawUnsafe<T = unknown>(sql: string, ...values: any[]): Promise<T>;
 }
-/** The part of a Prisma client Ahead uses; `PrismaClient` satisfies it. */
+/** The part of a Prisma client AXTON uses; `PrismaClient` satisfies it. */
 export interface PrismaClientLike<Tx extends PrismaTransaction> {
   $transaction<R>(
     body: (tx: Tx) => Promise<R>,

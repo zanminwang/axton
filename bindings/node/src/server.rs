@@ -1,4 +1,4 @@
-use ahead_server::live::Subscriptions;
+use axton_server::live::Subscriptions;
 use napi::{bindgen_prelude::*, threadsafe_function::ThreadsafeFunction};
 use napi_derive::napi;
 use serde_json::Value;
@@ -9,11 +9,11 @@ use std::{
     sync::{Mutex, MutexGuard, OnceLock},
 };
 struct CallbackHost(ThreadsafeFunction<String, Promise<String>, String, Status, false>);
-impl ahead_server::Host for CallbackHost {
+impl axton_server::Host for CallbackHost {
     fn call(
         &self,
         request: Value,
-    ) -> Pin<Box<dyn Future<Output = ahead_server::HostResult<Value>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = axton_server::HostResult<Value>> + Send + '_>> {
         Box::pin(async move {
             let returned = self
                 .0
@@ -28,19 +28,19 @@ impl ahead_server::Host for CallbackHost {
 }
 /// The engine error crosses N-API as its JSON encoding in the reason string;
 /// the server SDK decodes it back into `{code, message, details}`.
-fn reason(error: ahead_server::Error) -> Error {
+fn reason(error: axton_server::Error) -> Error {
     Error::from_reason(serde_json::to_string(&error).unwrap_or_else(|_| error.to_string()))
 }
 fn internal(error: impl std::fmt::Display) -> Error {
-    reason(ahead_server::Error::new(
-        ahead_server::code::INTERNAL,
+    reason(axton_server::Error::new(
+        axton_server::code::INTERNAL,
         error.to_string(),
     ))
 }
-fn config(raw: &str) -> Result<ahead_server::Config> {
-    ahead_server::Config::decode(serde_json::from_str(raw).map_err(|e| {
-        reason(ahead_server::Error::new(
-            ahead_server::code::CONFIG_INVALID,
+fn config(raw: &str) -> Result<axton_server::Config> {
+    axton_server::Config::decode(serde_json::from_str(raw).map_err(|e| {
+        reason(axton_server::Error::new(
+            axton_server::code::CONFIG_INVALID,
             e.to_string(),
         ))
     })?)
@@ -57,7 +57,7 @@ pub async fn process_push(
     request_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
-    ahead_server::process_push(
+    axton_server::process_push(
         &config(&config_json)?,
         &owner,
         request_json.as_bytes(),
@@ -73,7 +73,7 @@ pub async fn process_pull(
     request_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
-    ahead_server::process_pull(
+    axton_server::process_pull(
         &config(&config_json)?,
         &owner,
         request_json.as_bytes(),
@@ -89,12 +89,12 @@ pub async fn settle_external(
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
     let settlement = serde_json::from_str(&settlement_json).map_err(|e: serde_json::Error| {
-        reason(ahead_server::Error::new(
-            ahead_server::code::PUBLISH_INVALID,
+        reason(axton_server::Error::new(
+            axton_server::code::PUBLISH_INVALID,
             e.to_string(),
         ))
     })?;
-    ahead_server::settle_external(&config(&config_json)?, &settlement, &CallbackHost(callback))
+    axton_server::settle_external(&config(&config_json)?, &settlement, &CallbackHost(callback))
         .await
         .map(|v| v.to_string())
         .map_err(reason)
@@ -115,8 +115,8 @@ fn live_sessions() -> Result<MutexGuard<'static, LiveSessions>> {
         .map_err(|_| internal("live sessions poisoned"))
 }
 fn live_invalid(message: &str) -> Error {
-    reason(ahead_server::Error::new(
-        ahead_server::code::LIVE_INVALID_EVENT,
+    reason(axton_server::Error::new(
+        axton_server::code::LIVE_INVALID_EVENT,
         message,
     ))
 }
@@ -131,7 +131,7 @@ pub async fn negotiate_live(
     request_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
-    let negotiation = ahead_server::live::negotiate(
+    let negotiation = axton_server::live::negotiate(
         &config(&config_json)?,
         &owner,
         request_json.as_bytes(),
@@ -187,19 +187,19 @@ pub async fn pull_live(
     // decodes the pull.
     let models: std::collections::BTreeMap<String, u64> = serde_json::from_str(&models_json)
         .map_err(|_| {
-            reason(ahead_server::Error::new(
-                ahead_server::code::REQUEST_INVALID,
+            reason(axton_server::Error::new(
+                axton_server::code::REQUEST_INVALID,
                 "invalid live models",
             ))
         })?;
     let cursors: std::collections::BTreeMap<String, u64> = serde_json::from_str(&cursors_json)
         .map_err(|_| {
-            reason(ahead_server::Error::new(
-                ahead_server::code::REQUEST_INVALID,
+            reason(axton_server::Error::new(
+                axton_server::code::REQUEST_INVALID,
                 "invalid live cursors",
             ))
         })?;
-    let result = ahead_server::live::pull(
+    let result = axton_server::live::pull(
         &config(&config_json)?,
         &owner,
         &cursors,

@@ -1,11 +1,11 @@
 [package]
-name = "ahead-client"
+name = "axton-client"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 [dependencies]
 chrono.workspace = true
-ahead-core = { path = "../core" }
+axton-core = { path = "../core" }
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true

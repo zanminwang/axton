@@ -3,10 +3,10 @@
 //! gets a fresh file beside the old one, which is kept. Unsent work in the old
 //! file is sent first or explicitly discarded with a report.
 //!
-//! [#20]: https://github.com/zanminwang/ahead/issues/20
+//! [#20]: https://github.com/zanminwang/axton/issues/20
 mod common;
-use ahead_client::*;
-use ahead_sqlite::SqliteStore;
+use axton_client::*;
+use axton_sqlite::SqliteStore;
 use common::*;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -39,7 +39,7 @@ fn sidecar(path: &Path) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 fn descriptor(c: &mut Client<SqliteStore>) -> String {
-    c.read_sql("SELECT descriptor FROM ahead_schema", &[])
+    c.read_sql("SELECT descriptor FROM axton_schema", &[])
         .unwrap()[0]["descriptor"]
         .as_str()
         .unwrap()
@@ -128,7 +128,7 @@ fn an_earlier_framework_layout_is_rebuilt_beside_not_refused() {
     let path = dir.path().join("db");
     let mut s = SqliteStore::open(&path).unwrap();
     s.execute_batch(ddl::FRAMEWORK_DDL).unwrap();
-    s.execute_batch("CREATE TABLE ahead_push_checkpoint (push INTEGER NOT NULL, channel TEXT NOT NULL, cursor INTEGER NOT NULL, PRIMARY KEY (push, channel)); INSERT INTO ahead_push_checkpoint VALUES (1,'a',1); INSERT INTO ahead_client (client_id, next_ordinal, next_push, generation) VALUES ('old',1,1,1); INSERT INTO ahead_subscription VALUES ('a', 9)").unwrap();
+    s.execute_batch("CREATE TABLE axton_push_checkpoint (push INTEGER NOT NULL, channel TEXT NOT NULL, cursor INTEGER NOT NULL, PRIMARY KEY (push, channel)); INSERT INTO axton_push_checkpoint VALUES (1,'a',1); INSERT INTO axton_client (client_id, next_ordinal, next_push, generation) VALUES ('old',1,1,1); INSERT INTO axton_subscription VALUES ('a', 9)").unwrap();
     drop(s);
     assert!(
         Client::open(SqliteStore::open(&path).unwrap(), schema()).is_err(),
@@ -142,13 +142,13 @@ fn an_earlier_framework_layout_is_rebuilt_beside_not_refused() {
             .as_ref()
             .unwrap()
             .reason
-            .contains("ahead_push_checkpoint")
+            .contains("axton_push_checkpoint")
     );
     assert_eq!(c.subscriptions().unwrap(), vec![("a".to_string(), 0)]);
     assert_ne!(c.client_id(), "old", "a fresh client identity");
     let mut s = SqliteStore::open(&path).unwrap();
     let rows = s
-        .query_committed("SELECT COUNT(*) AS n FROM ahead_push_checkpoint", &[])
+        .query_committed("SELECT COUNT(*) AS n FROM axton_push_checkpoint", &[])
         .unwrap();
     assert_eq!(rows.rows[0][0], json!(1), "the old file is untouched");
 }
@@ -282,9 +282,9 @@ fn a_current_layout_file_without_a_descriptor_adopts_the_schema_it_opens_with() 
     let path = dir.path().join("db");
     let mut c = open_at(&path, schema());
     seed(&mut c, "A");
-    c.read_sql("DELETE FROM ahead_schema", &[]).ok();
+    c.read_sql("DELETE FROM axton_schema", &[]).ok();
     let mut s = SqliteStore::open(&path).unwrap();
-    s.execute("DELETE FROM ahead_schema", &[]).unwrap();
+    s.execute("DELETE FROM axton_schema", &[]).unwrap();
     drop(s);
     drop(c);
     let mut c = open_at(&path, wider());
@@ -296,7 +296,7 @@ fn a_current_layout_file_without_a_descriptor_adopts_the_schema_it_opens_with() 
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
     drop(c);
     let mut s = SqliteStore::open(&path).unwrap();
-    s.execute("DELETE FROM ahead_schema", &[]).unwrap();
+    s.execute("DELETE FROM axton_schema", &[]).unwrap();
     drop(s);
     let c = open_at(&path, breaking());
     assert!(
@@ -351,7 +351,7 @@ fn a_database_without_a_descriptor_is_rebuilt_only_when_its_tables_do_not_fit() 
     drop(open_at(&path, schema()));
     {
         let mut store = SqliteStore::open(&path).unwrap();
-        store.execute("DELETE FROM ahead_schema", &[]).unwrap();
+        store.execute("DELETE FROM axton_schema", &[]).unwrap();
     }
     let mut c = open_at(&path, wider());
     assert!(!c.schema_state().rebuilt, "compatible tables open in place");
@@ -360,7 +360,7 @@ fn a_database_without_a_descriptor_is_rebuilt_only_when_its_tables_do_not_fit() 
     drop(c);
     {
         let mut store = SqliteStore::open(&path).unwrap();
-        store.execute("DELETE FROM ahead_schema", &[]).unwrap();
+        store.execute("DELETE FROM axton_schema", &[]).unwrap();
     }
     let c = open_at(&path, breaking());
     assert!(

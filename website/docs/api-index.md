@@ -1,6 +1,6 @@
 # API reference
 
-Use this index to find the interface you call or implement. The examples use the `Entry` model and `Edit` mutation of the [round-trip fixture](https://github.com/zanminwang/ahead/blob/main/integration/e2e/fixtures/round-trip/models/entry.model); the [To-do example](getting-started.md) exposes the same interfaces as `Todo`, `addTodo` and `setTodoDone`. Generated names change with your schema: `Entry` becomes your model name, and `edit` becomes your mutation name.
+Use this index to find the interface you call or implement. The examples use the `Entry` model and `Edit` mutation of the [round-trip fixture](https://github.com/zanminwang/axton/blob/main/integration/e2e/fixtures/round-trip/models/entry.model); the [To-do example](getting-started.md) exposes the same interfaces as `Todo`, `addTodo` and `setTodoDone`. Generated names change with your schema: `Entry` becomes your model name, and `edit` becomes your mutation name.
 
 ## Application interfaces
 

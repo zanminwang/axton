@@ -1,6 +1,6 @@
 /**
- * What Ahead needs from a PostgreSQL access tool: one transaction runner and
- * one statement runner inside that transaction. Every Ahead statement lives in
+ * What AXTON needs from a PostgreSQL access tool: one transaction runner and
+ * one statement runner inside that transaction. Every AXTON statement lives in
  * `sql.mts`; a tool shim (`pg`, `prisma`, `drizzle`) only has to bind these
  * two methods to its own transaction type, which handlers and loaders keep
  * receiving unchanged.

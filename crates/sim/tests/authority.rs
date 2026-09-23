@@ -1,6 +1,6 @@
 //! Authority on the simulation: a push completes from its receipt, channel pages and
 //! receipts carry the same stamps, and neither can regress the other.
-use ahead_sim::{Action, MutationSpec, Sim, schema::entry_key};
+use axton_sim::{Action, MutationSpec, Sim, schema::entry_key};
 
 fn setup(seed: u64) -> Sim {
     let mut sim = Sim::new(seed, 1);
@@ -58,7 +58,7 @@ fn a1_server_value_overrides_optimism_and_later_edits_replay() {
     );
     let base = sim
         .client(0)
-        .read_sql("SELECT text FROM ahead_before_Entry", &[])
+        .read_sql("SELECT text FROM axton_before_Entry", &[])
         .unwrap();
     assert_eq!(
         base[0]["text"], "MINE",

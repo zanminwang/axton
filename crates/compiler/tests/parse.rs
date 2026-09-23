@@ -1,5 +1,5 @@
-use ahead_compiler::validate::{Cardinality, FieldType, OnDelete, Operation, Scalar};
-use ahead_compiler::{Pos, compile, generate, parse, validate};
+use axton_compiler::validate::{Cardinality, FieldType, OnDelete, Operation, Scalar};
+use axton_compiler::{Pos, compile, generate, parse, validate};
 
 const SOURCE: &str = "prerequisite Uploaded(key String)\nenum Status { active archived }\nmodel Parent {\n id UUID\n children Child[]\n @@id(id)\n @@unique(id)\n @@version(2)\n}\nmodel Child {\n id UUID\n parentId UUID\n label String @requires(Uploaded(key: self))\n parent Parent @reference(via: [parentId], onTargetDelete: delete)\n @@id(id)\n}\nmutation Add {\n parent Parent.create\n children Child.create(parent: parent)[]\n @@version(2)\n @@sequence(after: [Rename(parent: parent)])\n}\nmutation Rename { parent Parent.update<> }\n";
 
@@ -232,10 +232,10 @@ fn generate_is_a_pure_function_of_the_validated_schema() {
     assert_eq!(generate::descriptors(&v)["schema"], generate::schema(&v));
     assert_eq!(
         generate::typescript(&generate::descriptors(&v)),
-        ahead_compiler::typescript(&compile(SOURCE).unwrap())
+        axton_compiler::typescript(&compile(SOURCE).unwrap())
     );
     // The client descriptor is what core loads.
-    ahead_core::Schema::from_value(generate::schema(&v)).unwrap();
+    axton_core::Schema::from_value(generate::schema(&v)).unwrap();
 }
 
 #[test]

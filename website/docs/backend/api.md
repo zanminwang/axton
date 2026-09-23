@@ -1,8 +1,8 @@
 # Backend interfaces
 
-Your backend implements the write path through handlers and the read/sync path through loaders. The compiler generates their TypeScript interfaces from your schema. Ahead supplies protocol processing; your application supplies business logic, authorization and a database transaction.
+Your backend implements the write path through handlers and the read/sync path through loaders. The compiler generates their TypeScript interfaces from your schema. AXTON supplies protocol processing; your application supplies business logic, authorization and a database transaction.
 
-Examples use the `Entry` / `Edit` schema of the [round-trip fixture](https://github.com/zanminwang/ahead/blob/main/integration/e2e/fixtures/round-trip/models/entry.model), which keeps a nullable field and an update patch that the [To-do example](../getting-started.md) does not need. The complete working implementation is [server.mts](https://github.com/zanminwang/ahead/blob/main/integration/e2e/fixtures/round-trip/server.mts); the To-do backend is [examples/todo/server.mts](https://github.com/zanminwang/ahead/blob/main/examples/todo/server.mts).
+Examples use the `Entry` / `Edit` schema of the [round-trip fixture](https://github.com/zanminwang/axton/blob/main/integration/e2e/fixtures/round-trip/models/entry.model), which keeps a nullable field and an update patch that the [To-do example](../getting-started.md) does not need. The complete working implementation is [server.mts](https://github.com/zanminwang/axton/blob/main/integration/e2e/fixtures/round-trip/server.mts); the To-do backend is [examples/todo/server.mts](https://github.com/zanminwang/axton/blob/main/examples/todo/server.mts).
 
 ## createBackend
 
@@ -25,7 +25,7 @@ const server = await backend.listen({ port: 4242 });
 console.log(server.url);
 ```
 
-The imports assume the same directory depth as the repository example. `handlers.ts` and `loaders.ts` contain the implementations below. Generate the Prisma application client and apply Ahead's metadata migration first; see [Database](database.md).
+The imports assume the same directory depth as the repository example. `handlers.ts` and `loaders.ts` contain the implementations below. Generate the Prisma application client and apply AXTON's metadata migration first; see [Database](database.md).
 
 The generated `Options<Tx>` requires:
 
@@ -55,7 +55,7 @@ These are accepted limits of the current runtime, not planned features. See [dep
 
 ## Handlers
 
-A handler writes to your database. Ahead then reads every record the mutation changed back through your loader, in the same transaction, and returns that content to the client in the receipt. The simplest handler performs the write and nothing else:
+A handler writes to your database. AXTON then reads every record the mutation changed back through your loader, in the same transaction, and returns that content to the client in the receipt. The simplest handler performs the write and nothing else:
 
 ```ts
 // handlers.ts
@@ -111,11 +111,11 @@ These reproduce the demo's normalization and rejection behavior. They are not an
 | `changes` | The records this mutation changed: `changes.records` starts as the records the uploaded operations target; `changes.add(record)` reports one more |
 | `publish` | Synchronous function for publishing changed records to a channel; see [Publishing](#publishing) |
 
-A handler returns `Promise<void>`; its return value is ignored. When it returns, Ahead allocates a new **stamp** for every record in `changes`, whether or not the values differ from before, reads each of them back through the loader of the model version the client declared, and puts the results in the receipt. A record the handler changed without reporting it is not stamped, not read back and not in the receipt: use `changes.add` for every write beyond the uploaded operations, a related row you update or a child you delete included. Reporting is not publishing; nothing reaches other clients until the handler calls `publish`.
+A handler returns `Promise<void>`; its return value is ignored. When it returns, AXTON allocates a new **stamp** for every record in `changes`, whether or not the values differ from before, reads each of them back through the loader of the model version the client declared, and puts the results in the receipt. A record the handler changed without reporting it is not stamped, not read back and not in the receipt: use `changes.add` for every write beyond the uploaded operations, a related row you update or a child you delete included. Reporting is not publishing; nothing reaches other clients until the handler calls `publish`.
 
 A loader is channel-independent: the row it returns for a record is the row every client receives for it, in the receipt, in a catch-up page and on the live stream, at the same stamp. What a loader may vary by is `userId`.
 
-One mutation can have several slots and perform several business writes. Ahead runs it in a savepoint inside the batch transaction. The schema describes the local operation and typed input; it does not require the backend to replay the same database operations. The backend can normalize values or use different tables.
+One mutation can have several slots and perform several business writes. AXTON runs it in a savepoint inside the batch transaction. The schema describes the local operation and typed input; it does not require the backend to replay the same database operations. The backend can normalize values or use different tables.
 
 `handlers.edit` holds every retained version of `Edit`. While only v1 is retained, the function above is shorthand for `{ v1: ... }`. Once a second version is retained, register each one explicitly and keep them all while clients can still send those versions:
 
@@ -128,7 +128,7 @@ handlers.edit = {
 
 A bare function always means v1, never the latest version, so a mutation whose retained versions are not exactly v1 refuses it at startup, as does a missing version, an unknown `v<n>` key or a value that is not a function. A request reaches only the handler of the version it names; there is no fallback. A mutation naming a known but unsupported version is rejected `mutation_version_unsupported` without calling any handler; the rest of the batch is unaffected.
 
-Any other error a handler throws — not `MutationRejected`, not a code `translateRejection` maps — rejects that mutation with `handler.failed`, is reported to `onError`, and the rest of the batch commits ([#95](https://github.com/zanminwang/ahead/issues/95)).
+Any other error a handler throws — not `MutationRejected`, not a code `translateRejection` maps — rejects that mutation with `handler.failed`, is reported to `onError`, and the rest of the batch commits ([#95](https://github.com/zanminwang/axton/issues/95)).
 
 ## Loaders
 
@@ -169,7 +169,7 @@ loaders.entry = {
 };
 ```
 
-The generated `EntryV1` type is the record shape published for v1, so a v1 loader maps your current rows into it; Ahead does not convert between versions. A row with a field outside the served version's contract fails only that record, with `loader.invalid`, and is reported to `onError`. Registration is checked at startup like handlers: a bare function means v1 only, and a missing version, an unknown `v<n>` key or a non-function value is refused. A load reaches only the loader of the version it names.
+The generated `EntryV1` type is the record shape published for v1, so a v1 loader maps your current rows into it; AXTON does not convert between versions. A row with a field outside the served version's contract fails only that record, with `loader.invalid`, and is reported to `onError`. Registration is checked at startup like handlers: a bare function means v1 only, and a missing version, an unknown `v<n>` key or a non-function value is refused. A load reaches only the loader of the version it names.
 
 What each item may be:
 
@@ -178,7 +178,7 @@ What each item may be:
 | A row object | The record's current state for this user | Delivered with the record's current stamp |
 | `null` | The record does not exist, or this user must not see it | Delivered as a deletion. A newer stamp clears the authoritative row, whichever channel delivered it; the client keeps the stamp so older content cannot bring the record back; pending local operations are replayed on that state. |
 | a thrown `MutationRejected` (or an error `translateRejection` maps to a code) | A refused read | In a push, the mutation whose result is being read back is rejected with that code and rolled back. In a pull, that record is delivered as an error with that code: the client keeps its local copy and reports it, and the rest of the page applies |
-| any other thrown error | A failure | Reported to `onError` (default `console.error`). In a push, the mutation whose result is being read back is rejected with `loader.failed` and the rest of the batch commits; in a pull, that record is delivered as a `loader.failed` error and the rest of the page applies ([#95](https://github.com/zanminwang/ahead/issues/95)) |
+| any other thrown error | A failure | Reported to `onError` (default `console.error`). In a push, the mutation whose result is being read back is rejected with `loader.failed` and the rest of the batch commits; in a pull, that record is delivered as a `loader.failed` error and the rest of the page applies ([#95](https://github.com/zanminwang/axton/issues/95)) |
 | `undefined`, a missing entry, a non-array result, a nonfinite number | A defect | Reported to `onError` and treated like a thrown error: only the records it affects fail. It is never read as `null` |
 
 A row object must match the generated model type exactly. Include every non-identity field: a nullable field that is absent reads as `null`, but an absent non-nullable field is a defect. The identity fields may be present. Any other property, such as an extra database column or a relation object, is a defect. Map your rows to the model type rather than returning a wider database row.
@@ -212,7 +212,7 @@ export const handlers: Handlers<Prisma.TransactionClient> = {
 
 The channel must be nonblank. Decoded handler slots such as `input.entry` carry record-reference metadata and can be passed to `changes.add` and `publish` directly. Spreading or cloning a slot can lose this metadata; use the generated model reference function when constructing a reference yourself. The low-level `RECORD` symbol marks these decoded references; applications normally do not need to manipulate it.
 
-Publish to every channel that distributes a changed record, including when its loader should now return null. Ahead does not infer publications from writes to your database. Several calls are allowed; none is required, and a handler that publishes nothing still succeeds with its records in the receipt.
+Publish to every channel that distributes a changed record, including when its loader should now return null. AXTON does not infer publications from writes to your database. Several calls are allowed; none is required, and a handler that publishes nothing still succeeds with its records in the receipt.
 
 A change allocates one **stamp** per record; publishing allocates a **cursor** in each channel and carries that same stamp to all of them. Publishing an unchanged record reuses its current stamp (a record that has never been stamped gets its first one). Stamps prevent older content delivered later, on any channel, from overwriting newer content. See [concepts](../concepts.md).
 
@@ -233,7 +233,7 @@ A change allocates one **stamp** per record; publishing allocates a **cursor** i
 
 Codes must match `^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$`, such as `entry.denied`. An invalid code is itself an error. A recognized business rejection rolls back that mutation's business writes, stamps and publications and is included in the receipt. A loader that throws one while a push reads the mutation's results back rejects that mutation the same way. The client rolls back its optimistic change and retains a rejection entry. A network error is not a business rejection and must not cause a duplicate business action.
 
-Rejection codes appear in a mutation's receipt entry, never in an HTTP status or a thrown request failure: `entry.denied`-style codes you or `translateRejection` produce; `mutation_version_unsupported` for a mutation naming an unregistered version; `model_version_unsupported` for a handler that changed a model the client did not declare or declared at an unretained version; `handler.failed` for any other error a handler threw; `loader.failed` for any other error a loader threw while a push read a mutation's results back. Each rejects only that one mutation; the rest of the batch commits ([#95](https://github.com/zanminwang/ahead/issues/95)).
+Rejection codes appear in a mutation's receipt entry, never in an HTTP status or a thrown request failure: `entry.denied`-style codes you or `translateRejection` produce; `mutation_version_unsupported` for a mutation naming an unregistered version; `model_version_unsupported` for a handler that changed a model the client did not declare or declared at an unretained version; `handler.failed` for any other error a handler threw; `loader.failed` for any other error a loader threw while a push read a mutation's results back. Each rejects only that one mutation; the rest of the batch commits ([#95](https://github.com/zanminwang/axton/issues/95)).
 
 Unexpected exceptions that are not one of the above — a persistence fault, a failed `rollback`, or any host callback failure the engine cannot classify as a mutation outcome — abort the whole delivery transaction. Do not translate every exception into a rejection: a database outage or programming error should remain a retryable request failure. `onError` receives failures including authentication exceptions, persistence faults, publication errors, live-drain failures, and every `handler.failed`/`loader.failed` error (the underlying thrown error, not just the code).
 
@@ -288,6 +288,6 @@ Same objects and rules as a handler's, with two differences: the change set star
 
 `loaderHooks` maps model names to `{ prepareForViewer(call): Promise<void> }`. The hook runs before that model's loader in the same request context. Its failure fails the load. Use it only if viewer-specific preparation is needed; a loader already receives the user.
 
-`native?: Native` injects the native bridge when packaging it elsewhere. It implements `validateConfig`, `processPush`, `processPull`, `settleExternal`, `negotiateLive` and `pullLive` with the string/JSON callback contracts in the [SDK source](https://github.com/zanminwang/ahead/blob/main/packages/server/index.mts). The default binding comes from this repository's Node addon. This is a packaging seam; the generated handlers and loaders remain the application contract.
+`native?: Native` injects the native bridge when packaging it elsewhere. It implements `validateConfig`, `processPush`, `processPull`, `settleExternal`, `negotiateLive` and `pullLive` with the string/JSON callback contracts in the [SDK source](https://github.com/zanminwang/axton/blob/main/packages/server/index.mts). The default binding comes from this repository's Node addon. This is a packaging seam; the generated handlers and loaders remain the application contract.
 
 Backend methods marked `@internal` (`push`, `pull`, `negotiateLive`, `pullLive`, `onCommitted`, `notifyCommitted`, `closeLive`) are used by the listener and tests. They are not the supported application-facing HTTP integration surface.

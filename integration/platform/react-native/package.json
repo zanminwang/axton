@@ -1,10 +1,10 @@
 {
-  "name": "ahead-rn-harness",
+  "name": "axton-rn-harness",
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
-    "@ahead/client-react-native": "file:../../../packages/client-react-native",
-    "@ahead/native": "file:../../../packages/client-react-native/native-module",
+    "@axton/client-react-native": "file:../../../packages/client-react-native",
+    "@axton/native": "file:../../../packages/client-react-native/native-module",
     "expo": "~57.0.22",
     "expo-file-system": "~57.0.7",
     "expo-status-bar": "~57.0.1",
@@ -21,7 +21,7 @@
     "ios": "expo run:ios",
     "ios:release": "expo run:ios --configuration Release",
     "web": "expo start --web",
-    "ios:build": "xcodebuild -workspace ios/aheadrnharness.xcworkspace -scheme aheadrnharness -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/build ARCHS=arm64 CODE_SIGNING_ALLOWED=NO build"
+    "ios:build": "xcodebuild -workspace ios/axtonrnharness.xcworkspace -scheme axtonrnharness -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/build ARCHS=arm64 CODE_SIGNING_ALLOWED=NO build"
   },
   "private": true
 }

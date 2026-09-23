@@ -33,7 +33,7 @@ async function never(predicate, label, millis = 300) {
 
 async function scenario(body) {
  let app = await createExample();
- const directory = await mkdtemp(join(tmpdir(), 'ahead-todo-e2e-'));
+ const directory = await mkdtemp(join(tmpdir(), 'axton-todo-e2e-'));
  const clients = new Set();
  const errors = [];
  const fetchOriginal = globalThis.fetch;

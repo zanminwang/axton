@@ -24,7 +24,7 @@ The architecture SVG lives in `website/docs/assets/`; its editable Excalidraw so
 .venv/bin/python website/scripts/check_links.py
 ```
 
-The static output is `website/site/`. Do not edit this generated directory. Relative navigation supports both the local preview and the GitHub Pages project path `/ahead/`.
+The static output is `website/site/`. Do not edit this generated directory. Relative navigation supports both the local preview and the GitHub Pages project path `/axton/`.
 
 Run `python3 website/scripts/check_examples.py` after building the repository and resolving the example and Dart dependencies. This typechecks snippets from `website/docs/` and compiles the schema examples; it also runs in `scripts/test.sh`. Use `bash integration/e2e/run.sh` to check HTTP and SQLite behavior.
 

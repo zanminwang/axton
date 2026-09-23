@@ -1,6 +1,6 @@
 /**
- * Ahead's PostgreSQL persistence: the framework tables (`migration.sql`),
- * every statement Ahead runs, and one driver interface a PostgreSQL access
+ * AXTON's PostgreSQL persistence: the framework tables (`migration.sql`),
+ * every statement AXTON runs, and one driver interface a PostgreSQL access
  * tool binds with two methods. `pg`, `prisma` and `drizzle` are the shipped
  * shims; `persistence(driver)` builds the `database` option from any other.
  */

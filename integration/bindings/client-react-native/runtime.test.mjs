@@ -16,11 +16,11 @@ test('shared runtime accepts the mobile transaction and native carrier', () => {
   assert.equal(typeof runtime?.createClient, 'function');
 });
 {
-  const native = createRequire(import.meta.url)('../../../bindings/node/ahead-node.node');
+  const native = createRequire(import.meta.url)('../../../bindings/node/axton-node.node');
   const Client = runtime.createClient(native, Transaction, () => { throw Error('network not configured'); });
   const schema={models:[{name:'Entry',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'string'},nullable:false},{name:'text',type:{kind:'scalar',name:'string'},nullable:false}],relations:[],unique:[]}],enums:[],clientPolicies:[]};
   test('mobile scope preserves rollback, isolation and persistent identity on real SQLite', async () => {
-    const directory=await mkdtemp(join(tmpdir(),'ahead-rn-'));
+    const directory=await mkdtemp(join(tmpdir(),'axton-rn-'));
     const path=join(directory,'client.sqlite');
     let client=await Client.open({path,schema});
     try {
@@ -58,11 +58,11 @@ test('shared runtime accepts the mobile transaction and native carrier', () => {
   });
 }
 {
-  const native = createRequire(import.meta.url)('../../../bindings/node/ahead-node.node');
+  const native = createRequire(import.meta.url)('../../../bindings/node/axton-node.node');
   const Client = runtime.createClient(native, Transaction, () => { throw Error('network not configured'); });
   const schema={models:[{name:'Entry',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'string'},nullable:false},{name:'text',type:{kind:'scalar',name:'string'},nullable:false}],relations:[],unique:[]}],enums:[],clientPolicies:[]};
   test('mobile client mutation rejects promptly during a public callback, including unrelated callers', async () => {
-    const directory=await mkdtemp(join(tmpdir(),'ahead-rn-guard-'));
+    const directory=await mkdtemp(join(tmpdir(),'axton-rn-guard-'));
     const client=await Client.open({path:join(directory,'client.sqlite'),schema});
     let release;
     try {
@@ -85,7 +85,7 @@ test('shared runtime accepts the mobile transaction and native carrier', () => {
     } finally { release?.(); await client.close(); await rm(directory,{recursive:true,force:true}); }
   });
   test('mobile standalone submission rolls back optimistic writes and queue on enqueue failure', async () => {
-    const directory=await mkdtemp(join(tmpdir(),'ahead-rn-atomic-'));
+    const directory=await mkdtemp(join(tmpdir(),'axton-rn-atomic-'));
     const client=await Client.open({path:join(directory,'client.sqlite'),schema});
     try {
       await assert.rejects(client.mutate({name:'Broken',operations:[
@@ -99,11 +99,11 @@ test('shared runtime accepts the mobile transaction and native carrier', () => {
   });
 }
 {
-  const native = createRequire(import.meta.url)('../../../bindings/node/ahead-node.node');
+  const native = createRequire(import.meta.url)('../../../bindings/node/axton-node.node');
   const Client = runtime.createClient(native, Transaction, () => { throw Error('network not configured'); });
   const schema={models:[{name:'Entry',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'string'},nullable:false},{name:'text',type:{kind:'scalar',name:'string'},nullable:false}],relations:[],unique:[]}],enums:[],clientPolicies:[]};
   test('concurrent top-level mobile transactions serialize instead of interleaving', async () => {
-    const directory=await mkdtemp(join(tmpdir(),'ahead-rn-serial-'));
+    const directory=await mkdtemp(join(tmpdir(),'axton-rn-serial-'));
     const client=await Client.open({path:join(directory,'client.sqlite'),schema});
     try {
       const order=[];

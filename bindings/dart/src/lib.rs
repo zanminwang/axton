@@ -1,5 +1,5 @@
 //! C ABI called only on the Dart SDK's worker isolate.
-use ahead_binding::RuntimeHost;
+use axton_binding::RuntimeHost;
 use serde_json::json;
 use std::{
     ffi::{CStr, CString, c_char},
@@ -9,7 +9,7 @@ static HOST: OnceLock<Mutex<RuntimeHost>> = OnceLock::new();
 /// # Safety
 /// input must point to a valid NUL-terminated UTF-8 string for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ahead_call(input: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn axton_call(input: *const c_char) -> *mut c_char {
     let result = std::panic::catch_unwind(|| {
         if input.is_null() {
             return Err("null input".to_string());
@@ -34,9 +34,9 @@ pub unsafe extern "C" fn ahead_call(input: *const c_char) -> *mut c_char {
         .into_raw()
 }
 /// # Safety
-/// output must be a pointer returned by ahead_call, freed exactly once.
+/// output must be a pointer returned by axton_call, freed exactly once.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ahead_free(output: *mut c_char) {
+pub unsafe extern "C" fn axton_free(output: *mut c_char) {
     if !output.is_null() {
         drop(unsafe { CString::from_raw(output) });
     }

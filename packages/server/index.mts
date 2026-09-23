@@ -300,7 +300,7 @@ function versioned<F>(
       );
   return table;
 }
-export const RECORD: unique symbol = Symbol("ahead.record");
+export const RECORD: unique symbol = Symbol("axton.record");
 function toRef(value: unknown, caller: string): RecordRef {
   if (value !== null && typeof value === "object") {
     const tagged = (value as { [RECORD]?: RecordRef })[RECORD];
@@ -443,7 +443,7 @@ type MutationDescriptor = {
 export function createBackend<T>(options: BackendOptions<T>) {
   const native = typedNative(
     options.native ??
-      (require("../../bindings/node/ahead-node.node") as Native),
+      (require("../../bindings/node/axton-node.node") as Native),
   );
   // Nothing is dropped silently: without a handler, failures go to the console.
   const onError: (error: unknown) => void =

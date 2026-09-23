@@ -26,7 +26,7 @@ Actions, returned in order by every command:
 | `request {epoch, body}` | `POST /sync/pull` with one request for every subscribed channel; the response is `catchUp`, a failure is `closed`. |
 | `close {epoch, reason?}` | Close the socket of this epoch and abandon its request. A `reason` is a protocol violation to report as an error. |
 | `wake {lane: "push"}` | A page applied: wake the push lane so it re-evaluates what is eligible to send. |
-| `report {reports}` | What a page could not apply (read failures, skipped changes, conflicts, divergences): deliver each to the application's `onError` as an `AheadReport`. |
+| `report {reports}` | What a page could not apply (read failures, skipped changes, conflicts, divergences): deliver each to the application's `onError` as an `AxtonReport`. |
 | `wait {millis}` | Nothing to do until the timer fires; then report `next`. |
 
 ## 5. Building Block View
@@ -51,16 +51,16 @@ Code: [client/live.rs](../../../../../../crates/client/src/live.rs); disposition
 
 ## 9. Architecture Decisions
 
-### The live session is a Rust state machine; hosts execute its actions ([#58](https://github.com/zanminwang/ahead/issues/58))
+### The live session is a Rust state machine; hosts execute its actions ([#58](https://github.com/zanminwang/axton/issues/58))
 
-**Decision.** The session logic that existed twice (`connect` in the TypeScript and Dart clients) is the Rust `LiveSession`, driven like `ConnectionDriver` and `SyncCycle`: the host feeds events, Rust answers with actions, and the host performs sockets, HTTP and timers. The server's per-scope drain policy is `Subscriptions` in `ahead_server::live` ([Server / Connection / Controller](../../../server/connection/controller.md)). The connection model stays as chosen: HTTP writes, HTTP catch-up after the WebSocket acknowledgement, then live pages; no polling.
+**Decision.** The session logic that existed twice (`connect` in the TypeScript and Dart clients) is the Rust `LiveSession`, driven like `ConnectionDriver` and `SyncCycle`: the host feeds events, Rust answers with actions, and the host performs sockets, HTTP and timers. The server's per-scope drain policy is `Subscriptions` in `axton_server::live` ([Server / Connection / Controller](../../../server/connection/controller.md)). The connection model stays as chosen: HTTP writes, HTTP catch-up after the WebSocket acknowledgement, then live pages; no polling.
 
 **Implemented contract.** Sections 3 and 5 describe it. It refines the contract this decision first sketched in four places, each chosen to keep the host without decisions:
 
 - No `opened` or `subscriptionsChanged` event. `open` carries the frame, and Rust observes subscription changes itself through the engine's generation, so a host cannot forget to report one.
 - No `acknowledged` event and no `apply` action. Every frame is a `message`; Rust tells an acknowledgement from a page ([Protocol / Subscriptions](../../../protocol/subscriptions.md)), applies pages itself, and answers `wake` when the push lane should run. The push lane's own `connection` command is unchanged.
 - The live lane's scheduling lives inside `LiveSession` (`start`, `pause`, `resume`, `wake`, `next`, `wait`), so a host drives one state machine per lane.
-- Streamed frames are queued by Rust, bounded, rather than by the host; the host's buffer only bounds delivery. The acknowledgement's heads let a client that is already current skip catch-up entirely ([#95](https://github.com/zanminwang/ahead/issues/95)).
+- Streamed frames are queued by Rust, bounded, rather than by the host; the host's buffer only bounds delivery. The acknowledgement's heads let a client that is already current skip catch-up entirely ([#95](https://github.com/zanminwang/axton/issues/95)).
 
 **Consequences.** Both SDKs shrink to transport code with no sync decisions; the transition tests run once in Rust; the target architecture's code map is true for the live session. Dart's larger frame buffer and TypeScript's smaller one are host parameters ([Transport](../transport.md)); the session's own bound is the same in both.
 
@@ -71,10 +71,10 @@ Code: [client/live.rs](../../../../../../crates/client/src/live.rs); disposition
 - **The session subscribes, pulls only when behind, and then streams; heads equal to the cursors mean no catch-up; one pull covers every channel and continues while any is full.** Evidence: [sqlite/tests/live.rs](../../../../../../crates/sqlite/tests/live.rs) `a_session_subscribes_pulls_only_when_behind_and_then_streams` (which also holds a gap frame, pulls, and applies it after), `heads_equal_to_the_cursors_mean_no_catch_up_at_all`, `one_pull_covers_every_channel_and_continues_while_any_channel_is_full`.
 - **The frame queue is bounded and overflows into recovery; overflow discards the queue and recovers every channel after the request in flight; reports reach the host as actions.** Evidence: `the_frame_queue_is_bounded_and_overflows_into_recovery`, `overflow_discards_the_queue_and_recovers_every_channel_after_the_request_in_flight`, `reports_reach_the_host_as_actions`.
 - **A subscription change ends the session without backoff; a dropped socket reconnects with backoff; protocol violations close with a reason; pause, resume and stop; a page from an earlier subscription is stale.** Evidence: `a_subscription_change_ends_the_session_and_the_next_one_uses_the_new_set`, `a_dropped_socket_reconnects_with_backoff_and_resubscribes`, `protocol_violations_close_with_a_reason_and_retry`, `pause_ends_the_session_without_backoff_resume_reopens_and_stop_is_final`, `a_page_from_a_previous_subscription_is_stale_not_a_gap_through_the_session`; [session.rs](../../../../../../bindings/common/tests/session.rs) `incoming_pages_share_cursor_policy_and_do_not_overwrite_push_cycle`, `incoming_overlap_is_identical_with_or_without_http_request_metadata`.
-- **Both SDKs: listeners before catch-up, overlaps without HTTP, gaps recovered, subscription changes discard old frames, and reports reach `onError` as `AheadReport`.** Evidence: [live.test.mjs](../../../../../../integration/bindings/client-js/live.test.mjs) `unified connection acknowledges listeners then catches up through HTTP before live delivery`, `one incoming page path covers duplicates, applies overlap directly and recovers genuine gaps`, `client replaces subscriptions from saved cursors and guards queued obsolete pages`, `what a page cannot apply reaches onError as an AheadReport: read failures, skipped changes and divergence`, `a queued edit whose replay fails over new authority is reported as diverged and still sent`; [live_test.dart](../../../../../../packages/dart/test/live_test.dart) (the same scenarios).
+- **Both SDKs: listeners before catch-up, overlaps without HTTP, gaps recovered, subscription changes discard old frames, and reports reach `onError` as `AxtonReport`.** Evidence: [live.test.mjs](../../../../../../integration/bindings/client-js/live.test.mjs) `unified connection acknowledges listeners then catches up through HTTP before live delivery`, `one incoming page path covers duplicates, applies overlap directly and recovers genuine gaps`, `client replaces subscriptions from saved cursors and guards queued obsolete pages`, `what a page cannot apply reaches onError as an AxtonReport: read failures, skipped changes and divergence`, `a queued edit whose replay fails over new authority is reported as diverged and still sent`; [live_test.dart](../../../../../../packages/dart/test/live_test.dart) (the same scenarios).
 - **A commit observed during catch-up is not missed, and reconnect resumes from the persisted cursor.** Evidence: [round-trip.test.mjs](../../../../../../integration/e2e/round-trip.test.mjs).
 
-Executed 2026-09-16: `cargo test -p ahead-sqlite --test live --locked`, `cargo test -p ahead-binding --locked`, `node --test integration/bindings/client-js/*.test.mjs`, `dart test` in `packages/dart`; the full gate for e2e.
+Executed 2026-09-16: `cargo test -p axton-sqlite --test live --locked`, `cargo test -p axton-binding --locked`, `node --test integration/bindings/client-js/*.test.mjs`, `dart test` in `packages/dart`; the full gate for e2e.
 
 ## 11. Risks and Technical Debt
 

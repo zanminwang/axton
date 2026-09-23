@@ -1,4 +1,4 @@
-use ahead_core::*;
+use axton_core::*;
 use serde_json::{Value, json};
 
 fn schema() -> Schema {
@@ -292,7 +292,7 @@ fn shared_wire_fixtures_preserve_counter_boundaries() {
 }
 
 #[test]
-fn field_default_and_record_stamp_round_trip_and_ahead_prefix_is_rejected() {
+fn field_default_and_record_stamp_round_trip_and_axton_prefix_is_rejected() {
     let field: FieldDescriptor = serde_json::from_value(
         json!({"name":"rank","nullable":false,"type":{"kind":"scalar","name":"int"},"default":0}),
     )
@@ -319,10 +319,10 @@ fn field_default_and_record_stamp_round_trip_and_ahead_prefix_is_rejected() {
     );
     assert!(unstamped.unwrap_err().to_string().contains("stamp"));
     let bad = Schema::from_value(
-        json!({"enums":[],"models":[{"name":"ahead_x","identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}]}]}),
+        json!({"enums":[],"models":[{"name":"axton_x","identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}]}]}),
     );
     assert!(bad.is_err());
-    for name in ["sqlite_x", "SQLITE_x", "Ahead_x"] {
+    for name in ["sqlite_x", "SQLITE_x", "AXTON_x"] {
         let reserved = Schema::from_value(
             json!({"enums":[],"models":[{"name":name,"identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}]}]}),
         );
@@ -331,7 +331,7 @@ fn field_default_and_record_stamp_round_trip_and_ahead_prefix_is_rejected() {
             "{name} must be refused as reserved"
         );
     }
-    for name in ["sqlitex", "Sqlite", "aheadx"] {
+    for name in ["sqlitex", "Sqlite", "axtonx"] {
         assert!(
             Schema::from_value(
                 json!({"enums":[],"models":[{"name":name,"identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}]}]}),

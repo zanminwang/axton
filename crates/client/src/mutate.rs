@@ -5,7 +5,7 @@ use crate::engine::Engine;
 use crate::rows::merge_identity;
 use crate::store::ClientStore;
 use crate::{Mutation, Operation, OperationKind, policies};
-use ahead_core::{RecordKey, Result, Schema, invalid};
+use axton_core::{RecordKey, Result, Schema, invalid};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -135,7 +135,7 @@ impl<S: ClientStore> Engine<'_, S> {
     /// Replay every still-queued operation for one record over its held truth.
     /// When a replay fails the truth stays visible and the failing mutation's
     /// ordinal is returned and marked diverged; the queue is untouched
-    /// ([#122](https://github.com/zanminwang/ahead/issues/122)).
+    /// ([#122](https://github.com/zanminwang/axton/issues/122)).
     pub fn rebuild(&mut self, key: &RecordKey) -> Result<Option<u64>> {
         let truth = self.before_get(key)?;
         let ops = self.ops_for(key)?;

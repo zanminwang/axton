@@ -21,10 +21,10 @@ export type {
 const native = requireNativeModule<{
   clientCall(request: string): Promise<string>;
   databasePath(name: string): Promise<string>;
-}>("AheadNative");
+}>("AxtonNative");
 
 /** Resolves a basename inside persistent application storage. */
-export function databasePath(name = "ahead.sqlite"): Promise<string> {
+export function databasePath(name = "axton.sqlite"): Promise<string> {
   return native.databasePath(name);
 }
 export const Client = createClient(native, Transaction, createServerConnection);

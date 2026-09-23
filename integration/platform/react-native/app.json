@@ -1,14 +1,14 @@
 {
   "expo": {
-    "name": "ahead-rn-harness",
-    "slug": "ahead-rn-harness",
+    "name": "axton-rn-harness",
+    "slug": "axton-rn-harness",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "dev.ahead.ReactNativeSmoke",
+      "bundleIdentifier": "dev.axton.ReactNativeSmoke",
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true

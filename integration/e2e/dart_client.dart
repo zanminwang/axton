@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:ahead/ahead.dart';
+import 'package:axton/axton.dart';
 
 Future<void> main(List<String> args) async {
   final schema =
@@ -9,7 +9,7 @@ Future<void> main(List<String> args) async {
   final client = await Client.open(
     path: '${args[1]}/dart.sqlite',
     schema: schema,
-    libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+    libraryPath: Platform.environment['AXTON_LIBRARY']!,
   );
   try {
     await client.subscribe('book:demo');

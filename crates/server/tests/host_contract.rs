@@ -1,6 +1,6 @@
 //! The host operation contract: the shared fixture round-trips through the
 //! Rust types, and a malformed request or response is refused per operation.
-use ahead_server::host::{
+use axton_server::host::{
     Acknowledged, Claimed, Handled, Head, HostRequest, Invalidation, Loaded, OPERATIONS,
     PublicationIntent, Published, RecordRef, Scanned, Stamped,
 };
@@ -365,7 +365,7 @@ fn an_unusable_response_names_its_operation_and_ordinal() {
         ordinal: 3,
     };
     let error = handle.invalid_response("invalid handler settlement");
-    assert_eq!(error.code, ahead_server::code::HANDLER_INVALID);
+    assert_eq!(error.code, axton_server::code::HANDLER_INVALID);
     assert_eq!(
         error.message,
         "handle(ordinal 3) response invalid: invalid handler settlement"
@@ -378,7 +378,7 @@ fn an_unusable_response_names_its_operation_and_ordinal() {
     };
     assert_eq!(
         load.invalid_response("x").code,
-        ahead_server::code::LOADER_INVALID
+        axton_server::code::LOADER_INVALID
     );
     assert_eq!(
         HostRequest::Claim {
@@ -387,7 +387,7 @@ fn an_unusable_response_names_its_operation_and_ordinal() {
         }
         .invalid_response("x")
         .code,
-        ahead_server::code::STORAGE_INVALID
+        axton_server::code::STORAGE_INVALID
     );
     assert_eq!(
         HostRequest::Head {
@@ -395,7 +395,7 @@ fn an_unusable_response_names_its_operation_and_ordinal() {
         }
         .invalid_response("x")
         .code,
-        ahead_server::code::HOST_INVALID
+        axton_server::code::HOST_INVALID
     );
     assert_eq!(
         HostRequest::AdvanceStamp {
@@ -404,6 +404,6 @@ fn an_unusable_response_names_its_operation_and_ordinal() {
         }
         .invalid_response("x")
         .code,
-        ahead_server::code::HOST_INVALID
+        axton_server::code::HOST_INVALID
     );
 }

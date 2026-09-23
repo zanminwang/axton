@@ -334,7 +334,7 @@ class LiveLane implements LaneControls {
         _wakePush();
       case 'report':
         for (final report in action['reports'] as List<dynamic>) {
-          onError?.call(AheadReport.fromJson(report as Map<String, dynamic>));
+          onError?.call(AxtonReport.fromJson(report as Map<String, dynamic>));
         }
       case 'wait':
         _clearTimer();
@@ -393,8 +393,8 @@ class LiveLane implements LaneControls {
 /// stays consistent: a `readFailed` or `skipped` record keeps its local
 /// content and stamp, a `conflict` keeps the local content, a `diverged`
 /// mutation shows the server's row and is still sent.
-class AheadReport implements Exception {
-  AheadReport({
+class AxtonReport implements Exception {
+  AxtonReport({
     required this.kind,
     required this.model,
     required this.identity,
@@ -403,7 +403,7 @@ class AheadReport implements Exception {
     this.ordinal,
     this.detail,
   });
-  factory AheadReport.fromJson(Map<String, dynamic> json) => AheadReport(
+  factory AxtonReport.fromJson(Map<String, dynamic> json) => AxtonReport(
     kind: json['kind'] as String,
     model: json['model'] as String,
     identity: Map<String, dynamic>.from(json['identity'] as Map),
@@ -428,7 +428,7 @@ class AheadReport implements Exception {
 
   @override
   String toString() =>
-      'AheadReport($kind: $model ${jsonEncode(identity)} at stamp $stamp'
+      'AxtonReport($kind: $model ${jsonEncode(identity)} at stamp $stamp'
       '${code == null ? '' : ' ($code)'}'
       '${ordinal == null ? '' : ' (mutation $ordinal)'})';
 }

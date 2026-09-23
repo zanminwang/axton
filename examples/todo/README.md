@@ -1,6 +1,6 @@
 # Collaborative To-do
 
-Two phones, one shared list. Alice and Bob each run the same React Native app against their own local SQLite database; the app writes locally first and synchronizes through an application-owned TypeScript backend on PostgreSQL. This is the example behind [#31](https://github.com/zanminwang/ahead/issues/31).
+Two phones, one shared list. Alice and Bob each run the same React Native app against their own local SQLite database; the app writes locally first and synchronizes through an application-owned TypeScript backend on PostgreSQL. This is the example behind [#31](https://github.com/zanminwang/axton/issues/31).
 
 The app has two actions: add a task and mark it done. Everything else (assignment, replies, editing, deleting) is deliberately absent so the schema, backend and screen stay readable.
 
@@ -50,23 +50,23 @@ npx expo prebuild --platform ios --no-install
 npm run ios:build
 ```
 
-`ios:build` produces `ios/build/Build/Products/Release-iphonesimulator/AheadTodo.app` with embedded JavaScript. `npm run ios` (a development build with Metro) also works for iterating on the screen; Expo Go cannot load the native module.
+`ios:build` produces `ios/build/Build/Products/Release-iphonesimulator/AXTONTodo.app` with embedded JavaScript. `npm run ios` (a development build with Metro) also works for iterating on the screen; Expo Go cannot load the native module.
 
 Identity is launch configuration, not a login: without configuration the app is Alice on `http://127.0.0.1:4242`. To make a second simulator Bob, write `config.json` into that installation's Documents directory and launch:
 
 ```sh
 udid=<simulator udid>
-xcrun simctl install "$udid" ios/build/Build/Products/Release-iphonesimulator/AheadTodo.app
-docs="$(xcrun simctl get_app_container "$udid" dev.ahead.Todo data)/Documents"
+xcrun simctl install "$udid" ios/build/Build/Products/Release-iphonesimulator/AXTONTodo.app
+docs="$(xcrun simctl get_app_container "$udid" dev.axton.Todo data)/Documents"
 mkdir -p "$docs" && echo '{"user":"bob","url":"http://127.0.0.1:4242"}' > "$docs/config.json"
-xcrun simctl launch "$udid" dev.ahead.Todo
+xcrun simctl launch "$udid" dev.axton.Todo
 ```
 
 Each installation keeps its own database file and client identity under Application Support, so two simulators are two independent phones. Add a task on one; it appears on the other after the backend accepts it. Mark it done on the other; both converge.
 
 ## Walkthrough
 
-1. **Two tables.** `models/todo.model` declares `User(id, name)` and `Todo(id, title, done, createdById)` with `createdBy` as a reference. The backend adds no other application tables; Ahead's own sync tables come from `packages/postgres/migration.sql`.
+1. **Two tables.** `models/todo.model` declares `User(id, name)` and `Todo(id, title, done, createdById)` with `createdBy` as a reference. The backend adds no other application tables; AXTON's own sync tables come from `packages/postgres/migration.sql`.
 2. **Two operations.** `AddTodo` creates a task; `SetTodoDone` updates only `done`. The compiler emits typed builders for the app and typed `Handlers`/`Loaders` for the backend from the same file, so the wire shapes cannot drift.
 3. **Backend rules.** `server.mts` trims the title and refuses empty ones, requires the creator to be the authenticated user and `done` to start false, and turns only a proven primary-key collision into `todo.id_conflict`. Each handler publishes the changed record on channel `todo:demo` inside the same database transaction, so a notification never precedes its data.
 4. **Local watch.** `mobile/src/todo.ts` opens the generated client on a per-user database, subscribes to `todo:demo`, and exposes `watch`, `add` and `setDone`. `add` and `setDone` return after the local commit; the screen renders from watch callbacks only, never from a second in-memory store.
@@ -81,7 +81,7 @@ bash integration/e2e/todo-run.sh
 bash integration/platform/run_todo_ios_smoke.sh
 ```
 
-The e2e runner covers the happy path, every rejection code, an unknown identity, a lost push response, a backend restart on the same database, offline add-then-done across a reopen, and opposing completions in both commit orders. The simulator runner needs the Release app above; it creates two disposable simulators (newest installed iOS runtime and first iPhone device type by default, or `AHEAD_TODO_SIM_RUNTIME`/`AHEAD_TODO_SIM_DEVICE`) and deletes only those.
+The e2e runner covers the happy path, every rejection code, an unknown identity, a lost push response, a backend restart on the same database, offline add-then-done across a reopen, and opposing completions in both commit orders. The simulator runner needs the Release app above; it creates two disposable simulators (newest installed iOS runtime and first iPhone device type by default, or `AXTON_TODO_SIM_RUNTIME`/`AXTON_TODO_SIM_DEVICE`) and deletes only those.
 
 ## Evidence
 

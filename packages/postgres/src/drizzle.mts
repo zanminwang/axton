@@ -3,11 +3,11 @@ import type { DriverOptions, PostgresDriver } from "./driver.mts";
 import { RETRYABLE_SQLSTATES, withRetries } from "./driver.mts";
 import { persistence } from "./persistence.mts";
 
-/** The part of a Drizzle node-postgres transaction Ahead uses. */
+/** The part of a Drizzle node-postgres transaction AXTON uses. */
 export interface DrizzleTransaction {
   execute(query: SQL): Promise<{ rows: Record<string, unknown>[] }>;
 }
-/** The part of a Drizzle database Ahead uses; `drizzle(pool)` from `drizzle-orm/node-postgres` satisfies it. */
+/** The part of a Drizzle database AXTON uses; `drizzle(pool)` from `drizzle-orm/node-postgres` satisfies it. */
 export interface DrizzleDatabase<Tx extends DrizzleTransaction> {
   transaction<R>(
     body: (tx: Tx) => Promise<R>,

@@ -36,4 +36,4 @@ Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-**Accepted limitation (measured cost pending).** Filtering runs in SQL, but ordering and `limit` run in memory after every matching row is loaded, and only equality filters exist. Adequate for the current scale; listed as a cost center in [#12](https://github.com/zanminwang/ahead/issues/12).
+**Accepted limitation (measured cost pending).** Filtering runs in SQL, but ordering and `limit` run in memory after every matching row is loaded, and only equality filters exist. Adequate for the current scale; listed as a cost center in [#12](https://github.com/zanminwang/axton/issues/12).

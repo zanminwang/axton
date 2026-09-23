@@ -1,6 +1,6 @@
 //! SQLite implements the client's storage contract with one writer and one reader connection.
-use ahead_client::{ClientStore, SqlRows};
-use ahead_core::{Result, invalid};
+use axton_client::{ClientStore, SqlRows};
+use axton_core::{Result, invalid};
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{Connection, params_from_iter};
 use serde_json::Value;
@@ -11,7 +11,7 @@ pub struct SqliteStore {
     reader: Connection,
 }
 
-fn db(e: rusqlite::Error) -> ahead_core::Error {
+fn db(e: rusqlite::Error) -> axton_core::Error {
     invalid(format!("sqlite: {e}"))
 }
 

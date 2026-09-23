@@ -1,7 +1,7 @@
 //! Reproducible diagnostic, not a throughput guarantee. Each enqueue is a real SQLite commit.
-use ahead_client::{Client, Mutation, Operation, OperationKind};
-use ahead_core::{AuthorityRecord, CursorRange, PullPage, Schema};
-use ahead_sqlite::SqliteStore;
+use axton_client::{Client, Mutation, Operation, OperationKind};
+use axton_core::{AuthorityRecord, CursorRange, PullPage, Schema};
+use axton_sqlite::SqliteStore;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::time::Instant;

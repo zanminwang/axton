@@ -1,8 +1,8 @@
-site_name: Ahead
-site_description: Ahead is a schema-driven framework for building local-first apps with your own backend.
-site_url: https://zanminwang.github.io/ahead/
-repo_url: https://github.com/zanminwang/ahead
-repo_name: zanminwang/ahead
+site_name: AXTON
+site_description: AXTON is a schema-driven framework for building local-first apps with your own backend.
+site_url: https://zanminwang.github.io/axton/
+repo_url: https://github.com/zanminwang/axton
+repo_name: zanminwang/axton
 edit_uri: ''
 strict: true
 docs_dir: docs
@@ -10,6 +10,8 @@ site_dir: site
 theme:
   name: material
   language: en
+  logo: assets/axton-icon.svg
+  favicon: assets/axton-icon.png
   font: false
   features:
     - navigation.tabs
@@ -49,7 +51,7 @@ nav:
   - Docs:
       - Getting started:
           - Run your first app: getting-started.md
-          - How Ahead works: concepts.md
+          - How AXTON works: concepts.md
           - Find an interface: api-index.md
       - Schema:
           - Define models and mutations: schema/define.md
@@ -67,11 +69,11 @@ nav:
           - Database: backend/database.md
           - Deploy the backend: backend/deployment.md
       - Contributing:
-          - Contribute to the docs: https://github.com/zanminwang/ahead/blob/main/docs/writing/guides.md
-          - Testing: https://github.com/zanminwang/ahead/blob/main/docs/engineering/testing/running.md
-          - Guarantees and proofs: https://github.com/zanminwang/ahead/blob/main/docs/engineering/guarantees.md
-          - Testing strategy: https://github.com/zanminwang/ahead/blob/main/docs/engineering/testing/strategy.md
-  - GitHub: https://github.com/zanminwang/ahead
+          - Contribute to the docs: https://github.com/zanminwang/axton/blob/main/docs/writing/guides.md
+          - Testing: https://github.com/zanminwang/axton/blob/main/docs/engineering/testing/running.md
+          - Guarantees and proofs: https://github.com/zanminwang/axton/blob/main/docs/engineering/guarantees.md
+          - Testing strategy: https://github.com/zanminwang/axton/blob/main/docs/engineering/testing/strategy.md
+  - GitHub: https://github.com/zanminwang/axton
 validation:
   links:
     not_found: warn

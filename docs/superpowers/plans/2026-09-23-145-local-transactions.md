@@ -83,7 +83,7 @@ void misuse(GeneratedTransaction tx) {
 // Positive runtime test: await client.transaction((tx) => tx.models.entry.get(identity));
 ```
 
-Run Dart tests from the package directory as documented: `(cd packages/dart && dart test test/client_test.dart)`, after setting `AHEAD_DART_LIBRARY` to the built dylib/so absolute path. `bash integration/generated-api/verify.sh` exists and runs compiler, generator, TS, Node and Dart checks; its generated outputs must be reviewed for unintended history changes.
+Run Dart tests from the package directory as documented: `(cd packages/dart && dart test test/client_test.dart)`, after setting `AXTON_DART_LIBRARY` to the built dylib/so absolute path. `bash integration/generated-api/verify.sh` exists and runs compiler, generator, TS, Node and Dart checks; its generated outputs must be reviewed for unintended history changes.
 
 ### Task 1: Split generated public ports and facades
 
@@ -91,7 +91,7 @@ Run Dart tests from the package directory as documented: `(cd packages/dart && d
 
 - [ ] Add compiler assertions that emitted `WritePort` has `direct` but no `mutate`, `GeneratedTransaction` has `models` but no `mutate`, and client-level `Mutate` still accepts `MutatePort`. Check TypeScript ports and the Dart generated facade; `WritePort` itself is runtime-owned in `packages/dart/lib/src/port.dart` and is checked through Dart analysis in Task 3. The old emission must fail these assertions.
 - [ ] In `emit.rs`, remove the TypeScript `MutatePort` extension from `WritePort`; remove `GeneratedTransaction.mutate` and Dart equivalent; retain client-level `Mutate(client)`. Do not remove mutation builders, codecs or schema descriptors.
-- [ ] Run `cargo test -p ahead-compiler --locked`; expect pass. Run compiler emission tests, then defer the full generated API runner until Task 4 has migrated all positive and negative fixture consumers. Inspect generated output only after that coordinated update.
+- [ ] Run `cargo test -p axton-compiler --locked`; expect pass. Run compiler emission tests, then defer the full generated API runner until Task 4 has migrated all positive and negative fixture consumers. Inspect generated output only after that coordinated update.
 - [ ] Commit compiler emission and its focused tests. Generated fixtures remain on their old baseline until Task 4 updates the consumers and regenerates them together.
 
 ### Task 2: Internal atomic enqueue on Node
@@ -109,7 +109,7 @@ Run Dart tests from the package directory as documented: `(cd packages/dart && d
 **Files:** Modify `packages/client-react-native/transaction.mts` and shared `packages/client-js/runtime.mts` as required; modify `packages/dart/lib/src/{client.dart,port.dart}`; test `integration/bindings/client-react-native/transaction.test.mjs`, `runtime.test.mjs`, `packages/dart/test/client_test.dart`.
 
 - [ ] Add tests that public raw transactions lack `mutate`, standalone `client.mutate` still enqueues atomically, and captured calls inside callbacks fail without a hang. Assert Dart's Zone guard distinguishes callback work from independent callers. For React Native, use the conservative fail-fast guard while a public transaction is active and test the documented concurrent-call limitation.
-- [ ] Run focused RN Node tests and `(cd packages/dart && dart test test/client_test.dart)` with `AHEAD_DART_LIBRARY` set per `docs/engineering/testing/running.md`; confirm red where supported.
+- [ ] Run focused RN Node tests and `(cd packages/dart && dart test test/client_test.dart)` with `AXTON_DART_LIBRARY` set per `docs/engineering/testing/running.md`; confirm red where supported.
 - [ ] Route each standalone client mutation through an internal begin/enqueue/commit/rollback sequence, then remove public `Transaction.mutate` and change Dart `WritePort implements ReadPort` in `port.dart` (keep `Client implements MutatePort`). Keep Dart savepoint and RN lifetime behavior unchanged. Do not expose the internal helper from SDK exports.
 - [ ] Re-run focused tests and Dart analyzer. Commit.
 
@@ -123,4 +123,4 @@ Run Dart tests from the package directory as documented: `(cd packages/dart && d
 
 ## Verification and handoff
 
-Run the relevant host suites and generated API runner with prerequisites from `docs/engineering/testing/running.md`; run `cargo test -p ahead-compiler --locked`. Validate a real SQLite reopen and rejection path, then inspect `git diff --check`, generated fixtures, and the final public surface. Record commands, results and limits. A close/reopen test is not a process-crash test. Report the branch and commits; do not begin #141 until this branch is completed and incorporated into its baseline.
+Run the relevant host suites and generated API runner with prerequisites from `docs/engineering/testing/running.md`; run `cargo test -p axton-compiler --locked`. Validate a real SQLite reopen and rejection path, then inspect `git diff --check`, generated fixtures, and the final public surface. Record commands, results and limits. A close/reopen test is not a process-crash test. Report the branch and commits; do not begin #141 until this branch is completed and incorporated into its baseline.

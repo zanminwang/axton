@@ -7,7 +7,7 @@ use crate::engine::Engine;
 use crate::rows::merge_identity;
 use crate::store::ClientStore;
 use crate::{Report, ReportKind};
-use ahead_core::{AuthorityRecord, RecordKey, Result};
+use axton_core::{AuthorityRecord, RecordKey, Result};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 

@@ -1,8 +1,8 @@
 {
-  "name": "@ahead/native",
+  "name": "@axton/native",
   "version": "0.1.0",
   "private": true,
-  "description": "Native mobile carrier for Ahead",
+  "description": "Native mobile carrier for AXTON",
   "files": [
     "expo-module.config.json",
     "ios",

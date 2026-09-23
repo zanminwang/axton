@@ -20,13 +20,13 @@ A backend author writes handlers (one per mutation) and loaders (one per model) 
 
 ## 5. Building Block View
 
-The runtime package holds `createBackend`, the HTTP and WebSocket servers and the SQL-free `Database<T>` contract; `@ahead/postgres` builds that object from a two-method driver and ships the `pg`, `prisma` and `drizzle` shims ([Persistence](../../server/persistence.md)). Slot arguments handed to a handler are tagged with a hidden record reference, which is why `changes.add(input.entry)` and `publish({channel, records: [input.entry]})` work without spelling out model and identity.
+The runtime package holds `createBackend`, the HTTP and WebSocket servers and the SQL-free `Database<T>` contract; `@axton/postgres` builds that object from a two-method driver and ships the `pg`, `prisma` and `drizzle` shims ([Persistence](../../server/persistence.md)). Slot arguments handed to a handler are tagged with a hidden record reference, which is why `changes.add(input.entry)` and `publish({channel, records: [input.entry]})` work without spelling out model and identity.
 
 Code: [server/index.mts](../../../../../packages/server/index.mts); generated signatures from `backend_typescript` in [compiler/emit.rs](../../../../../crates/compiler/src/emit.rs).
 
 ## 9. Architecture Decisions
 
-**Handler and loader registration by version ([#91](https://github.com/zanminwang/ahead/issues/91)).** Group versions under the mutation or model name. For an initial v1-only contract, a function is shorthand for `{v1: implementation}`. Once multiple versions are supported, register each explicitly:
+**Handler and loader registration by version ([#91](https://github.com/zanminwang/axton/issues/91)).** Group versions under the mutation or model name. For an initial v1-only contract, a function is shorthand for `{v1: implementation}`. Once multiple versions are supported, register each explicitly:
 
 ```ts
 handlers: {
@@ -59,7 +59,7 @@ Loader registration implements the same decision. Generated `Loaders<Tx>` holds 
 - **Generated handlers group the retained versions of a mutation.** Evidence: [compiler/tests/compiler.rs](../../../../../crates/compiler/tests/compiler.rs) `backend_emitter_groups_handler_versions_under_the_mutation_name`, `backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation`.
 - **Loader registration names every retained model version, a bare function registers v1 only, and a pull reaches only the served version's loader.** Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `loader registration names every retained model version and a function means v1 only`, `a pull reaches the loader of the declared model version and normalizes rows with that contract`; [compiler/tests/compiler.rs](../../../../../crates/compiler/tests/compiler.rs) `backend_emitter_groups_loader_versions_under_the_model_name`; the `@ts-expect-error` loader negatives (bare function, missing and unknown versions, a value outside the v1 contract) in [test.ts](../../../../../integration/generated-api/test.ts).
 
-Executed 2026-09-15 with the `changes`/`publish` handler API: `cargo test -p ahead-compiler --locked`, `bash integration/generated-api/verify.sh`, and `bash integration/persistence/server/run.sh` (61 passed).
+Executed 2026-09-15 with the `changes`/`publish` handler API: `cargo test -p axton-compiler --locked`, `bash integration/generated-api/verify.sh`, and `bash integration/persistence/server/run.sh` (61 passed).
 
 ## 11. Risks and Technical Debt
 

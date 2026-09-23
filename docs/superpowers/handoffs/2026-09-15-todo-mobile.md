@@ -7,7 +7,7 @@ Implemented on branch `codex/todo-mobile` (worktree `.worktrees/todo-mobile`), s
 
 ## Copyable agent prompt
 
-**Scope correction:** Work is split into two issues. [React Native support #100](https://github.com/zanminwang/ahead/issues/100) blocks [To-do demo #31](https://github.com/zanminwang/ahead/issues/31). Complete #100 using `docs/superpowers/plans/2026-09-15-react-native-support.md` first. If already working from the original handoff, preserve current changes and separate SDK work under #100; do not continue treating both as one demo issue.
+**Scope correction:** Work is split into two issues. [React Native support #100](https://github.com/zanminwang/axton/issues/100) blocks [To-do demo #31](https://github.com/zanminwang/axton/issues/31). Complete #100 using `docs/superpowers/plans/2026-09-15-react-native-support.md` first. If already working from the original handoff, preserve current changes and separate SDK work under #100; do not continue treating both as one demo issue.
 
 After #100 supplies its verified integration, implement #31 using these documents, in order:
 

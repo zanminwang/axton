@@ -4,7 +4,7 @@
 //! result per record ([Server / Push](../../../docs/engineering/architecture/server/engine/push.md)).
 use crate::host::{HostExt, HostRequest, Loaded, PublicationIntent, Published, RecordRef, Stamped};
 use crate::{Config, Error, Host, Result, code, internal};
-use ahead_core::{AuthorityRecord, RecordKey};
+use axton_core::{AuthorityRecord, RecordKey};
 use serde_json::Value;
 use std::collections::BTreeMap;
 

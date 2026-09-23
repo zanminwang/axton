@@ -41,7 +41,7 @@ Retain request byte limits and the current batch size limit. Validate envelopes,
 
 ## Backend persistence and execution
 
-Add an ahead_call table in the application's PostgreSQL database:
+Add an axton_call table in the application's PostgreSQL database:
 
     owner_id TEXT NOT NULL
     call_id TEXT NOT NULL

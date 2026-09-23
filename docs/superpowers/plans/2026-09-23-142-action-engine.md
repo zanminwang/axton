@@ -11,12 +11,12 @@
 ## Global Constraints
 
 - Implement only after reviewed #145 and #141 are incorporated into this worktree. Rebase/merge their completed branch commits into codex/142-action-engine, inspect descriptors and generated interfaces, and update interface adapters in this plan to those actual names before code changes.
-- Preserve atomic optimism/enqueue, one frozen durable batch per client, contiguous sequence validation, receipt-only completion, savepoint failure isolation, stamps and independent live downlink.
+- Preserve atomic optimism/enqueue, one frozen durable batch per client, contiguous sequence validation, receipt-only completion for durable calls, savepoint failure isolation, stamps and independent live downlink.
 - Durable default and direct request-response use one handler, input and output contract. Direct calls do not enqueue, apply optimism or drain the durable queue.
 - Results are invocation-specific Loader snapshots, distinct from batch-final authority. Explicit Model handler outputs are identity objects, not bare scalars or complete Models. Implicit identities come from inputs.
 - Client successful business results stay in live observer memory; backend replay responses are durable. Pending work/completion metadata and rejection visibility stay durable. No new public history, cancellation or progress API.
 - Retain internal legacy fixtures while migrating runnable examples, then remove public legacy wiring only when replacement paths actually work. Do not expose throwing placeholder APIs. No legacy user/database migration guarantee is required.
-- #116 owns full ephemeral/materialization feature acceptance. Implement the common identity/result execution needed by the approved ordinary and mutation Action examples; record shared work, leaving #116 open for remaining policy/integration coverage.
+- #142 implements the shared Loader, snapshot and materialization path. #116 owns ephemeral policy and dedicated mixed-output acceptance; record the shared work there and leave it open for that remaining scope.
 - Use tests at each changed boundary. Do not infer PostgreSQL transaction correctness from an in-memory mock or arbitrary crash safety from a reopen test.
 
 ## Preparation and evidence ledger

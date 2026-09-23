@@ -1,5 +1,171 @@
 use std::{fs, process::Command};
 #[test]
+fn cli_action_history_versions_outputs_and_refuses_edits_atomically() {
+    let (root, input) = workspace("action-history");
+    let out = root.join("out");
+    let model = input.join("test.model");
+    let v1 = "model Todo { id String @@id(id) } action SendEmail(to String) { messageId String relatedTodo Todo? }";
+    fs::write(&model, v1).unwrap();
+    assert!(
+        ahead(&[input.as_os_str(), out.as_os_str()])
+            .status
+            .success()
+    );
+    let actions = input.join("history/actions.json");
+    let before: Vec<_> = [
+        actions.clone(),
+        input.join("history/models.json"),
+        input.join("history/mutations.json"),
+        out.join("backend.json"),
+        out.join("schema.json"),
+        out.join("generated.ts"),
+    ]
+    .iter()
+    .map(|p| fs::read(p).unwrap())
+    .collect();
+    fs::write(&model, v1.replace("messageId String", "messageId Int")).unwrap();
+    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("output"));
+    let after: Vec<_> = [
+        actions.clone(),
+        input.join("history/models.json"),
+        input.join("history/mutations.json"),
+        out.join("backend.json"),
+        out.join("schema.json"),
+        out.join("generated.ts"),
+    ]
+    .iter()
+    .map(|p| fs::read(p).unwrap())
+    .collect();
+    assert_eq!(before, after);
+    fs::write(
+        &model,
+        v1.replace(
+            "model Todo { id String @@id(id) }",
+            "@version(2) model Todo { id String title String @@id(id) }",
+        )
+        .replace("action SendEmail", "@version(2) action SendEmail")
+        .replace("messageId String", "messageId Int"),
+    )
+    .unwrap();
+    let result = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let backend: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("backend.json")).unwrap()).unwrap();
+    assert_eq!(backend["actions"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        backend["actions"][0]["outputs"][0]["type"]["name"],
+        "string"
+    );
+    assert_eq!(backend["actions"][1]["outputs"][0]["type"]["name"], "int");
+    assert_eq!(backend["actions"][0]["outputs"][1]["modelReadVersion"], 1);
+    assert_eq!(backend["actions"][1]["outputs"][1]["modelReadVersion"], 2);
+    let retained = fs::read(&actions).unwrap();
+    let generated = fs::read(out.join("backend.json")).unwrap();
+    assert!(
+        ahead(&[input.as_os_str(), out.as_os_str()])
+            .status
+            .success()
+    );
+    assert_eq!(fs::read(&actions).unwrap(), retained);
+    assert_eq!(fs::read(out.join("backend.json")).unwrap(), generated);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_action_history_options_require_explicit_initialization() {
+    let (root, input) = workspace("action-options");
+    let out = root.join("out");
+    let path = root.join("action-history.json");
+    let model = input.join("test.model");
+    fs::write(
+        &model,
+        "model Todo { id String @@id(id) } @version(2) action Send(to String) { id String }",
+    )
+    .unwrap();
+    let args = [
+        input.as_os_str(),
+        out.as_os_str(),
+        "--action-history".as_ref(),
+        path.as_os_str(),
+    ];
+    let missing = ahead(&args);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("missing Action history"));
+    let uninitialized = ahead(&[
+        input.as_os_str(),
+        out.as_os_str(),
+        "--action-history".as_ref(),
+        path.as_os_str(),
+        "--initialize-action-history".as_ref(),
+    ]);
+    assert!(!uninitialized.status.success());
+    assert!(String::from_utf8_lossy(&uninitialized.stderr).contains("begin at version 1"));
+    assert!(!out.exists());
+    fs::write(
+        &model,
+        "model Todo { id String @@id(id) } action Send(to String) { id String }",
+    )
+    .unwrap();
+    assert!(
+        ahead(&[
+            input.as_os_str(),
+            out.as_os_str(),
+            "--action-history".as_ref(),
+            path.as_os_str(),
+            "--initialize-action-history".as_ref()
+        ])
+        .status
+        .success()
+    );
+    assert!(path.exists());
+    assert!(!input.join("history/actions.json").exists());
+    assert!(
+        !ahead(&[
+            input.as_os_str(),
+            out.as_os_str(),
+            "--action-history".as_ref(),
+            path.as_os_str(),
+            "--initialize-action-history".as_ref()
+        ])
+        .status
+        .success()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_refuses_removing_the_last_retained_action() {
+    let (root, input) = workspace("action-removal");
+    let out = root.join("out");
+    let model = input.join("test.model");
+    fs::write(
+        &model,
+        "model Todo { id String @@id(id) } action Send(to String) { id String }",
+    )
+    .unwrap();
+    assert!(
+        ahead(&[input.as_os_str(), out.as_os_str()])
+            .status
+            .success()
+    );
+    let actions = input.join("history/actions.json");
+    let before_history = fs::read(&actions).unwrap();
+    let before_backend = fs::read(out.join("backend.json")).unwrap();
+    fs::write(&model, "model Todo { id String @@id(id) }").unwrap();
+    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("cannot be removed"));
+    assert_eq!(fs::read(&actions).unwrap(), before_history);
+    assert_eq!(fs::read(out.join("backend.json")).unwrap(), before_backend);
+    fs::remove_dir_all(root).unwrap();
+}
+#[test]
 fn cli_retains_history_and_does_not_overwrite_on_break() {
     let root = std::env::temp_dir().join(format!("ahead-compiler-cli-{}", std::process::id()));
     let input = root.join("input");
@@ -265,6 +431,7 @@ fn cli_output_is_deterministic() {
     assert_eq!(names.len(), 6, "{names:?}");
     assert!(input.join("history").join("mutations.json").exists());
     assert!(input.join("history").join("models.json").exists());
+    assert!(!input.join("history").join("actions.json").exists());
     assert_eq!(
         fs::read(input.join("history").join("models.json")).unwrap(),
         {

@@ -8,7 +8,9 @@ mod history;
 pub mod parse;
 pub mod validate;
 pub use emit::{backend_typescript, client_typescript, dart, typescript};
-pub use history::{check_fence, reconcile_history, reconcile_model_history};
+pub use history::{
+    check_fence, reconcile_action_history, reconcile_history, reconcile_model_history,
+};
 pub use parse::{Declarations, Pos, parse};
 pub use validate::{Validated, validate};
 

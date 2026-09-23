@@ -830,3 +830,76 @@ fn deprecations_reach_every_generated_surface_and_leave_the_descriptors_alone() 
     assert!(dart.contains("Map<String,dynamic> edit({required EditTaskUpdate task,@Deprecated('use task') EditOldUpdate? old})"), "{dart}");
     assert!(dart.contains(" Future<int> edit({required EditTaskUpdate task,@Deprecated('use task') EditOldUpdate? old})"), "{dart}");
 }
+#[test]
+fn action_descriptors_separate_values_operands_and_output_sources() {
+    let source = "model Todo { id String title String @@id(id) } action Save(label String?, todo Todo.create, maybe Todo.update<title>?, gone Todo.delete[]) { related Todo? count Int }";
+    let descriptor = ahead_compiler::compile(source).unwrap();
+    let action = &descriptor["actions"][0];
+    assert_eq!(action["name"], "Save");
+    assert_eq!(action["inputs"][0]["kind"], "value");
+    assert_eq!(action["inputs"][0]["required"], true);
+    assert_eq!(action["inputs"][0]["nullable"], true);
+    assert_eq!(action["inputs"][1]["kind"], "model");
+    assert_eq!(action["inputs"][2]["cardinality"], "optional");
+    assert_eq!(
+        action["inputs"][2]["allowedPatchFields"],
+        serde_json::json!(["title"])
+    );
+    assert_eq!(
+        action["outputs"][1]["source"],
+        serde_json::json!({"inputIdentity":"maybe"})
+    );
+    assert_eq!(action["outputs"][2]["kind"], "deleteIdentity");
+    assert_eq!(action["outputs"][2]["cardinality"], "list");
+    assert_eq!(
+        action["outputs"][3]["source"],
+        serde_json::json!("handlerIdentity")
+    );
+    assert_eq!(
+        action["outputs"][3]["handlerType"]["fields"][0]["name"],
+        "id"
+    );
+    assert_eq!(action["outputs"][3]["modelReadVersion"], 1);
+    assert!(
+        descriptor["schema"]["clientPolicies"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn action_descriptors_keep_bindings_sequence_prerequisites_and_composite_keys() {
+    let source = r#"
+prerequisite Uploaded(key String)
+model Parent { id String children Child[] @@id(id) }
+model Child { tenant String id String parentId String title String @requires(Uploaded(key: self)) parent Parent @reference(via: [parentId]) @@id(tenant, id) }
+@sequence(after: [Rename(child: child)])
+action Add(parent Parent.create, child Child.create(parent: parent)) { found Child[] }
+action Rename(child Child.update<title>)
+"#;
+    let descriptors = ahead_compiler::compile(source).unwrap();
+    let action = &descriptors["actions"][0];
+    assert_eq!(action["inputs"][1]["bindings"][0]["slot"], "parent");
+    assert_eq!(
+        action["sequence"]["after"][0]["arguments"]["child"],
+        "child"
+    );
+    assert_eq!(action["outputs"][2]["cardinality"], "list");
+    assert_eq!(
+        action["outputs"][2]["handlerType"]["fields"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        action["outputs"][2]["handlerType"]["fields"][0]["name"],
+        "tenant"
+    );
+    let history = ahead_compiler::reconcile_action_history(&descriptors, None).unwrap();
+    let snapshot = &history["actions"]["Add"]["1"];
+    assert_eq!(snapshot["requirements"][0]["name"], "Uploaded");
+    assert_eq!(snapshot["prerequisites"][0]["name"], "Uploaded");
+    assert_eq!(snapshot["sequence"], action["sequence"]);
+}

@@ -6,6 +6,175 @@ fn list<'a>(v: &'a Value, k: &str) -> Result<&'a Vec<Value>, String> {
 fn named<'a>(items: &'a [Value], name: &Value) -> Option<&'a Value> {
     items.iter().find(|item| item["name"] == *name)
 }
+/// Retain the complete input and output contract of each published Action.
+/// Output changes always require a new Action version; input compatibility
+/// follows the existing mutation operand rules.
+pub fn reconcile_action_history(current: &Value, history: Option<&Value>) -> Result<Value, String> {
+    let mut result = history
+        .cloned()
+        .unwrap_or(json!({"formatVersion":1,"actions":{}}));
+    if result["formatVersion"] != 1 || !result["actions"].is_object() {
+        return Err("unsupported Action history format".into());
+    }
+    let actions = list(current, "actions")?;
+    for name in result["actions"].as_object().unwrap().keys() {
+        if !actions.iter().any(|a| a["name"] == *name) {
+            return Err(format!("retained Action {name} cannot be removed"));
+        }
+    }
+    for action in actions {
+        let name = action["name"].as_str().ok_or("unnamed Action")?;
+        let version = action["version"].as_u64().ok_or("invalid Action version")?;
+        let snapshot = capture_action(current, action)?;
+        let versions = result["actions"]
+            .as_object_mut()
+            .unwrap()
+            .entry(name)
+            .or_insert(json!({}))
+            .as_object_mut()
+            .ok_or("invalid Action history versions")?;
+        let latest = versions
+            .keys()
+            .map(|v| {
+                v.parse::<u64>()
+                    .map_err(|_| "invalid retained Action version")
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .max()
+            .unwrap_or(0);
+        if version < latest {
+            return Err(format!("{name}: version cannot decrease from {latest}"));
+        }
+        if let Some(old) = versions.get(&version.to_string()) {
+            if old["outputs"] != snapshot["outputs"]
+                || old["outputEnums"] != snapshot["outputEnums"]
+            {
+                return Err(format!(
+                    "{name} v{version}: incompatible output change; increase @version"
+                ));
+            }
+            if !action_inputs_compatible(old, &snapshot)? {
+                return Err(format!(
+                    "{name} v{version}: incompatible input change; increase @version"
+                ));
+            }
+        }
+        versions.insert(version.to_string(), snapshot);
+    }
+    for versions in result["actions"].as_object().unwrap().values() {
+        for snapshot in versions
+            .as_object()
+            .ok_or("invalid Action history versions")?
+            .values()
+        {
+            for prerequisite in list(snapshot, "prerequisites")? {
+                if named(list(current, "prerequisites")?, &prerequisite["name"])
+                    != Some(prerequisite)
+                {
+                    return Err(format!(
+                        "retained Action still requires original prerequisite {}",
+                        prerequisite["name"]
+                    ));
+                }
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn action_inputs_compatible(old: &Value, new: &Value) -> Result<bool, String> {
+    let previous = list(old, "inputs")?;
+    let next = list(new, "inputs")?;
+    if previous.len() != next.len() {
+        return Ok(false);
+    }
+    for (left, right) in previous.iter().zip(next) {
+        if left["kind"] != right["kind"] {
+            return Ok(false);
+        }
+        if left["kind"] == "value" && left != right {
+            return Ok(false);
+        }
+    }
+    let slots = |inputs: &[Value]| {
+        inputs
+            .iter()
+            .filter(|x| x["kind"] == "model")
+            .map(|x| {
+                let mut slot = x.clone();
+                slot.as_object_mut().unwrap().remove("kind");
+                slot
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut old_mutation = old.clone();
+    let mut new_mutation = new.clone();
+    old_mutation["slots"] = json!(slots(previous));
+    new_mutation["slots"] = json!(slots(next));
+    compatible(&old_mutation, &new_mutation)
+}
+
+fn capture_action(config: &Value, action: &Value) -> Result<Value, String> {
+    let inputs = list(action, "inputs")?;
+    let mut outputs = list(action, "outputs")?.clone();
+    if let Some(models) = config["backendModels"].as_array() {
+        for output in &mut outputs {
+            if output["kind"] == "model" {
+                let model = models
+                    .iter()
+                    .find(|model| {
+                        model["name"] == output["model"]
+                            && model["version"] == output["modelReadVersion"]
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "Action output {} has no retained Model read contract",
+                            output["name"]
+                        )
+                    })?;
+                output["modelReadVersion"] = model["version"].clone();
+            }
+        }
+    }
+    let slots: Vec<Value> = inputs
+        .iter()
+        .filter(|input| input["kind"] == "model")
+        .map(|input| {
+            let mut slot = input.clone();
+            slot.as_object_mut().unwrap().remove("kind");
+            slot
+        })
+        .collect();
+    let operand = capture(
+        config,
+        &json!({"name":action["name"],"version":action["version"],"slots":slots,"sequence":action["sequence"]}),
+    )?;
+    let referenced = |values: &[Value]| -> Vec<Value> {
+        let names: std::collections::BTreeSet<_> = values
+            .iter()
+            .filter(|v| v["type"]["kind"] == "enum")
+            .filter_map(|v| v["type"]["name"].as_str())
+            .collect();
+        config["schema"]["enums"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["name"].as_str().is_some_and(|n| names.contains(n)))
+            .cloned()
+            .collect()
+    };
+    let input_enums = referenced(inputs);
+    let output_enums = referenced(&outputs);
+    let mut input = operand["input"].clone();
+    input["enums"].as_array_mut().unwrap().extend(input_enums);
+    Ok(json!({
+        "name":action["name"],"version":action["version"],"inputs":inputs,"outputs":outputs,
+        "input":input,"outputEnums":output_enums,
+        "requirements":operand["requirements"],"prerequisites":operand["prerequisites"],
+        "sequence":action["sequence"],
+    }))
+}
 /// Preserve historical mutation inputs independently of today's storage schema.
 pub fn reconcile_history(current: &Value, history: Option<&Value>) -> Result<Value, String> {
     let mut result = history

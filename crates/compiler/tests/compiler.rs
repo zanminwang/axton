@@ -1,4 +1,153 @@
 use ahead_compiler::compile;
+use ahead_compiler::validate::{
+    ActionInput, ActionOutputSource, ActionOutputType, Cardinality, FieldType, Scalar,
+};
+use ahead_compiler::{parse, validate};
+
+#[test]
+fn action_values_and_explicit_outputs_are_typed() {
+    let schema = parse("enum Status { active closed } model Todo { id String @@id(id) } action Search(query String?, labels String[]) { count Int status Status? statuses Status[] }").unwrap();
+    let action = &validate(&schema).unwrap().actions[0];
+    assert_eq!(
+        action.inputs[0],
+        ActionInput::Value {
+            name: "query".into(),
+            ty: FieldType::Scalar(Scalar::String),
+            nullable: true,
+            list: false
+        }
+    );
+    assert_eq!(
+        action.inputs[1],
+        ActionInput::Value {
+            name: "labels".into(),
+            ty: FieldType::Scalar(Scalar::String),
+            nullable: false,
+            list: true
+        }
+    );
+    assert_eq!(
+        action
+            .outputs
+            .iter()
+            .map(|x| x.cardinality)
+            .collect::<Vec<_>>(),
+        [
+            Cardinality::Single,
+            Cardinality::Optional,
+            Cardinality::List
+        ]
+    );
+    assert!(
+        action
+            .outputs
+            .iter()
+            .all(|x| x.source == ActionOutputSource::HandlerValue)
+    );
+    assert_eq!(
+        action.outputs[1].ty,
+        ActionOutputType::Value(FieldType::Enum("Status".into()))
+    );
+}
+
+#[test]
+fn action_model_operands_imply_bound_outputs() {
+    let schema = parse("model Todo { id String title String @@id(id) } action Edit(one Todo.create, maybe Todo.update<title>?, many Todo.delete[]) { related Todo? }").unwrap();
+    let action = &validate(&schema).unwrap().actions[0];
+    assert_eq!(
+        action
+            .outputs
+            .iter()
+            .map(|x| x.cardinality)
+            .collect::<Vec<_>>(),
+        [
+            Cardinality::Single,
+            Cardinality::Optional,
+            Cardinality::List,
+            Cardinality::Optional
+        ]
+    );
+    assert_eq!(action.outputs[0].ty, ActionOutputType::Model("Todo".into()));
+    assert_eq!(
+        action.outputs[2].ty,
+        ActionOutputType::DeleteIdentity("Todo".into())
+    );
+    assert_eq!(
+        action.outputs[1].source,
+        ActionOutputSource::InputIdentity {
+            input: "maybe".into()
+        }
+    );
+    assert_eq!(
+        action.outputs[3].source,
+        ActionOutputSource::HandlerModelIdentity
+    );
+    assert_eq!(action.outputs[0].model_read_version, Some(1));
+}
+
+#[test]
+fn action_semantic_errors_name_the_member_and_location() {
+    for (source, name) in [
+        ("action Search(query Object)", "Object"),
+        (
+            "model Todo { id String @@id(id) } action A(todo Todo.create) { todo Todo }",
+            "todo",
+        ),
+        ("action A(x String, x Int)", "x"),
+        ("action Call(x String)", "Call"),
+        (
+            "model Todo { id String @@id(id) } action Todo(x String)",
+            "Todo",
+        ),
+        (
+            "model Todo { id String @@id(id) } action Save(x String) action save(y String)",
+            "save",
+        ),
+        (
+            "model Todo { id String @@id(id) } action A(todo Todo.update<missing>)",
+            "missing",
+        ),
+    ] {
+        let err = validate(&parse(source).unwrap()).unwrap_err();
+        assert!(err.contains("1:") && err.contains(name), "{source}: {err}");
+    }
+}
+
+#[test]
+fn action_preserves_restricted_patch_bindings_and_sequence() {
+    let schema = parse(r#"
+prerequisite Uploaded(key String)
+model Parent { id String children Child[] @@id(id) }
+model Child { id String parentId String title String @requires(Uploaded(key: self)) parent Parent @reference(via: [parentId]) @@id(id) }
+@sequence(after: [Rename(child: child)])
+action Add(parent Parent.create, child Child.create(parent: parent))
+action Rename(child Child.update<title>)
+"#).unwrap();
+    let valid = validate(&schema).unwrap();
+    let ActionInput::Model { slot: child } = &valid.actions[0].inputs[1] else {
+        panic!("model input")
+    };
+    assert_eq!(child.bindings[0].slot, "parent");
+    assert_eq!(
+        valid.actions[0].sequence.as_ref().unwrap().after[0].bindings[0].path,
+        ["child"]
+    );
+    let ActionInput::Model { slot: patch } = &valid.actions[1].inputs[0] else {
+        panic!("model input")
+    };
+    assert_eq!(patch.allowed_patch_fields.as_ref().unwrap(), &["title"]);
+    assert_eq!(valid.requirements[0].prerequisite, "Uploaded");
+}
+
+#[test]
+fn action_value_input_can_share_a_name_with_an_explicit_output() {
+    let schema =
+        parse("model Todo { id String @@id(id) } action Echo(value String) { value String }")
+            .unwrap();
+    let action = &validate(&schema).unwrap().actions[0];
+    assert_eq!(action.inputs.len(), 1);
+    assert_eq!(action.outputs.len(), 1);
+}
 #[test]
 fn schema_and_mutations() {
     let v=compile("enum Status { active archived } model Entry { owner UUID id UUID title String note String? labels String[] at DateTime status Status @@id(owner,id) @@unique(title) } mutation Edit { entry Entry.update<title,note> @@version(2) }").unwrap();

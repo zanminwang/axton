@@ -2,7 +2,7 @@
 //! from source reports the offending declaration; the core descriptor check
 //! near the end is a backstop at the end of the input. No descriptor is
 //! assembled here: [`crate::generate`] renders [`Validated`].
-use crate::parse::{Declarations, FieldDecl, ModelDecl, Pos, at};
+use crate::parse::{ActionInputDecl, Declarations, FieldDecl, ModelDecl, Pos, SlotDecl, at};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -21,6 +21,7 @@ pub struct Validated {
     pub requirements: Vec<Requirement>,
     pub prerequisites: Vec<Prerequisite>,
     pub mutations: Vec<Mutation>,
+    pub actions: Vec<Action>,
     /// Every `@deprecated`, in source order. A generated-code notice only
     /// ([#91](https://github.com/zanminwang/ahead/issues/91)): Generate keeps
     /// it beside the descriptors, never inside them, so no runtime reads it.
@@ -182,6 +183,47 @@ pub struct Mutation {
     pub sequence: Option<Sequence>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Action {
+    pub name: String,
+    pub version: u64,
+    pub inputs: Vec<ActionInput>,
+    pub outputs: Vec<ActionOutput>,
+    pub sequence: Option<Sequence>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ActionInput {
+    /// Nullable values still require the named argument to be present.
+    Value {
+        name: String,
+        ty: FieldType,
+        nullable: bool,
+        list: bool,
+    },
+    Model {
+        slot: Slot,
+    },
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ActionOutputSource {
+    InputIdentity { input: String },
+    HandlerValue,
+    HandlerModelIdentity,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ActionOutputType {
+    Value(FieldType),
+    Model(String),
+    DeleteIdentity(String),
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActionOutput {
+    pub name: String,
+    pub ty: ActionOutputType,
+    pub cardinality: Cardinality,
+    pub source: ActionOutputSource,
+    pub model_read_version: Option<u64>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Slot {
     pub name: String,
     pub model: String,
@@ -259,6 +301,136 @@ fn strings(values: &[Value]) -> Vec<String> {
         .iter()
         .map(|v| v.as_str().unwrap_or_default().to_string())
         .collect()
+}
+fn action_value_type(f: &FieldDecl, enums: &[Enum]) -> Result<FieldType, String> {
+    if !f.attributes.is_empty() || f.deprecated.is_some() {
+        return Err(at(
+            f.pos,
+            format!("unsupported Action value directive on {}", f.name),
+        ));
+    }
+    if let Some(scalar) = Scalar::from_source(&f.type_name) {
+        Ok(FieldType::Scalar(scalar))
+    } else if enums.iter().any(|e| e.name == f.type_name) {
+        Ok(FieldType::Enum(f.type_name.clone()))
+    } else {
+        Err(at(
+            f.pos,
+            format!(
+                "unknown or unsupported Action type {} on {}",
+                f.type_name, f.name
+            ),
+        ))
+    }
+}
+fn cardinality(s: &str) -> Cardinality {
+    match s {
+        "list" => Cardinality::List,
+        "optional" => Cardinality::Optional,
+        _ => Cardinality::Single,
+    }
+}
+fn validate_action_slot(
+    s: &SlotDecl,
+    inputs: &[ActionInputDecl],
+    models: &[Model],
+) -> Result<Slot, String> {
+    let model = models.iter().find(|m| m.name == s.model).ok_or_else(|| {
+        at(
+            s.pos,
+            format!("unknown Action model {} on {}", s.model, s.name),
+        )
+    })?;
+    let operation = match s.operation.as_str() {
+        "create" => Operation::Create,
+        "update" => Operation::Update,
+        "delete" => Operation::Delete,
+        _ => return Err(at(s.pos, format!("unknown operation on {}", s.name))),
+    };
+    let mut allowed_patch_fields = s.allowed_patch_fields.clone();
+    if operation == Operation::Update {
+        if allowed_patch_fields.is_none() {
+            allowed_patch_fields = Some(
+                model
+                    .fields
+                    .iter()
+                    .filter(|f| !model.identity.contains(&f.name))
+                    .map(|f| f.name.clone())
+                    .collect(),
+            );
+        }
+        let mut seen = BTreeSet::new();
+        for name in allowed_patch_fields.as_ref().unwrap() {
+            if !seen.insert(name.as_str())
+                || model.identity.contains(name)
+                || !model.fields.iter().any(|f| f.name == *name)
+            {
+                return Err(at(
+                    s.pos,
+                    format!("invalid allowed patch field {name} on {}", s.name),
+                ));
+            }
+        }
+    } else if allowed_patch_fields.is_some() {
+        return Err(at(
+            s.pos,
+            format!("field restriction requires update on {}", s.name),
+        ));
+    }
+    let mut bindings = vec![];
+    for (relation, parent) in s
+        .relation_bindings
+        .as_object()
+        .ok_or_else(|| at(s.pos, format!("invalid bindings on {}", s.name)))?
+    {
+        let rel = model
+            .relations
+            .iter()
+            .find(|r| r.name == *relation)
+            .ok_or_else(|| {
+                at(
+                    s.pos,
+                    format!("unknown binding relation {relation} on {}", s.name),
+                )
+            })?;
+        let parent_name = parent
+            .as_str()
+            .ok_or_else(|| at(s.pos, format!("invalid binding parent on {}", s.name)))?;
+        let parent_slot = inputs
+            .iter()
+            .find_map(|i| match i {
+                ActionInputDecl::Model(x) if x.name == parent_name => Some(x),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                at(
+                    s.pos,
+                    format!("unknown parent slot {parent_name} on {}", s.name),
+                )
+            })?;
+        if parent_slot.model != rel.target || parent_slot.cardinality != "single" {
+            return Err(at(
+                s.pos,
+                format!(
+                    "binding parent {parent_name} must be single matching model on {}",
+                    s.name
+                ),
+            ));
+        }
+        bindings.push(Binding {
+            relation: relation.clone(),
+            slot: parent_name.into(),
+            fields: rel.fields.clone(),
+        });
+    }
+    Ok(Slot {
+        name: s.name.clone(),
+        model: s.model.clone(),
+        operation,
+        cardinality: cardinality(&s.cardinality),
+        allowed_patch_fields,
+        bindings,
+    })
 }
 
 /// Check the declarations and resolve them into the typed schema.
@@ -735,6 +907,193 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
     for (m, sequence) in mutations.iter_mut().zip(sequences) {
         m.sequence = sequence;
     }
+    let mut actions = Vec::new();
+    let mut action_names = BTreeSet::new();
+    for decl in &d.actions {
+        if decl.name.eq_ignore_ascii_case("call") {
+            return Err(at(
+                decl.pos,
+                format!("Action name {} is reserved", decl.name),
+            ));
+        }
+        if declared_names.iter().any(|(name, _)| *name == decl.name) {
+            return Err(at(
+                decl.pos,
+                format!("Action {} collides with a model or enum", decl.name),
+            ));
+        }
+        let generated_name = format!("{}{}", decl.name[..1].to_ascii_lowercase(), &decl.name[1..]);
+        if !action_names.insert(generated_name) {
+            return Err(at(decl.pos, format!("duplicate Action {}", decl.name)));
+        }
+        let mut inputs = Vec::new();
+        let mut outputs = Vec::new();
+        let mut input_names = BTreeSet::new();
+        let mut output_names = BTreeSet::new();
+        for input in &decl.inputs {
+            let (name, pos) = match input {
+                ActionInputDecl::Value(f) => (&f.name, f.pos),
+                ActionInputDecl::Model(s) => (&s.name, s.pos),
+            };
+            if !input_names.insert(name.as_str()) {
+                return Err(at(pos, format!("duplicate Action input {name}")));
+            }
+            match input {
+                ActionInputDecl::Value(f) => {
+                    let ty = action_value_type(f, &enums)?;
+                    inputs.push(ActionInput::Value {
+                        name: f.name.clone(),
+                        ty,
+                        nullable: f.nullable,
+                        list: f.list,
+                    });
+                }
+                ActionInputDecl::Model(s) => {
+                    let slot = validate_action_slot(s, &decl.inputs, &models)?;
+                    let model = model(&s.model).unwrap();
+                    output_names.insert(s.name.as_str());
+                    outputs.push(ActionOutput {
+                        name: s.name.clone(),
+                        ty: if slot.operation == Operation::Delete {
+                            ActionOutputType::DeleteIdentity(s.model.clone())
+                        } else {
+                            ActionOutputType::Model(s.model.clone())
+                        },
+                        cardinality: slot.cardinality,
+                        source: ActionOutputSource::InputIdentity {
+                            input: s.name.clone(),
+                        },
+                        model_read_version: (slot.operation != Operation::Delete)
+                            .then_some(model.version),
+                    });
+                    inputs.push(ActionInput::Model { slot });
+                }
+            }
+        }
+        for output in &decl.outputs {
+            let f = &output.field;
+            if !output_names.insert(f.name.as_str()) {
+                return Err(at(f.pos, format!("duplicate Action output {}", f.name)));
+            }
+            let (ty, source, read_version) = if let Some(model) = model(&f.type_name) {
+                if !f.attributes.is_empty() || f.deprecated.is_some() {
+                    return Err(at(
+                        f.pos,
+                        format!("unsupported Action output directive on {}", f.name),
+                    ));
+                }
+                (
+                    ActionOutputType::Model(model.name.clone()),
+                    ActionOutputSource::HandlerModelIdentity,
+                    Some(model.version),
+                )
+            } else {
+                (
+                    ActionOutputType::Value(action_value_type(f, &enums)?),
+                    ActionOutputSource::HandlerValue,
+                    None,
+                )
+            };
+            outputs.push(ActionOutput {
+                name: f.name.clone(),
+                ty,
+                cardinality: if f.list {
+                    Cardinality::List
+                } else if f.nullable {
+                    Cardinality::Optional
+                } else {
+                    Cardinality::Single
+                },
+                source,
+                model_read_version: read_version,
+            });
+        }
+        actions.push(Action {
+            name: decl.name.clone(),
+            version: decl.version,
+            inputs,
+            outputs,
+            sequence: None,
+        });
+    }
+    for (i, decl) in d.actions.iter().enumerate() {
+        let Some(s) = &decl.sequence else { continue };
+        let qpos = s.pos;
+        let sequence = s
+            .arguments
+            .as_object()
+            .ok_or_else(|| at(qpos, "sequence requires after"))?;
+        if sequence.len() != 1 || !sequence.contains_key("after") {
+            return Err(at(
+                qpos,
+                format!("sequence requires after on {}", decl.name),
+            ));
+        }
+        let after = sequence["after"]
+            .as_array()
+            .ok_or_else(|| at(qpos, "sequence after must be list"))?;
+        let mut calls = vec![];
+        for call in after {
+            let target = actions
+                .iter()
+                .find(|a| call["name"].as_str() == Some(a.name.as_str()))
+                .ok_or_else(|| at(qpos, format!("unknown sequence Action on {}", decl.name)))?;
+            let args = call["arguments"]
+                .as_object()
+                .ok_or_else(|| at(qpos, "sequence requires invocation"))?;
+            let mut bindings = vec![];
+            for (slot_name, expression) in args {
+                let target_slot = target
+                    .inputs
+                    .iter()
+                    .find_map(|input| match input {
+                        ActionInput::Model { slot } if slot.name == *slot_name => Some(slot),
+                        _ => None,
+                    })
+                    .ok_or_else(|| at(qpos, format!("unknown sequence target slot {slot_name}")))?;
+                let path: Vec<String> = expression
+                    .as_str()
+                    .ok_or_else(|| at(qpos, "sequence requires slot path"))?
+                    .split('.')
+                    .map(str::to_string)
+                    .collect();
+                let source_slot = actions[i]
+                    .inputs
+                    .iter()
+                    .find_map(|input| match input {
+                        ActionInput::Model { slot } if slot.name == path[0] => Some(slot),
+                        _ => None,
+                    })
+                    .ok_or_else(|| at(qpos, format!("unknown sequence source slot {}", path[0])))?;
+                let mut current = model(&source_slot.model).unwrap();
+                for part in &path[1..] {
+                    let relation = current
+                        .relations
+                        .iter()
+                        .find(|r| r.name == *part)
+                        .ok_or_else(|| {
+                            at(qpos, format!("unknown sequence relation path {part}"))
+                        })?;
+                    current = model(&relation.target).unwrap();
+                }
+                if current.name != target_slot.model {
+                    return Err(at(
+                        qpos,
+                        format!("sequence target model mismatch for {slot_name}"),
+                    ));
+                }
+                bindings.push(SequenceBinding {
+                    slot: slot_name.clone(),
+                    path,
+                });
+            }
+            calls.push(SequenceCall {
+                mutation: target.name.clone(),
+                bindings,
+            });
+        }
+        actions[i].sequence = Some(Sequence { after: calls });
+    }
     for (c, pos) in unique_constraints.iter().zip(&constraint_pos) {
         let m = model(&c.model).unwrap();
         if c.fields.is_empty()
@@ -753,6 +1112,7 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
         requirements,
         prerequisites,
         mutations,
+        actions,
         deprecations: {
             let mut list = vec![];
             for e in &d.enums {

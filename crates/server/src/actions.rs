@@ -72,10 +72,11 @@ fn current_authority(
             .clone();
         let model = contract.model(&record.model).map_err(storage_invalid)?;
         for field in &model.fields {
-            if !model.identity.contains(&field.name) && !state.contains_key(&field.name) {
-                if let Some(default) = &field.default {
-                    state.insert(field.name.clone(), default.clone());
-                }
+            if !model.identity.contains(&field.name)
+                && !state.contains_key(&field.name)
+                && let Some(default) = &field.default
+            {
+                state.insert(field.name.clone(), default.clone());
             }
         }
         record.state = contract
@@ -209,7 +210,16 @@ async fn execute_fresh(
             Outcome::Records(records) => records,
         };
     let (result, additional) = assemble_result(
-        config, owner, action, &args, &outputs, &records, models, host,
+        config,
+        owner,
+        action,
+        &args,
+        &outputs,
+        ResultReadback {
+            records: &records,
+            models,
+        },
+        host,
     )
     .await?;
     let result = validate_action_result(&config.schema, action, &result)
@@ -301,22 +311,26 @@ async fn load_one_state(
     }
 }
 
+struct ResultReadback<'a> {
+    records: &'a [AuthorityRecord],
+    models: &'a BTreeMap<String, u64>,
+}
+
 async fn assemble_result(
     config: &Config,
     owner: &str,
     action: &axton_core::ActionDescriptor,
     args: &Value,
     outputs: &Value,
-    records: &[AuthorityRecord],
-    models: &BTreeMap<String, u64>,
+    readback: ResultReadback<'_>,
     host: &impl Host,
 ) -> Result<(Value, Vec<AuthorityRecord>)> {
-    if action.outputs.is_empty() {
-        return Ok((Value::Null, vec![]));
-    }
     let explicit = outputs
         .as_object()
         .ok_or_else(|| Error::code(code::HANDLER_INVALID))?;
+    if action.outputs.is_empty() && explicit.is_empty() {
+        return Ok((Value::Null, vec![]));
+    }
     if explicit.keys().any(|name| {
         !action.outputs.iter().any(|output| {
             output.name == *name && matches!(output.source, ActionOutputSource::Named(_))
@@ -324,6 +338,7 @@ async fn assemble_result(
     }) {
         return Err(Error::code(code::HANDLER_INVALID));
     }
+    let ResultReadback { records, models } = readback;
     let mut result = Map::new();
     let mut additional: BTreeMap<String, AuthorityRecord> = BTreeMap::new();
     for output in &action.outputs {

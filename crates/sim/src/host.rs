@@ -727,6 +727,9 @@ impl Host for MemHost {
                         }
                     }
                 }
+                HostRequest::HandleAction { .. } => {
+                    return Err("sim Action handlers are not configured".into());
+                }
                 HostRequest::AdvanceStamp {
                     model,
                     identity_key,

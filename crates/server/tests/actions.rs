@@ -29,6 +29,7 @@ impl Host for HostState {
                 "handleAction" => {
                     let outputs = match request["name"].as_str().unwrap() {
                         "Void" | "Broken" => json!({}),
+                        "UnexpectedVoid" => json!({"unexpected":1}),
                         "Values" => json!({"maybe":null,"items":["a","b"]}),
                         _ => json!({"message":"ok"}),
                     };
@@ -99,6 +100,46 @@ fn ordinary_list_nullable_void_and_missing_explicit_outputs_are_independent() {
     let ops = host.0.lock().unwrap();
     assert_eq!(ops.iter().filter(|op| op["op"] == "rollback").count(), 1);
     assert_eq!(ops.iter().filter(|op| op["op"] == "saveCall").count(), 3);
+}
+
+#[test]
+fn void_action_rejects_undeclared_handler_output_without_rejecting_next_call() {
+    let config = Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[
+        {"name":"UnexpectedVoid","version":1,"inputs":[],"outputs":[]},
+        {"name":"Void","version":1,"inputs":[],"outputs":[]}
+    ]},"mutations":[],"loaders":[]}))
+    .unwrap();
+    let host = HostState(Mutex::new(vec![]));
+    let calls = ["UnexpectedVoid", "Void"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| {
+            json!({
+                "ordinal":index+1,
+                "callId":format!("01890f47-1234-7123-8123-123456789ab{}",index+1),
+                "name":name,"version":1,"args":{}
+            })
+        })
+        .collect::<Vec<_>>();
+    let request = json!({"clientId":"device","batchSequence":1,"models":{},"mutations":calls});
+    let receipt: Value = serde_json::from_str(
+        &run(process_action_push(
+            &config,
+            "alice",
+            request.to_string().as_bytes(),
+            &host,
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        receipt["rejections"],
+        json!([{"ordinal":1,"code":"handler.invalid"}])
+    );
+    assert_eq!(receipt["completions"][1]["outcome"]["result"], Value::Null);
+    let ops = host.0.lock().unwrap();
+    assert_eq!(ops.iter().filter(|op| op["op"] == "rollback").count(), 1);
+    assert_eq!(ops.iter().filter(|op| op["op"] == "saveCall").count(), 2);
 }
 
 struct ModelHost(Mutex<Vec<Value>>);

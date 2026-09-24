@@ -535,7 +535,11 @@ export function createClient<
           // What the receipt or page could not apply; the client stays
           // consistent and the application hears about each one.
           for (const report of applied.reports)
-            onError?.(new AxtonReport(report));
+            try {
+              onError?.(new AxtonReport(report));
+            } catch (error) {
+              reportActionCallbackError(error);
+            }
         }
       };
       this.#syncing = run().finally(() => {

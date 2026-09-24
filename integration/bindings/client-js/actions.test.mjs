@@ -348,6 +348,93 @@ test("the real native pump settles a waiting handle before a throwing diagnostic
   }
 });
 
+test("durable reports isolate throwing onError and keep the native pump alive", async () => {
+  const native = createRequire(import.meta.url)(
+    "../../../bindings/node/axton-node.node",
+  );
+  const directory = await mkdtemp(join(tmpdir(), "axton-action-reports-"));
+  const schema = JSON.parse(
+    await readFile(
+      new URL("../../../fixtures/schemas/entry.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  schema.actions = [{ name: "Ping", version: 1, inputs: [], outputs: [] }];
+  let requests = 0;
+  const PumpClient = createClient(native, Transaction, () => ({
+    open() {},
+    push: async (kind, bodyText) => {
+      assert.equal(kind, "push");
+      const body = JSON.parse(bodyText);
+      requests++;
+      return JSON.stringify({
+        clientId: body.clientId,
+        batchSequence: body.batchSequence,
+        rejections: [],
+        completions: body.mutations.map((mutation) => ({
+          callId: mutation.callId,
+          outcome: { status: "succeeded", result: null },
+        })),
+        records:
+          requests === 3
+            ? []
+            : ["a", "b"].map((id) => ({
+                model: "Entry",
+                identity: { id },
+                stamp: 1,
+                state: {
+                  text: requests === 1 ? "first" : "second",
+                  note: null,
+                },
+              })),
+      });
+    },
+  }));
+  const client = await PumpClient.open({ path: join(directory, "db"), schema });
+  const previousReportError = globalThis.reportError;
+  const diagnostic = Error("application diagnostic failed");
+  const observed = [];
+  const reports = [];
+  globalThis.reportError = (error) => observed.push(error);
+  try {
+    const connection = await client.connect(
+      { url: "http://unused", token: "token" },
+      {
+        onError: (report) => {
+          reports.push(report);
+          throw diagnostic;
+        },
+      },
+    );
+    const first = await client.invokeAction("Ping", 1, {}, () => undefined);
+    assert.equal((await first.wait()).error, null);
+    const second = await client.invokeAction("Ping", 1, {}, () => undefined);
+    assert.equal((await second.wait()).error, null);
+    const third = await client.invokeAction("Ping", 1, {}, () => undefined);
+    assert.equal(
+      (
+        await Promise.race([
+          third.wait(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(Error("pump stalled")), 1000),
+          ),
+        ])
+      ).error,
+      null,
+    );
+    assert.equal(requests, 3);
+    assert.equal(reports.length, 2);
+    assert.ok(reports.every((report) => report.message.includes("conflict")));
+    assert.deepEqual(observed, [diagnostic, diagnostic]);
+    assert.equal((await client.syncState()).pending, 0);
+    await connection.close();
+  } finally {
+    globalThis.reportError = previousReportError;
+    await client.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("direct invocation decodes a committed response and maps unavailable transport errors", async () => {
   const native = createRequire(import.meta.url)(
     "../../../bindings/node/axton-node.node",

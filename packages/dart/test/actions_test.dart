@@ -450,6 +450,114 @@ void main() {
   });
 
   test(
+    'durable reports isolate throwing onError and keep the pump alive',
+    () async {
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      schema['actions'] = [
+        {'name': 'Ping', 'version': 1, 'inputs': [], 'outputs': []},
+      ];
+      final local = await Client.open(
+        path: '${directory.path}/durable-diagnostic',
+        schema: schema,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var requests = 0;
+      final served = server.listen((request) async {
+        if (request.uri.path != '/sync/mutations') {
+          request.response.statusCode = 404;
+          await request.response.close();
+          return;
+        }
+        final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+        requests++;
+        request.response.write(
+          jsonEncode({
+            'clientId': body['clientId'],
+            'batchSequence': body['batchSequence'],
+            'rejections': [],
+            'completions': [
+              for (final mutation in body['mutations'] as List)
+                {
+                  'callId': (mutation as Map)['callId'],
+                  'outcome': {'status': 'succeeded', 'result': null},
+                },
+            ],
+            'records': requests == 3
+                ? []
+                : [
+                    for (final id in ['a', 'b'])
+                      {
+                        'model': 'Entry',
+                        'identity': {'id': id},
+                        'stamp': 1,
+                        'state': {
+                          'text': requests == 1 ? 'first' : 'second',
+                          'note': null,
+                        },
+                      },
+                  ],
+          }),
+        );
+        await request.response.close();
+      });
+      final diagnostic = StateError('application diagnostic failed');
+      final reports = <Object>[];
+      final observed = <Object>[];
+      final finished = Completer<void>();
+      try {
+        runZonedGuarded(() {
+          () async {
+            final connection = await local.connect(
+              SyncServer(
+                url: 'http://127.0.0.1:${server.port}',
+                token: () => 'alice',
+              ),
+              onError: (report) {
+                reports.add(report);
+                throw diagnostic;
+              },
+            );
+            try {
+              for (var i = 0; i < 3; i++) {
+                final call = await local.invokeAction<void>(
+                  'Ping',
+                  1,
+                  {},
+                  (_) {},
+                );
+                expect(
+                  await call.wait().timeout(const Duration(seconds: 2)),
+                  isA<ActionSuccess<void>>(),
+                );
+              }
+            } finally {
+              await connection.close();
+            }
+          }().then(finished.complete, onError: finished.completeError);
+        }, (error, stack) => observed.add(error));
+        await finished.future.timeout(const Duration(seconds: 3));
+        expect(requests, 3);
+        expect(reports, hasLength(2));
+        expect(
+          reports.every((report) => report.toString().contains('conflict')),
+          isTrue,
+        );
+        expect(observed, [same(diagnostic), same(diagnostic)]);
+        expect((await local.syncState())['pending'], 0);
+      } finally {
+        await local.close();
+        await served.cancel();
+        await server.close(force: true);
+      }
+    },
+  );
+
+  test(
     'throwing direct diagnostic preserves applied result and reaches the Zone',
     () async {
       final schema =

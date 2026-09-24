@@ -611,7 +611,11 @@ class Client implements WritePort, MutatePort {
       // What the receipt or page could not apply; the client stays consistent
       // and the application hears about each one.
       for (final report in applied['reports'] as List<dynamic>) {
-        onError?.call(AxtonReport.fromJson(report as Map<String, dynamic>));
+        try {
+          onError?.call(AxtonReport.fromJson(report as Map<String, dynamic>));
+        } catch (error, stack) {
+          Zone.current.handleUncaughtError(error, stack);
+        }
       }
     }
   }

@@ -316,14 +316,6 @@ class UpdateTodoOutput implements _DartActionRecord {
  };
 }
 typedef UpdateTodoHandlerOutput = void;
-typedef ActionTxModels = TxModels;
-typedef ActionModels = LiveModels;
-typedef ActionTodoModel = TodoTxModel;
-typedef ActionTodoLiveModel = TodoLiveModel;
-typedef ActionTransactionContract = GeneratedTransaction;
-typedef ActionClientContract = GeneratedClient;
-typedef ActionActionsContract = Actions;
-typedef ActionDirectCallsContract = DirectCalls;
 abstract interface class ActionHandlerCall<Ctx, Args> { Ctx get ctx; Args get args; }
 abstract interface class ActionHandlers<Ctx> {
  ActionAddTodoHandlers<Ctx> get addTodo;
@@ -376,9 +368,6 @@ class DirectCalls {
  Future<SendEmailOutput> sendEmail({required String to, required String subject, required String body}) => client.invokeDirectAction<SendEmailOutput>('SendEmail', 1, {'to': _dartActionEncode(to), 'subject': _dartActionEncode(subject), 'body': _dartActionEncode(body)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SendEmailOutput(messageId: row['messageId'] as String); });
  Future<UpdateTodoOutput> updateTodo({required UpdateTodoTodoUpdate todo}) => client.invokeDirectAction<UpdateTodoOutput>('UpdateTodo', 2, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return UpdateTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
 }
-class Mutate { final MutatePort port; Mutate(this.port);
-
-}
 class LiveModels { final Client port; LiveModels(this.port);
  late final TodoLiveModel todo = TodoLiveModel(port);
 }
@@ -393,8 +382,6 @@ class GeneratedTransaction { final Transaction transaction; late final TxModels 
 class GeneratedClient {
  /// The runtime handle (internal); application code uses the members below.
  final Client client; RuntimeConnection? connection; late final LiveModels models = LiveModels(client);
- /// Each mutation runs in its own local transaction and returns its ordinal.
- late final Mutate mutate = Mutate(client);
  late final Channels channels = Channels(client);
  late final Actions actions = Actions(client);
  GeneratedClient._(this.client, this.connection);

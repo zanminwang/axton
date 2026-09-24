@@ -5,6 +5,31 @@ use axton_compiler::validate::{
 use axton_compiler::{parse, validate};
 
 #[test]
+fn generated_actions_bind_to_shared_runtime_and_backend() {
+    let descriptor = compile("model Todo { id String at DateTime @@id(id) } action Touch(todo Todo.update<at>, when DateTime) { echoed DateTime }").unwrap();
+    let model = axton_compiler::typescript(&descriptor);
+    let client = axton_compiler::client_typescript("@axton/client");
+    let backend = axton_compiler::backend_typescript(&descriptor, "@axton/server");
+    assert!(model.contains("import type { ActionCall } from './client.ts'"));
+    assert!(client.contains("type ActionOutcome"));
+    assert!(client.contains("readonly actions:"));
+    assert!(model.contains("invokeAction"));
+    assert!(backend.contains("export function createBackend"));
+    assert!(backend.contains("ActionContext<Tx>"));
+}
+
+#[test]
+fn retained_loader_identity_uses_its_own_datetime_contract() {
+    let mut descriptor = compile("model Moment { at DateTime @@id(at) @@version(2) }").unwrap();
+    let mut old = descriptor["schema"]["models"][0].clone();
+    old["version"] = serde_json::json!(1);
+    descriptor["backendModels"] =
+        serde_json::json!([old, descriptor["schema"]["models"][0].clone()]);
+    let backend = axton_compiler::backend_typescript(&descriptor, "@axton/server");
+    assert!(backend.contains("v1(call: LoaderCall<Tx, MomentV1Identity>)"));
+}
+
+#[test]
 fn action_values_and_explicit_outputs_are_typed() {
     let schema = parse("enum Status { active closed } model Todo { id String @@id(id) } action Search(query String?, labels String[]) { count Int status Status? statuses Status[] }").unwrap();
     let action = &validate(&schema).unwrap().actions[0];
@@ -330,7 +355,7 @@ fn backend_emitter_declares_handlers_loaders_and_references() {
             " book: { v1(call: LoaderCall<Tx, BookIdentity>): Promise<readonly (Book | null)[]> } | ((call: LoaderCall<Tx, BookIdentity>) => Promise<readonly (Book | null)[]>);"
         )
     );
-    assert!(ts.contains("export function Book(identity: BookIdentity): RecordRef { return { model: \"Book\", identity }; }"));
+    assert!(ts.contains("export function Book(identity: BookIdentity): RecordRef { return { model: \"Book\", identity: encodeBookIdentity(identity) }; }"));
     assert!(ts.contains("export interface AddBookInput {\n book: Book;\n}"));
     assert!(ts.contains("export function createBackend<Tx>("));
     assert!(!axton_compiler::typescript(&v).contains("backendConfig"));
@@ -766,7 +791,7 @@ fn backend_emitter_groups_loader_versions_under_the_model_name() {
         "the latest version keeps the plain name: {ts}"
     );
     assert!(
-        ts.contains(" task: { v1(call: LoaderCall<Tx, TaskIdentity>): Promise<readonly (TaskV1 | null)[]>; v2(call: LoaderCall<Tx, TaskIdentity>): Promise<readonly (Task | null)[]> };\n"),
+        ts.contains(" task: { v1(call: LoaderCall<Tx, TaskV1Identity>): Promise<readonly (TaskV1 | null)[]>; v2(call: LoaderCall<Tx, TaskIdentity>): Promise<readonly (Task | null)[]> };\n"),
         "{ts}"
     );
     assert!(
@@ -960,7 +985,10 @@ fn action_typescript_emits_flattened_operands_and_separate_client_contract() {
     );
     assert!(ts.contains("export interface AddTodoInput"), "{ts}");
     assert!(ts.contains("label: string | null;"), "{ts}");
-    assert!(ts.contains("export interface ActionCall<T>"), "{ts}");
+    assert!(
+        ts.contains("import type { ActionCall } from './client.ts'"),
+        "{ts}"
+    );
     assert!(ts.contains("export interface ActionClientContract"), "{ts}");
     assert!(
         ts.contains("addTodo(args: AddTodoInput): Promise<ActionCall<AddTodoOutput>>"),
@@ -974,7 +1002,7 @@ fn action_typescript_emits_flattened_operands_and_separate_client_contract() {
 }
 
 #[test]
-fn action_backend_emits_versioned_handler_identity_contracts_without_factory() {
+fn action_backend_emits_versioned_handler_identity_contracts_with_factory() {
     let v = compile("model Todo { id String title String @@id(id) } action AddTodo(todo Todo.create) { relatedTodo Todo? }").unwrap();
     let mut retained = v.clone();
     let mut old = retained["actions"][0].clone();
@@ -993,19 +1021,17 @@ fn action_backend_emits_versioned_handler_identity_contracts_without_factory() {
     assert!(ts.contains("relatedTodo: TodoIdentity | null;"), "{ts}");
     assert!(
         ts.contains(
-            "v1(call: ActionHandlerCall<Ctx, AddTodoV1Input>): Promise<AddTodoV1HandlerOutput>"
+            "v1(call: ActionHandlerCall<Tx, AddTodoV1Input>): Promise<AddTodoV1HandlerOutput>"
         ),
         "{ts}"
     );
     assert!(
-        ts.contains(
-            "v2(call: ActionHandlerCall<Ctx, AddTodoInput>): Promise<AddTodoHandlerOutput>"
-        ),
+        ts.contains("v2(call: ActionHandlerCall<Tx, AddTodoInput>): Promise<AddTodoHandlerOutput>"),
         "{ts}"
     );
-    assert!(!ts.contains("export function createBackend"), "{ts}");
-    assert!(!ts.contains("createRuntimeBackend"), "{ts}");
-    assert!(!ts.contains("BackendOptions"), "{ts}");
+    assert!(ts.contains("export function createBackend<Tx>"), "{ts}");
+    assert!(ts.contains("createRuntimeBackend"), "{ts}");
+    assert!(ts.contains("BackendOptions"), "{ts}");
 }
 
 #[test]
@@ -1013,14 +1039,14 @@ fn mixed_action_and_legacy_backend_keeps_handler_context_in_scope() {
     let v = compile("model Todo { id String @@id(id) } mutation Legacy { todo Todo.delete } action New(todo Todo.delete)").unwrap();
     let ts = axton_compiler::backend_typescript(&v, "@axton/server");
     assert!(
-        ts.contains("legacy: { v1(call: HandlerCall<Ctx, LegacyInput>)"),
+        ts.contains("legacy: { v1(call: HandlerCall<Tx, LegacyInput>)"),
         "{ts}"
     );
     assert!(
-        ts.contains("new: { v1(call: ActionHandlerCall<Ctx, NewInput>)"),
+        ts.contains("new: { v1(call: ActionHandlerCall<Tx, NewInput>)"),
         "{ts}"
     );
-    assert!(!ts.contains("export function createBackend"), "{ts}");
+    assert!(ts.contains("export function createBackend<Tx>"), "{ts}");
 }
 
 #[test]

@@ -1,0 +1,93 @@
+{
+  "formatVersion": 1,
+  "models": {
+    "Moment": {
+      "1": {
+        "enums": [],
+        "fields": [
+          {
+            "name": "at",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "at"
+        ],
+        "name": "Moment",
+        "version": 1
+      }
+    },
+    "Todo": {
+      "1": {
+        "enums": [
+          {
+            "name": "Status",
+            "values": [
+              "open",
+              "closed"
+            ]
+          }
+        ],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "at",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "name": "status",
+            "nullable": false,
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          },
+          {
+            "name": "note",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Todo",
+        "version": 1
+      }
+    }
+  }
+}

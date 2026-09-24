@@ -1,0 +1,1606 @@
+{
+  "actions": [
+    {
+      "input": {
+        "enums": [
+          {
+            "name": "Status",
+            "values": [
+              "open",
+              "closed"
+            ]
+          }
+        ],
+        "models": [
+          {
+            "fields": [
+              {
+                "name": "id",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              },
+              {
+                "name": "title",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              },
+              {
+                "name": "at",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "dateTime"
+                }
+              },
+              {
+                "name": "status",
+                "nullable": false,
+                "type": {
+                  "kind": "enum",
+                  "name": "Status"
+                }
+              },
+              {
+                "name": "note",
+                "nullable": true,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "identity": [
+              "id"
+            ],
+            "name": "Todo"
+          }
+        ]
+      },
+      "inputs": [
+        {
+          "allowedPatchFields": [
+            "title",
+            "at",
+            "status",
+            "note"
+          ],
+          "cardinality": "optional",
+          "kind": "model",
+          "model": "Todo",
+          "name": "todo",
+          "operation": "update"
+        },
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "list": false,
+          "name": "at",
+          "nullable": false,
+          "required": true,
+          "type": {
+            "kind": "scalar",
+            "name": "dateTime"
+          }
+        }
+      ],
+      "name": "Change",
+      "outputEnums": [],
+      "outputs": [
+        {
+          "cardinality": "optional",
+          "kind": "model",
+          "model": "Todo",
+          "modelReadVersion": 1,
+          "name": "todo",
+          "source": {
+            "inputIdentity": "todo"
+          }
+        },
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "name": "echoed",
+          "source": "handlerValue",
+          "type": {
+            "kind": "scalar",
+            "name": "dateTime"
+          }
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 1
+    },
+    {
+      "input": {
+        "enums": [],
+        "models": [
+          {
+            "fields": [
+              {
+                "name": "id",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "identity": [
+              "id"
+            ],
+            "name": "Todo"
+          }
+        ]
+      },
+      "inputs": [
+        {
+          "cardinality": "list",
+          "kind": "model",
+          "model": "Todo",
+          "name": "todo",
+          "operation": "delete"
+        }
+      ],
+      "name": "Clear",
+      "outputEnums": [],
+      "outputs": [
+        {
+          "cardinality": "list",
+          "kind": "deleteIdentity",
+          "model": "Todo",
+          "name": "todo",
+          "source": {
+            "inputIdentity": "todo"
+          }
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 1
+    },
+    {
+      "input": {
+        "enums": [],
+        "models": []
+      },
+      "inputs": [
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "list": false,
+          "name": "at",
+          "nullable": false,
+          "required": true,
+          "type": {
+            "kind": "scalar",
+            "name": "dateTime"
+          }
+        }
+      ],
+      "name": "Find",
+      "outputEnums": [],
+      "outputs": [
+        {
+          "cardinality": "optional",
+          "handlerType": {
+            "fields": [
+              {
+                "name": "id",
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "kind": "identity",
+            "model": "Todo"
+          },
+          "kind": "model",
+          "model": "Todo",
+          "modelReadVersion": 1,
+          "name": "todo",
+          "source": "handlerIdentity"
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 1
+    },
+    {
+      "input": {
+        "enums": [],
+        "models": [
+          {
+            "fields": [
+              {
+                "name": "at",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "dateTime"
+                }
+              },
+              {
+                "name": "title",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "identity": [
+              "at"
+            ],
+            "name": "Moment"
+          }
+        ]
+      },
+      "inputs": [
+        {
+          "allowedPatchFields": [
+            "title"
+          ],
+          "cardinality": "single",
+          "kind": "model",
+          "model": "Moment",
+          "name": "moment",
+          "operation": "update"
+        }
+      ],
+      "name": "Mark",
+      "outputEnums": [],
+      "outputs": [
+        {
+          "cardinality": "single",
+          "kind": "model",
+          "model": "Moment",
+          "modelReadVersion": 1,
+          "name": "moment",
+          "source": {
+            "inputIdentity": "moment"
+          }
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 1
+    },
+    {
+      "input": {
+        "enums": [],
+        "models": []
+      },
+      "inputs": [],
+      "name": "Ping",
+      "outputEnums": [],
+      "outputs": [],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 1
+    },
+    {
+      "input": {
+        "enums": [
+          {
+            "name": "Status",
+            "values": [
+              "open",
+              "closed"
+            ]
+          },
+          {
+            "name": "Status",
+            "values": [
+              "open",
+              "closed"
+            ]
+          }
+        ],
+        "models": [
+          {
+            "fields": [
+              {
+                "name": "id",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              },
+              {
+                "name": "title",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              },
+              {
+                "name": "at",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "dateTime"
+                }
+              },
+              {
+                "name": "status",
+                "nullable": false,
+                "type": {
+                  "kind": "enum",
+                  "name": "Status"
+                }
+              },
+              {
+                "name": "note",
+                "nullable": true,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "identity": [
+              "id"
+            ],
+            "name": "Todo"
+          }
+        ]
+      },
+      "inputs": [
+        {
+          "cardinality": "single",
+          "kind": "model",
+          "model": "Todo",
+          "name": "todo",
+          "operation": "create"
+        },
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "list": false,
+          "name": "when",
+          "nullable": false,
+          "required": true,
+          "type": {
+            "kind": "scalar",
+            "name": "dateTime"
+          }
+        },
+        {
+          "cardinality": "list",
+          "kind": "value",
+          "list": true,
+          "name": "statuses",
+          "nullable": false,
+          "required": true,
+          "type": {
+            "kind": "enum",
+            "name": "Status"
+          }
+        },
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "list": false,
+          "name": "note",
+          "nullable": true,
+          "required": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "name": "Put",
+      "outputEnums": [
+        {
+          "name": "Status",
+          "values": [
+            "open",
+            "closed"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "cardinality": "single",
+          "kind": "model",
+          "model": "Todo",
+          "modelReadVersion": 1,
+          "name": "todo",
+          "source": {
+            "inputIdentity": "todo"
+          }
+        },
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "name": "echoed",
+          "source": "handlerValue",
+          "type": {
+            "kind": "scalar",
+            "name": "dateTime"
+          }
+        },
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "name": "status",
+          "source": "handlerValue",
+          "type": {
+            "kind": "enum",
+            "name": "Status"
+          }
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 1
+    },
+    {
+      "input": {
+        "enums": [
+          {
+            "name": "Status",
+            "values": [
+              "open",
+              "closed"
+            ]
+          },
+          {
+            "name": "Status",
+            "values": [
+              "open",
+              "closed"
+            ]
+          }
+        ],
+        "models": [
+          {
+            "fields": [
+              {
+                "name": "id",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              },
+              {
+                "name": "title",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              },
+              {
+                "name": "at",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "dateTime"
+                }
+              },
+              {
+                "name": "status",
+                "nullable": false,
+                "type": {
+                  "kind": "enum",
+                  "name": "Status"
+                }
+              },
+              {
+                "name": "note",
+                "nullable": true,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "identity": [
+              "id"
+            ],
+            "name": "Todo"
+          }
+        ]
+      },
+      "inputs": [
+        {
+          "cardinality": "single",
+          "kind": "model",
+          "model": "Todo",
+          "name": "todo",
+          "operation": "create"
+        },
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "list": false,
+          "name": "when",
+          "nullable": false,
+          "required": true,
+          "type": {
+            "kind": "scalar",
+            "name": "dateTime"
+          }
+        },
+        {
+          "cardinality": "list",
+          "kind": "value",
+          "list": true,
+          "name": "statuses",
+          "nullable": false,
+          "required": true,
+          "type": {
+            "kind": "enum",
+            "name": "Status"
+          }
+        },
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "list": false,
+          "name": "note",
+          "nullable": true,
+          "required": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "name": "Put",
+      "outputEnums": [
+        {
+          "name": "Status",
+          "values": [
+            "open",
+            "closed"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "cardinality": "single",
+          "kind": "model",
+          "model": "Todo",
+          "modelReadVersion": 1,
+          "name": "todo",
+          "source": {
+            "inputIdentity": "todo"
+          }
+        },
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "name": "echoed",
+          "source": "handlerValue",
+          "type": {
+            "kind": "scalar",
+            "name": "dateTime"
+          }
+        },
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "name": "status",
+          "source": "handlerValue",
+          "type": {
+            "kind": "enum",
+            "name": "Status"
+          }
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 2
+    },
+    {
+      "input": {
+        "enums": [],
+        "models": [
+          {
+            "fields": [
+              {
+                "name": "at",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "dateTime"
+                }
+              }
+            ],
+            "identity": [
+              "at"
+            ],
+            "name": "Moment"
+          }
+        ]
+      },
+      "inputs": [
+        {
+          "cardinality": "single",
+          "kind": "model",
+          "model": "Moment",
+          "name": "moment",
+          "operation": "delete"
+        }
+      ],
+      "name": "RemoveMoment",
+      "outputEnums": [],
+      "outputs": [
+        {
+          "cardinality": "single",
+          "kind": "deleteIdentity",
+          "model": "Moment",
+          "name": "moment",
+          "source": {
+            "inputIdentity": "moment"
+          }
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 1
+    }
+  ],
+  "deprecations": [],
+  "inverses": [],
+  "loaders": [
+    "Todo",
+    "Moment"
+  ],
+  "models": [
+    {
+      "enums": [],
+      "fields": [
+        {
+          "name": "at",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "dateTime"
+          }
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "identity": [
+        "at"
+      ],
+      "name": "Moment",
+      "version": 1
+    },
+    {
+      "enums": [
+        {
+          "name": "Status",
+          "values": [
+            "open",
+            "closed"
+          ]
+        }
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "at",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "dateTime"
+          }
+        },
+        {
+          "name": "status",
+          "nullable": false,
+          "type": {
+            "kind": "enum",
+            "name": "Status"
+          }
+        },
+        {
+          "name": "note",
+          "nullable": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "identity": [
+        "id"
+      ],
+      "name": "Todo",
+      "version": 1
+    }
+  ],
+  "mutations": [],
+  "prerequisites": [],
+  "requirements": [],
+  "schema": {
+    "actions": [
+      {
+        "input": {
+          "enums": [
+            {
+              "name": "Status",
+              "values": [
+                "open",
+                "closed"
+              ]
+            }
+          ],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "title",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "at",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                },
+                {
+                  "name": "status",
+                  "nullable": false,
+                  "type": {
+                    "kind": "enum",
+                    "name": "Status"
+                  }
+                },
+                {
+                  "name": "note",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Todo"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "allowedPatchFields": [
+              "title",
+              "at",
+              "status",
+              "note"
+            ],
+            "cardinality": "optional",
+            "kind": "model",
+            "model": "Todo",
+            "name": "todo",
+            "operation": "update"
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "at",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          }
+        ],
+        "name": "Change",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "optional",
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "todo",
+            "source": {
+              "inputIdentity": "todo"
+            }
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "echoed",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      },
+      {
+        "input": {
+          "enums": [],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Todo"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "cardinality": "list",
+            "kind": "model",
+            "model": "Todo",
+            "name": "todo",
+            "operation": "delete"
+          }
+        ],
+        "name": "Clear",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "list",
+            "kind": "deleteIdentity",
+            "model": "Todo",
+            "name": "todo",
+            "source": {
+              "inputIdentity": "todo"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      },
+      {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "at",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          }
+        ],
+        "name": "Find",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "optional",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "todo",
+            "source": "handlerIdentity"
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      },
+      {
+        "input": {
+          "enums": [],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "at",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                },
+                {
+                  "name": "title",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "at"
+              ],
+              "name": "Moment"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "allowedPatchFields": [
+              "title"
+            ],
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Moment",
+            "name": "moment",
+            "operation": "update"
+          }
+        ],
+        "name": "Mark",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Moment",
+            "modelReadVersion": 1,
+            "name": "moment",
+            "source": {
+              "inputIdentity": "moment"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      },
+      {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [],
+        "name": "Ping",
+        "outputEnums": [],
+        "outputs": [],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      },
+      {
+        "input": {
+          "enums": [
+            {
+              "name": "Status",
+              "values": [
+                "open",
+                "closed"
+              ]
+            },
+            {
+              "name": "Status",
+              "values": [
+                "open",
+                "closed"
+              ]
+            }
+          ],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "title",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "at",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                },
+                {
+                  "name": "status",
+                  "nullable": false,
+                  "type": {
+                    "kind": "enum",
+                    "name": "Status"
+                  }
+                },
+                {
+                  "name": "note",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Todo"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Todo",
+            "name": "todo",
+            "operation": "create"
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "when",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "cardinality": "list",
+            "kind": "value",
+            "list": true,
+            "name": "statuses",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "note",
+            "nullable": true,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "name": "Put",
+        "outputEnums": [
+          {
+            "name": "Status",
+            "values": [
+              "open",
+              "closed"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "todo",
+            "source": {
+              "inputIdentity": "todo"
+            }
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "echoed",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "status",
+            "source": "handlerValue",
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      },
+      {
+        "input": {
+          "enums": [
+            {
+              "name": "Status",
+              "values": [
+                "open",
+                "closed"
+              ]
+            },
+            {
+              "name": "Status",
+              "values": [
+                "open",
+                "closed"
+              ]
+            }
+          ],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "title",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "at",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                },
+                {
+                  "name": "status",
+                  "nullable": false,
+                  "type": {
+                    "kind": "enum",
+                    "name": "Status"
+                  }
+                },
+                {
+                  "name": "note",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Todo"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Todo",
+            "name": "todo",
+            "operation": "create"
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "when",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "cardinality": "list",
+            "kind": "value",
+            "list": true,
+            "name": "statuses",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "note",
+            "nullable": true,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "name": "Put",
+        "outputEnums": [
+          {
+            "name": "Status",
+            "values": [
+              "open",
+              "closed"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "todo",
+            "source": {
+              "inputIdentity": "todo"
+            }
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "echoed",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "status",
+            "source": "handlerValue",
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 2
+      },
+      {
+        "input": {
+          "enums": [],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "at",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                }
+              ],
+              "identity": [
+                "at"
+              ],
+              "name": "Moment"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Moment",
+            "name": "moment",
+            "operation": "delete"
+          }
+        ],
+        "name": "RemoveMoment",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "deleteIdentity",
+            "model": "Moment",
+            "name": "moment",
+            "source": {
+              "inputIdentity": "moment"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      }
+    ],
+    "clientPolicies": [],
+    "enums": [
+      {
+        "name": "Status",
+        "values": [
+          "open",
+          "closed"
+        ]
+      }
+    ],
+    "models": [
+      {
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "at",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "name": "status",
+            "nullable": false,
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          },
+          {
+            "name": "note",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Todo",
+        "relations": [],
+        "unique": [],
+        "version": 1
+      },
+      {
+        "fields": [
+          {
+            "name": "at",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "at"
+        ],
+        "name": "Moment",
+        "relations": [],
+        "unique": [],
+        "version": 1
+      }
+    ],
+    "prerequisites": [],
+    "requirements": [],
+    "resultModels": [
+      {
+        "enums": [],
+        "fields": [
+          {
+            "name": "at",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "at"
+        ],
+        "name": "Moment",
+        "version": 1
+      },
+      {
+        "enums": [
+          {
+            "name": "Status",
+            "values": [
+              "open",
+              "closed"
+            ]
+          }
+        ],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "at",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "name": "status",
+            "nullable": false,
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          },
+          {
+            "name": "note",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Todo",
+        "version": 1
+      }
+    ]
+  },
+  "uniqueConstraints": []
+}

@@ -19,7 +19,7 @@ if(false){
  entries.query({orderBy:[{field:'status',direction:'ascending'}]});
  // @ts-expect-error date filter must be a Date
  entries.query({where:{at:'2026-01-01'}});
- const live:LivePort={...reads,watch(){return ()=>{}},async syncState(){return {pending:[],rejections:[]}}};
+ const live:LivePort={...reads,async direct(){},watch(){return ()=>{}},async syncState(){return {pending:[],rejections:[]}}};
  new EntryLiveModel(live).watch({},(rows)=>rows[0]?.at.getTime());
  // A record's sync state is typed by model: the identity is the model's, pending names are the schema's mutations.
  const state:Promise<SyncState>=new EntryLiveModel(live).syncState({id:row.id});

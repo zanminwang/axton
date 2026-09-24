@@ -125,6 +125,7 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
         "ActionSuccess",
         "ActionFailure",
         "ActionBackendContract",
+        "ActionPort",
     ] {
         add(helper.into(), "Action helper".into())?;
     }

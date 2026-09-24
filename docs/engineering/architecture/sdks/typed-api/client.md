@@ -20,9 +20,9 @@ What an application sees:
 
 Every call becomes one command through the [bindings](../bindings.md). Generated code depends on the runtime package (`@axton/client`, `package:axton`); the generic runtime depends on nothing generated.
 
-The compiler also emits TypeScript and Dart `ActionClientContract` interfaces. They are type-level contracts pending #142; the concrete `GeneratedClient` still runs the legacy `client.mutate` path. The contract gives standalone `client.models` local CRUD/read/watch, transaction `tx.models` local CRUD/read without watch or Actions, queued `client.actions.name(args)` returning an `ActionCall<Output>`, and direct `client.actions.call.name(args)` returning the final output. Neither Action route may run inside an application-owned local transaction. Standalone local Model writes use their own local transaction and do not enqueue backend work.
+The concrete generated client exposes standalone `client.models` local CRUD/read/watch, transaction `tx.models` local CRUD/read without watch or Actions, queued `client.actions.name(args)` returning an `ActionCall<Output>`, and direct `client.actions.call.name(args)` returning the final output. The generated Action methods use the SDK's shared `ActionCall`, `ActionOutcome`, `ActionStatus`, and `ActionError` types. Neither Action route may run inside an application-owned local transaction. Standalone local Model writes use their own local transaction and do not enqueue backend work.
 
-Under the #142 execution contract, a queued call returns its handle after initial local acceptance and commit; that is not final backend success. The handle exposes only `status` and `wait()`, with `wait()` yielding either a result or an `ActionError`. An initial local failure rejects before a handle exists. Direct calls skip the queue and automatic optimism, returning the result or rejecting with `ActionError`. A Model result is a per-invocation Loader snapshot: a later call in the same batch may change the batch-final settlement authority, and current local reads may include later optimism. #142 owns that shared Loader/materialization path and durable per-call outcome persistence. Live handles keep business results in memory while pending/completion state remains durable. #116 owns ephemeral output policy.
+A queued call returns its handle after initial local acceptance and commit; that is not final backend success. The handle exposes only `status` and `wait()`, with `wait()` yielding either a result or an `ActionError`. An initial local failure rejects before a handle exists. Direct calls skip the queue and automatic optimism, returning the result or rejecting with `ActionError`. A Model result is a per-invocation Loader snapshot: a later call in the same batch may change the batch-final settlement authority, and current local reads may include later optimism. Live handles keep business results in memory while pending/completion state remains durable. #116 owns ephemeral output policy.
 
 ## 5. Building Block View
 
@@ -46,9 +46,8 @@ Code: [React Native adapter](../../../../../packages/client-react-native/index.t
 
 - **An unawaited or escaped call poisons the transaction, and a caught failure still rolls it back unless confined to a savepoint** (binding half of guarantee L3). Evidence: [transaction.test.mjs](../../../../../integration/bindings/client-js/transaction.test.mjs); [dart/test/client_test.dart](../../../../../packages/dart/test/client_test.dart) `Dart callbacks read their writes, rollback and reopen through native Rust`.
 - **Generated code forwards calls unchanged and rejects misuse at compile time**. Evidence: [integration/generated-api/test.ts](../../../../../integration/generated-api/test.ts) (positives and `@ts-expect-error` negatives); [generated_test.dart](../../../../../integration/generated-api/generated_test.dart) (positives only).
+- **Generated Action methods use the shared SDK handle types and preserve local Model writes and decoded result snapshots.** Evidence: [generated Action fixture](../../../../../integration/action-runtime-ts/verify.sh) and [mobile host adapter test](../../../../../integration/bindings/client-react-native/actions.test.mjs). The mobile test runs with the Node native library and mobile transaction adapter; it is not a device run.
 - **One end-to-end flow per language works against a real backend**. Evidence: [round-trip.test.mjs](../../../../../integration/e2e/round-trip.test.mjs).
-
-Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 

@@ -713,6 +713,7 @@
   "prerequisites": [],
   "requirements": [],
   "schema": {
+    "actions": [],
     "clientPolicies": [
       {
         "input": {
@@ -1343,7 +1344,222 @@
       }
     ],
     "prerequisites": [],
-    "requirements": []
+    "requirements": [],
+    "resultModels": [
+      {
+        "enums": [],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Book",
+        "version": 1
+      },
+      {
+        "enums": [],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "bookId",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "text",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Comment",
+        "version": 1
+      },
+      {
+        "enums": [],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "index",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "int"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Counter",
+        "version": 1
+      },
+      {
+        "enums": [
+          {
+            "name": "Status",
+            "values": [
+              "active",
+              "archived"
+            ]
+          }
+        ],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "uuid"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "note",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "at",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "name": "status",
+            "nullable": false,
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Entry",
+        "version": 1
+      },
+      {
+        "enums": [
+          {
+            "name": "Status",
+            "values": [
+              "active",
+              "archived"
+            ]
+          }
+        ],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "uuid"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "note",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "at",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "name": "tags",
+            "nullable": false,
+            "type": {
+              "element": {
+                "kind": "scalar",
+                "name": "string"
+              },
+              "kind": "list"
+            }
+          },
+          {
+            "name": "status",
+            "nullable": false,
+            "type": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Entry",
+        "version": 2
+      }
+    ]
   },
   "uniqueConstraints": []
 }

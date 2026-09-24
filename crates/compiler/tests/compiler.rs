@@ -1050,29 +1050,62 @@ fn mixed_action_and_legacy_backend_keeps_handler_context_in_scope() {
 }
 
 #[test]
-fn action_dart_emits_type_only_client_and_versioned_handler_contracts() {
+fn action_dart_emits_concrete_client_and_versioned_handler_contracts() {
     let v = compile("model Todo { id String title String @@id(id) } action Search(query String?) { relatedTodo Todo? } action Ping()").unwrap();
     let dart = axton_compiler::dart(&v);
     for expected in [
-        "abstract interface class ActionCall<T>",
-        "ActionStatus get status;",
-        "Future<ActionOutcome<T>> wait();",
+        "show RuntimeConnection, SyncServer, ActionCall, ActionOutcome, ActionSuccess, ActionFailure, ActionStatus, ActionError",
         "required String? query",
         "class TodoIdentity",
         "required this.relatedTodo",
         "TodoIdentity? relatedTodo",
         "Todo? relatedTodo",
-        "abstract interface class ActionClientContract",
-        "ActionActionsContract get actions;",
-        "ActionDirectCallsContract get call;",
+        "typedef ActionClientContract = GeneratedClient;",
+        "late final Actions actions = Actions(client);",
+        "late final DirectCalls call = DirectCalls(client);",
         "Future<ActionCall<SearchOutput>> search(",
         "Future<SearchOutput> search(",
-        "abstract interface class ActionTransactionContract",
+        "typedef ActionTransactionContract = GeneratedTransaction;",
         "typedef PingOutput = void;",
     ] {
         assert!(dart.contains(expected), "missing {expected}: {dart}");
     }
     assert!(!dart.contains("class GeneratedClient extends ActionClientContract"));
+}
+
+#[test]
+fn model_only_dart_keeps_local_crud_without_action_symbols() {
+    let v = compile("model Note { id String label String @@id(id) }").unwrap();
+    let dart = axton_compiler::dart(&v);
+    assert!(
+        dart.contains("class NoteLiveModel extends NoteTxModel"),
+        "{dart}"
+    );
+    assert!(!dart.contains("late final Actions actions"), "{dart}");
+}
+
+#[test]
+fn action_dart_binds_shared_runtime_and_retained_codecs() {
+    let v = compile("enum Mood { calm loud } model Note { id String at DateTime mood Mood @@id(id) } action Save(note Note.create, changed Note.update<at>?, stamps DateTime[], when DateTime?) { saved Note? at DateTime moods Mood[] }").unwrap();
+    let dart = axton_compiler::dart(&v);
+    for expected in [
+        "show RuntimeConnection, SyncServer, ActionCall, ActionOutcome, ActionSuccess, ActionFailure, ActionStatus, ActionError",
+        "late final Actions actions = Actions(client)",
+        "client.invokeAction<SaveOutput>('Save', 1",
+        "client.invokeDirectAction<SaveOutput>('Save', 1",
+        "Duration directTimeout = const Duration(seconds: 30)",
+        "directTimeout:directTimeout",
+        "DateTime.parse(",
+        ".toUtc().toIso8601String()",
+        "if (changed != null)",
+        "class NoteLiveModel extends NoteTxModel",
+    ] {
+        assert!(dart.contains(expected), "missing {expected}: {dart}");
+    }
+    assert!(
+        !dart.contains("abstract interface class ActionCall<T>"),
+        "{dart}"
+    );
 }
 
 #[test]

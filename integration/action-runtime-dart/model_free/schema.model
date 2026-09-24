@@ -1,0 +1,2 @@
+action Ping()
+action Clock(at DateTime) { at DateTime }

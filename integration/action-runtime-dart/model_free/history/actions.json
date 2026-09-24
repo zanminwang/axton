@@ -1,0 +1,61 @@
+{
+  "actions": {
+    "Clock": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "at",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          }
+        ],
+        "name": "Clock",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "at",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      }
+    },
+    "Ping": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [],
+        "name": "Ping",
+        "outputEnums": [],
+        "outputs": [],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      }
+    }
+  },
+  "formatVersion": 1
+}

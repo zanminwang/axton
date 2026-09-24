@@ -1304,7 +1304,7 @@ fn dart_action_output_type(
 }
 
 fn dart_data_class(o: &mut String, name: &str, fields: &[(String, String, bool)]) {
-    writeln!(o, "class {name} {{").unwrap();
+    writeln!(o, "class {name} implements _DartActionRecord {{").unwrap();
     for (field, ty, _) in fields {
         writeln!(o, " final {ty} {field};").unwrap();
     }
@@ -1317,7 +1317,7 @@ fn dart_data_class(o: &mut String, name: &str, fields: &[(String, String, bool)]
         .join(",");
     writeln!(
         o,
-        " const {name}({});\n}}",
+        " const {name}({});",
         if fields.is_empty() {
             String::new()
         } else {
@@ -1325,6 +1325,19 @@ fn dart_data_class(o: &mut String, name: &str, fields: &[(String, String, bool)]
         }
     )
     .unwrap();
+    o.push_str(" Map<String,dynamic> toRecord() => {\n");
+    for (field, ty, _) in fields {
+        if ty.starts_with("Present<") {
+            writeln!(
+                o,
+                " if ({field} != null) '{field}': _dartActionEncode({field}!.value),"
+            )
+            .unwrap();
+        } else {
+            writeln!(o, " '{field}': _dartActionEncode({field}),").unwrap();
+        }
+    }
+    o.push_str(" };\n}\n");
 }
 fn dart_action_update(
     o: &mut String,
@@ -1358,10 +1371,7 @@ fn dart_actions(v: &Value, o: &mut String) {
     if actions.is_empty() {
         return;
     }
-    o.push_str(
-        "/// Type-level Action contracts; runtime binding arrives with the Action engine.\n",
-    );
-    o.push_str("enum ActionStatus { pending, succeeded, failed }\nabstract interface class ActionError implements Exception { String get code; }\nsealed class ActionOutcome<T> { const ActionOutcome(); }\nfinal class ActionSuccess<T> extends ActionOutcome<T> { final T result; const ActionSuccess(this.result); }\nfinal class ActionFailure<T> extends ActionOutcome<T> { final ActionError error; const ActionFailure(this.error); }\nabstract interface class ActionCall<T> { ActionStatus get status; Future<ActionOutcome<T>> wait(); }\n");
+    o.push_str("/// Public Action lifecycle types are owned by the SDK.\n");
     let models = arr(&v["schema"], "models");
     for model in models {
         let n = s(model, "name");
@@ -1465,8 +1475,10 @@ fn dart_actions(v: &Value, o: &mut String) {
                 && arg["operation"] == "update"
                 && arg["allowedPatchFields"].is_array()
             {
-                let model = arr(&action["input"], "models")
-                    .iter()
+                let model = action["input"]["models"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
                     .chain(models.iter())
                     .find(|m| m["name"] == arg["model"])
                     .unwrap();
@@ -1569,70 +1581,17 @@ fn dart_actions(v: &Value, o: &mut String) {
             dart_data_class(o, &format!("{prefix}HandlerOutput"), &fields);
         }
     }
-    o.push_str("abstract interface class ActionTxModels {\n");
-    for model in models {
-        writeln!(
-            o,
-            " Action{0}Model get {1};",
-            s(model, "name"),
-            lower(s(model, "name"))
-        )
-        .unwrap();
-    }
-    o.push_str("}\nabstract interface class ActionModels {\n");
-    for model in models {
-        writeln!(
-            o,
-            " Action{0}LiveModel get {1};",
-            s(model, "name"),
-            lower(s(model, "name"))
-        )
-        .unwrap();
-    }
-    o.push_str("}\n");
+    o.push_str("typedef ActionTxModels = TxModels;\ntypedef ActionModels = LiveModels;\n");
     for model in models {
         let n = s(model, "name");
-        writeln!(o, "abstract interface class Action{n}Model {{\n Future<{n}?> get({n}Identity identity);\n Future<List<{n}>> query({{{n}Filter? where, List<{n}Order> orderBy = const [], int? limit}});\n Future<void> create({n} value);\n Future<void> update({n}Identity identity, {n}Patch patch);\n Future<void> delete({n}Identity identity);\n}}\nabstract interface class Action{n}LiveModel implements Action{n}Model {{\n Stream<List<{n}>> watch({{{n}Filter? where}});\n}}").unwrap();
-    }
-    o.push_str("abstract interface class ActionTransactionContract { ActionTxModels get models; }\nabstract interface class ActionClientContract { ActionModels get models; Future<T> transaction<T>(Future<T> Function(ActionTransactionContract tx) body); ActionActionsContract get actions; }\nabstract interface class ActionActionsContract { ActionDirectCallsContract get call;\n");
-    for (name, version) in &latest {
-        let action = actions
-            .iter()
-            .find(|a| s(a, "name") == *name && a["version"].as_u64() == Some(*version))
-            .unwrap();
-        let params = dart_action_params(action);
         writeln!(
             o,
-            " Future<ActionCall<{name}Output>> {}({});",
-            lower(name),
-            if params.is_empty() {
-                String::new()
-            } else {
-                format!("{{{params}}}")
-            }
+            "typedef Action{n}Model = {n}TxModel;\ntypedef Action{n}LiveModel = {n}LiveModel;"
         )
         .unwrap();
     }
-    o.push_str("}\nabstract interface class ActionDirectCallsContract {\n");
-    for (name, version) in &latest {
-        let action = actions
-            .iter()
-            .find(|a| s(a, "name") == *name && a["version"].as_u64() == Some(*version))
-            .unwrap();
-        let params = dart_action_params(action);
-        writeln!(
-            o,
-            " Future<{name}Output> {}({});",
-            lower(name),
-            if params.is_empty() {
-                String::new()
-            } else {
-                format!("{{{params}}}")
-            }
-        )
-        .unwrap();
-    }
-    o.push_str("}\nabstract interface class ActionHandlerCall<Ctx, Args> { Ctx get ctx; Args get args; }\nabstract interface class ActionHandlers<Ctx> {\n");
+    o.push_str("typedef ActionTransactionContract = GeneratedTransaction;\ntypedef ActionClientContract = GeneratedClient;\ntypedef ActionActionsContract = Actions;\ntypedef ActionDirectCallsContract = DirectCalls;\n");
+    o.push_str("abstract interface class ActionHandlerCall<Ctx, Args> { Ctx get ctx; Args get args; }\nabstract interface class ActionHandlers<Ctx> {\n");
     for name in latest.keys() {
         writeln!(o, " Action{}Handlers<Ctx> get {};", name, lower(name)).unwrap();
     }
@@ -1650,6 +1609,98 @@ fn dart_actions(v: &Value, o: &mut String) {
         }
         o.push_str("}\n");
     }
+}
+fn dart_action_decode_field(field: &Value, value: &str) -> String {
+    let one = |x: &str| -> String {
+        match s(field, "kind") {
+            "value" => decode(&field["type"], x, true),
+            "model" => format!(
+                "{}.fromRecord(({x} as Map).cast<String,dynamic>())",
+                s(field, "model")
+            ),
+            "deleteIdentity" => format!(
+                "{}Identity.fromRecord(({x} as Map).cast<String,dynamic>())",
+                s(field, "model")
+            ),
+            _ => unreachable!(),
+        }
+    };
+    let cardinality = s(field, "cardinality");
+    if cardinality == "list" {
+        return format!("({value} as List).map((e) => {}).toList()", one("e"));
+    }
+    if cardinality == "optional" || (field["kind"] == "value" && field["nullable"] == true) {
+        return format!("{value} == null ? null : {}", one(value));
+    }
+    one(value)
+}
+fn dart_action_runtime(v: &Value, o: &mut String) {
+    let actions = arr(v, "actions");
+    if actions.is_empty() {
+        return;
+    }
+    o.push_str("dynamic _dartActionEncode(dynamic value) {\n if (value == null) return null;\n if (value is DateTime) return value.toUtc().toIso8601String();\n if (value is Enum) return value.name;\n if (value is List) return value.map(_dartActionEncode).toList();\n if (value is _DartActionRecord) return value.toRecord();\n");
+    for model in arr(&v["schema"], "models") {
+        let n = s(model, "name");
+        writeln!(o, " if (value is {n}) return value.toRecord();\n if (value is {n}Identity) return value.toRecord();").unwrap();
+    }
+    o.push_str(" return value;\n}\nclass Actions {\n final Client client; Actions(this.client); late final DirectCalls call = DirectCalls(client);\n");
+    let mut latest = std::collections::BTreeMap::new();
+    for action in actions {
+        latest
+            .entry(s(action, "name"))
+            .and_modify(|n: &mut u64| *n = (*n).max(action["version"].as_u64().unwrap()))
+            .or_insert(action["version"].as_u64().unwrap());
+    }
+    for direct in [false, true] {
+        if direct {
+            o.push_str("}\nclass DirectCalls {\n final Client client; DirectCalls(this.client);\n");
+        }
+        for (name, version) in &latest {
+            let action = actions
+                .iter()
+                .find(|a| s(a, "name") == *name && a["version"].as_u64() == Some(*version))
+                .unwrap();
+            let output = format!("{name}Output");
+            let params = dart_action_params(action);
+            let arguments = arr(action, "inputs")
+                .iter()
+                .map(|arg| {
+                    let key = s(arg, "name");
+                    if arg["kind"] == "model" && arg["cardinality"] == "optional" {
+                        format!("if ({key} != null) '{key}': _dartActionEncode({key})")
+                    } else {
+                        format!("'{key}': _dartActionEncode({key})")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let outputs = arr(action, "outputs");
+            let decoder = if outputs.is_empty() {
+                "(_) {}".to_string()
+            } else {
+                let fields = outputs
+                    .iter()
+                    .map(|field| {
+                        let key = s(field, "name");
+                        let value = format!("row['{key}']");
+                        format!("{key}: {}", dart_action_decode_field(field, &value))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "(value) {{ final row = (value as Map).cast<String,dynamic>(); return {output}({fields}); }}"
+                )
+            };
+            let signature = if params.is_empty() {
+                String::new()
+            } else {
+                format!("{{{params}}}")
+            };
+            writeln!(o, " Future<{}> {}({}) => client.{}<{output}>('{name}', {version}, {{{arguments}}}, {decoder});", if direct { output.clone() } else { format!("ActionCall<{output}>") }, lower(name), signature, if direct { "invokeDirectAction" } else { "invokeAction" }).unwrap();
+        }
+    }
+    o.push_str("}\n");
 }
 fn dart_action_params(action: &Value) -> String {
     arr(action, "inputs")
@@ -1675,8 +1726,13 @@ fn dart_action_params(action: &Value) -> String {
 
 pub fn dart(v: &Value) -> String {
     let mut o = String::from(
-        "// Generated by axton. Do not edit.\nimport 'dart:convert';\nimport 'package:axton/axton.dart';\nexport 'package:axton/axton.dart' show RuntimeConnection, SyncServer;\nclass Present<T> { final T value; const Present(this.value); }\n",
+        "// Generated by axton. Do not edit.\nimport 'dart:convert';\nimport 'package:axton/axton.dart';\nexport 'package:axton/axton.dart' show RuntimeConnection, SyncServer, ActionCall, ActionOutcome, ActionSuccess, ActionFailure, ActionStatus, ActionError;\nclass Present<T> { final T value; const Present(this.value); }\n",
     );
+    if !arr(v, "actions").is_empty() {
+        o.push_str(
+            "abstract interface class _DartActionRecord { Map<String,dynamic> toRecord(); }\n",
+        );
+    }
     writeln!(
         o,
         "final Map<String,dynamic> schema = jsonDecode(r'''{}''') as Map<String,dynamic>;",
@@ -1958,6 +2014,7 @@ pub fn dart(v: &Value) -> String {
     dart_query_types(v, &mut o);
     dart_models(v, &mut o);
     dart_actions(v, &mut o);
+    dart_action_runtime(v, &mut o);
     writeln!(
         o,
         "class Mutate {{ final MutatePort port; Mutate(this.port);\n{}\n}}",
@@ -1984,10 +2041,14 @@ pub fn dart(v: &Value) -> String {
     }
     o.push_str("class Channels { final Client client; Channels(this.client);\n Future<void> subscribe(String channel) => client.subscribe(channel);\n Future<void> unsubscribe(String channel) => client.unsubscribe(channel);\n}\n");
     o.push_str("class GeneratedTransaction { final Transaction transaction; late final TxModels models = TxModels(transaction); GeneratedTransaction(this.transaction); }\n");
-    o.push_str("class GeneratedClient {\n /// The runtime handle (internal); application code uses the members below.\n final Client client; RuntimeConnection? connection; late final LiveModels models = LiveModels(client);\n /// Each mutation runs in its own local transaction and returns its ordinal.\n late final Mutate mutate = Mutate(client);\n late final Channels channels = Channels(client);\n GeneratedClient._(this.client, this.connection);\n");
+    o.push_str("class GeneratedClient {\n /// The runtime handle (internal); application code uses the members below.\n final Client client; RuntimeConnection? connection; late final LiveModels models = LiveModels(client);\n /// Each mutation runs in its own local transaction and returns its ordinal.\n late final Mutate mutate = Mutate(client);\n late final Channels channels = Channels(client);\n");
+    if !arr(v, "actions").is_empty() {
+        o.push_str(" late final Actions actions = Actions(client);\n");
+    }
+    o.push_str(" GeneratedClient._(this.client, this.connection);\n");
     o.push_str(" /// Opens the local database at [path]. With a [server], the connection starts immediately and retries on its own.\n");
-    o.push_str(" static Future<GeneratedClient> open({required String path, SyncServer? server, String? libraryPath, Map<String,dynamic>? migration, bool discardPending = false, void Function(Object)? onError, Future<void> Function()? refreshAuth}) async {\n  final client = await Client.open(path:path, schema:schema, libraryPath:libraryPath, migration:migration, discardPending:discardPending);\n  try {\n  final connection = server == null ? null : await client.connect(server, onError:onError, refreshAuth:refreshAuth);\n  return GeneratedClient._(client, connection);\n  } catch (_) { try { await client.close(); } catch (_) {} rethrow; }\n }\n");
-    o.push_str(" Future<T> transaction<T>(Future<T> Function(GeneratedTransaction tx) body) => client.transaction((tx) => body(GeneratedTransaction(tx)));\n /// This device's durable client identity.\n String get clientId => client.clientId;\n /// The client's sync state: a local snapshot, not a network probe.\n Future<Map<String,dynamic>> syncState() => client.syncState();\n /// Leave an incompatible database behind for a fresh file; refused while unsent work remains unless [discardPending].\n Future<Map<String,dynamic>> rebuild({bool discardPending = false}) => client.rebuild(discardPending: discardPending);\n /// Remove a handled rejection from the local inbox; it is not retried.\n Future<void> dismissRejection(int ordinal) => client.dismissRejection(ordinal);\n /// Remove unsent work and recompute local state; frozen work cannot be dropped.\n Future<void> drop(int ordinal) => client.drop(ordinal);\n Future<List<Map<String,dynamic>>> pendingTasks() => client.pendingTasks();\n /// Mark a prerequisite task by its opaque key: `ready`, `pending` or `failed`.\n Future<void> setReadiness(String key, String state) => client.setReadiness(key, state);\n Future<void> runPrerequisites(Map<String, Future<void> Function(Map<String,dynamic>)> handlers) => client.runPrerequisites(handlers);\n /// Start the background connection when `open` was called without a server.\n Future<RuntimeConnection> connect(SyncServer server, {void Function(Object)? onError, Future<void> Function()? refreshAuth}) async => connection = await client.connect(server, onError:onError, refreshAuth:refreshAuth);\n /// Escape hatch: an untyped structured query.\n Future<List<Map<String,dynamic>>> querySpec(String model, Map<String,dynamic> query) => client.querySpec(model, query);\n /// Escape hatch: read-only SQL over the local database.\n Future<List<Map<String,dynamic>>> readSql(String sql, {List<dynamic> parameters = const []}) => client.readSql(sql, parameters: parameters);\n Future<void> close() => client.close();\n}\n");
+    o.push_str(" static Future<GeneratedClient> open({required String path, SyncServer? server, String? libraryPath, Map<String,dynamic>? migration, bool discardPending = false, void Function(Object)? onError, Future<void> Function()? refreshAuth, Duration directTimeout = const Duration(seconds: 30)}) async {\n  final client = await Client.open(path:path, schema:schema, libraryPath:libraryPath, migration:migration, discardPending:discardPending);\n  try {\n  final connection = server == null ? null : await client.connect(server, onError:onError, refreshAuth:refreshAuth, directTimeout:directTimeout);\n  return GeneratedClient._(client, connection);\n  } catch (_) { try { await client.close(); } catch (_) {} rethrow; }\n }\n");
+    o.push_str(" Future<T> transaction<T>(Future<T> Function(GeneratedTransaction tx) body) => client.transaction((tx) => body(GeneratedTransaction(tx)));\n /// This device's durable client identity.\n String get clientId => client.clientId;\n /// The client's sync state: a local snapshot, not a network probe.\n Future<Map<String,dynamic>> syncState() => client.syncState();\n /// Leave an incompatible database behind for a fresh file; refused while unsent work remains unless [discardPending].\n Future<Map<String,dynamic>> rebuild({bool discardPending = false}) => client.rebuild(discardPending: discardPending);\n /// Remove a handled rejection from the local inbox; it is not retried.\n Future<void> dismissRejection(int ordinal) => client.dismissRejection(ordinal);\n /// Remove unsent work and recompute local state; frozen work cannot be dropped.\n Future<void> drop(int ordinal) => client.drop(ordinal);\n Future<List<Map<String,dynamic>>> pendingTasks() => client.pendingTasks();\n /// Mark a prerequisite task by its opaque key: `ready`, `pending` or `failed`.\n Future<void> setReadiness(String key, String state) => client.setReadiness(key, state);\n Future<void> runPrerequisites(Map<String, Future<void> Function(Map<String,dynamic>)> handlers) => client.runPrerequisites(handlers);\n /// Start the background connection when `open` was called without a server.\n Future<RuntimeConnection> connect(SyncServer server, {void Function(Object)? onError, Future<void> Function()? refreshAuth, Duration directTimeout = const Duration(seconds: 30)}) async => connection = await client.connect(server, onError:onError, refreshAuth:refreshAuth, directTimeout:directTimeout);\n /// Escape hatch: an untyped structured query.\n Future<List<Map<String,dynamic>>> querySpec(String model, Map<String,dynamic> query) => client.querySpec(model, query);\n /// Escape hatch: read-only SQL over the local database.\n Future<List<Map<String,dynamic>>> readSql(String sql, {List<dynamic> parameters = const []}) => client.readSql(sql, parameters: parameters);\n Future<void> close() => client.close();\n}\n");
     o
 }
 fn upper(name: &str) -> String {
@@ -2117,7 +2178,7 @@ fn dart_models(v: &Value, o: &mut String) {
             }
         }
         o.push_str("}\n");
-        writeln!(o, "class {n}LiveModel extends {n}Model {{ final Client client; {n}LiveModel(this.client) : super(client);\n Stream<List<{n}>> watch({{{n}Filter? where}}) => client.watch('{n}', where:where?.toRecord()??{{}}).map((rows) => rows.map({n}.fromRecord).toList());\n /// This record's sync state: its pending mutations and retained rejections. Local only.\n Future<SyncState> syncState({n}Identity identity) async => SyncState.fromRecord(await client.recordSyncState('{n}', identity.toRecord()));\n}}").unwrap();
+        writeln!(o, "class {n}LiveModel extends {n}TxModel {{ final Client client; {n}LiveModel(this.client) : super(client);\n Stream<List<{n}>> watch({{{n}Filter? where}}) => client.watch('{n}', where:where?.toRecord()??{{}}).map((rows) => rows.map({n}.fromRecord).toList());\n /// This record's sync state: its pending mutations and retained rejections. Local only.\n Future<SyncState> syncState({n}Identity identity) async => SyncState.fromRecord(await client.recordSyncState('{n}', identity.toRecord()));\n}}").unwrap();
         writeln!(o, "class {n}TxModel extends {n}Model {{ final WritePort writer; {n}TxModel(this.writer) : super(writer);\n Future<void> create({n} value) {{ final state=value.toRecord(); for (final key in value.identity.toRecord().keys) {{ state.remove(key); }} return writer.direct({{'model':'{n}','op':'create','identity':value.identity.toRecord(),'values':state}}); }}\n Future<void> update({n}Identity identity, {n}Patch patch) => writer.direct({{'model':'{n}','op':'update','identity':identity.toRecord(),'values':patch.toRecord()}});\n Future<void> delete({n}Identity identity) => writer.direct({{'model':'{n}','op':'delete','identity':identity.toRecord()}});\n}}").unwrap();
     }
 }

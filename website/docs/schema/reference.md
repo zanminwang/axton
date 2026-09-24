@@ -30,14 +30,14 @@ For source-checkout use, supply runtime paths relative to the output directory; 
 
 | File | Contents |
 | --- | --- |
-| `schema.json` | Client schema descriptor (each model with the read-contract version the client expects), requirements and mutation policies |
-| `backend.json` | Backend descriptor including retained mutation inputs, Action input/output contracts and Model read contracts |
-| `generated.ts` | TypeScript records, identities, patches, model facades and mutation builders |
+| `schema.json` | Client descriptor with Model read versions, Action contracts and requirements |
+| `backend.json` | Backend descriptor with retained Action input/output contracts and Model read contracts; legacy mutation inputs remain where used |
+| `generated.ts` | TypeScript records, identities, patches, Model facades and Action bindings |
 | `client.ts` | Schema-bound `GeneratedClient`, channels and runtime re-exports |
-| `backend.ts` | Typed `Handlers`, `Loaders`, inputs and record references; legacy-only schemas include bound `createBackend` |
-| `generated.dart` | Dart models, patches, mutation builders and generated client |
+| `backend.ts` | Typed `Handlers`, `Loaders`, inputs, `ActionRejected`, record references and a bound `createBackend` |
+| `generated.dart` | Dart Models, patches, Action bindings and generated client |
 
-History is not generated output: `INPUT_DIR/history/mutations.json` retains legacy mutation inputs, `INPUT_DIR/history/models.json` retains Model reads, and `INPUT_DIR/history/actions.json` retains both Action inputs and outputs when Actions exist. A refused compile leaves all histories and outputs untouched. An Action schema currently emits type contracts without a callable backend factory or executable client Action methods; #142 binds these routes. Legacy mutation schemas remain runnable.
+History is not generated output: `INPUT_DIR/history/mutations.json` retains legacy mutation inputs where used, `INPUT_DIR/history/models.json` retains Model reads, and `INPUT_DIR/history/actions.json` retains both Action inputs and outputs when Actions exist. A refused compile leaves all histories and outputs untouched. Generated Action methods and the bound backend factory are executable.
 
 Dart output imports `package:axton/axton.dart`. Commit the history used to generate released clients; regenerating from an empty history loses compatibility information. A history left at the superseded `OUTPUT_DIR/mutation-history.json` is read once, rewritten at the new default and reported on stderr; the old file stays where it is and you can delete it after committing the new one.
 
@@ -57,7 +57,7 @@ Dart output imports `package:axton/axton.dart`. Commit the history used to gener
 
 `@deprecated` or `@deprecated(reason: "…")` after a field, an enum value or a mutation slot marks it deprecated, as in GraphQL: generated TypeScript carries `@deprecated` JSDoc and generated Dart carries `@Deprecated`, so editors and the Dart analyzer flag uses. Nothing else changes: the member stays in the schema and in every contract, and removing it still follows the versioning rules below.
 
-`@@id(field,...)` defines identity, including composite keys. Identity fields must be nonnullable. `@@version(n)` names the model's read contract, the record shape a loader of that version returns; it defaults to 1 and is independent of mutation versions (see [History and compatibility](#history-and-compatibility)). Model names starting with `axton_` or `sqlite_` (in any letter case) are reserved and refused, and so are model and enum names the generated client itself declares (`SyncState`, `PendingMutation`, `Rejection`, `MutationName`, `Mutate`, `Channels`, `GeneratedClient`, `GeneratedTransaction`, `LiveModels`, `TxModels`, the port types, `Client`, `Transaction`, `Connection`, `RuntimeConnection`, `SyncServer`, `Present`). `@@unique(field,...)` declares a unique group that the client's local database enforces; the server does not check it, so your application database schema must carry its own constraints ([What your backend owns](../backend/api.md#what-your-backend-owns)). Generated patches exclude identity fields. Complete records contain all declared fields, including nullable ones; an optional patch field is a separate concept.
+`@@id(field,...)` defines identity, including composite keys. Identity fields must be nonnullable. `@@version(n)` names the Model read contract returned by a Loader; it defaults to 1 and is independent of Action versions (see [History and compatibility](#history-and-compatibility)). Model names starting with `axton_` or `sqlite_` (in any letter case) are reserved. Names used by generated clients, including `Actions`, `DirectCalls`, `ActionPort`, `GeneratedClient` and `GeneratedTransaction`, are also reserved. `@@unique(field,...)` declares a unique group that the client's local database enforces; your application database needs its own constraint ([What your backend owns](../backend/api.md#what-your-backend-owns)). Generated patches exclude identity fields. Complete records contain nullable fields; an optional patch field is a separate concept.
 
 TypeScript omission leaves a patch field unchanged; null clears a nullable field. Dart uses `Present<T>` to distinguish supplied values from omission. Generated TypeScript is intended for `exactOptionalPropertyTypes`.
 
@@ -79,34 +79,15 @@ model Comment {
 
 A reference names the local fields matching the target identity. `onTargetDelete` accepts `none` (default) or `delete`. The cascade runs on the client only: deleting a `Book` locally deletes its `Comment` rows locally, and those deletes are never sent. A handler that deletes a book must delete its comments itself, report them with `changes.add` and publish them to their channels ([What your backend owns](../backend/api.md#what-your-backend-owns)). Inverse declarations generate navigation without storing another copy of the relationship. Singular inverses require a unique foreign key. Named references/inverses can disambiguate multiple relations; see the [parser tests](https://github.com/zanminwang/axton/blob/main/crates/compiler/tests/compiler.rs) for validated examples.
 
-## Mutations
-
-```text
-mutation Edit {
-  entry Entry.update<text,note>
-  @@version(1)
-}
-```
-
-| Slot | Meaning |
-| --- | --- |
-| `entry Entry.create` | Complete record to create |
-| `entry Entry.update<text,note>` | Identity and patch restricted to these fields |
-| `entry Entry.delete` | Identity to delete |
-| `entry Entry.delete?` | Optional operation |
-| `entries Entry.delete[]` | List of operations |
-
-Builders emit operations in declared slot order. Slot bindings can connect operations; prerequisites and `@@sequence` specify dependencies. A prerequisite argument must be `self` (the annotated field's value); no other expression is accepted, and prerequisites are satisfied on the client, never seen by the backend. See [advanced declarations](define.md#relations-prerequisites-and-ordering) and [compiler tests](https://github.com/zanminwang/axton/blob/main/crates/compiler/tests/compiler.rs). The generator does not implement your backend business logic or host prerequisite callbacks.
-
-## Action contracts (execution pending #142)
+## Actions
 
 `action Name(inputs) { outputs }` defines one generated input/output pair for queued and direct calls. Braces may be omitted when there are no explicit outputs. Ordinary inputs use scalar or enum types; `String?` is a required argument whose value can be null. Model operands use `Model.create`, `Model.update<fields>` or `Model.delete`, optionally followed by `?` or `[]`. An optional Model operand may be omitted or null; a list has zero or more elements. Omitted update fields stay omitted, while explicit null clears a nullable field. TypeScript flattens operands into `ModelCreate`, `ModelUpdate<K>` and `ModelDelete`; Dart uses `Present<T>` to represent supplied patch fields.
 
 Create/update operands imply full Model result fields bound to their input identities. Delete operands imply identity confirmations. The versioned backend handler receives `{ ctx, args }`, separating trusted framework context from caller-supplied values. Explicit scalar/enum outputs are supplied by the handler; explicit Model outputs are selected with identity objects containing exactly the Model's `@@id` fields. For a composite identity, every key field is required. A nullable output field is present with null when absent; a list preserves order and duplicates; an Action with no outputs returns void. Nullable lists, nested lists, nullable list elements and output names colliding with implicit fields are invalid. `call` is reserved in the Action namespace.
 
-The generated TypeScript and Dart contract describes `client.actions.name(args)` returning an `ActionCall<Output>` after local acceptance, and `client.actions.call.name(args)` returning the final `Output`. The handle exposes only `status` and `wait()`. Under the #142 runtime design, local submission errors reject before a handle exists, terminal business failures appear in `wait()` as `ActionError`, and direct-call failures reject with `ActionError`. Direct calls do not queue or apply automatic optimism. Neither Action route is allowed inside an application-owned local transaction. Standalone `client.models` CRUD is local-only; `tx.models` has local reads and CRUD without Action calls or watch.
+The generated TypeScript and Dart client provides `client.actions.name(args)` returning an `ActionCall<Output>` after local acceptance, and `client.actions.call.name(args)` returning the final `Output`. The handle exposes only `status` and `wait()`. Local submission errors reject before a handle exists; terminal business failures appear in `wait()` as `ActionError`; direct-call failures reject with `ActionError`. Direct calls do not queue or apply automatic optimism and use a finite timeout. Neither Action route is allowed inside an application-owned local transaction. Standalone `client.models` CRUD is local-only; `tx.models` has local reads and CRUD without Action calls or watch.
 
-Model results will be resolved through the shared Loader path in #142. A returned Model is the snapshot for that invocation, even if a later call in the same batch changes the row or local optimism changes the current `client.models` view. Batch-final records settle the local authoritative base and cannot reconstruct an earlier per-call result. #142 must persist each backend outcome atomically with business writes; live handles keep business results in memory, while pending and completion state remains durable. Per-output ephemeral policy belongs to #116.
+Model results are resolved through the shared Loader path. A returned Model is the snapshot for that invocation, even if a later call in the same batch changes the row or local optimism changes the current `client.models` view. Batch-final records settle the local authoritative base and cannot reconstruct an earlier per-call result. The backend persists each outcome atomically with business writes and retains it without TTL or automatic pruning. Live client handles keep business results in memory, while pending and completion state remains durable. Per-output ephemeral policy belongs to [#116](https://github.com/zanminwang/axton/issues/116); [#143](https://github.com/zanminwang/axton/issues/143) tool behavior is separate.
 
 ## History and compatibility
 

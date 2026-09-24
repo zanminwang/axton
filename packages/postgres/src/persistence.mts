@@ -1,6 +1,7 @@
 import type {
   Acknowledged,
   Claimed,
+  ClaimedCall,
   Head,
   HostRequest,
   Invalidation,
@@ -53,6 +54,32 @@ export async function answer<Tx>(
         r.receipt,
       );
       if (rows.length !== 1) throw new Error("Receipt owner mismatch");
+      const acknowledged: Acknowledged = null;
+      return acknowledged;
+    }
+    case "claimCall": {
+      const inserted = await q(
+        SQL.CLAIM_CALL_INSERT,
+        r.owner,
+        r.callId,
+        r.request,
+      );
+      const rows = await q(SQL.CLAIM_CALL_LOCK, r.owner, r.callId);
+      if (rows.length !== 1) throw new Error("Failed to lock call");
+      const row = rows[0]!;
+      if (inserted.length === 0 && row.response === null)
+        throw new Error("Call has incomplete stored response");
+      const claimed: ClaimedCall = {
+        fresh: inserted.length === 1,
+        request: String(row.request),
+        response: row.response === null ? null : String(row.response),
+      };
+      return claimed;
+    }
+    case "saveCall": {
+      const rows = await q(SQL.SAVE_CALL, r.owner, r.callId, r.response);
+      if (rows.length !== 1)
+        throw new Error("Call not claimed or already completed");
       const acknowledged: Acknowledged = null;
       return acknowledged;
     }
@@ -134,6 +161,7 @@ export async function answer<Tx>(
       return acknowledged;
     }
     case "handle":
+    case "handleAction":
     case "load":
       break;
     default: {

@@ -1,4 +1,5 @@
 //! Client engine over per-model SQLite tables. No state lives in memory between calls.
+pub mod actions;
 pub mod authority;
 pub mod connection;
 pub mod ddl;
@@ -16,6 +17,7 @@ pub mod schema_store;
 pub mod store;
 pub mod transport;
 
+pub use actions::SubmittedCall;
 pub use axton_core::*;
 pub use connection::*;
 pub use live::*;
@@ -50,6 +52,10 @@ pub struct Mutation {
     pub name: String,
     #[serde(default = "one")]
     pub version: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Value>,
     pub operations: Vec<Operation>,
     #[serde(default)]
     pub companion: Vec<Operation>,
@@ -81,6 +87,8 @@ impl Mutation {
         Self {
             name: name.into(),
             version: 1,
+            call_id: None,
+            args: None,
             operations,
             companion: vec![],
             effects: vec![],
@@ -150,6 +158,8 @@ pub struct ApplyReport {
     pub stale: bool,
     pub cursors: BTreeMap<String, u64>,
     pub reports: Vec<Report>,
+    /// Invocation outcomes are emitted after settlement and never stored locally.
+    pub completions: Vec<CallCompletion>,
 }
 impl ApplyReport {
     pub fn count(&self, kind: ReportKind) -> usize {
@@ -225,6 +235,14 @@ pub struct RebuildReport {
     pub reason: String,
     pub left_pending: usize,
     pub left_direct: usize,
+    /// Live observers can terminate calls left in the prior file. A frozen
+    /// call may have executed remotely; its outcome is unknown.
+    pub abandoned_calls: Vec<AbandonedCall>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AbandonedCall {
+    pub call_id: String,
+    pub frozen: bool,
 }
 
 /// Marker a transaction leaves in its changed set when it subscribes or
@@ -474,20 +492,30 @@ impl<S: ClientStore> Client<S> {
             }
         }
         let new_file = schema_store::next_free_file(path);
-        let channels: Vec<String> = match factory(old_file) {
-            Ok(mut old) => old
-                .query_committed(
-                    "SELECT channel FROM axton_subscription ORDER BY channel",
-                    &[],
-                )
-                .map(|rows| {
-                    rows.rows
-                        .iter()
-                        .filter_map(|r| r[0].as_str().map(str::to_owned))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            Err(_) => vec![],
+        let mut old = factory(old_file)?;
+        let channels: Vec<String> = old
+            .query_committed(
+                "SELECT channel FROM axton_subscription ORDER BY channel",
+                &[],
+            )
+            .map(|rows| {
+                rows.rows
+                    .iter()
+                    .filter_map(|r| r[0].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let columns = old.query_committed("PRAGMA table_info(axton_mutation)", &[])?;
+        let has = |name: &str| columns.rows.iter().any(|r| r[1].as_str() == Some(name));
+        let abandoned_calls = if has("call_id") && has("push") {
+            old.query_committed("SELECT call_id, push FROM axton_mutation WHERE call_id IS NOT NULL ORDER BY ordinal", &[])?
+                .rows.iter().map(|r| Ok(AbandonedCall {
+                    call_id: r[0].as_str().ok_or_else(|| invalid("stored Action call ID is not text"))?.to_owned(),
+                    frozen: !r[1].is_null(),
+                })).collect::<Result<Vec<_>>>()?
+        } else {
+            // An older framework table predates Action identity columns.
+            vec![]
         };
         let mut client = Self::open(factory(&new_file)?, schema.clone())?;
         if !channels.is_empty() {
@@ -506,6 +534,7 @@ impl<S: ClientStore> Client<S> {
             reason: reason.to_string(),
             left_pending,
             left_direct,
+            abandoned_calls,
         });
         Ok(client)
     }
@@ -839,10 +868,38 @@ impl<S: ClientStore> Client<S> {
                 }
                 Some(_) => {}
             }
-            e.remove_rejected(&[Rejection {
+            let (affected, completions) = e.mark_rejected_with_completions(&[Rejection {
                 ordinal,
                 code: "dropped".into(),
-            }])
+            }])?;
+            if !completions.is_empty() {
+                return Err(invalid(
+                    "Action discard requires completion-returning drop_action",
+                ));
+            }
+            e.rebuild_held(&affected)?;
+            Ok(())
+        })
+    }
+    /// Explicitly discard unsent work and return terminal events for any
+    /// Action calls removed through its lifecycle dependency chain.
+    pub fn drop_action(&mut self, ordinal: u64) -> Result<Vec<CallCompletion>> {
+        self.write(|e| {
+            match e.queued_one(ordinal)? {
+                None => return Ok(vec![]),
+                Some(q) if q.push.is_some() => {
+                    return Err(invalid(
+                        "cannot drop a sent mutation with unknown/accepted outcome",
+                    ));
+                }
+                Some(_) => {}
+            }
+            let (affected, completions) = e.mark_rejected_with_completions(&[Rejection {
+                ordinal,
+                code: "dropped".into(),
+            }])?;
+            e.rebuild_held(&affected)?;
+            Ok(completions)
         })
     }
     pub fn freeze(&mut self) -> Result<Option<Vec<u8>>> {
@@ -855,7 +912,6 @@ impl<S: ClientStore> Client<S> {
     /// lands, the completed operations leave the queue and what remains
     /// replays, in one transaction. Nothing waits for a channel.
     pub fn acknowledge(&mut self, sequence: u64, receipt: PushReceipt) -> Result<ApplyReport> {
-        let receipt = PushReceipt::decode(&receipt.encode()?)?;
         self.write(|e| e.acknowledge(sequence, &receipt))
     }
     pub fn set_readiness(&mut self, key: &str, value: Readiness) -> Result<()> {

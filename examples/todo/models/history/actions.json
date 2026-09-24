@@ -1,0 +1,144 @@
+{
+  "actions": {
+    "AddTodo": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "title",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "done",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "boolean"
+                  }
+                },
+                {
+                  "name": "createdById",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Todo"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Todo",
+            "name": "todo",
+            "operation": "create"
+          }
+        ],
+        "name": "AddTodo",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "todo",
+            "source": {
+              "inputIdentity": "todo"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      }
+    },
+    "SetTodoDone": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "done",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "boolean"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Todo"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "allowedPatchFields": [
+              "done"
+            ],
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Todo",
+            "name": "todo",
+            "operation": "update"
+          }
+        ],
+        "name": "SetTodoDone",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "todo",
+            "source": {
+              "inputIdentity": "todo"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      }
+    }
+  },
+  "formatVersion": 1
+}

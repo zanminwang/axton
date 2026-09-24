@@ -98,8 +98,8 @@ async function scenario(body) {
  }
 }
 
-const addTodo = (client, todo) => client.mutate.addTodo({ todo });
-const setDone = (client, id, done) => client.mutate.setTodoDone({ todo: { identity: { id }, values: { done } } });
+const addTodo = (client, todo) => client.actions.addTodo({ todo });
+const setDone = (client, id, done) => client.actions.setTodoDone({ todo: { id, done } });
 
 test('seeds reach both participants and survive a restart without resetting edits', async () => {
  await scenario(async ctx => {
@@ -368,10 +368,62 @@ test('a completion request without a boolean done is an empty patch: a no-op the
   const alice = await ctx.open('alice', 'alice');
   await wait(async () => (await alice.models.todo.get({ id: 'seed-1' })) !== null, 'Alice catches up');
   const before = ctx.app.handlerCalls;
-  await alice.client.mutate({ name: 'SetTodoDone', version: 1, operations: [{ model: 'Todo', op: 'update', identity: { id: 'seed-1' }, values: {} }] });
+  await alice.actions.setTodoDone({ todo: { id: 'seed-1' } });
   await ctx.settled(alice);
   assert.equal(ctx.app.handlerCalls, before + 1, 'the handler runs with an empty patch');
   assert.deepEqual((await alice.syncState()).rejections, []);
   assert.equal((await ctx.row('seed-1')).done, false, 'nothing was written');
+ });
+});
+
+test('direct result keeps its Loader snapshot while an independent durable edit replays', async () => {
+ await scenario(async ctx => {
+  const alice = await ctx.open('alice', 'alice');
+  await wait(async () => (await alice.models.todo.get({ id: 'seed-1' })) !== null, 'seed is local');
+  const gate = ctx.gate('alice');
+  try {
+   const pending = await setDone(alice, 'seed-1', true);
+   await gate.entered;
+   assert.equal((await alice.models.todo.get({ id: 'seed-1' })).done, true, 'durable optimism is visible');
+   const result = await alice.actions.call.setTodoDone({ todo: { id: 'seed-1', done: false } });
+   assert.equal(result.todo.done, false, 'direct result is the committed Loader snapshot');
+   assert.equal((await alice.models.todo.get({ id: 'seed-1' })).done, true, 'pending optimism replays over direct authority');
+   assert.equal((await alice.syncState()).pending, 1, 'direct call does not drain the independent durable queue');
+   assert.equal(pending.status, 'pending');
+  } finally { gate.release(); }
+  await ctx.settled(alice);
+  assert.equal((await alice.models.todo.get({ id: 'seed-1' })).done, true);
+  assert.equal((await ctx.row('seed-1')).done, true);
+  assert.equal(ctx.errors.length, 0, String(ctx.errors));
+ });
+});
+
+test('a direct retry replays the stored result snapshot after a later update', async () => {
+ await scenario(async ctx => {
+  const alice = await ctx.open('alice', 'alice');
+  await wait(async () => (await alice.models.todo.get({ id: 'seed-1' })) !== null, 'seed is local');
+  const originalFetch = globalThis.fetch;
+  let firstBody;
+  globalThis.fetch = (url, init) => {
+   if (String(url).endsWith('/sync/actions') && firstBody === undefined) firstBody = init?.body;
+   return originalFetch(url, init);
+  };
+  try {
+   const first = await alice.actions.call.setTodoDone({ todo: { id: 'seed-1', done: true } });
+   assert.equal(first.todo.done, true);
+   assert.equal(typeof firstBody, 'string');
+   const second = await alice.actions.call.setTodoDone({ todo: { id: 'seed-1', done: false } });
+   assert.equal(second.todo.done, false);
+   assert.equal((await ctx.row('seed-1')).done, false);
+   const calls = ctx.app.handlerCalls;
+   const replay = await originalFetch(`${ctx.url}/sync/actions`, {
+    method: 'POST', headers: { authorization: 'Bearer alice', 'content-type': 'application/json' }, body: firstBody,
+   });
+   assert.equal(replay.status, 200);
+   const stored = await replay.json();
+   assert.equal(stored.completion.outcome.result.todo.done, true, 'retry returns A, not later B');
+   assert.equal(ctx.app.handlerCalls, calls, 'retry does not execute the handler again');
+   assert.equal((await ctx.row('seed-1')).done, false, 'retry does not overwrite B');
+  } finally { globalThis.fetch = originalFetch; }
  });
 });

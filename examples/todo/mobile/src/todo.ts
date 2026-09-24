@@ -60,7 +60,7 @@ export async function openTodoSession(options: {
     async add(title) {
       const value = title.trim();
       if (!value) throw Error("Enter a task title");
-      await client.mutate.addTodo({
+      await client.actions.addTodo({
         todo: {
           id: randomUUID(),
           title: value,
@@ -70,8 +70,8 @@ export async function openTodoSession(options: {
       });
     },
     async setDone(id, done) {
-      await client.mutate.setTodoDone({
-        todo: { identity: { id }, values: { done } },
+      await client.actions.setTodoDone({
+        todo: { id, done },
       });
     },
     close() {

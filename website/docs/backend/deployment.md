@@ -4,7 +4,7 @@ This page describes the deployment configuration the current backend supports an
 
 ## What the listener is
 
-`backend.listen({ port, host? })` starts one Node HTTP server inside your application's process. It serves three routes on one port: `POST /sync/mutations`, `POST /sync/pull` and the WebSocket upgrade on `/sync/live`. Everything else answers `404`; other methods answer `405`.
+`backend.listen({ port, host? })` starts one Node HTTP server inside your application's process. It serves durable `POST /sync/mutations`, direct `POST /sync/actions`, `POST /sync/pull` and the WebSocket upgrade on `/sync/live` on one port. Everything else answers `404`; other methods answer `405`.
 
 | Property | Current behavior |
 | --- | --- |

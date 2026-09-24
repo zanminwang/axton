@@ -8,20 +8,20 @@ hide:
 
 AXTON is a schema-driven framework for building local-first apps with your own backend.
 
-Define your records and mutations once. AXTON generates typed client calls and backend interfaces, keeps local state in SQLite, and synchronizes through your handlers and loaders.
+Define Models and Actions once. AXTON generates typed client calls and backend interfaces, keeps local state in SQLite, and synchronizes through your handlers and Loaders.
 
-- **Schema-driven.** Describe your models and local mutations in one contract.
+- **Schema-driven.** Describe local Models and backend Actions in one contract.
 - **Typed end to end.** Generate client APIs and backend read/write interfaces together.
 - **Works offline.** Read and write locally; pending changes persist until they can sync.
 - **Your backend.** Keep your business logic and database. No vendor cloud service required.
 
 ## Start here
 
-[Run the getting-started tutorial](getting-started.md) to run the collaborative To-do example on two simulators, work offline and see your backend accept or reject a mutation.
+[Run the getting-started tutorial](getting-started.md) to run the collaborative To-do example on two simulators, work offline and see your backend accept or reject an Action.
 
 | What you need | Read |
 | --- | --- |
-| Define records and mutations | [Schema guide](schema/define.md) |
+| Define Models and Actions | [Schema guide](schema/define.md) |
 | Use the client | [Client setup](frontend/setup.md) |
 | Implement handlers and loaders | [Backend guide](backend/setup.md) |
 | Understand local state and sync | [Concepts](concepts.md) |

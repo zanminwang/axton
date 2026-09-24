@@ -4,6 +4,14 @@ CREATE TABLE IF NOT EXISTS axton_client (
  sequence bigint NOT NULL DEFAULT 0 CHECK(sequence >= 0 AND sequence <= 9007199254740991),
  receipt text
 );
+CREATE TABLE IF NOT EXISTS axton_call (
+ owner_id text NOT NULL,
+ call_id text NOT NULL,
+ request text NOT NULL,
+ response text,
+ claim_tx xid8 NOT NULL DEFAULT pg_current_xact_id(),
+ PRIMARY KEY(owner_id,call_id)
+);
 CREATE TABLE IF NOT EXISTS axton_channel (
  channel text PRIMARY KEY,
  head bigint NOT NULL CHECK(head >= 0 AND head <= 9007199254740991)

@@ -1,6 +1,7 @@
 import type { DriverOptions, PostgresDriver } from "./driver.mts";
-import { RETRYABLE_SQLSTATES, withRetries } from "./driver.mts";
+import { withRetries } from "./driver.mts";
 import { persistence } from "./persistence.mts";
+import { isRetryableTransactionError } from "../../server/retryable.mts";
 
 /** The part of a Prisma interactive transaction AXTON uses; `Prisma.TransactionClient` satisfies it. */
 export interface PrismaTransaction {
@@ -13,14 +14,6 @@ export interface PrismaClientLike<Tx extends PrismaTransaction> {
     options: { isolationLevel: "RepeatableRead"; timeout: number },
   ): Promise<R>;
 }
-
-const retryable = (error: unknown): boolean => {
-  const e = error as { code?: string; meta?: { code?: string } } | null;
-  return (
-    e?.code === "P2034" ||
-    (e?.code === "P2010" && RETRYABLE_SQLSTATES.has(e.meta?.code ?? ""))
-  );
-};
 
 /** A driver over a Prisma client. Handlers and loaders receive the interactive transaction client. */
 export function prismaDriver<Tx extends PrismaTransaction>(
@@ -35,7 +28,7 @@ export function prismaDriver<Tx extends PrismaTransaction>(
             isolationLevel: "RepeatableRead",
             timeout: options.timeout ?? 20000,
           }),
-        retryable,
+        isRetryableTransactionError,
         options.retries ?? 3,
       ),
     // Prisma binds `$n` itself and maps bigint/jsonb columns to JS values.

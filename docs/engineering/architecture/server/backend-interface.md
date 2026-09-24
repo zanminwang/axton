@@ -6,6 +6,10 @@ The backend interface is where the framework meets application code. The Rust en
 
 ## 3. Context and Scope
 
+**Action host contract.** The generated backend registers one handler for each retained Action version. The host invokes it with `{ctx, args}`: `ctx` contains the application transaction, authenticated user, stable call ID, changed-record collector and publisher; `args` is decoded from the retained Action input snapshot. The handler returns explicit scalar/enum values and identity objects for explicit Model outputs. The shared Action executor resolves Model outputs through the appropriate retained Loader version. An implicit Model result uses its input identity; a delete result confirms its input identity. The handler's output snapshot is distinct from the batch-final changed-record readback. See [server execution](engine/README.md) and [typed server API](../sdks/typed-api/server.md).
+
+`ActionRejected(code)` is the public backend business-rejection class; it has the same explicit code semantics as the retained legacy `MutationRejected` path described below. A handler or Loader exception that is not a business rejection becomes `handler.failed` or `loader.failed` for that call unless it is a retryable database transaction error. A persistence fault aborts the outer transaction for retry. Diagnostic callback exceptions after commit are reported through the SDK runtime uncaught-error channel and cannot replace the committed outcome.
+
 The host operations the engine may issue:
 
 | Operation | Answered by | Purpose |

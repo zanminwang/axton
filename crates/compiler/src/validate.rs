@@ -444,10 +444,15 @@ fn validate_action_slot(
 /// runtime packages they import, declare. A model or enum with one of these
 /// names would collide with them in the generated file.
 const GENERATED_NAMES: &[&str] = &[
+    "ActionContext",
+    "ActionPort",
+    "ActionRejected",
+    "Actions",
     "Channels",
     "Client",
     "ClientSyncState",
     "Connection",
+    "DirectCalls",
     "GeneratedClient",
     "GeneratedTransaction",
     "LiveModels",

@@ -1,0 +1,5 @@
+model Item {
+ id String
+ label String
+ @@id(id)
+}

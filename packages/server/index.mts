@@ -4,11 +4,18 @@ import type { IncomingMessage, RequestListener, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket } from "ws";
 import type { HostRequest } from "./host-contract.mts";
+import { isRetryableTransactionError } from "./retryable.mts";
 export { WebSocket } from "ws";
 const require = createRequire(import.meta.url);
 export type Native = {
   validateConfig(config: string): void;
   processPush(
+    config: string,
+    owner: string,
+    request: string,
+    callback: (request: string) => Promise<string>,
+  ): Promise<string>;
+  processAction(
     config: string,
     owner: string,
     request: string,
@@ -137,6 +144,7 @@ function engineError(error: unknown): unknown {
 function typedNative(native: Native): Native {
   type Async =
     | "processPush"
+    | "processAction"
     | "processPull"
     | "settleExternal"
     | "negotiateLive"
@@ -164,6 +172,7 @@ function typedNative(native: Native): Native {
   return {
     validateConfig: wrapSync("validateConfig"),
     processPush: wrap("processPush"),
+    processAction: wrap("processAction"),
     processPull: wrap("processPull"),
     settleExternal: wrap("settleExternal"),
     negotiateLive: wrap("negotiateLive"),
@@ -193,6 +202,8 @@ export class MutationRejected extends Error {
     this.code = code;
   }
 }
+/** Public Action spelling for the same business rejection contract. */
+export { MutationRejected as ActionRejected };
 export interface RecordRef {
   model: string;
   identity: object;
@@ -253,6 +264,19 @@ export type Loader<Tx, Identity = any, Row = object> = (
 /** Every retained version of one mutation, or a bare function as shorthand for a v1-only contract. */
 export type HandlerRegistration<Tx> =
   Handler<Tx> | { [version: `v${number}`]: Handler<Tx> };
+export interface ActionContext<Tx> {
+  tx: Tx;
+  userId: string;
+  callId: string;
+  changes: Changes;
+  publish: Publish;
+}
+export type ActionHandler<Tx, Args = any, Outputs = any> = (call: {
+  ctx: ActionContext<Tx>;
+  args: Args;
+}) => Promise<Outputs | void>;
+export type ActionHandlerRegistration<Tx> =
+  ActionHandler<Tx> | { [version: `v${number}`]: ActionHandler<Tx> };
 /** Every retained version of one model's read contract, or a bare function as shorthand for a v1-only model. */
 export type LoaderRegistration<Tx> =
   Loader<Tx> | { [version: `v${number}`]: Loader<Tx> };
@@ -315,6 +339,7 @@ function toRef(value: unknown, caller: string): RecordRef {
 }
 /** JSON with object keys sorted at every depth: one text per identity, whatever its key order. */
 function canonical(value: unknown): string {
+  if (value instanceof Date) return JSON.stringify(value.toISOString());
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value !== null && typeof value === "object")
     return `{${Object.keys(value)
@@ -330,6 +355,27 @@ function tag<T extends object>(value: T, ref: RecordRef): T {
   Object.defineProperty(value, RECORD, { value: ref, enumerable: false });
   return value;
 }
+/** Decode the API view in place while preserving JSON identities for record references. */
+function decodeActionValue(type: any, value: unknown): unknown {
+  if (value == null) return value;
+  if (type?.kind === "list")
+    return (value as unknown[]).map((item) =>
+      decodeActionValue(type.element, item),
+    );
+  if (type?.name === "dateTime") return new Date(value as string);
+  return value;
+}
+function decodeActionRecord(
+  value: unknown,
+  model: { fields?: { name: string; type: unknown }[] },
+): unknown {
+  if (value == null) return value;
+  const record = value as Record<string, unknown>;
+  for (const field of model.fields ?? [])
+    if (Object.hasOwn(record, field.name))
+      record[field.name] = decodeActionValue(field.type, record[field.name]);
+  return record;
+}
 function lowerFirst(name: string): string {
   return name.charAt(0).toLowerCase() + name.slice(1);
 }
@@ -337,7 +383,10 @@ export interface BackendOptions<T> {
   config: object;
   database: Database<T>;
   authenticate: Authenticate;
-  handlers: Record<string, HandlerRegistration<T>>;
+  handlers: Record<
+    string,
+    HandlerRegistration<T> | ActionHandlerRegistration<T>
+  >;
   loaders: Record<string, LoaderRegistration<T>>;
   loaderHooks?: Record<
     string,
@@ -449,9 +498,40 @@ export function createBackend<T>(options: BackendOptions<T>) {
   const onError: (error: unknown) => void =
     options.onError ?? ((error) => console.error(error));
   const descriptor = options.config as {
-    schema?: { models?: { name: string; version?: number }[] };
+    schema?: {
+      models?: {
+        name: string;
+        version?: number;
+        identity?: string[];
+        fields?: { name: string; type: unknown }[];
+      }[];
+      actions?: {
+        name: string;
+        version: number;
+        inputs?: {
+          kind: string;
+          name: string;
+          model?: string;
+          cardinality?: string;
+          list?: boolean;
+          type?: unknown;
+        }[];
+        outputs?: { source: unknown }[];
+        input?: {
+          models?: {
+            name: string;
+            identity?: string[];
+            fields?: { name: string; type: unknown }[];
+          }[];
+        };
+      }[];
+    };
     mutations?: MutationDescriptor[];
-    models?: { name: string; version: number }[];
+    models?: {
+      name: string;
+      version: number;
+      fields?: { name: string; type: unknown }[];
+    }[];
   };
   const retained = new Map<string, number[]>();
   for (const m of descriptor.mutations ?? [])
@@ -515,6 +595,32 @@ export function createBackend<T>(options: BackendOptions<T>) {
       handler: registered.get(m.name)!.get(m.version)!,
       slots: m.slots ?? [],
     });
+  const actionVersions = new Map<string, number[]>();
+  for (const action of descriptor.schema?.actions ?? [])
+    actionVersions.set(
+      action.name,
+      [...(actionVersions.get(action.name) ?? []), action.version].sort(
+        (a, b) => a - b,
+      ),
+    );
+  const actionHandlers = new Map<string, ActionHandler<T>>();
+  for (const [name, versions] of actionVersions) {
+    const registered = versioned<ActionHandler<T>>(
+      "handler",
+      name,
+      lowerFirst(name),
+      versions,
+      options.handlers[lowerFirst(name)],
+    );
+    for (const [version, handler] of registered)
+      actionHandlers.set(`${name}:${version}`, handler);
+  }
+  const actionTable = new Map(
+    (descriptor.schema?.actions ?? []).map((action) => [
+      `${action.name}:${action.version}`,
+      action,
+    ]),
+  );
   const sessions = new Map<T, Session>();
   const wakes = new WakeHub();
   /**
@@ -635,6 +741,66 @@ export function createBackend<T>(options: BackendOptions<T>) {
             });
             result = collected.settlement();
           } catch (error) {
+            if (isRetryableTransactionError(error)) throw error;
+            result = refusal(error);
+          }
+        } else if (req.op === "handleAction") {
+          const action = actionTable.get(`${req.name}:${req.version}`);
+          const handler = actionHandlers.get(`${req.name}:${req.version}`);
+          if (!action || !handler)
+            throw new Error(
+              `Missing Action handler ${req.name} v${req.version}`,
+            );
+          const args = { ...req.arguments };
+          const collected = collect();
+          for (const input of action.inputs ?? []) {
+            if (input.kind === "value") {
+              const type = input.list
+                ? { kind: "list", element: input.type }
+                : input.type;
+              args[input.name] = decodeActionValue(type, args[input.name]);
+              continue;
+            }
+            if (!input.model) continue;
+            const model =
+              action.input?.models?.find(
+                (candidate: any) => candidate.name === input.model,
+              ) ??
+              schemaModels.find((candidate) => candidate.name === input.model);
+            if (!model) throw new Error(`Missing Action model ${input.model}`);
+            const identityFields = model.identity ?? [];
+            const shape = (value: unknown): unknown => {
+              if (value === null || value === undefined) return null;
+              const record = value as Record<string, unknown>;
+              const identity = Object.fromEntries(
+                identityFields.map((field) => [field, record[field]]),
+              );
+              decodeActionRecord(record, model);
+              return tag(record, { model: input.model!, identity });
+            };
+            const value = args[input.name];
+            args[input.name] =
+              input.cardinality === "list"
+                ? (value as unknown[]).map(shape)
+                : shape(value);
+          }
+          try {
+            const outputs = await handler({
+              ctx: {
+                tx,
+                userId: req.owner,
+                callId: req.callId,
+                changes: collected.changes,
+                publish: collected.publish,
+              },
+              args,
+            });
+            result = {
+              outputs: outputs === undefined ? {} : outputs,
+              ...collected.settlement(),
+            };
+          } catch (error) {
+            if (isRetryableTransactionError(error)) throw error;
             result = refusal(error);
           }
         } else if (req.op === "load") {
@@ -643,8 +809,17 @@ export function createBackend<T>(options: BackendOptions<T>) {
           const loader = loaderTable.get(`${req.model}:${req.version}`);
           if (!loader)
             throw new Error(`Missing loader ${req.model} v${req.version}`);
+          const loaderModel =
+            (descriptor.models ?? []).find(
+              (model: any) =>
+                model.name === req.model && model.version === req.version,
+            ) ?? schemaModels.find((model) => model.name === req.model);
           const call = {
-            ids: req.identities as any[],
+            ids: (req.identities as any[]).map((identity) =>
+              loaderModel
+                ? decodeActionRecord(identity, loaderModel)
+                : identity,
+            ),
             tx,
             userId: req.owner,
           };
@@ -662,6 +837,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
             ]?.prepareForViewer(call);
             rows = await loader(call);
           } catch (error) {
+            if (isRetryableTransactionError(error)) throw error;
             refused = refusal(error);
           }
           if (refused) return callbackJson(refused);
@@ -692,6 +868,8 @@ export function createBackend<T>(options: BackendOptions<T>) {
           switch (req.op) {
             case "claim":
             case "saveReceipt":
+            case "claimCall":
+            case "saveCall":
             case "head":
             case "scan":
             case "savepoint":
@@ -823,6 +1001,10 @@ export function createBackend<T>(options: BackendOptions<T>) {
       run((tx, session) =>
         native.processPush(config, owner, text(request), host(tx, session)),
       ).then(reportInvalidReceipt),
+    action: (owner: string, request: Uint8Array | string) =>
+      run((tx, session) =>
+        native.processAction(config, owner, text(request), host(tx, session)),
+      ),
     pull: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
         native.processPull(config, owner, text(request), host(tx, session)),
@@ -926,6 +1108,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
 interface HttpBackend {
   push(owner: string, request: Uint8Array | string): Promise<string>;
   pull(owner: string, request: Uint8Array | string): Promise<string>;
+  action(owner: string, request: Uint8Array | string): Promise<string>;
 }
 function createHttpHandler(options: {
   backend: HttpBackend;
@@ -942,7 +1125,11 @@ function createHttpHandler(options: {
       response.end(typeof value === "string" ? value : JSON.stringify(value));
     };
     const path = request.url?.split("?")[0];
-    if (path !== "/sync/mutations" && path !== "/sync/pull") {
+    if (
+      path !== "/sync/mutations" &&
+      path !== "/sync/pull" &&
+      path !== "/sync/actions"
+    ) {
       send(404, { code: "not_found" });
       return;
     }
@@ -984,7 +1171,9 @@ function createHttpHandler(options: {
       }
       const result = await (path === "/sync/mutations"
         ? options.backend.push(owner, bytes)
-        : options.backend.pull(owner, bytes));
+        : path === "/sync/actions"
+          ? options.backend.action(owner, bytes)
+          : options.backend.pull(owner, bytes));
       send(200, result);
     } catch (error) {
       const status =

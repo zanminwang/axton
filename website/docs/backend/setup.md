@@ -4,57 +4,39 @@ This TypeScript SDK embeds the shared Rust server runtime in your Node applicati
 
 `index.mts` runs on Node with TypeScript support (Node 22.18+), or can be compiled with TypeScript. Build the local native module with `node bindings/node/build.mjs`. Supply an injected `native` implementation when packaging the native artifact elsewhere.
 
-Given `models/book.model` describing an `Entry` Model and an `Edit` Mutation, the compiler emits `generated/backend.ts`, which already binds the schema:
+Given a schema with `Todo` and `AddTodo`, the compiler emits `generated/backend.ts`, which already binds the schema. Your application implements the generated `Handlers<Tx>` and `Loaders<Tx>` contracts:
 
 ```ts
-// handlers.ts
-import type { Handlers } from './generated/backend.ts';
-import { MutationRejected } from './generated/backend.ts';
-
-export const handlers: Handlers<Tx> = {
-  async edit({ input, tx, userId, publish }) {
-    const { identity, patch } = input.entry;
-    if (!await canEdit(tx, userId, identity)) throw new MutationRejected('entry.forbidden');
-    await tx.entry.update({ where: identity, data: patch });
-    publish({ channel: 'book:demo' });
-  },
-};
-
-// loaders.ts
-import type { Loaders } from './generated/backend.ts';
-
-export const loaders: Loaders<Tx> = {
-  async entry({ ids, tx, userId }) {
-    return Promise.all(ids.map(identity => loadVisibleEntry(tx, userId, identity)));
-  },
-};
-
-// main.ts
 import { createBackend, devAuth } from './generated/backend.ts';
 import { prisma } from '../../packages/postgres/index.mts';
 import { handlers } from './handlers.ts';
 import { loaders } from './loaders.ts';
 
-const backend = createBackend<Tx>({ database: prisma(db), authenticate: devAuth(), handlers, loaders });
+const backend = createBackend<Prisma.TransactionClient>({
+  database: prisma(db), // db is the application's Prisma client
+  authenticate: devAuth(),
+  handlers,
+  loaders,
+});
 const server = await backend.listen({ port: 4242 });
 console.log(server.url);
 ```
 
 The generated `createBackend` needs no `config` option: the schema is already bound. The runtime's own `createBackend` (`packages/server/index.mts`) still takes `config` explicitly, for callers that build the schema themselves.
 
-`db` is your Prisma client and `Tx` is `Prisma.TransactionClient`. The application supplies `canEdit` and `loadVisibleEntry` to enforce its write and read permissions. Authorization, unique constraints, child deletion and client identity are the application's responsibility; the runtime does not enforce them ([What your backend owns](api.md#what-your-backend-owns)).
+`handlers` and `loaders` are application modules typed against the generated interfaces. The application enforces write and read permissions. Authorization, unique constraints, child deletion and client identity are the application's responsibility ([What your backend owns](api.md#what-your-backend-owns)).
 
 ## Call objects
 
-A Handler receives a `HandlerCall<Tx, Input>`: `{ input, tx, userId, changes, publish }`. A Loader receives a `LoaderCall<Tx, Identity>`: `{ ids, tx, userId }`. `input` and `ids` come from `EditInput`-style generated types; `tx` is the application's own transaction object; `userId` is the authenticated owner, so a loader can decide what this user sees and return null for rows they must not see. A loader is never told a channel: the row it returns is the row every delivery path carries for that record.
+An Action Handler receives `{ctx, args}`. `args` is typed from the retained Action input; `ctx` supplies the application's `tx`, authenticated `userId`, stable `callId`, `changes` and `publish`. The Handler returns explicit outputs; Model outputs are identities resolved by a Loader. A Loader receives `{ids, tx, userId}` and returns one record or null per identity. It is never told a channel.
 
 ## changes and publish
 
-`changes` is the set of records this mutation changed. It starts as the records the uploaded operations name; `changes.add(record)` (a slot argument or a `{ model, identity }` ref, such as those returned by the generated `Entry({ id })` constructor) reports a record the Handler wrote beyond them. When the Handler returns, the framework allocates a new **stamp** for every record in the set, reads them all back through the Loaders, and returns their content in the receipt, so the client that sent the mutation completes it without waiting for any channel.
+`ctx.changes` is the set of records an Action changed. It starts with the inferred Model operands; `ctx.changes.add(record)` (an operand or a generated Model reference such as `Todo({ id })`) reports an additional record. On durable delivery, the framework allocates a **stamp** for each changed record and reads the batch-final content back through Loaders for the receipt. The Action's own result snapshot is resolved separately at its invocation.
 
-`publish({ channel })` distributes that final change set on `channel`, a non-empty string; `publish({ channel, records })` distributes exactly `records` instead, and `[]` distributes nothing. Publishing is optional and may be called several times; it allocates channel cursors and carries the records' stamps, never a new stamp. A record published without being changed keeps its current stamp.
+`ctx.publish({ channel })` distributes the final change set on a non-empty channel; `ctx.publish({ channel, records })` distributes exactly those records, and `[]` distributes nothing. Publishing is optional and may be called several times; it allocates channel cursors and carries records' stamps, never a new stamp. A record published without being changed keeps its current stamp.
 
-A stamp is a per-record counter that every delivery path carries with the record's content: the receipt, catch-up pages and the live stream. The client applies content strictly by stamp, so a receipt and a page for the same change agree, and older content arriving later on any channel cannot overwrite newer content.
+A stamp is a per-record counter carried with authority in receipts, direct responses, catch-up pages and the live stream. The client applies content by stamp, so older content arriving later cannot overwrite newer content.
 
 Publish to every channel that provides a record whenever that record changes, including when a loader starts returning `null` for it. A channel that is not published to keeps delivering its old position, and its subscribers will not pick up the change through it. The framework does not detect a missing publication.
 
@@ -84,9 +66,9 @@ See [background writes](api.md#background-writes).
 
 The outer transaction belongs to the application. Persistence, Handler, and Loader callbacks all receive that same transaction. The runner must provide a coherent snapshot (Repeatable Read or stronger), roll back on rejected promises, and retry serialization conflicts. Every shim of [`@axton/postgres`](database.md) supplies this contract.
 
-## Mutation results
+## Action results
 
-A successful Handler returns nothing; its return value is ignored. The receipt carries the content and stamp of every record in `changes`, read back by the Loaders in the Handler's transaction, once per record with the last successful mutation's result. An explicit `MutationRejected` or registered `translateRejection` code, thrown by the Handler or by a Loader during the readback, rolls back that mutation's savepoint, including business effects, stamps and publications; any other exception rejects that same mutation with `handler.failed`/`loader.failed`, reported to `onError`, and the rest of the batch still commits ([#95](https://github.com/zanminwang/axton/issues/95)). Translation must produce a stable machine code. A mutation naming a known but unsupported version is rejected the same isolated way (`mutation_version_unsupported`), without calling any handler. Only the request envelope, client identity/order and infrastructure failures (a failed `rollback`, a persistence fault) still abort the whole batch. The `handlers` key for a mutation is its lowerFirst name (e.g. `editTask`), and its value registers every retained version under `v1`, `v2`, .... A mutation that retains only v1 also accepts the plain function shown above; see [handlers](api.md#handlers).
+A successful Handler returns the explicit outputs declared by its Action; an Action with no explicit outputs may return nothing. AXTON resolves Model outputs through the versioned Loader at that invocation. A later Action in the batch may change the same record before batch-final authority is read, so the call result snapshot can differ from the receipt's record content. `ActionRejected` or a registered `translateRejection` code rolls back that call's savepoint; ordinary Handler/Loader exceptions become `handler.failed` / `loader.failed` and reach `onError`. Retryable database errors retry the transaction, and persistence faults abort it. Durable calls expose final outcomes through `ActionCall.wait()`; direct calls return a final result or throw `ActionError`. See [handlers](api.md#handlers) and [client Actions](../frontend/client-api.md#actions).
 
 ## Loaders and Pull
 
@@ -96,6 +78,6 @@ A record that cannot be read fails alone ([#95](https://github.com/zanminwang/ax
 
 Run `integration/persistence/server/run.sh` for the disposable PostgreSQL/Prisma integration suite. Its database is created, used, and destroyed by the runner.
 
-`backend.listen({ port, host? })` starts a Node HTTP+WebSocket server that serves `/sync/mutations`, `/sync/pull`, and `/sync/live` on one port, and returns `{ url, close() }`. It resolves once the listener is bound.
+`backend.listen({ port, host? })` starts a Node HTTP+WebSocket server that serves durable `/sync/mutations`, direct `/sync/actions`, `/sync/pull`, and `/sync/live` on one port, and returns `{ url, close() }`. It resolves once the listener is bound.
 
 For every option, callback, return value and failure mode, see the [backend interface reference](api.md). For process placement, the reverse-proxy configuration and trust boundaries, see [Deploy the backend](deployment.md).

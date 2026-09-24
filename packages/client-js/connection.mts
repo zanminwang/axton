@@ -6,6 +6,8 @@ export type Transport = (
 export type ConnectionOptions = {
   onError?: (error: unknown) => void;
   refreshAuth?: () => Promise<void>;
+  /** Maximum duration of one direct Action attempt, including token acquisition and authentication refresh. Integer 1..2147483647 ms; default 30000 ms. */
+  directTimeoutMs?: number;
 };
 export type Connection = {
   pause(): Promise<void>;
@@ -13,19 +15,36 @@ export type Connection = {
   wake(): Promise<void>;
   close(): Promise<void>;
 };
+export type DirectConnection = Connection & {
+  requestAction(body: string): Promise<string>;
+};
+export const directFailure = (code: string) =>
+  Object.assign(Error(code), { code, execution: "unknown" as const });
 /** Host timers/network only. Rust decides when work/retries are eligible. */
 export async function startConnection(
   control: (event: string) => Promise<any>,
   sync: (transport: Transport) => Promise<void>,
   transport: Transport,
   options: ConnectionOptions = {},
-): Promise<Connection> {
+): Promise<DirectConnection> {
+  const directTimeoutMs = options.directTimeoutMs ?? 30_000;
+  if (
+    !Number.isSafeInteger(directTimeoutMs) ||
+    directTimeoutMs <= 0 ||
+    directTimeoutMs > 2_147_483_647
+  )
+    throw Error("directTimeoutMs must be an integer from 1 to 2147483647");
   let epoch = 0;
   let stopped = false;
   let paused = false;
   let active: Promise<void> | undefined;
   let awaken: (() => void) | undefined;
   let abort = new AbortController();
+  const directAttempts = new Set<AbortController>();
+  const stopDirect = () => {
+    for (const attempt of directAttempts) attempt.abort();
+    directAttempts.clear();
+  };
   const notify = () => {
     epoch++;
     awaken?.();
@@ -100,6 +119,44 @@ export async function startConnection(
     if (!stopped) options.onError?.(error);
   });
   return {
+    async requestAction(body) {
+      if (stopped) throw directFailure("action.unavailable");
+      const attempt = new AbortController();
+      directAttempts.add(attempt);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const terminated = new Promise<never>((_, reject) => {
+          const cancel = () =>
+            reject(
+              directFailure(
+                stopped ? "action.unavailable" : "action.execution_unknown",
+              ),
+            );
+          attempt.signal.addEventListener("abort", cancel, { once: true });
+          timer = setTimeout(() => attempt.abort(), directTimeoutMs);
+        });
+        const send = async () => {
+          try {
+            return await transport("action", body, attempt.signal);
+          } catch (error) {
+            if (
+              (error as { status?: number })?.status !== 401 ||
+              !options.refreshAuth
+            )
+              throw error;
+            await options.refreshAuth();
+            if (attempt.signal.aborted)
+              throw directFailure("action.execution_unknown");
+            return transport("action", body, attempt.signal);
+          }
+        };
+        return await Promise.race([send(), terminated]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+        directAttempts.delete(attempt);
+        attempt.abort();
+      }
+    },
     async pause() {
       if (stopped) return;
       paused = true;
@@ -122,6 +179,7 @@ export async function startConnection(
     async close() {
       if (stopped) return;
       stopped = true;
+      stopDirect();
       abort.abort();
       notify();
       await control("stop");

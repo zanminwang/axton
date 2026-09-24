@@ -190,7 +190,9 @@ fn run() -> Result<(), String> {
     config["schema"]["clientPolicies"] = serde_json::json!(historical);
     if let Some(action_history) = &action_history {
         config["actions"] = serde_json::json!(retained(action_history, "actions"));
+        config["schema"]["actions"] = config["actions"].clone();
     }
+    config["schema"]["resultModels"] = config["backendModels"].clone();
     axton_compiler::check_action_names(&config)?;
     let mut backend = config.clone();
     backend["mutations"] = serde_json::json!(historical);
@@ -216,7 +218,7 @@ fn run() -> Result<(), String> {
         ),
         (
             out.join("client.ts"),
-            axton_compiler::client_typescript(&client_runtime),
+            axton_compiler::client_typescript(&config, &client_runtime),
         ),
         (out.join("generated.dart"), axton_compiler::dart(&config)),
         (

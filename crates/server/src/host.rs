@@ -51,18 +51,27 @@ fn present<'de, D: Deserializer<'de>>(
     Value::deserialize(deserializer).map(Some)
 }
 
+fn nullable_string<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(deserializer)
+}
+
 /// Every operation, in the order [`HostRequest`] declares them. The fixture
 /// and `packages/server/host-contract.mts` carry the same list; the contract
 /// test checks this one against the enum itself.
-pub const OPERATIONS: [&str; 12] = [
+pub const OPERATIONS: [&str; 15] = [
     "claim",
     "saveReceipt",
+    "claimCall",
+    "saveCall",
     "head",
     "scan",
     "savepoint",
     "rollback",
     "release",
     "handle",
+    "handleAction",
     "load",
     "advanceStamp",
     "ensureStamp",
@@ -87,6 +96,18 @@ pub enum HostRequest {
         sequence: u64,
         receipt: String,
     },
+    /// Lock an invocation's immutable request and completed response.
+    ClaimCall {
+        owner: String,
+        call_id: String,
+        request: String,
+    },
+    /// Complete a newly claimed invocation in the caller's transaction.
+    SaveCall {
+        owner: String,
+        call_id: String,
+        response: String,
+    },
     /// The channel's current head cursor.
     Head { channel: String },
     /// Invalidation rows after `after`, at most `limit` of them, in cursor order.
@@ -108,6 +129,15 @@ pub enum HostRequest {
         version: u64,
         arguments: Value,
         owner: String,
+        ordinal: u64,
+    },
+    /// Execute one generated Action handler with its normalized flat arguments.
+    HandleAction {
+        name: String,
+        version: u64,
+        arguments: Value,
+        owner: String,
+        call_id: String,
         ordinal: u64,
     },
     /// Load the current state of these identities as the records of one
@@ -141,12 +171,15 @@ impl HostRequest {
         match self {
             Self::Claim { .. } => "claim".into(),
             Self::SaveReceipt { .. } => "saveReceipt".into(),
+            Self::ClaimCall { .. } => "claimCall".into(),
+            Self::SaveCall { .. } => "saveCall".into(),
             Self::Head { .. } => "head".into(),
             Self::Scan { .. } => "scan".into(),
             Self::Savepoint { ordinal } => format!("savepoint(ordinal {ordinal})"),
             Self::Rollback { ordinal } => format!("rollback(ordinal {ordinal})"),
             Self::Release { ordinal } => format!("release(ordinal {ordinal})"),
             Self::Handle { ordinal, .. } => format!("handle(ordinal {ordinal})"),
+            Self::HandleAction { ordinal, .. } => format!("handleAction(ordinal {ordinal})"),
             Self::Load { .. } => "load".into(),
             Self::AdvanceStamp { .. } => "advanceStamp".into(),
             Self::EnsureStamp { .. } => "ensureStamp".into(),
@@ -156,10 +189,12 @@ impl HostRequest {
     /// The code an unusable response to this operation has always carried.
     fn invalid_code(&self) -> &'static str {
         match self {
-            Self::Claim { .. } | Self::SaveReceipt { .. } | Self::Scan { .. } => {
-                code::STORAGE_INVALID
-            }
-            Self::Handle { .. } => code::HANDLER_INVALID,
+            Self::Claim { .. }
+            | Self::SaveReceipt { .. }
+            | Self::ClaimCall { .. }
+            | Self::SaveCall { .. }
+            | Self::Scan { .. } => code::STORAGE_INVALID,
+            Self::Handle { .. } | Self::HandleAction { .. } => code::HANDLER_INVALID,
             Self::Load { .. } => code::LOADER_INVALID,
             Self::Head { .. }
             | Self::Savepoint { .. }
@@ -195,6 +230,16 @@ pub struct Claimed {
     /// Absent and `null` both mean "no stored receipt", as they always have.
     #[serde(default)]
     pub receipt: Option<String>,
+}
+
+/// The stored invocation; only the inserting transaction may execute a fresh body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClaimedCall {
+    pub fresh: bool,
+    pub request: String,
+    #[serde(deserialize_with = "nullable_string")]
+    pub response: Option<String>,
 }
 
 /// The answer to `head`: a bare counter.
@@ -322,6 +367,79 @@ pub enum Handled {
     Failed {
         error: String,
     },
+}
+
+/// Action handlers return explicit named fields in addition to change and publication intents.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged, try_from = "HandledActionWire")]
+pub enum HandledAction {
+    Settled {
+        outputs: Value,
+        changes: Vec<RecordRef>,
+        publications: Vec<PublicationIntent>,
+    },
+    Rejected {
+        rejection: String,
+    },
+    Failed {
+        error: String,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HandledActionWire {
+    #[serde(default, deserialize_with = "present")]
+    outputs: Option<Value>,
+    #[serde(default, deserialize_with = "present")]
+    changes: Option<Value>,
+    #[serde(default, deserialize_with = "present")]
+    publications: Option<Value>,
+    #[serde(default, deserialize_with = "present")]
+    rejection: Option<Value>,
+    #[serde(default, deserialize_with = "present")]
+    error: Option<Value>,
+}
+
+impl TryFrom<HandledActionWire> for HandledAction {
+    type Error = String;
+    fn try_from(wire: HandledActionWire) -> std::result::Result<Self, String> {
+        match (
+            wire.outputs,
+            wire.changes,
+            wire.publications,
+            wire.rejection,
+            wire.error,
+        ) {
+            (None, None, None, Some(rejection), None) => rejection
+                .as_str()
+                .filter(|code| valid_code(code))
+                .map(|code| Self::Rejected {
+                    rejection: code.into(),
+                })
+                .ok_or_else(|| "invalid rejection code".into()),
+            (None, None, None, None, Some(error)) => error
+                .as_str()
+                .map(|error| Self::Failed {
+                    error: error.into(),
+                })
+                .ok_or_else(|| "invalid handler error".into()),
+            (Some(outputs), Some(changes), Some(publications), None, None)
+                if outputs.is_object() =>
+            {
+                let changes: Vec<RecordRef> = serde_json::from_value(changes)
+                    .map_err(|error| format!("invalid handler changes: {error}"))?;
+                let publications: Vec<PublicationIntent> = serde_json::from_value(publications)
+                    .map_err(|error| format!("invalid handler publications: {error}"))?;
+                Ok(Self::Settled {
+                    outputs,
+                    changes,
+                    publications,
+                })
+            }
+            _ => Err("invalid Action handler settlement".into()),
+        }
+    }
 }
 
 #[derive(Deserialize)]

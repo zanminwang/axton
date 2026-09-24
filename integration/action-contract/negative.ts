@@ -1,12 +1,11 @@
 import * as actionBackend from "./backend.ts";
-import type { GeneratedClient } from "./client.ts";
-import type { ActionCall, ActionClientContract, AddTodoInput, AddTodoOutput, Todo, TodoIdentity, TodoUpdate, ProjectIdentity, PingOutput } from './generated.ts';
+import type { ActionCall, GeneratedClient } from "./client.ts";
+import type { AddTodoInput, AddTodoOutput, Todo, TodoIdentity, TodoUpdate, ProjectIdentity, PingOutput } from './generated.ts';
 import type { AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, LinkHandlerOutput, PingHandlerOutput, RemoveTodoHandlerOutput, Handlers, StateListHandlerOutput, StateListV1HandlerOutput } from './backend.ts';
 
-declare const client: ActionClientContract;
+declare const client: GeneratedClient;
 declare const concrete: GeneratedClient;
-// @ts-expect-error Action execution is not bound on the legacy concrete client before #142.
-concrete.actions;
+void concrete.actions;
 declare const call: ActionCall<AddTodoOutput>;
 declare const todo: Todo;
 declare const input: AddTodoInput;
@@ -60,8 +59,7 @@ const badPingHandler: PingHandlerOutput = { unexpected: true };
 const badRemoveHandler: RemoveTodoHandlerOutput = { todo: { id: 'x' } };
 // @ts-expect-error A retained v2 handler cannot be omitted.
 const missingV2: Pick<Handlers<{}>, 'addTodo'> = { addTodo: { async v1() { return { relatedTodo: null, matches: [], count: 1 }; } } };
-// @ts-expect-error The Action backend has no callable factory before #142.
-actionBackend.createBackend;
+void actionBackend.createBackend;
 // @ts-expect-error All versioned Action handlers are required.
 const missingHandler: Handlers<{}> = { link: { async v1() { return { relatedProject: null }; } }, ping: { async v1() {} } };
 void [missingNullable, badPatch, badProject, bare, full, wrongModel, missingCount, badList, badComposite, fullComposite, wrongScalar, oldEnum, oldModel, oldOutput, badPing, badPingHandler, badRemoveHandler, missingV2, missingHandler];

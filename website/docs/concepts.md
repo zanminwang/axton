@@ -1,6 +1,6 @@
 # How state moves
 
-A local-first client reads its local database. A user edit can become visible immediately, while a durable Mutation records the intent that still needs backend processing. The authoritative result arrives in the mutation's receipt, and through Pull for changes other clients made, and is reconciled with remaining local work.
+A local-first client reads its local database. A durable Action can make an inferred Model change visible immediately while its backend intent waits for delivery. Its typed result arrives with the Action outcome. Batch-final record authority arrives in the receipt, and Pull delivers changes made elsewhere; the client reconciles both with remaining local work.
 
 ## Model, Record and Identity
 
@@ -10,13 +10,13 @@ These are client-facing shapes. A Loader may assemble one Record from several ba
 
 See the [compiler guide](schema/reference.md) for supported declarations and generated types.
 
-## Mutation and local state
+## Actions and local state
 
-A **Mutation** describes a named business operation. Its optimistic operations update the locally visible result, while the queue retains the work needed for backend processing. A dirty record's sparse before image holds the authoritative base used when replaying pending changes.
+An **Action** describes a named backend operation with typed inputs and outputs. The durable route, `client.actions.name`, commits its intent and inferred Model optimism locally, then returns an `ActionCall` whose `wait()` observes the final outcome. The direct route, `client.actions.call.name`, returns the final result without queueing or automatic optimism. A dirty record's sparse before image holds the authoritative base used when replaying pending changes.
 
-For example, editing a title while offline makes that title visible locally. If a remote update then arrives, the client updates the authoritative base and replays pending local operations. Pending local fields may therefore continue to be visible until their mutations complete or are rejected.
+For example, a durable `SetTodoDone` call can change `done` locally while offline. If a remote update arrives, the client updates the authoritative base and replays pending local operations. Pending local fields may remain visible until their Actions complete or are rejected.
 
-Direct local writes and local companions have their own roles. A direct write is separate from a server mutation's fate; a companion participates in a mutation's fate without being uploaded. The framework does not rerun arbitrary application callbacks to reconstruct optimistic state.
+Standalone `client.models` and transactional `tx.models` writes change only local storage; they do not upload. Later backend authority for the same identity can replace a cached local record. The application owns any conflict policy. The framework does not rerun arbitrary application callbacks to reconstruct optimistic state.
 
 ## Handler, Loader and Publish
 
@@ -24,11 +24,11 @@ The TypeScript backend SDK connects three operations to your application:
 
 | Primitive | Application responsibility |
 | --- | --- |
-| **Handler** | Execute a named Mutation against your business data, including business authorization. |
+| **Handler** | Execute a named Action against your business data, including business authorization, and return explicit outputs. |
 | **Loader** | Return current, complete, visible state for the requested identities, in their supplied order. Return null for missing or unauthorized rows. |
-| **Publish** | Explicitly name the Channels that should receive a mutation's changed Records; `changes.add` reports a changed Record the uploaded operations did not name. |
+| **Publish** | Explicitly name the Channels that should receive an Action's changed Records; `changes.add` reports additional changed Records. |
 
-After a Handler returns, the framework allocates a stamp for every changed Record, reads those Records back through the Loaders in the same transaction, and returns their content in the receipt. The application provides the transaction runner. Batch processing uses one outer transaction with per-mutation savepoints; business writes, stamps, publications and receipts participate in that transaction. A business rejection, an unsupported mutation version, a handler failure or a loader failure each roll back just that mutation's savepoint; the rest of the batch commits. Only identity/order refusals and infrastructure failures (a broken transaction, a failed rollback) abort the whole batch.
+The framework resolves Model outputs through retained Loaders during each Action invocation. The result is that invocation's snapshot. For durable batches it also stamps and reads changed Records for batch-final authority in the receipt. The application provides the transaction runner; business writes, outcomes, stamps, publications and receipts commit together. A business rejection or attributable Handler/Loader failure rolls back that Action's savepoint, while independent calls can commit. An infrastructure fault aborts the delivery transaction for retry. Backend outcomes remain stored without TTL or automatic pruning; client business results live only in memory.
 
 Background jobs publish through `backend.transaction`, which runs the job's writes and its publication in one application transaction, advances the stamps of the records it names, and wakes live subscribers once the transaction commits.
 
@@ -46,14 +46,14 @@ Channels distribute access to current state. They are not event logs that promis
 
 Consider one pending title edit:
 
-1. The client writes the optimistic title and persists the Mutation.
+1. The client writes inferred optimistic Model state and persists the Action intent.
 2. Push sends a frozen request. If the result is unknown, a retry uses the same persisted request bytes and batch sequence.
-3. The server commits the business change, reads the changed Records back through the Loaders and stores the receipt. The receipt reports acceptance or rejection per Mutation, and the authoritative content and Stamp of every Record the accepted Mutations changed.
-4. The client applies that authority beneath its pending work, removes the completed Mutation and replays the remaining pending work, all in one local transaction. No Channel is awaited, and no subscription is needed to complete a Mutation.
+3. The server commits business changes, each call's result snapshot, batch-final record authority and the receipt. The receipt reports the outcome per Action and the authoritative content and Stamp of changed Records.
+4. The client applies that authority beneath its pending work, removes completed queue entries and replays remaining pending work, all in one local transaction. No Channel is awaited to complete an Action.
 
 If the Handler also published the Record, a Pull page carries the same content at the same Stamp, before or after the receipt. Whichever arrives second rewrites nothing: an equal Stamp with equal content is a no-op, a newer Stamp wins, an older one is ignored. Both orders leave the same local state.
 
-A server may normalize the title or reject the edit. Rejections are retained in the local inbox so the application can explain the result to the user. See [recovery](frontend/storage.md) for retry and rejection handling.
+A server may normalize the title or reject the edit. `wait()` reports the Action outcome; rejections are also retained in the local inbox. See [recovery](frontend/storage.md) for retry and rejection handling.
 
 ## Stamps across channels
 
@@ -65,9 +65,9 @@ A newer deletion withdraws the record across channels, and the client keeps the 
 
 `get`, `query`, relation accessors, raw SQL and `watch` read local SQLite through the Rust engine. They do not call a loader. Read-only SQL uses the on-disk tables rather than copying the full record set into a separate projection.
 
-The backend's loader is the sync read path: it supplies the current authorized content of the records a mutation changed, for the receipt, and of the records a publication identified, for a page. It never sees which path is asking. A record the loader cannot read fails alone: the rest of the page is delivered, and the client keeps its copy and reports the failure. This separation lets your local record schema differ from your backend database layout.
+The backend Loader supplies Action Model result snapshots, changed-record authority, and the current authorized content of records a publication identified for a page. It never sees which channel is asking. A record the Loader cannot read in a page fails alone: the rest of the page is delivered, and the client keeps its copy and reports the failure.
 
-AXTON uses one connection: HTTP submits mutations and catches up missing records in one pull for all channels; WebSocket delivers ongoing changes. Initial connection, reconnection and gap recovery use saved channel cursors. Received records pass through the Rust engine into SQLite.
+AXTON uses one connection: HTTP submits durable Actions and direct requests, and catches up missing records in one pull for all channels; WebSocket delivers ongoing changes. Initial connection, reconnection and gap recovery use saved channel cursors. Received records pass through the Rust engine into SQLite.
 
 ## Current limits
 

@@ -17,6 +17,412 @@ fn schema() -> Schema {
 const ID: &str = "01890F47-1234-7123-8123-123456789ABC";
 
 #[test]
+fn fresh_model_result_cannot_omit_declared_nullable_field() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/action-results.json"
+    ))
+    .unwrap();
+    let mut raw = fixture["schema"].clone();
+    raw["resultModels"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"note","type":{"kind":"scalar","name":"string"},"nullable":true}));
+    let schema = Schema::from_value(raw).unwrap();
+    let action = schema.action("Find", 1).unwrap();
+    let incomplete = json!({"todo":{"id":ID.to_lowercase(),"title":"A"}});
+    assert!(validate_action_result(&schema, action, &incomplete).is_err());
+}
+
+fn action_schema() -> Schema {
+    Schema::from_value(json!({
+        "enums":[], "models":[],
+        "actions":[{"name":"Send","version":1,"inputs":[
+            {"kind":"value","name":"to","type":{"kind":"scalar","name":"string"},"nullable":false,"list":false,"required":true,"cardinality":"single"}
+        ],"outputs":[
+            {"name":"messageId","kind":"value","type":{"kind":"scalar","name":"string"},"cardinality":"single","source":"handlerValue"},
+            {"name":"note","kind":"value","type":{"kind":"scalar","name":"string"},"cardinality":"optional","source":"handlerValue"}
+        ]},{"name":"Void","version":1,"inputs":[],"outputs":[]}]
+    })).unwrap()
+}
+
+#[test]
+fn ordinary_only_actions_normalize_args_and_distinguish_named_null_from_void() {
+    let schema = action_schema();
+    let action = schema.action("Send", 1).unwrap();
+    assert_eq!(
+        normalize_action_args(&schema, action, &json!({"to":"a"})).unwrap(),
+        json!({"to":"a"})
+    );
+    assert!(normalize_action_args(&schema, action, &json!({"to":7})).is_err());
+    assert!(normalize_action_args(&schema, action, &json!({"to":"a","extra":true})).is_err());
+    assert_eq!(
+        validate_action_result(&schema, action, &json!({"messageId":"m","note":null})).unwrap(),
+        json!({"messageId":"m","note":null})
+    );
+    assert!(validate_action_result(&schema, action, &Value::Null).is_err());
+    assert!(validate_action_result(&schema, action, &json!({"messageId":"m"})).is_err());
+    let void = schema.action("Void", 1).unwrap();
+    assert_eq!(
+        validate_action_result(&schema, void, &Value::Null).unwrap(),
+        Value::Null
+    );
+    assert!(validate_action_result(&schema, void, &json!({})).is_err());
+}
+
+#[test]
+fn action_receipt_keeps_each_result_when_authority_collapses() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/action-results.json"
+    ))
+    .unwrap();
+    let schema = Schema::from_value(fixture["schema"].clone()).unwrap();
+    let calls: Vec<ActionIntent> = serde_json::from_value(fixture["calls"].clone()).unwrap();
+    let request =
+        PushRequest::decode_actions(fixture["request"].to_string().as_bytes(), &schema).unwrap();
+    let receipt =
+        PushReceipt::decode_actions(fixture["receipt"].to_string().as_bytes(), &request, &schema)
+            .unwrap();
+    assert!(
+        PushReceipt::decode(fixture["receipt"].to_string().as_bytes()).is_err(),
+        "Action results require request-aware correlation"
+    );
+    assert_eq!(receipt.completions.len(), 2);
+    assert_eq!(receipt.completions[0].call_id, calls[0].call_id);
+    assert_eq!(
+        success_result(&receipt.completions[0])["todo"]["title"],
+        "A"
+    );
+    assert_eq!(
+        success_result(&receipt.completions[1])["todo"]["title"],
+        "B"
+    );
+    assert_eq!(receipt.records.len(), 1);
+    assert_eq!(receipt.records[0].state["title"], "B");
+    for bad in fixture["invalidReceipts"].as_array().unwrap() {
+        assert!(
+            PushReceipt::decode_actions(bad.to_string().as_bytes(), &request, &schema).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn action_receipt_rejection_matches_the_frozen_ordinal_and_failure_code() {
+    let schema = action_schema();
+    let request = PushRequest::decode_actions(json!({"clientId":"device","batchSequence":3,"models":{},"mutations":[{"ordinal":7,"callId":ID,"name":"Send","version":1,"args":{"to":"a"}}]}).to_string().as_bytes(), &schema).unwrap();
+    let failure = json!({"callId":ID.to_lowercase(),"outcome":{"status":"failed","code":"handler.failed","execution":"rejected"}});
+    let base = json!({"clientId":"device","batchSequence":3,"rejections":[{"ordinal":7,"code":"handler.failed"}],"completions":[failure],"records":[]});
+    assert!(PushReceipt::decode_actions(base.to_string().as_bytes(), &request, &schema).is_ok());
+    for bad in [
+        json!({"clientId":"device","batchSequence":3,"rejections":[],"completions":[failure],"records":[]}),
+        json!({"clientId":"device","batchSequence":3,"rejections":[{"ordinal":1,"code":"handler.failed"}],"completions":[failure],"records":[]}),
+        json!({"clientId":"device","batchSequence":3,"rejections":[{"ordinal":7,"code":"other.failed"}],"completions":[failure],"records":[]}),
+    ] {
+        assert!(
+            PushReceipt::decode_actions(bad.to_string().as_bytes(), &request, &schema).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn action_receipt_returns_normalized_model_identity_in_completion() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/action-results.json"
+    ))
+    .unwrap();
+    let schema = Schema::from_value(fixture["schema"].clone()).unwrap();
+    let request =
+        PushRequest::decode_actions(fixture["request"].to_string().as_bytes(), &schema).unwrap();
+    let mut response = fixture["receipt"].clone();
+    response["completions"][0]["outcome"]["result"]["todo"]["id"] = json!(ID);
+    let decoded =
+        PushReceipt::decode_actions(response.to_string().as_bytes(), &request, &schema).unwrap();
+    assert_eq!(
+        success_result(&decoded.completions[0])["todo"]["id"],
+        ID.to_lowercase()
+    );
+}
+
+fn success_result(completion: &CallCompletion) -> &Value {
+    match &completion.outcome {
+        ActionOutcome::Succeeded { result } => result,
+        ActionOutcome::Failed { .. } => panic!("expected success"),
+    }
+}
+
+#[test]
+fn direct_action_request_accepts_empty_models_only_for_scalar_contracts() {
+    let schema = action_schema();
+    let wire = br#"{"call":{"callId":"01890F47-1234-7123-8123-123456789ABC","name":"Send","version":1,"args":{"to":"a"}},"models":{}}"#;
+    let request = DirectActionRequest::decode(wire, &schema).unwrap();
+    assert_eq!(request.call.call_id, ID.to_lowercase());
+    assert_eq!(
+        DirectActionRequest::decode(&request.encode().unwrap(), &schema)
+            .unwrap()
+            .call
+            .call_id,
+        ID.to_lowercase()
+    );
+    for bad in [
+        json!({"call":{"callId":ID,"name":"Unknown","version":1,"args":{"to":"a"}},"models":{}}),
+        json!({"call":{"callId":ID,"name":"Send","version":2,"args":{"to":"a"}},"models":{}}),
+        json!({"call":{"callId":ID,"name":"Send","version":1,"args":{"to":3}},"models":{}}),
+        json!({"call":{"callId":"bad","name":"Send","version":1,"args":{"to":"a"}},"models":{}}),
+    ] {
+        assert!(
+            DirectActionRequest::decode(bad.to_string().as_bytes(), &schema).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn action_push_envelope_rejects_duplicate_call_ids_and_oversize_bytes() {
+    let schema = action_schema();
+    let call = json!({"callId":ID,"name":"Send","version":1,"args":{"to":"a"},"ordinal":1});
+    let duplicate = json!({"clientId":"device","batchSequence":1,"models":{},"mutations":[call,{"callId":ID,"name":"Send","version":1,"args":{"to":"b"},"ordinal":2}]});
+    assert!(PushRequest::decode_actions(duplicate.to_string().as_bytes(), &schema).is_err());
+    let good = json!({"clientId":"device","batchSequence":1,"models":{},"mutations":[{"callId":ID,"name":"Send","version":1,"args":{"to":"a"},"ordinal":1}]});
+    assert_eq!(
+        PushRequest::decode_actions(good.to_string().as_bytes(), &schema)
+            .unwrap()
+            .mutations
+            .len(),
+        1
+    );
+    let too_large = json!({"clientId":"device","batchSequence":1,"models":{},"mutations":[{"callId":ID,"name":"Send","version":1,"args":{"to":"x".repeat(limits::PUSH_BYTES)},"ordinal":1}]});
+    assert!(PushRequest::decode_actions(too_large.to_string().as_bytes(), &schema).is_err());
+}
+
+#[test]
+fn structural_action_envelope_keeps_unsupported_version_for_per_call_rejection() {
+    let schema = action_schema();
+    let request = json!({"clientId":"device","batchSequence":1,"models":{},"mutations":[{"callId":ID,"name":"Send","version":2,"args":{"to":"a"},"ordinal":7}]});
+    assert!(PushRequest::decode_action_envelope(request.to_string().as_bytes()).is_ok());
+    assert!(PushRequest::decode_actions(request.to_string().as_bytes(), &schema).is_err());
+}
+
+#[test]
+fn action_schema_rejects_model_reads_without_local_model_and_bad_output_source() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/action-results.json"
+    ))
+    .unwrap();
+    let mut no_local = fixture["schema"].clone();
+    no_local["models"] = json!([]);
+    assert!(Schema::from_value(no_local).is_err());
+    let mut wrong_source = fixture["schema"].clone();
+    wrong_source["actions"][0]["outputs"][0]["source"] = json!({"inputIdentity":"missing"});
+    assert!(Schema::from_value(wrong_source).is_err());
+    let mut missing_history = fixture["schema"].clone();
+    missing_history["resultModels"] = json!([]);
+    assert!(Schema::from_value(missing_history).is_err());
+}
+
+#[test]
+fn retained_action_metadata_survives_schema_round_trip_and_optional_model_defaults_null() {
+    let mut raw: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/action-results.json"
+    ))
+    .unwrap();
+    let schema = &mut raw["schema"];
+    schema["actions"][0]["inputs"].as_array_mut().unwrap().push(json!({"kind":"model","name":"maybe","model":"Todo","operation":"update","cardinality":"optional","bindings":[{"slot":"prior","fields":["id"]}]}));
+    schema["actions"][0]["requirements"] =
+        json!([{"model":"Todo","field":"title","name":"Ready","arguments":{}}]);
+    schema["actions"][0]["prerequisites"] = json!([{"name":"Ready","fields":[]}]);
+    schema["actions"][0]["sequence"] = json!({"after":[{"name":"Earlier","arguments":{}}]});
+    let parsed = Schema::from_value(schema.clone()).unwrap();
+    let serialized = serde_json::to_value(&parsed).unwrap();
+    assert_eq!(
+        serialized["actions"][0]["inputs"][1]["bindings"],
+        schema["actions"][0]["inputs"][1]["bindings"]
+    );
+    assert_eq!(
+        serialized["actions"][0]["requirements"],
+        schema["actions"][0]["requirements"]
+    );
+    assert_eq!(
+        serialized["actions"][0]["prerequisites"],
+        schema["actions"][0]["prerequisites"]
+    );
+    assert_eq!(
+        serialized["actions"][0]["sequence"],
+        schema["actions"][0]["sequence"]
+    );
+    assert_eq!(
+        normalize_action_args(
+            &parsed,
+            parsed.action("Find", 1).unwrap(),
+            &json!({"query":"a"})
+        )
+        .unwrap(),
+        json!({"query":"a","maybe":null})
+    );
+    assert!(
+        normalize_action_args(
+            &parsed,
+            parsed.action("Find", 1).unwrap(),
+            &json!({"maybe":null})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn action_model_operands_and_delete_results_use_exact_identity_objects() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/action-results.json"
+    ))
+    .unwrap();
+    let mut raw = fixture["schema"].clone();
+    raw["actions"][0]["inputs"] = json!([{"kind":"model","name":"todo","model":"Todo","operation":"update","cardinality":"single","allowedPatchFields":["title"]}]);
+    raw["actions"][0]["outputs"] = json!([{"name":"todo","kind":"deleteIdentity","model":"Todo","cardinality":"single","source":{"inputIdentity":"todo"}}]);
+    let schema = Schema::from_value(raw).unwrap();
+    let action = schema.action("Find", 1).unwrap();
+    let normalized =
+        normalize_action_args(&schema, action, &json!({"todo":{"id":ID,"title":"B"}})).unwrap();
+    assert_eq!(normalized["todo"]["id"], ID.to_lowercase());
+    assert!(normalize_action_args(&schema, action, &json!({"todo":{"id":7,"title":"B"}})).is_err());
+    assert!(
+        normalize_action_args(&schema, action, &json!({"todo":{"id":ID,"done":true}})).is_err()
+    );
+    assert_eq!(
+        validate_action_result(&schema, action, &json!({"todo":{"id":ID}})).unwrap()["todo"]["id"],
+        ID.to_lowercase()
+    );
+    assert!(validate_action_result(&schema, action, &json!({"todo":ID})).is_err());
+}
+
+#[test]
+fn flat_update_and_delete_keep_model_fields_named_identity_or_patch() {
+    let mut raw: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/action-results.json"
+    ))
+    .unwrap();
+    let schema = &mut raw["schema"];
+    schema["models"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"identity","type":{"kind":"scalar","name":"string"},"nullable":true}));
+    schema["models"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"patch","type":{"kind":"scalar","name":"string"},"nullable":true}));
+    schema["actions"][0]["inputs"] = json!([{"kind":"model","name":"todo","model":"Todo","operation":"update","cardinality":"single","allowedPatchFields":["identity","patch"]}]);
+    schema["actions"][0]["outputs"] = json!([]);
+    let schema: Schema = serde_json::from_value(schema.clone()).unwrap();
+    schema.validate().unwrap();
+    let action = schema.action("Find", 1).unwrap();
+    assert_eq!(
+        normalize_action_args(&schema, action, &json!({"todo":{"id":ID,"identity":"x"}})).unwrap(),
+        json!({"todo":{"id":ID.to_lowercase(),"identity":"x"}})
+    );
+    assert!(
+        normalize_action_args(&schema, action, &json!({"todo":{"id":ID,"done":true}})).is_err()
+    );
+}
+
+#[test]
+fn flat_composite_delete_accepts_only_the_identity_fields() {
+    let schema = Schema::from_value(json!({"enums":[],"models":[{"name":"Book","identity":["slug","edition"],"fields":[{"name":"slug","type":{"kind":"scalar","name":"string"},"nullable":false},{"name":"edition","type":{"kind":"scalar","name":"int"},"nullable":false},{"name":"title","type":{"kind":"scalar","name":"string"},"nullable":false}]}],"actions":[{"name":"Delete","version":1,"inputs":[{"kind":"model","name":"book","model":"Book","operation":"delete","cardinality":"single"}],"outputs":[]}]})).unwrap();
+    let action = schema.action("Delete", 1).unwrap();
+    assert_eq!(
+        normalize_action_args(
+            &schema,
+            action,
+            &json!({"book":{"edition":2,"slug":"edition-2"}})
+        )
+        .unwrap(),
+        json!({"book":{"slug":"edition-2","edition":2}})
+    );
+    assert!(
+        normalize_action_args(
+            &schema,
+            action,
+            &json!({"book":{"slug":"edition-2","edition":2,"title":"extra"}})
+        )
+        .is_err()
+    );
+    assert!(normalize_action_args(&schema, action, &json!({"book":{"slug":"edition-2"}})).is_err());
+}
+
+#[test]
+fn model_action_requires_local_read_version_independent_of_result_snapshot() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/action-results.json"
+    ))
+    .unwrap();
+    let schema = Schema::from_value(fixture["schema"].clone()).unwrap();
+    let request = &fixture["request"];
+    assert!(PushRequest::decode_actions(request.to_string().as_bytes(), &schema).is_ok());
+    for models in [json!({}), json!({"Todo":1}), json!({"Todo":3})] {
+        let mut invalid = request.clone();
+        invalid["models"] = models;
+        assert!(PushRequest::decode_actions(invalid.to_string().as_bytes(), &schema).is_err());
+    }
+}
+
+#[test]
+fn direct_action_response_correlates_and_validates_before_application() {
+    let schema = action_schema();
+    let request = DirectActionRequest::decode(
+        json!({"call":{"callId":ID,"name":"Send","version":1,"args":{"to":"a"}},"models":{}})
+            .to_string()
+            .as_bytes(),
+        &schema,
+    )
+    .unwrap();
+    let success = json!({"completion":{"callId":ID.to_lowercase(),"outcome":{"status":"succeeded","result":{"messageId":"m","note":null}}},"records":[]});
+    let response =
+        DirectActionResponse::decode(success.to_string().as_bytes(), &request, &schema).unwrap();
+    assert_eq!(success_result(&response.completion)["messageId"], "m");
+    assert!(DirectActionResponse::decode(&response.encode().unwrap(), &request, &schema).is_ok());
+    for bad in [
+        json!({"completion":{"callId":"01890f47-1234-7123-8123-123456789abd","outcome":{"status":"succeeded","result":{"messageId":"m","note":null}}},"records":[]}),
+        json!({"completion":{"callId":ID.to_lowercase(),"outcome":{"status":"succeeded","result":{"messageId":"m"}}},"records":[]}),
+        json!({"completion":{"callId":ID.to_lowercase(),"outcome":{"status":"failed","code":"handler.failed","execution":"unknown"}},"records":[]}),
+    ] {
+        assert!(
+            DirectActionResponse::decode(bad.to_string().as_bytes(), &request, &schema).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn retained_result_materialization_joins_identity_to_v1_state() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/action-results.json"
+    ))
+    .unwrap();
+    let schema = Schema::from_value(fixture["schema"].clone()).unwrap();
+    let identity = &fixture["receipt"]["records"][0]["identity"];
+    assert_eq!(
+        materialize_action_model(&schema, "Todo", 1, identity, &json!({"title":"A"})).unwrap(),
+        json!({"id":identity["id"],"title":"A"})
+    );
+    assert!(
+        materialize_action_model(
+            &schema,
+            "Todo",
+            1,
+            identity,
+            &json!({"title":"A","done":false})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn action_only_schema_still_checks_value_type_rules() {
+    let mut raw = serde_json::to_value(action_schema()).unwrap();
+    raw["actions"][0]["inputs"][0]["list"] = json!(true);
+    raw["actions"][0]["inputs"][0]["nullable"] = json!(true);
+    assert!(Schema::from_value(raw).is_err());
+}
+
+#[test]
 fn identities_are_exact_normalized_and_independent_of_channels() {
     let schema = schema();
     let key = schema.record_key("Entry", &json!({"id":ID})).unwrap();

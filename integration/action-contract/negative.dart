@@ -4,7 +4,7 @@ const todo = Todo(id: 't', title: 'Task', state: Status.open, note: null);
 const identity = TodoIdentity(id: 't');
 const created = TodoCreate(id: 't', title: 'Task', state: Status.open, note: null);
 
-Future<void> misuse(ActionClientContract client, ActionCall<AddTodoOutput> call) async {
+Future<void> misuse(GeneratedClient client, ActionCall<AddTodoOutput> call) async {
   await client.actions.addTodo(todo: created, gone: [], tags: []); // required nullable status
   await client.actions.addTodo(todo: created, gone: [], status: null, tags: [], status: Status.open); // duplicate shape
   await client.actions.addTodo(todo: created, gone: [], status: null, tags: [], patch: TodoUpdate(id: 't')); // restricted shape
@@ -36,7 +36,7 @@ final oldArchived = AddTodoV1Input(
   gone: [], status: AddTodoV1Status.open, tags: [],
 );
 
-Future<void> missingSearchQuery(ActionClientContract client) async {
+Future<void> missingSearchQuery(GeneratedClient client) async {
   await client.actions.search();
 }
 

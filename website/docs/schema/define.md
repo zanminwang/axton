@@ -1,8 +1,8 @@
 # Define a schema and generate interfaces
 
-The schema connects local operations to typed backend inputs. It describes the records your app keeps locally; your backend's tables and business logic can have a different shape.
+The schema connects local Models and backend Actions to typed client and handler interfaces. Your backend's tables and business logic can have a different shape.
 
-## Define records and an operation
+## Define records and an Action
 
 Create `models/entry.model`:
 
@@ -14,12 +14,10 @@ model Entry {
   @@id(id)
 }
 
-mutation Edit {
-  entry Entry.update<text,note>
-}
+action EditEntry(entry Entry.update<text,note>) { updated Entry? }
 ```
 
-`@@id(id)` defines identity. `String?` is nullable. `Edit` declares one update slot named `entry`; clients can change `text` and `note` but cannot change identity through that patch. It generates both the local operation and the backend's `EditInput` type.
+`@@id(id)` defines identity. `String?` is nullable. `EditEntry` declares an update operand named `entry`; callers can change `text` and `note` but not identity through that patch. Its implicit `entry` result resolves the input identity through the Loader. The handler selects the explicit nullable `updated` result by identity.
 
 ## Generate from a source checkout
 
@@ -38,7 +36,7 @@ The compiler writes TypeScript and Dart clients, typed backend interfaces, descr
 
 ## Declare an Action contract
 
-The compiler accepts Action declarations with ordinary values, Model operands and named outputs. This standalone schema is a small declaration example, separate from the [integration Action schema](https://github.com/zanminwang/axton/blob/main/integration/action-contract/schema.model) used in the [frontend Action example](../frontend/client-api.md#action-contract-execution-pending-142). Action invocation and backend registration become executable with #142.
+The compiler accepts Action declarations with ordinary values, Model operands and named outputs. This standalone schema is a small declaration example, separate from the [integration Action schema](https://github.com/zanminwang/axton/blob/main/integration/action-contract/schema.model) used in the [frontend Action example](../frontend/client-api.md#actions).
 
 ```text
 model Todo {
@@ -57,25 +55,26 @@ action GetTodos() { todos Todo[] }
 action FindTodo(id String) { found Todo? }
 ```
 
-`AddTodo` implicitly returns the created `todo` as a full `Todo` and confirms each deleted identity in `removed`. Its handler supplies `relatedTodo` as a `TodoIdentity` object or `null`, plus `labels`; `FindTodo` likewise selects `found` by identity. `GetTodos` selects a list of identities, which #142 will resolve through the same Loader as the implicit result. `DeleteTodo` returns a delete identity confirmation. `SendEmail` has no output and therefore returns void. The required `note` argument accepts a string or `null`; omitting it is invalid. The Action contracts appear in generated TypeScript and Dart, while the runnable `mutation Edit` example above remains the current runtime path.
+`AddTodo` implicitly returns the created `todo` as a full `Todo` and confirms each deleted identity in `removed`. Its handler supplies `relatedTodo` as a `TodoIdentity` object or `null`, plus `labels`; `FindTodo` likewise selects `found` by identity. `GetTodos` selects a list of identities resolved through the same Loader as the implicit result. `DeleteTodo` returns a delete identity confirmation. `SendEmail` has no output and therefore returns void. The required `note` argument accepts a string or `null`; omitting it is invalid.
 
 ## Connect the generated layers
 
 | Generated interface | Your use |
 | --- | --- |
 | `client.models.entry` | Local get, query and watch |
-| `client.mutate.edit` | Apply the local update and queue `Edit` |
-| `Handlers<Tx>.edit` | Implement authoritative business logic for `Edit` |
+| `client.actions.editEntry` | Apply inferred local optimism and queue `EditEntry` |
+| `client.actions.call.editEntry` | Execute `EditEntry` directly and return its final output |
+| `Handlers<Tx>.editEntry` | Implement authoritative business logic for `EditEntry` |
 | `Loaders<Tx>.entry` | Return current records from your backend |
 | Backend `Entry(identity)` | Identify a changed record in `publish` or `changes.add` |
 
-On the client, an update slot takes `{ identity, values }` in TypeScript. In the handler, its decoded input is `{ identity, patch }`. Dart exposes a typed `EditEntryUpdate` whose fields use `Present`. These are generated views of the same mutation contract, not independently matched API names.
+On the client, an update operand takes `{ identity, values }` in TypeScript. In the handler's `args`, it is `{ identity, patch }`. Dart exposes a typed update operand whose changed fields use `Present`.
 
 See [generated client usage](../frontend/client-api.md) and [backend usage](../backend/api.md) for complete examples.
 
-## Group several changes into one mutation
+## Group several changes into one Action
 
-Declare several named slots in the same `mutation`. For example:
+Declare several named operands in the same `action`. For example:
 
 ```text
 model Project {
@@ -89,28 +88,25 @@ model Task {
   title String
   @@id(id)
 }
-mutation CreateProject {
-  project Project.create
-  tasks Task.create[]
-}
+action CreateProject(project Project.create, tasks Task.create[])
 ```
 
-`CreateProject` becomes one typed client call and one backend handler. Its declared operations apply together locally, and its backend business writes share one mutation savepoint. The list slot supplies zero or more complete task records. If you need a declared relationship as well, add a reference; a field named `projectId` alone does not create one automatically.
+`CreateProject` becomes one typed client call and one backend handler. Its inferred Model operations apply together locally on the durable route, and its backend business writes share one savepoint. The list operand supplies zero or more complete task records. If you need a declared relationship as well, add a reference; a field named `projectId` alone does not create one automatically.
 
-Several `client.mutate` calls commit locally one at a time and have separate backend rejection outcomes. Choose one multi-slot mutation when the business operation must be accepted or rejected as one unit.
+Several `client.actions` calls commit locally one at a time and have separate backend outcomes. Choose one Action with several operands when the business operation must be accepted or rejected as one unit.
 
 ## Relations, prerequisites and ordering
 
 Declare a forward reference with `@reference(via: [field])` and an inverse with the related model type. Relations generate local navigation methods and let the runtime enforce the declared contract. The [relations fixture](https://github.com/zanminwang/axton/blob/main/fixtures/compiler/relations.model) shows `Book.comments` and `Comment.book`.
 
-Prerequisites declare host work that must finish before sending a mutation. For example, a schema can declare `prerequisite Uploaded(key String)` and use `@requires(Uploaded(key: self))` on a field. Your application provides the async callback through [runPrerequisites](../frontend/runtime.md#prerequisites). Prerequisites are not automatically implemented uploads.
+Prerequisites declare host work that must finish before sending a durable Action. For example, a schema can declare `prerequisite Uploaded(key String)` and use `@requires(Uploaded(key: self))` on a field. Your application provides the async callback through [runPrerequisites](../frontend/runtime.md#prerequisites). Prerequisites are not automatically implemented uploads.
 
 Slot bindings and `@@sequence` express operation dependencies. Use the [compiler's tested declarations](https://github.com/zanminwang/axton/blob/main/crates/compiler/tests/compiler.rs) as syntax examples for these advanced features; they affect scheduling, not just generated types.
 
 ## Evolve the contract
 
-Keep `history/mutations.json` and `history/models.json` beside your `.model` files and commit them. Regenerating retains prior contracts: each queued mutation keeps a defined input contract, and each published model version keeps the record shape its readers expect.
+Keep `history/actions.json` and `history/models.json` beside your `.model` files and commit them. Regenerating retains prior contracts: each queued Action keeps its input and output contract, and each published Model version keeps the record shape its readers expect.
 
-A compatible change can keep the same version; breaking slot/input/policy changes require `@@version(n)` with a newer version on the mutation, and a breaking change to the records a model returns (a required field, a rename, a removal, a type change, a new enum value) requires a newer `@@version(n)` on the model. Implement every supported handler version exposed by the generated backend interface. Do not delete history to silence a compatibility error. To steer clients away from a field, enum value or slot before removing it, mark it `@deprecated(reason: "…")`; the generated code carries the notice and everything keeps working.
+A compatible change can keep the same version; incompatible Action input or output changes require `@version(n)` with a newer version. A breaking change to the records a Model returns (a required field, a rename, a removal, a type change, a new enum value) requires a newer `@@version(n)` on the Model. Implement every retained handler version exposed by the generated backend interface. Do not delete history to silence a compatibility error.
 
 There are three separate responsibilities: compiler compatibility checks, the client's local database, and migration of your backend database. The client handles its database on its own at open, applying a compatible change in place and rebuilding an incompatible one beside the old file; the compile and your backend migration are yours. Read [compiler compatibility](reference.md#history-and-compatibility) and [opening and schema changes](../frontend/runtime.md#opening-and-schema-changes) before shipping a schema change.

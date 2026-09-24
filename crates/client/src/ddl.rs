@@ -31,8 +31,12 @@ const CLIENT_COLUMNS: &[&str] = &["last_completed_push", "push_models"];
 /// A database without one gets it in place: its queue stays sendable.
 /// `diverged` marks a queued mutation whose replay failed over new authority
 /// ([#122](https://github.com/zanminwang/axton/issues/122)).
-const ADDED_COLUMNS: &[(&str, &str, &str)] =
-    &[("axton_mutation", "diverged", "INTEGER NOT NULL DEFAULT 0")];
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("axton_mutation", "diverged", "INTEGER NOT NULL DEFAULT 0"),
+    ("axton_mutation", "call_id", "TEXT"),
+    ("axton_mutation", "args", "TEXT"),
+    ("axton_client", "push_results", "TEXT"),
+];
 
 /// Add every framework column in [`ADDED_COLUMNS`] a table still lacks.
 pub fn add_framework_columns<S: ClientStore>(store: &mut S) -> Result<()> {
@@ -44,6 +48,9 @@ pub fn add_framework_columns<S: ClientStore>(store: &mut S) -> Result<()> {
             ))?;
         }
     }
+    store.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS axton_mutation_call_id ON axton_mutation(call_id)",
+    )?;
     Ok(())
 }
 
@@ -57,7 +64,8 @@ CREATE TABLE IF NOT EXISTS axton_client (
   next_push    INTEGER NOT NULL,
   generation   INTEGER NOT NULL,
   last_completed_push INTEGER NOT NULL DEFAULT 0,
-  push_models  TEXT
+  push_models  TEXT,
+  push_results TEXT
 );
 CREATE TABLE IF NOT EXISTS axton_record (
   model TEXT NOT NULL, identity TEXT NOT NULL, stamp INTEGER NOT NULL,
@@ -68,7 +76,8 @@ CREATE TABLE IF NOT EXISTS axton_subscription (
 );
 CREATE TABLE IF NOT EXISTS axton_mutation (
   ordinal INTEGER PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL, push INTEGER,
-  diverged INTEGER NOT NULL DEFAULT 0
+  diverged INTEGER NOT NULL DEFAULT 0, call_id TEXT UNIQUE, args TEXT,
+  CHECK ((call_id IS NULL AND args IS NULL) OR (call_id IS NOT NULL AND args IS NOT NULL))
 );
 CREATE TABLE IF NOT EXISTS axton_mutation_operation (
   ordinal INTEGER NOT NULL REFERENCES axton_mutation(ordinal) ON DELETE CASCADE,

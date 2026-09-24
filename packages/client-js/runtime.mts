@@ -1,8 +1,10 @@
 import {
   AxtonReport,
+  directFailure,
   startConnection,
   startLiveLane,
   type Connection,
+  type DirectConnection,
   type ConnectionOptions,
   type LiveLane,
   type ReportDetails,
@@ -36,6 +38,7 @@ export type RebuildReport = {
   reason: string;
   leftPending: number;
   leftDirect: number;
+  abandonedCalls: { callId: string; frozen: boolean }[];
 };
 /** The open-time schema check: whether this open rebuilt, or is waiting to. */
 export type SchemaState = {
@@ -61,6 +64,23 @@ export type ClientSyncState = {
 import { strictJson, type QuerySpec, type RecordValue } from "./values.mts";
 import type { ServerOptions, ServerConnection } from "./live.mts";
 import { Events } from "./events.mts";
+import {
+  ActionRegistry,
+  ActionError,
+  actionError,
+  type ActionCall,
+} from "./actions.mts";
+
+/** Report application callback failures without changing an applied Action outcome. */
+function reportActionCallbackError(error: unknown): void {
+  if (typeof globalThis.reportError === "function") {
+    globalThis.reportError(error);
+  } else {
+    setTimeout(() => {
+      throw error;
+    }, 0);
+  }
+}
 
 /** Hosts share the Rust action executor and supply only their carrier, transaction scope and network. */
 export function createClient<
@@ -68,6 +88,7 @@ export function createClient<
     finish(): Promise<void>;
     runCallback<T>(body: () => Promise<T>): Promise<T>;
     inCallback(): boolean;
+    direct(operation: object): Promise<void>;
   },
 >(
   native: { clientCall(request: string): Promise<string> },
@@ -79,6 +100,10 @@ export function createClient<
     #syncing: Promise<void> | undefined;
     #tasks: Promise<void> | undefined;
     #connection: Connection | undefined;
+    #direct: DirectConnection | undefined;
+    #directOnError: ((error: unknown) => void) | undefined;
+    #completionListeners = new Set<(completion: any) => void>();
+    #actions = new ActionRegistry();
     #connecting = false;
     #started: Promise<void> | undefined;
     #closing: Promise<void> | undefined;
@@ -188,6 +213,150 @@ export function createClient<
       if (this.#activePublicTx?.inCallback())
         return Promise.reject(Error("transaction_active"));
       return this.#submitMutation(mutation);
+    }
+    /** One standalone Model write in its own local transaction. */
+    direct(operation: object): Promise<void> {
+      if (this.#activePublicTx?.inCallback())
+        return Promise.reject(Error("transaction_active"));
+      return this.transaction(async (tx) => {
+        await tx.direct(operation);
+      });
+    }
+    /** Submit durable work and register its observer before the work wake. */
+    async invokeAction<T>(
+      name: string,
+      version: number,
+      args: object,
+      decode: (value: unknown) => T,
+    ): Promise<ActionCall<T>> {
+      this.#actions.assertSupported();
+      let call: ActionCall<T> | undefined;
+      try {
+        await this.submitAction(name, version, args, (callId) => {
+          call = this.#actions.register(callId, decode);
+        });
+      } catch (error) {
+        throw actionError(error);
+      }
+      return call!;
+    }
+    /** Execute a direct Action and decode its committed result. */
+    async invokeDirectAction<T>(
+      name: string,
+      version: number,
+      args: object,
+      decode: (value: unknown) => T,
+    ): Promise<T> {
+      let applied: {
+        completions: {
+          outcome: {
+            status: string;
+            result?: unknown;
+            code?: string;
+            execution?: string;
+          };
+        }[];
+      };
+      try {
+        applied = await this.callAction(name, version, args);
+      } catch (error) {
+        throw actionError(error);
+      }
+      const outcome = applied.completions[0]?.outcome;
+      if (!outcome) throw new ActionError("action.observation_failed");
+      if (outcome.status === "failed")
+        throw new ActionError(
+          outcome.code ?? "action.failed",
+          outcome.execution === "rejected" ? "rejected" : "unknown",
+        );
+      try {
+        return decode(outcome.result);
+      } catch (cause) {
+        throw new ActionError("action.observation_failed", "unknown", cause);
+      }
+    }
+    /** Internal Action seam: register after local commit, synchronously before waking work. */
+    submitAction(
+      name: string,
+      version: number,
+      args: object,
+      onCommitted?: (callId: string, ordinal: number) => void,
+    ): Promise<{ callId: string; ordinal: number }> {
+      if (this.#activePublicTx?.inCallback())
+        return Promise.reject(Error("transaction_active"));
+      return this.#exclusive(async () => {
+        const submitted = (await this.#send({
+          op: "submitAction",
+          name,
+          version,
+          args,
+        })) as { callId: string; ordinal: number };
+        onCommitted?.(submitted.callId, submitted.ordinal);
+        this.#events.emit("work");
+        return submitted;
+      });
+    }
+    onActionCompletion(listener: (completion: any) => void): () => void {
+      this.#completionListeners.add(listener);
+      return () => this.#completionListeners.delete(listener);
+    }
+    #deliverCompletions(completions: any[]): void {
+      // Finish every registered handle before an application diagnostic listener can throw.
+      for (const completion of completions) this.#actions.complete(completion);
+      for (const completion of completions)
+        for (const listener of [...this.#completionListeners])
+          try {
+            listener(completion);
+          } catch (error) {
+            reportActionCallbackError(error);
+          }
+    }
+    /** Direct network work never occupies the local exclusive queue. */
+    async callAction(name: string, version: number, args: object) {
+      if (this.#activePublicTx?.inCallback()) throw Error("transaction_active");
+      const direct = this.#direct;
+      if (!direct) throw directFailure("action.unavailable");
+      const prepared = (await this.#exclusive(() =>
+        this.#send({ op: "prepareAction", name, version, args }),
+      )) as { callId: string; body: string };
+      let response: string;
+      try {
+        response = await direct.requestAction(prepared.body);
+      } catch (error) {
+        if ((error as { code?: string })?.code) throw error;
+        throw Object.assign(Error("action.execution_unknown"), {
+          code: "action.execution_unknown",
+          execution: "unknown" as const,
+          cause: error,
+        });
+      }
+      if (this.#direct !== direct)
+        throw directFailure("action.execution_unknown");
+      let applied: { completions: any[]; reports: ReportDetails[] };
+      try {
+        applied = await this.#exclusive(() => {
+          if (this.#direct !== direct)
+            throw directFailure("action.execution_unknown");
+          return this.#send({
+            op: "applyActionResponse",
+            body: prepared.body,
+            response: JSON.parse(response),
+          });
+        });
+      } catch (error) {
+        if ((error as { code?: string })?.code) throw error;
+        throw Object.assign(directFailure("action.execution_unknown"), {
+          cause: error,
+        });
+      }
+      this.#deliverCompletions(applied.completions);
+      for (const report of applied.reports)
+        try {
+          this.#directOnError?.(new AxtonReport(report));
+        } catch (error) {
+          reportActionCallbackError(error);
+        }
+      return applied;
     }
     #submitMutation(mutation: object): Promise<number> {
       return this.#exclusive(async () => {
@@ -324,6 +493,8 @@ export function createClient<
             await Promise.all([streaming.wake(), connection.wake()]);
           },
           close: async () => {
+            this.#direct = undefined;
+            this.#directOnError = undefined;
             this.#events.off("work", wake);
             this.#events.off("channels", channels);
             await Promise.all([streaming.close(), connection.close()]);
@@ -334,6 +505,8 @@ export function createClient<
           },
         };
         this.#connection = result;
+        this.#direct = connection;
+        this.#directOnError = options.onError;
         return result;
       } finally {
         this.#connecting = false;
@@ -355,12 +528,18 @@ export function createClient<
           );
           if (action === null) return;
           const response = await transport(action.kind, action.body);
-          const reports = (await this.#exclusive(() =>
+          const applied = (await this.#exclusive(() =>
             this.#send({ op: "complete", response: JSON.parse(response) }),
-          )) as ReportDetails[];
+          )) as { reports: ReportDetails[]; completions: any[] };
+          this.#deliverCompletions(applied.completions);
           // What the receipt or page could not apply; the client stays
           // consistent and the application hears about each one.
-          for (const report of reports) onError?.(new AxtonReport(report));
+          for (const report of applied.reports)
+            try {
+              onError?.(new AxtonReport(report));
+            } catch (error) {
+              reportActionCallbackError(error);
+            }
         }
       };
       this.#syncing = run().finally(() => {
@@ -401,9 +580,11 @@ export function createClient<
       return this.#exclusive(() => this.#send({ op: "freeze" }));
     }
     acknowledge(sequence: number, receipt: object) {
-      return this.#exclusive(() =>
-        this.#send({ op: "ack", sequence, receipt }),
-      );
+      return this.#exclusive(async () => {
+        const applied = await this.#send({ op: "ack", sequence, receipt });
+        this.#deliverCompletions(applied.completions);
+        return applied;
+      });
     }
     applyPull(page: object) {
       return this.#exclusive(() => this.#send({ op: "pull", page }));
@@ -428,6 +609,18 @@ export function createClient<
     ): Promise<RebuildReport> {
       return this.#exclusive(() =>
         this.#send({ op: "rebuild", ...options }).then((value) => {
+          this.#deliverCompletions(
+            (value.abandonedCalls ?? []).map(
+              (abandoned: { callId: string; frozen: boolean }) => ({
+                callId: abandoned.callId,
+                outcome: {
+                  status: "failed",
+                  code: "abandoned",
+                  execution: abandoned.frozen ? "unknown" : "rejected",
+                },
+              }),
+            ),
+          );
           this.#events.emit("change");
           this.#events.emit("work");
           return value;
@@ -448,8 +641,9 @@ export function createClient<
     drop(ordinal: number) {
       return this.#exclusive(() =>
         this.#send({ op: "drop", ordinal }).then((value) => {
+          this.#deliverCompletions(value.completions);
           this.#events.emit("work");
-          return value;
+          return undefined;
         }),
       );
     }
@@ -483,6 +677,7 @@ export function createClient<
       };
     }
     close(): Promise<void> {
+      this.#actions.close();
       return (this.#closing ??= this.#finishClose());
     }
     async #finishClose(): Promise<void> {

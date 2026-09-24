@@ -6,8 +6,9 @@ use axton_core::{PushRequest, RecordKey};
 use axton_server::{
     Host,
     host::{
-        Acknowledged, Claimed, Handled, Head, HostRequest, Invalidation as ContractInvalidation,
-        Loaded, PublicationIntent, Published, RecordRef, Scanned, Stamped,
+        Acknowledged, Claimed, ClaimedCall, Handled, Head, HostRequest,
+        Invalidation as ContractInvalidation, Loaded, PublicationIntent, Published, RecordRef,
+        Scanned, Stamped,
     },
 };
 use serde_json::{Map, Value, json};
@@ -45,8 +46,16 @@ struct Stamp {
     initialized: bool,
 }
 
+#[derive(Clone)]
+struct CallRow {
+    request: String,
+    response: Option<String>,
+    claim_transaction: u64,
+}
+
 #[derive(Clone, Default)]
 struct Tables {
+    calls: BTreeMap<(String, String), CallRow>,
     records: BTreeMap<String, Value>,
     stamps: BTreeMap<String, Stamp>,
     heads: BTreeMap<String, u64>,
@@ -59,6 +68,8 @@ struct State {
     membership: BTreeMap<String, Vec<String>>,
     clients: BTreeMap<String, Claimed>,
     savepoints: Vec<Tables>,
+    next_transaction: u64,
+    active_transaction: Option<u64>,
     reject_next: Option<String>,
     fail_next: bool,
     break_next: bool,
@@ -118,6 +129,36 @@ impl Default for MemHost {
 impl MemHost {
     pub fn new() -> Self {
         Self(Mutex::new(State::default()))
+    }
+    /// Run one simulated application transaction, restoring table/savepoint state
+    /// on failure just as the real driver's transaction runner does.
+    fn transaction<T>(&self, body: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        let (before, depth, invocations) = {
+            let mut s = self.0.lock().unwrap();
+            assert!(
+                s.active_transaction.is_none(),
+                "nested simulated transaction"
+            );
+            s.next_transaction = s
+                .next_transaction
+                .checked_add(1)
+                .expect("transaction ID overflow");
+            s.active_transaction = Some(s.next_transaction);
+            (
+                s.tables.clone(),
+                s.savepoints.len(),
+                s.handler_invocations.len(),
+            )
+        };
+        let result = body();
+        let mut s = self.0.lock().unwrap();
+        if result.is_err() {
+            s.tables = before;
+            s.savepoints.truncate(depth);
+            s.handler_invocations.truncate(invocations);
+        }
+        s.active_transaction = None;
+        result
     }
     pub fn set_membership(&self, key: &RecordKey, channels: &[&str]) {
         self.0.lock().unwrap().membership.insert(
@@ -318,40 +359,15 @@ impl MemHost {
         if let Ok(request) = PushRequest::decode(bytes) {
             self.0.lock().unwrap().current_push = Some((request.client_id, request.batch_sequence));
         }
-        let (before, depth, invocations) = {
-            let s = self.0.lock().unwrap();
-            (
-                s.tables.clone(),
-                s.savepoints.len(),
-                s.handler_invocations.len(),
-            )
-        };
-        let result = block_on(axton_server::process_push(
-            &crate::schema::config(),
-            owner,
-            bytes,
-            self,
-        ))
-        .map_err(|e| e.to_string());
-        if result.is_err() {
-            // An aborted batch is a rolled-back transaction: nothing it did survives.
-            // A `handle` error short-circuits process_push after `savepoint` but before
-            // the matching `release`, so the savepoint stack must also be restored to
-            // its pre-call depth here — this is the same invariant a successful push
-            // already leaves it at (every `savepoint` is paired with a `release`).
-            //
-            // The client legitimately retries the same bytes after this (P6), and that
-            // retry will call `handle` again for the same ordinals - that is correct,
-            // not a double execution, because nothing from this attempt was ever
-            // durably accepted. So `handler_invocations` rolls back with the tables:
-            // only a triple recorded by a push that actually committed counts toward
-            // `no_mutation_executes_twice`.
-            let mut s = self.0.lock().unwrap();
-            s.tables = before;
-            s.savepoints.truncate(depth);
-            s.handler_invocations.truncate(invocations);
-        }
-        result
+        self.transaction(|| {
+            block_on(axton_server::process_push(
+                &crate::schema::config(),
+                owner,
+                bytes,
+                self,
+            ))
+            .map_err(|e| e.to_string())
+        })
     }
     pub fn savepoint_depth(&self) -> usize {
         self.0.lock().unwrap().savepoints.len()
@@ -553,6 +569,59 @@ impl Host for MemHost {
                     );
                     response!(Acknowledged)
                 }
+                HostRequest::ClaimCall {
+                    owner,
+                    call_id,
+                    request,
+                } => {
+                    let transaction = s
+                        .active_transaction
+                        .ok_or("Call claim outside transaction")?;
+                    let key = (owner, call_id);
+                    if let Some(row) = s.tables.calls.get(&key) {
+                        if row.response.is_none() {
+                            return Err("Call has incomplete stored response".into());
+                        }
+                        response!(ClaimedCall {
+                            fresh: false,
+                            request: row.request.clone(),
+                            response: row.response.clone()
+                        })
+                    } else {
+                        s.tables.calls.insert(
+                            key,
+                            CallRow {
+                                request: request.clone(),
+                                response: None,
+                                claim_transaction: transaction,
+                            },
+                        );
+                        response!(ClaimedCall {
+                            fresh: true,
+                            request,
+                            response: None
+                        })
+                    }
+                }
+                HostRequest::SaveCall {
+                    owner,
+                    call_id,
+                    response,
+                } => {
+                    let transaction = s
+                        .active_transaction
+                        .ok_or("Call save outside transaction")?;
+                    let Some(row) = s.tables.calls.get_mut(&(owner, call_id)) else {
+                        return Err("Call not claimed".into());
+                    };
+                    if row.response.is_some() || row.claim_transaction != transaction {
+                        return Err(
+                            "Call not claimed by this transaction or already completed".into()
+                        );
+                    }
+                    row.response = Some(response);
+                    response!(Acknowledged)
+                }
                 HostRequest::Head { channel } => {
                     response!(Head(s.tables.heads.get(&channel).copied().unwrap_or(0)))
                 }
@@ -657,6 +726,9 @@ impl Host for MemHost {
                             })
                         }
                     }
+                }
+                HostRequest::HandleAction { .. } => {
+                    return Err("sim Action handlers are not configured".into());
                 }
                 HostRequest::AdvanceStamp {
                     model,
@@ -777,6 +849,47 @@ mod tests {
     use super::*;
     use crate::schema::{self, entry_key};
     use axton_core::{PullPage, PullRequest, PushReceipt};
+
+    #[test]
+    fn call_claims_belong_to_the_simulated_transaction_and_follow_savepoint_rollback() {
+        let host = MemHost::new();
+        let claim = |call_id: &str| json!({"op":"claimCall","owner":"alice","callId":call_id,"request":"{}"});
+        let save = |call_id: &str| json!({"op":"saveCall","owner":"alice","callId":call_id,"response":"{\"ok\":true}"});
+
+        host.transaction(|| {
+            assert_eq!(block_on(host.call(claim("incomplete")))?["fresh"], true);
+            Ok(())
+        })
+        .unwrap();
+        assert!(
+            host.transaction(|| block_on(host.call(save("incomplete"))))
+                .is_err()
+        );
+        assert!(
+            host.transaction(|| block_on(host.call(claim("incomplete"))))
+                .is_err()
+        );
+
+        host.transaction(|| {
+            assert_eq!(block_on(host.call(claim("kept")))?["fresh"], true);
+            block_on(host.call(json!({"op":"savepoint","ordinal":1})))?;
+            assert_eq!(block_on(host.call(claim("rolled-back")))?["fresh"], true);
+            block_on(host.call(json!({"op":"rollback","ordinal":1})))?;
+            block_on(host.call(json!({"op":"release","ordinal":1})))?;
+            assert!(block_on(host.call(save("rolled-back"))).is_err());
+            block_on(host.call(save("kept")))?;
+            Ok(())
+        })
+        .unwrap();
+        host.transaction(|| {
+            let replay = block_on(host.call(claim("kept")))?;
+            assert_eq!(replay["fresh"], false);
+            assert_eq!(replay["response"], "{\"ok\":true}");
+            assert_eq!(block_on(host.call(claim("rolled-back")))?["fresh"], true);
+            Ok(())
+        })
+        .unwrap();
+    }
 
     fn push_bytes(client_id: &str, sequence: u64, mutation: &axton_client::Mutation) -> Vec<u8> {
         let m = serde_json::to_value(mutation).unwrap();

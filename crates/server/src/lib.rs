@@ -1,8 +1,10 @@
 //! Server protocol orchestration. Host calls run in the application's outer transaction.
+mod actions;
 pub mod error;
 pub mod host;
 pub mod live;
 mod readback;
+pub use actions::{ActionResponse, execute_action, process_action, process_action_push};
 use axton_core::{
     AuthorityRecord, CursorRange, PullPage, PullRequest, PushReceipt, PushRequest, RecordKey,
     Rejection, Schema, limits, read_counter,
@@ -53,6 +55,8 @@ impl ModelContract {
     fn schema(&self) -> Schema {
         Schema {
             enums: self.enums.clone(),
+            actions: vec![],
+            result_models: vec![],
             models: vec![axton_core::ModelDescriptor {
                 name: self.name.clone(),
                 version: self.version,
@@ -605,6 +609,7 @@ pub async fn process_push(
         client_id: request.client_id.clone(),
         batch_sequence: request.batch_sequence,
         rejections,
+        completions: vec![],
         records: results.into_values().collect(),
     };
     let text = String::from_utf8(receipt.encode().map_err(internal)?).map_err(internal)?;

@@ -1,0 +1,33 @@
+{
+  "formatVersion": 1,
+  "models": {
+    "Item": {
+      "1": {
+        "enums": [],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "label",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Item",
+        "version": 1
+      }
+    }
+  }
+}

@@ -2,11 +2,11 @@
 
 ## 1. Introduction and Goals
 
-The transport moves bytes. It knows the two HTTP routes and the WebSocket route, adds the bearer token, honors cancellation, and buffers streamed frames within a bound. It never looks inside a request body or a frame, not even to tell the acknowledgement from a page; those come from and go to Rust.
+The transport moves bytes. It knows the three HTTP routes and the WebSocket route, adds the bearer token, honors cancellation, and buffers streamed frames within a bound. It never looks inside a request body or a frame, not even to tell the acknowledgement from a page; those come from and go to Rust.
 
 ## 3. Context and Scope
 
-Configuration is `{url, token}`, where `token` is a string or a function returning one. Push and catch-up are `POST <url>/sync/mutations` and `POST <url>/sync/pull`; the stream is a WebSocket on `<url>/sync/live`; all three carry `Authorization: Bearer <token>`. A non-2xx response becomes an error carrying `status` (TypeScript) or `AuthenticationExpired` for 401 and `HttpException` otherwise (Dart), which is what [scheduling](controller/scheduling.md) uses to trigger an auth refresh.
+Configuration is `{url, token}`, where `token` is a string or a function returning one. Push, catch-up and direct Action calls use `POST <url>/sync/mutations`, `POST <url>/sync/pull` and `POST <url>/sync/actions`; the stream is a WebSocket on `<url>/sync/live`. All four carry `Authorization: Bearer <token>`. A non-2xx response becomes an error carrying `status` (TypeScript) or `AuthenticationExpired` for 401 and `HttpException` otherwise (Dart), which is what [scheduling](controller/scheduling.md) uses to trigger an auth refresh. Direct calls use the connection's configured carrier independently of the durable push and live lanes. `directTimeoutMs` in TypeScript accepts an integer from 1 to 2,147,483,647 milliseconds; `directTimeout` in Dart accepts a positive `Duration`. Both bound the entire direct attempt, including token acquisition and refresh, and default to 30 seconds. A timeout or lost response leaves execution unknown. Authentication retry reuses the prepared request body and call ID.
 
 ## 5. Building Block View
 

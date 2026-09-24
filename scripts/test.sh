@@ -19,6 +19,7 @@ dart pub get --directory integration/action-contract
 dart analyze integration/action-contract/generated.dart
 dart analyze integration/action-contract/positive.dart
 bash integration/action-contract/check-negative.sh
+bash integration/action-runtime-ts/verify.sh
 "$root/node_modules/.bin/prettier" --check packages/client-js/*.mts packages/server/*.mts packages/postgres/*.mts packages/postgres/src/*.mts packages/client-react-native/*.mts packages/client-react-native/index.ts
 "$root/node_modules/.bin/tsc" -p packages/client-react-native
 node --test packages/client-react-native/plugins/expo-path-spaces.test.cjs
@@ -33,8 +34,10 @@ case "$(uname -s)" in
 esac
 export AXTON_DART_LIBRARY="$AXTON_LIBRARY"
 (cd packages/dart && dart pub get && dart analyze && dart test)
+(cd integration/action-runtime-dart && dart pub get && dart analyze generated.dart generated_test.dart model_only/generated.dart model_free/generated.dart && bash check-negative.sh && dart test generated_test.dart)
 bash integration/generated-api/verify.sh
 bash integration/e2e/run.sh
+bash integration/action-e2e/run.sh
 node --test integration/e2e/todo-ui.test.mjs
 bash integration/e2e/todo-run.sh
 python3 website/scripts/check_examples.py

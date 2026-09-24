@@ -1,0 +1,67 @@
+{
+  "formatVersion": 1,
+  "models": {
+    "Todo": {
+      "1": {
+        "enums": [],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Todo",
+        "version": 1
+      },
+      "2": {
+        "enums": [],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "title",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "note",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Todo",
+        "version": 2
+      }
+    }
+  }
+}

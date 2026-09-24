@@ -3,6 +3,12 @@ import { createClient } from "../client-js/runtime.mts";
 import { Transaction } from "./transaction.mts";
 import { createServerConnection } from "./live.mts";
 export { Transaction } from "./transaction.mts";
+export {
+  ActionError,
+  type ActionCall,
+  type ActionOutcome,
+  type ActionStatus,
+} from "../client-js/actions.mts";
 export type { QuerySpec, RecordValue } from "../client-js/values.mts";
 export type {
   Connection,

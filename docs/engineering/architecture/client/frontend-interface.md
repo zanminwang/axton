@@ -13,10 +13,10 @@ The surface, grouped by purpose:
 | Purpose | Operations |
 | --- | --- |
 | Lifecycle | `open(store, schema)` on a store the caller opened; `open_at(path, schema, factory, discard_pending)` chooses the file behind `path` ([Reconciliation](storage/reconciliation.md)); `rebuild(discard_pending)` switches an incompatible database to a fresh file and returns a `RebuildReport` |
-| Writes | `transaction(\|tx\| …)` with `enqueue`, `direct`, `set_channel`, nested `savepoint` and reads inside |
+| Writes | `transaction(\|tx\| …)` with local `direct`, `submit_action`, `set_channel`, nested `savepoint` and reads inside; legacy internal `enqueue` remains for retained fixtures |
 | Session API for hosts that hold a transaction open across calls | `begin_session`, `session(\|tx\| …)`, `session_savepoint`, `session_release`, `session_rollback_savepoint`, `commit_session`, `rollback_session` |
 | Reads on the last commit | `read`, `query`, `query_spec`, `related`, `referencing`, `read_sql` |
-| Sync | `freeze`, `acknowledge` (returns an `ApplyReport` for the receipt's authority; [Settlement](engine/settlement.md)), `downlink_request` (one pull for every subscribed channel), `apply_page` and `receive_downlink` (return an `ApplyReport` whose `reports` list what could not be applied: read failures, skipped changes, conflicts, divergences; [Pull](engine/pull.md)), plus the `SyncCycle` and `ConnectionDriver` state machines |
+| Sync | `freeze`, `acknowledge` (returns authority reports and transient Action completions; [Settlement](engine/settlement.md)), `prepare_action` and `apply_action_response` for direct calls, `downlink_request`, `apply_page` and `receive_downlink`, plus the `SyncCycle` and `ConnectionDriver` state machines |
 | State and control | `pending_count`, `cursor`, `subscriptions`, `subscription_generation` (how many subscribes and unsubscribes committed since open; the [live session](connection/controller/live-session.md) restarts when it changes), `rejections`, `record_status` (pending entries carry `diverged` when their replay failed over new authority), `pending_tasks`, `next_task`, `outcome`, `set_readiness`, `drop_mutation`, `dismiss_rejection`, `schema_state` (`rebuilt`, `pending`, `last_rebuild`) |
 | Notification | `watch(tables)` → a receiver signalled when a commit touched one of the tables |
 
@@ -33,6 +33,8 @@ The interface is the `Client` and `ClientTransaction` types in [client/lib.rs](.
 **Sessions** exist for hosts whose transaction spans several native calls. While a session is open, sync commands are refused, and `commit_session` refuses to commit with an unclosed savepoint.
 
 **Reads outside a transaction** use the committed reader connection, so a long session in the same process does not block them and they do not see its uncommitted writes.
+
+**Action boundaries.** `submit_action` normalizes the retained Action contract and commits its call ID, canonical args and inferred Model operations in one local transaction. It can enqueue an ordinary-only Action with no Model row. `prepare_action` builds a direct request; network I/O occurs outside the exclusive local database section, and `apply_action_response` validates the response and applies authority in a short transaction. Neither route runs inside an application-owned local transaction. Business results are returned through transient completions and SDK memory, not stored in client SQLite; pending and completion state remains durable.
 
 ## 10. Quality Requirements
 

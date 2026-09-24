@@ -110,6 +110,11 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
         }
     }
     for helper in [
+        "ActionContext",
+        "ActionPort",
+        "ActionRejected",
+        "Actions",
+        "DirectCalls",
         "ActionError",
         "ActionStatus",
         "ActionOutcome",

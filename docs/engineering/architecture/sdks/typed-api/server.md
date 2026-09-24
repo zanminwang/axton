@@ -2,64 +2,64 @@
 
 ## 1. Introduction and Goals
 
-A backend author writes handlers (one per mutation) and loaders (one per model) against their own database transaction; the server typed API gives them typed inputs, `changes` and `publish` to report and distribute what a handler changed, and an HTTP and WebSocket server, while the Rust engine decides what runs, reads the results back and tells the client.
+A backend author writes retained Action handlers and versioned Model Loaders against their own database transaction. The server typed API gives handlers `{ctx, args}` with trusted transaction context and decoded caller input, plus typed explicit outputs. The Rust engine decides execution, resolves Model outputs through Loaders, and distributes changed records.
 
 ## 3. Context and Scope
 
-`createBackend({database, authenticate, handlers, loaders, loaderHooks?, translateRejection?, onError?})` returns `{listen, transaction, …}`. Generated `backend.ts` supplies `Handlers<Tx>` and `Loaders<Tx>` so a missing or misnamed handler is a type error, and wraps `createBackend` with the compiled config ([Compiler / Generate](../../compiler/generate.md)). The behavior behind each option is owned by the [backend interface](../../server/backend-interface.md); this page is about the shape an application sees.
+`createBackend({database, authenticate, handlers, loaders, loaderHooks?, translateRejection?, onError?})` returns `{listen, transaction, …}`. Generated `backend.ts` supplies `Handlers<Tx>`, `Loaders<Tx>`, `ActionContext<Tx>` and `ActionRejected`; missing or misnamed handlers are type errors. It binds the compiled config to `createBackend` ([Compiler / Generate](../../compiler/generate.md)).
 
 | Piece | Shape |
 | --- | --- |
-| Handler | `({input, tx, userId, changes, publish}: HandlerCall) => Promise<void>`; `input` is one typed value per slot; the return value is ignored |
+| Action handler | `({ctx, args}: ActionHandlerCall<Tx, Args>) => Promise<Outputs>`; `ctx` has `tx`, `userId`, `callId`, `changes`, `publish` |
 | Change set | `changes.records` (the records the uploaded operations target) and `changes.add(record)` for a record the handler changed beyond them; every member is stamped, read back and returned in the receipt |
 | Loader | `({ids, tx, userId}: LoaderCall) => Promise<(Row \| null)[]>`, aligned with `ids`; one per retained model version, `Row` being that version's record type; no channel |
-| Rejecting one mutation, or refusing a read | throw `MutationRejected(code)`, or throw anything `translateRejection` maps to a code; from a loader in a push this rejects the mutation, in a pull it fails the page |
+| Rejecting one Action or refusing a read | throw `ActionRejected(code)`, or throw anything `translateRejection` maps to a code; during Action execution this rejects the call, in a pull it reports the affected record |
 | Publishing | `publish({channel})` or `publish({channel, records})` (`PublishArgs`) inside a handler; outside one, `backend.transaction(async ({tx, changes, publish}) => …)` hands the body the same `changes` and `publish` and settles them when it returns ([Publish](../../server/engine/publish.md)) |
 | Serving | `backend.listen({port, host?})` → `{url, close}` |
 | Development auth | `devAuth()` treats the bearer token as the user id; documented as development only |
 
 ## 5. Building Block View
 
-The runtime package holds `createBackend`, the HTTP and WebSocket servers and the SQL-free `Database<T>` contract; `@axton/postgres` builds that object from a two-method driver and ships the `pg`, `prisma` and `drizzle` shims ([Persistence](../../server/persistence.md)). Slot arguments handed to a handler are tagged with a hidden record reference, which is why `changes.add(input.entry)` and `publish({channel, records: [input.entry]})` work without spelling out model and identity.
+The runtime package holds `createBackend`, the HTTP and WebSocket servers and the SQL-free `Database<T>` contract; `@axton/postgres` builds that object from a two-method driver and ships the `pg`, `prisma` and `drizzle` shims ([Persistence](../../server/persistence.md)). Decoded Model operands carry a hidden record reference, so `ctx.changes.add(args.todo)` and `ctx.publish({channel, records: [args.todo]})` work without spelling out model and identity.
 
 Code: [server/index.mts](../../../../../packages/server/index.mts); generated signatures from `backend_typescript` in [compiler/emit.rs](../../../../../crates/compiler/src/emit.rs).
 
 ## 9. Architecture Decisions
 
-**Handler and loader registration by version ([#91](https://github.com/zanminwang/axton/issues/91)).** Group versions under the mutation or model name. For an initial v1-only contract, a function is shorthand for `{v1: implementation}`. Once multiple versions are supported, register each explicitly:
+**Handler and Loader registration by version ([#91](https://github.com/zanminwang/axton/issues/91)).** Group versions under the Action or Model name. For a v1-only contract, a function is shorthand for `{v1: implementation}`. Once multiple versions are retained, register each explicitly:
 
 ```ts
 handlers: {
-  edit: {
-    v1: handleOriginalEdit,
-    v2: handleNewEdit,
+  addTodo: {
+    v1: handleOriginalAddTodo,
+    v2: handleNewAddTodo,
   },
 },
 loaders: {
-  task: {
-    v1: loadOriginalTask,
-    v2: loadNewTask,
+  todo: {
+    v1: loadOriginalTodo,
+    v2: loadNewTodo,
   },
 }
 ```
 
-Handlers receive generated input types for their mutation version; loaders return generated record types for their independent [model version](../../schema/models.md#9-architecture-decisions). Registration keys use `v1`, `v2`; wire versions remain numbers. Shorthand always means v1, never the latest version. Client calls use `client.mutate.edit(...)`, with their generated version fixed in the request.
+Handlers receive generated Action input types for their version and return typed explicit outputs. Loaders return record types for an independent [Model read version](../../schema/models.md#9-architecture-decisions). Registration keys use `v1`, `v2`; wire versions remain numbers. Shorthand always means v1, never the latest version. Client calls use the Action version embedded in their generated method.
 
-Handler registration implements this decision. Generated `Handlers<Tx>` holds one key per mutation, `lowerFirst(name)`, whose value carries a `v<n>` member for every retained version; a mutation retaining only v1 also accepts the bare function. The runtime refuses at startup: a bare function whenever the retained versions are not exactly v1, a missing version, an unknown `v<n>` key and a non-function value, each naming the mutation and version. Dispatch stays keyed by name and version, so a request never falls back to another version.
+Generated `Handlers<Tx>` holds one key per Action, `lowerFirst(name)`, with a `v<n>` member for every retained version; v1-only Actions also accept a bare function. The runtime refuses missing, unknown or non-function registrations at startup. Dispatch is keyed by name and version, so a request never falls back to another version.
 
-Loader registration implements the same decision. Generated `Loaders<Tx>` holds one key per model, `lowerFirst(name)`, with a `v<n>` member per retained [model version](../../schema/models.md#9-architecture-decisions), each returning that version's record type: the schema's own version keeps the plain name (`Entry`), an older retained contract is its own type (`EntryV1`) with the enum values of its time inline. A model retaining only v1 also accepts the bare function. The runtime applies the handler rules to loaders at startup, naming the model and version. Dispatch is by model name and contract version: the engine names the version in every `load`, and the runtime never routes one version's request to another's loader. Which version a pull is served at is the one the client declared ([Server / Engine / Pull](../../server/engine/pull.md#6-runtime-view)).
+Generated `Loaders<Tx>` holds one key per Model and a `v<n>` member per retained read version, each returning that version's record type. The current shape uses `Todo`; an older retained shape uses `TodoV1`. A Model retaining only v1 also accepts a bare function. The engine names the Loader version for each Action output separately from the client's current authority version; a pull uses the client's declared version ([Server / Engine / Pull](../../server/engine/pull.md#6-runtime-view)).
 
 ## 10. Quality Requirements
 
 - **Startup fails on an invalid config or a missing handler or loader.** Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `backend validates config and complete registrations at startup`.
 - **Registration names every retained version; a bare function registers v1 only.** Evidence: `handler registration names every retained version and a function means v1 only`.
 - **A version reaches only its own handler, whichever way v1 was registered.** Evidence: `a version dispatches only to its own handler and a function registers v1`.
-- **Slot arguments can be passed to `changes.add` and `publish` directly.** Evidence: `slot arguments are tagged so changes.add and publish accept them directly`.
-- **A handler returns nothing; the framework reads the change set back and publishes what was asked, with or without a `publish` call; loaders receive no channel.** Evidence: `a handler that publishes nothing still returns readback records and touches no channel`, `publish({channel}) publishes the final change set, an addition made after the call included`, `loaders receive no channel` ([Backend interface §10](../../server/backend-interface.md#10-quality-requirements)).
-- **Generated handlers group the retained versions of a mutation.** Evidence: [compiler/tests/compiler.rs](../../../../../crates/compiler/tests/compiler.rs) `backend_emitter_groups_handler_versions_under_the_mutation_name`, `backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation`.
+- **Decoded Model operands can be passed to `changes.add` and `publish` directly.** Evidence: [generated backend test](../../../../../integration/action-runtime-ts/backend.test.mts).
+- **Action handlers return explicit outputs and Model identity objects while the framework resolves Model snapshots through a Loader.** Evidence: [Action execution tests](../../../../../crates/server/tests/actions.rs) and [generated backend test](../../../../../integration/action-runtime-ts/backend.test.mts).
+- **Generated handlers group retained Action versions and share one `Tx` with Loaders.** Evidence: [Action contract fixture](../../../../../integration/action-contract/backend.ts) and [generated backend test](../../../../../integration/action-runtime-ts/backend.test.mts).
 - **Loader registration names every retained model version, a bare function registers v1 only, and a pull reaches only the served version's loader.** Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `loader registration names every retained model version and a function means v1 only`, `a pull reaches the loader of the declared model version and normalizes rows with that contract`; [compiler/tests/compiler.rs](../../../../../crates/compiler/tests/compiler.rs) `backend_emitter_groups_loader_versions_under_the_model_name`; the `@ts-expect-error` loader negatives (bare function, missing and unknown versions, a value outside the v1 contract) in [test.ts](../../../../../integration/generated-api/test.ts).
 
-Executed 2026-09-15 with the `changes`/`publish` handler API: `cargo test -p axton-compiler --locked`, `bash integration/generated-api/verify.sh`, and `bash integration/persistence/server/run.sh` (61 passed).
+The earlier legacy mutation evidence in the runtime tests remains useful for unchanged lower-level savepoint and Loader rules. Task 7 integration verifies the Action API separately.
 
 ## 11. Risks and Technical Debt
 

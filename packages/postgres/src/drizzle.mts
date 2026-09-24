@@ -1,7 +1,8 @@
 import { sql as drizzleSql, type SQL, type SQLChunk } from "drizzle-orm";
 import type { DriverOptions, PostgresDriver } from "./driver.mts";
-import { RETRYABLE_SQLSTATES, withRetries } from "./driver.mts";
+import { withRetries } from "./driver.mts";
 import { persistence } from "./persistence.mts";
+import { isRetryableTransactionError } from "../../server/retryable.mts";
 
 /** The part of a Drizzle node-postgres transaction AXTON uses. */
 export interface DrizzleTransaction {
@@ -14,11 +15,6 @@ export interface DrizzleDatabase<Tx extends DrizzleTransaction> {
     options: { isolationLevel: "repeatable read" },
   ): Promise<R>;
 }
-
-const sqlstate = (error: unknown): string | undefined => {
-  const e = error as { code?: string; cause?: { code?: string } } | null;
-  return e?.code ?? e?.cause?.code;
-};
 
 /**
  * Turn `$n` placeholders into a Drizzle `sql` template so the tool binds the
@@ -49,7 +45,7 @@ export function drizzleDriver<Tx extends DrizzleTransaction>(
     transaction: (body) =>
       withRetries(
         () => db.transaction(body, { isolationLevel: "repeatable read" }),
-        (error) => RETRYABLE_SQLSTATES.has(sqlstate(error) ?? ""),
+        isRetryableTransactionError,
         options.retries ?? 3,
       ),
     query: async (tx, text, params) =>

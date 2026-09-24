@@ -1,6 +1,121 @@
 use axton_binding::RuntimeHost;
 use serde_json::{Value, json};
 #[test]
+fn dropped_and_rebuilt_actions_keep_terminal_call_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let mut schema: Value =
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
+    schema["actions"] = json!([{"name":"Ping","version":1,"inputs":[],"outputs":[]}]);
+    let mut breaking = schema.clone();
+    breaking["models"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"due","nullable":false,"type":{"kind":"scalar","name":"string"}}));
+    for frozen in [false, true] {
+        let path = dir.path().join(if frozen { "frozen" } else { "unsent" });
+        let opened = host
+            .call(json!({"op":"open","path":path,"schema":schema}))
+            .unwrap()["value"]
+            .clone();
+        let id = opened["handle"].clone();
+        let first = host
+            .call(json!({"op":"submitAction","handle":id,"name":"Ping","version":1,"args":{}}))
+            .unwrap()["value"]
+            .clone();
+        if !frozen {
+            let dropped = host
+                .call(json!({"op":"drop","handle":id,"ordinal":first["ordinal"]}))
+                .unwrap()["value"]
+                .clone();
+            assert_eq!(dropped["completions"][0]["callId"], first["callId"]);
+            assert_eq!(dropped["completions"][0]["outcome"]["code"], "dropped");
+        }
+        let left = host
+            .call(json!({"op":"submitAction","handle":id,"name":"Ping","version":1,"args":{}}))
+            .unwrap()["value"]
+            .clone();
+        if frozen {
+            host.call(json!({"op":"freeze","handle":id})).unwrap();
+        }
+        host.call(json!({"op":"close","handle":id})).unwrap();
+        let reopened = host
+            .call(json!({"op":"open","path":path,"schema":breaking}))
+            .unwrap()["value"]
+            .clone();
+        let report = host
+            .call(json!({"op":"rebuild","handle":reopened["handle"],"discardPending":true}))
+            .unwrap()["value"]
+            .clone();
+        assert!(
+            report["abandonedCalls"]
+                .as_array()
+                .unwrap()
+                .contains(&json!({"callId":left["callId"],"frozen":frozen}))
+        );
+        if frozen {
+            assert!(
+                report["abandonedCalls"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!({"callId":first["callId"],"frozen":true}))
+            );
+        }
+    }
+}
+#[test]
+fn direct_action_stays_off_queue_and_applies_completion_without_advancing_cursor() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let schema = json!({"enums":[],"models":[],"actions":[{"name":"Ping","version":1,"inputs":[{"kind":"value","name":"label","type":{"kind":"scalar","name":"string"},"nullable":false}],"outputs":[]}]});
+    let id = host
+        .call(json!({"op":"open","path":dir.path().join("db"),"schema":schema}))
+        .unwrap()["value"]["handle"]
+        .clone();
+    let prepared = host.call(json!({"op":"prepareAction","handle":id,"name":"Ping","version":1,"args":{"label":"hi"}})).unwrap()["value"].clone();
+    let body: Value = serde_json::from_str(prepared["body"].as_str().unwrap()).unwrap();
+    assert_eq!(body["call"]["callId"], prepared["callId"]);
+    assert_eq!(
+        host.call(json!({"op":"status","handle":id})).unwrap()["value"]["pending"],
+        0
+    );
+    let applied_raw = host.call(json!({"op":"applyActionResponse","handle":id,"body":prepared["body"],"response":{"completion":{"callId":prepared["callId"],"outcome":{"status":"succeeded","result":null}},"records":[]}})).unwrap();
+    assert_eq!(applied_raw["changed"], false);
+    let applied = applied_raw["value"].clone();
+    assert_eq!(applied["completions"][0]["callId"], prepared["callId"]);
+    assert_eq!(
+        host.call(json!({"op":"status","handle":id})).unwrap()["value"]["pending"],
+        0
+    );
+    assert_eq!(
+        host.call(json!({"op":"status","handle":id})).unwrap()["value"]["cursors"],
+        json!({})
+    );
+}
+
+#[test]
+fn durable_action_completion_survives_real_sync_cycle_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let schema = json!({"enums":[],"models":[],"actions":[{"name":"Ping","version":1,"inputs":[{"kind":"value","name":"label","type":{"kind":"scalar","name":"string"},"nullable":false}],"outputs":[]}]});
+    let opened = host
+        .call(json!({"op":"open","path":dir.path().join("db"),"schema":schema}))
+        .unwrap()["value"]
+        .clone();
+    let id = opened["handle"].clone();
+    let submitted = host.call(json!({"op":"submitAction","handle":id,"name":"Ping","version":1,"args":{"label":"hi"}})).unwrap()["value"].clone();
+    host.call(json!({"op":"startSync","handle":id,"pushOnly":true}))
+        .unwrap();
+    let next = host.call(json!({"op":"next","handle":id})).unwrap()["value"].clone();
+    assert_eq!(next["kind"], "push");
+    let applied = host.call(json!({"op":"complete","handle":id,"response":{"clientId":opened["clientId"],"batchSequence":1,"rejections":[],"completions":[{"callId":submitted["callId"],"outcome":{"status":"succeeded","result":null}}],"records":[]}})).unwrap()["value"].clone();
+    assert_eq!(applied["completions"][0]["callId"], submitted["callId"]);
+    assert_eq!(
+        host.call(json!({"op":"status","handle":id})).unwrap()["value"]["pending"],
+        0
+    );
+}
+#[test]
 fn language_commands_preserve_transaction_isolation_and_closed_handles() {
     let dir = tempfile::tempdir().unwrap();
     let mut host = RuntimeHost::default();

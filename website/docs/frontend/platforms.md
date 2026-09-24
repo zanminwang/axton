@@ -24,15 +24,15 @@ The repository includes a simulator integration harness. It requires Xcode and a
 bash integration/platform/run_ios_simulator_smoke.sh
 ```
 
-The harness builds the native library and Flutter app, creates a disposable simulator, and checks local writes, queued mutations, close/reopen and app restart. It removes only the simulator it creates. Passing the build alone does not establish that all runtime checks pass.
+The harness builds the native library and Flutter app, creates a disposable simulator, and checks local writes, queued Actions, close/reopen and app restart. It removes only the simulator it creates. Passing the build alone does not establish that all runtime checks pass.
 
 ## React Native
 
 The repository includes a React Native TypeScript adapter, reusable Expo native module, and a two-simulator integration harness. Use a native Expo build; Expo Go does not contain AXTON's Rust library. This integration currently targets arm64 iOS simulators and is consumed from a repository checkout.
 
-[`databasePath(name = "axton.sqlite"): Promise<string>`](https://github.com/zanminwang/axton/blob/main/packages/client-react-native/README.md) resolves a basename under persistent Application Support storage, creates the parent directory, and rejects invalid path names. Keep that path stable across launches so local records, queued mutations and client identity can be reopened.
+[`databasePath(name = "axton.sqlite"): Promise<string>`](https://github.com/zanminwang/axton/blob/main/packages/client-react-native/README.md) resolves a basename under persistent Application Support storage, creates the parent directory, and rejects invalid path names. Keep that path stable across launches so local records, queued Actions and client identity can be reopened.
 
-Generated read/watch/mutation/transaction APIs are shared with Node. React Native's runtime transaction does not expose nested savepoints. Native WebSocket failures do not expose a structured HTTP status; HTTP 401 refresh and application-managed socket credentials are documented separately in the package guide. Background execution while iOS suspends the app is not promised.
+Generated read/watch/Action/transaction APIs are shared with Node. React Native's runtime transaction does not expose nested savepoints. Native WebSocket failures do not expose a structured HTTP status; HTTP 401 refresh and application-managed socket credentials are documented separately in the package guide. Background execution while iOS suspends the app is not promised.
 
 The runnable demo is the [To-do example](https://github.com/zanminwang/axton/blob/main/examples/todo/README.md): two simulators, local writes, offline work and synchronization through the example backend ([getting started](../getting-started.md)). See the [package guide](https://github.com/zanminwang/axton/blob/main/packages/client-react-native/README.md) for installation and API limits, and the [SDK integration harness](https://github.com/zanminwang/axton/blob/main/integration/platform/react-native/README.md) for exact build/run steps and runtime evidence. The simulator sequence uses embedded JavaScript and actual network interruption; host tests or native linking alone do not establish completion.
 

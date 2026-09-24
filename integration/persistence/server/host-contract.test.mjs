@@ -18,7 +18,7 @@ const response=(op,variant)=>{
  return found.value;
 };
 
-const schema={enums:[],models:[{name:'Task',identity:['id'],fields:[
+const schema={enums:[],actions:[{name:'Send',version:1,inputs:[],outputs:[{name:'message',kind:'value',type:{kind:'scalar',name:'string'},cardinality:'single',source:'handlerValue'}]}],models:[{name:'Task',identity:['id'],fields:[
  {name:'id',type:{kind:'scalar',name:'string'},nullable:false},
  {name:'title',type:{kind:'scalar',name:'string'},nullable:false}]}]};
 const config={schema,mutations:[{name:'edit',version:1,slots:[
@@ -30,7 +30,8 @@ const fakePersistence=seen=>({
   seen.push(request);
   switch(request.op){
    case 'claim':return response('claim','claimed');
-   case 'saveReceipt':case 'savepoint':case 'rollback':case 'release':return null;
+   case 'claimCall':return response('claimCall','fresh');
+   case 'saveReceipt':case 'saveCall':case 'savepoint':case 'rollback':case 'release':return null;
    case 'head':return response('head','cursor');
    case 'scan':return response('scan','rows');
    case 'advanceStamp':return response('advanceStamp','stamped');
@@ -65,7 +66,7 @@ async function replay(requests,{reject=false,fail=false,onError}={}){
   onError,
   // The seeded change set (the update slot's t-1) plus one addition, published
   // by default to one channel and explicitly to another: the fixture's settlement.
-  handlers:{async edit({input,changes,publish}){
+  handlers:{async send(){return {message:'sent'};},async edit({input,changes,publish}){
    handled.push(input);
    changes.add({model:'Task',identity:{id:'t-2'}});
    publish({channel:'shared'});
@@ -89,16 +90,16 @@ test('every fixture request replays through the TypeScript host to the fixture a
  const {answers,seen,handled,loaded}=await replay(requests);
  assert.deepEqual(answers.map(([op])=>op),HOST_OPERATIONS);
  const expected={
-  claim:response('claim','claimed'),saveReceipt:null,head:response('head','cursor'),
+  claim:response('claim','claimed'),saveReceipt:null,claimCall:response('claimCall','fresh'),saveCall:null,head:response('head','cursor'),
   scan:response('scan','rows'),savepoint:null,rollback:null,release:null,
-  handle:response('handle','settled'),load:response('load','rows'),
+  handle:response('handle','settled'),handleAction:response('handleAction','settled'),load:response('load','rows'),
   advanceStamp:response('advanceStamp','stamped'),ensureStamp:response('ensureStamp','stamped'),publish:response('publish','published'),
  };
  assert.equal(Object.keys(expected).length,HOST_OPERATIONS.length,'every operation has an expected answer');
  for(const [op,answer] of answers)assert.deepEqual(answer,expected[op],`${op} answer`);
  // handle and load reach application code; everything else reaches persistence,
  // savepoint/rollback/release included - they are bookkept *and* forwarded.
- assert.deepEqual(seen.map(r=>r.op),HOST_OPERATIONS.filter(op=>op!=='handle'&&op!=='load'));
+ assert.deepEqual(seen.map(r=>r.op),HOST_OPERATIONS.filter(op=>op!=='handle'&&op!=='handleAction'&&op!=='load'));
  assert.equal(handled.length,1);
  assert.deepEqual(handled[0].task.patch,entry('handle').request.arguments.task.patch);
  assert.equal(loaded.length,1);assert.deepEqual(loaded[0].ids,entry('load').request.identities);assert.equal(loaded[0].userId,entry('load').request.owner);
@@ -132,7 +133,7 @@ test('the PostgreSQL persistence answers the persistence half through a two-meth
  assert.equal(await bound.call(entry('head').request),response('head','cursor'));
  assert.equal(await bound.call(entry('savepoint').request),null);
  assert.equal(await answer(driver,'tx',entry('head').request),6);
- for(const op of ['handle','load'])
+ for(const op of ['handle','handleAction','load'])
   await assert.rejects(()=>bound.call(entry(op).request),/Unsupported persistence operation/);
  await assert.rejects(()=>bound.call({op:'vacuum'}),/Unsupported persistence operation vacuum/);
 });

@@ -1,0 +1,11 @@
+enum Mood { calm loud }
+model Note {
+ id String
+ at DateTime
+ mood Mood
+ label String?
+ @@id(id)
+}
+action Echo(at DateTime, moods Mood[], maybe DateTime?) { result DateTime moods Mood[] maybe DateTime? }
+action Touch(note Note.create, changed Note.update<at>?) { stamp DateTime }
+action Ping()

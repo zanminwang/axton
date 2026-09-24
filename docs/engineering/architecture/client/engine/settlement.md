@@ -14,7 +14,7 @@ Settlement is triggered by one event and works entirely inside the engine's tran
 | --- | --- | --- |
 | A receipt for the batch in flight ([Protocol / Push](../../protocol/push.md)) | rejections and the final authority of every record the accepted operations changed | stages the authority beneath the queue, records rejections, removes the completed operations, replays what remains, remembers the completion |
 
-State it owns: `axton_client.last_completed_push` (the sequence of the last completed batch), `axton_client.push_models` (the read contracts the batch in flight declared) and `axton_rejection` (the durable inbox of rejected mutations). It deletes rows from the queue tables owned by [Queue](push/queue.md) and rewrites records through the authority applier and the replay logic of [Local operations](local-operations/README.md).
+State it owns: `axton_client.last_completed_push` (the sequence of the last completed batch), `axton_client.push_models` (the read contracts the batch in flight declared) and `axton_rejection` (the durable inbox of rejected mutations). It deletes rows from the queue tables owned by [Queue](push/queue.md) and rewrites records through the authority applier and the replay logic of [Local operations](local-operations/README.md). Action completions are returned in memory after commit; successful business results have no local history table.
 
 ## 5. Building Block View
 
@@ -26,7 +26,7 @@ State it owns: `axton_client.last_completed_push` (the sequence of the last comp
 
 ### Validating the receipt
 
-A receipt must name this client and the batch in flight. A receipt for a sequence at or below `last_completed_push` is a duplicate and changes nothing, whatever it carries; one for any other sequence, or for another client, is refused. Its rejections must name ordinals of the batch, and its records must cover every record the accepted wire operations targeted: a receipt that omits one cannot complete the batch and is refused, leaving the frozen batch for retry. Authority the client cannot decode (a state its schema refuses) is refused the same way. Nothing below runs until all of this holds.
+A receipt must name this client and the batch in flight. A receipt for a sequence at or below `last_completed_push` is a duplicate and changes nothing, whatever it carries; one for any other sequence, or for another client, is refused. Action completions must match the frozen call IDs and order, with failure codes matching rejected ordinals. A Model result must contain every field declared when the call was frozen. After compatible schema growth, current fields supplied by the server are validated; absent newly introduced nullable or defaulted fields are added to the transient result. Its rejections must name ordinals of the batch, and its records must cover every record the accepted optimistic operations targeted: a receipt that omits one cannot complete the batch and is refused, leaving the frozen batch for retry. Authority the client cannot decode (a state its schema refuses) is refused the same way. Nothing below runs until all of this holds.
 
 ### The atomic transition
 
@@ -36,7 +36,7 @@ A receipt must name this client and the batch in flight. A receipt for a sequenc
 4. **Record rejections.** Rejected mutations and their lifecycle dependents get their inbox entries and leave the queue.
 5. **Remove the completed operations.** The accepted mutations' rows go, with their operations, dependencies and prerequisites.
 6. **Replay once.** Every record the batch touched or that was staged beneath pending operations is rebuilt from its before image plus whatever is still queued; the before image is dropped where nothing pending remains. Queued deletes are extended to descendants that appeared. A clean row that received authority in step 3 is left alone.
-7. **Remember the completion.** `last_completed_push` becomes the batch sequence and the frozen declaration is released; the transaction commits.
+7. **Remember the completion.** `last_completed_push` becomes the batch sequence and the frozen declaration is released; the transaction commits. The returned report carries transient Action completions, including unsent lifecycle dependents removed by rejection.
 
 Any failure rolls the whole transition back: the batch stays in flight, the records keep their optimism, and the next cycle resends the same bytes.
 

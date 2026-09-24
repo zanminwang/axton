@@ -4,8 +4,19 @@ import 'dart:math';
 import 'live.dart';
 
 typedef Transport = Future<String> Function(String kind, String body);
+typedef DirectCarrier =
+    Future<String> Function(String body, Future<void> cancellation);
 typedef ConnectionControl =
     Future<dynamic> Function(String event, int now, int entropy);
+
+class ActionTransportException implements Exception {
+  final String code;
+  final String execution = 'unknown';
+  final Object? cause;
+  ActionTransportException(this.code, [this.cause]);
+  @override
+  String toString() => code;
+}
 
 /// The controls every lane offers; the push connection fans them out to the live lane.
 abstract class LaneControls {
@@ -27,8 +38,11 @@ class RuntimeConnection implements LaneControls {
   final ConnectionControl _control;
   final Future<void> Function(Transport) _sync;
   final Transport _transport;
+  final DirectCarrier? _directCarrier;
   final void Function(Object)? onError;
   final Future<void> Function()? refreshAuth;
+  final Duration directTimeout;
+  final _directRequests = <Completer<String>, Completer<void>>{};
   final _requests = <Completer<String>>{};
   final _closed = Completer<void>();
   Future<void>? _activeSync;
@@ -41,23 +55,32 @@ class RuntimeConnection implements LaneControls {
     this._control,
     this._sync,
     this._transport,
+    this._directCarrier,
     this.onError,
     this.refreshAuth,
+    this.directTimeout,
   );
   Future<void> get closed => _closed.future;
+  bool get directAvailable => !_stopped;
   static Future<RuntimeConnection> start({
     required ConnectionControl control,
     required Future<void> Function(Transport) sync,
     required Transport transport,
+    DirectCarrier? directCarrier,
     void Function(Object)? onError,
     Future<void> Function()? refreshAuth,
+    Duration directTimeout = const Duration(seconds: 30),
   }) async {
+    if (directTimeout.inMicroseconds <= 0)
+      throw ArgumentError.value(directTimeout, 'directTimeout');
     final connection = RuntimeConnection._(
       control,
       sync,
       transport,
+      directCarrier,
       onError,
       refreshAuth,
+      directTimeout,
     );
     await connection._command('start');
     unawaited(
@@ -102,6 +125,48 @@ class RuntimeConnection implements LaneControls {
     ]).whenComplete(() {
       _requests.remove(cancellation);
     });
+  }
+
+  /// One bounded direct attempt, including token acquisition and auth refresh.
+  Future<String> requestAction(String body) async {
+    if (_stopped) throw ActionTransportException('action.unavailable');
+    final cancelled = Completer<String>();
+    final cancellation = Completer<void>();
+    _directRequests[cancelled] = cancellation;
+    void terminate(String code) {
+      if (!cancellation.isCompleted) cancellation.complete();
+      if (!cancelled.isCompleted)
+        cancelled.completeError(ActionTransportException(code));
+    }
+
+    final timer = Timer(directTimeout, () {
+      terminate('action.execution_unknown');
+    });
+    Future<String> send() async {
+      try {
+        return await (_directCarrier?.call(body, cancellation.future) ??
+            _transport('action', body));
+      } on AuthenticationExpired {
+        if (refreshAuth == null) rethrow;
+        await refreshAuth!();
+        if (_stopped || cancelled.isCompleted)
+          throw ActionTransportException('action.execution_unknown');
+        return _directCarrier?.call(body, cancellation.future) ??
+            _transport('action', body);
+      }
+    }
+
+    try {
+      return await Future.any([Future.sync(send), cancelled.future]);
+    } on ActionTransportException {
+      rethrow;
+    } catch (error) {
+      throw ActionTransportException('action.execution_unknown', error);
+    } finally {
+      timer.cancel();
+      _directRequests.remove(cancelled);
+      if (!cancellation.isCompleted) cancellation.complete();
+    }
   }
 
   void _cancelRequests() {
@@ -177,6 +242,11 @@ class RuntimeConnection implements LaneControls {
   Future<void> close() async {
     if (_stopped) return;
     _stopped = true;
+    for (final entry in _directRequests.entries.toList()) {
+      if (!entry.value.isCompleted) entry.value.complete();
+      if (!entry.key.isCompleted)
+        entry.key.completeError(ActionTransportException('action.unavailable'));
+    }
     _cancelRequests();
     _notify();
     _invalidateLive?.call();

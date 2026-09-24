@@ -1,0 +1,21 @@
+enum Status { open closed }
+model Todo {
+ id String
+ title String
+ at DateTime
+ status Status
+ note String?
+ @@id(id)
+}
+model Moment {
+ at DateTime
+ title String
+ @@id(at)
+}
+@version(2) action Put(todo Todo.create, when DateTime, statuses Status[], note String?) { echoed DateTime status Status }
+action Change(todo Todo.update?, at DateTime) { echoed DateTime }
+action Clear(todo Todo.delete[])
+action Ping()
+action Find(at DateTime) { todo Todo? }
+action Mark(moment Moment.update)
+action RemoveMoment(moment Moment.delete)

@@ -5,6 +5,15 @@ export const CLAIM_LOCK =
   "SELECT client_id, owner_id, sequence, receipt FROM axton_client WHERE client_id=$1 FOR UPDATE";
 export const SAVE_RECEIPT =
   "UPDATE axton_client SET sequence=$3, receipt=$4 WHERE client_id=$1 AND owner_id=$2 RETURNING client_id";
+/** The inserted row is the only fresh claim. A concurrent duplicate waits for commit. */
+export const CLAIM_CALL_INSERT =
+  "INSERT INTO axton_call(owner_id,call_id,request) VALUES($1,$2,$3) ON CONFLICT(owner_id,call_id) DO NOTHING RETURNING call_id";
+export const CLAIM_CALL_LOCK =
+  "SELECT request,response FROM axton_call WHERE owner_id=$1 AND call_id=$2 FOR UPDATE";
+export const SAVE_CALL =
+  // The full creating transaction ID survives savepoints and prevents a later
+  // transaction from completing an unexpectedly committed placeholder.
+  "UPDATE axton_call SET response=$3 WHERE owner_id=$1 AND call_id=$2 AND response IS NULL AND claim_tx=pg_current_xact_id() RETURNING call_id";
 export const HEAD = "SELECT head FROM axton_channel WHERE channel=$1";
 /**
  * The invalidation keeps its own cursor (delivery progress); the stamp is the

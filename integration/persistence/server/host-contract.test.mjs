@@ -30,7 +30,8 @@ const fakePersistence=seen=>({
   seen.push(request);
   switch(request.op){
    case 'claim':return response('claim','claimed');
-   case 'saveReceipt':case 'savepoint':case 'rollback':case 'release':return null;
+   case 'claimCall':return response('claimCall','fresh');
+   case 'saveReceipt':case 'saveCall':case 'savepoint':case 'rollback':case 'release':return null;
    case 'head':return response('head','cursor');
    case 'scan':return response('scan','rows');
    case 'advanceStamp':return response('advanceStamp','stamped');
@@ -89,7 +90,7 @@ test('every fixture request replays through the TypeScript host to the fixture a
  const {answers,seen,handled,loaded}=await replay(requests);
  assert.deepEqual(answers.map(([op])=>op),HOST_OPERATIONS);
  const expected={
-  claim:response('claim','claimed'),saveReceipt:null,head:response('head','cursor'),
+  claim:response('claim','claimed'),saveReceipt:null,claimCall:response('claimCall','fresh'),saveCall:null,head:response('head','cursor'),
   scan:response('scan','rows'),savepoint:null,rollback:null,release:null,
   handle:response('handle','settled'),load:response('load','rows'),
   advanceStamp:response('advanceStamp','stamped'),ensureStamp:response('ensureStamp','stamped'),publish:response('publish','published'),

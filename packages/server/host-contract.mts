@@ -23,6 +23,10 @@ export type SaveReceiptRequest = {
   sequence: number;
   receipt: string;
 };
+/** Lock one call's immutable intent and its completed response. */
+export type ClaimCallRequest = { op: "claimCall"; owner: string; callId: string; request: string };
+/** Save a complete response for a fresh claim in the same transaction. */
+export type SaveCallRequest = { op: "saveCall"; owner: string; callId: string; response: string };
 /** The channel's current head cursor. */
 export type HeadRequest = { op: "head"; channel: string };
 /** Invalidation rows after `after`, at most `limit` of them, in cursor order. */
@@ -87,6 +91,8 @@ export type PublishRequest = {
 export type HostRequest =
   | ClaimRequest
   | SaveReceiptRequest
+  | ClaimCallRequest
+  | SaveCallRequest
   | HeadRequest
   | ScanRequest
   | SavepointRequest
@@ -115,6 +121,8 @@ export type Claimed = {
   sequence: number;
   receipt: string | null;
 };
+/** An existing ID returns its original request, even when the incoming intent differs. */
+export type ClaimedCall = { fresh: boolean; request: string; response: string | null };
 /** The answer to `head`: a bare counter. */
 export type Head = number;
 /**
@@ -175,6 +183,8 @@ export type Loaded =
 export type HostResponse = {
   claim: Claimed;
   saveReceipt: Acknowledged;
+  claimCall: ClaimedCall;
+  saveCall: Acknowledged;
   head: Head;
   scan: Invalidation[];
   savepoint: Acknowledged;
@@ -194,6 +204,8 @@ export type HostResponse = {
 const OPERATIONS: Record<HostOperation, true> = {
   claim: true,
   saveReceipt: true,
+  claimCall: true,
+  saveCall: true,
   head: true,
   scan: true,
   savepoint: true,

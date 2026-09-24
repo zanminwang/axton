@@ -240,6 +240,9 @@ impl Scripted {
                 let (sequence, receipt) = s.clients.get(&client_id).cloned().unwrap_or((0, None));
                 json!({"clientId":client_id,"owner":owner,"sequence":sequence,"receipt":receipt})
             }
+            HostRequest::ClaimCall { .. } | HostRequest::SaveCall { .. } => {
+                return Err("call persistence is outside this readback host".into());
+            }
             HostRequest::SaveReceipt {
                 client_id,
                 sequence,

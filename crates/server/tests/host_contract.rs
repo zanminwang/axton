@@ -1,8 +1,8 @@
 //! The host operation contract: the shared fixture round-trips through the
 //! Rust types, and a malformed request or response is refused per operation.
 use axton_server::host::{
-    Acknowledged, Claimed, Handled, Head, HostRequest, Invalidation, Loaded, OPERATIONS,
-    PublicationIntent, Published, RecordRef, Scanned, Stamped,
+    Acknowledged, Claimed, ClaimedCall, Handled, Head, HostRequest, Invalidation, Loaded,
+    OPERATIONS, PublicationIntent, Published, RecordRef, Scanned, Stamped,
 };
 use serde_json::{Value, json};
 
@@ -24,7 +24,8 @@ fn round_trip_response(op: &str, value: &Value) -> Result<Value, String> {
     }
     match op {
         "claim" => round!(Claimed),
-        "saveReceipt" | "savepoint" | "rollback" | "release" => round!(Acknowledged),
+        "claimCall" => round!(ClaimedCall),
+        "saveReceipt" | "saveCall" | "savepoint" | "rollback" | "release" => round!(Acknowledged),
         "head" => round!(Head),
         "scan" => round!(Scanned),
         "handle" => round!(Handled),
@@ -172,11 +173,31 @@ fn a_response_carrying_an_unknown_field_is_refused() {
 }
 
 #[test]
+fn a_claimed_call_always_names_its_response_even_when_uncompleted() {
+    assert!(
+        serde_json::from_value::<ClaimedCall>(json!({"fresh": true, "request": "{}"})).is_err()
+    );
+    assert_eq!(
+        serde_json::from_value::<ClaimedCall>(
+            json!({"fresh": true, "request": "{}", "response": null})
+        )
+        .unwrap()
+        .response,
+        None
+    );
+}
+
+#[test]
 fn a_response_of_the_wrong_type_is_refused_per_operation() {
     // One clearly wrong answer per operation, in the shape a host might drift into.
-    let wrong: [(&str, Value); 12] = [
+    let wrong: [(&str, Value); 14] = [
         ("claim", json!({"clientId":"c","owner":"o","sequence":-1})),
         ("saveReceipt", json!({"saved": true})),
+        (
+            "claimCall",
+            json!({"fresh": true, "request": "{}", "response": 1}),
+        ),
+        ("saveCall", json!({"saved": true})),
         ("head", json!("7")),
         ("scan", json!({"rows": []})),
         ("savepoint", json!({})),

@@ -692,6 +692,8 @@ export function createBackend<T>(options: BackendOptions<T>) {
           switch (req.op) {
             case "claim":
             case "saveReceipt":
+            case "claimCall":
+            case "saveCall":
             case "head":
             case "scan":
             case "savepoint":

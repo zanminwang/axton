@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-Persistence stores the framework's four tables in the application's own database, through the application's own transaction. That is what makes a push atomic: business writes, stamps, publications and the receipt are one commit. PostgreSQL is the database; the application chooses the tool it talks to PostgreSQL with.
+Persistence stores the framework's tables in the application's own database, through the application's own transaction. That is what makes a push atomic: business writes, stamps, publications and receipts commit together. PostgreSQL is the database; the application chooses the tool it talks to PostgreSQL with.
 
 ## 3. Context and Scope
 
@@ -19,6 +19,8 @@ interface PostgresDriver<Tx> {
 | --- | --- |
 | `claim {owner, clientId}` | create the client row if new, lock it, return owner, sequence and stored receipt |
 | `saveReceipt {owner, clientId, sequence, receipt}` | record the batch outcome |
+| `claimCall {owner, callId, request}` | insert or lock a call; return whether this transaction inserted it plus its immutable request and saved response |
+| `saveCall {owner, callId, response}` | complete a fresh, uncompleted call claimed by the current transaction |
 | `head {channel}` | current cursor of a channel (0 if unknown) |
 | `scan {channel, after, limit}` | invalidation rows after a cursor, in order, each joined with the record's current stamp from `axton_record`; a row whose record has no stamp is a storage defect |
 | `advanceStamp {model, identityKey}` | allocate the record's next stamp (1 for a record without one) and return it |
@@ -26,7 +28,7 @@ interface PostgresDriver<Tx> {
 | `publish {channel, model, identity, identityKey, stamp}` | allocate the channel's next cursor and upsert the invalidation row at the given stamp, which must be the record's current one; return both |
 | `savepoint`, `rollback`, `release {ordinal}` | per-mutation savepoints |
 
-Tables: `axton_client`, `axton_channel`, `axton_record`, `axton_invalidation` ([migration.sql](../../../../packages/postgres/migration.sql)).
+Tables: `axton_client`, `axton_call`, `axton_channel`, `axton_record`, `axton_invalidation` ([migration.sql](../../../../packages/postgres/migration.sql)).
 
 ## 5. Building Block View
 
@@ -37,7 +39,7 @@ Tables: `axton_client`, `axton_channel`, `axton_record`, `axton_invalidation` ([
 | [src/persistence.mts](../../../../packages/postgres/src/persistence.mts) | `answer(driver, tx, request)`, the switch over the operations above, and `persistence(driver)`, the `Database<Tx>` it becomes |
 | [src/pg.mts](../../../../packages/postgres/src/pg.mts), [src/prisma.mts](../../../../packages/postgres/src/prisma.mts), [src/drizzle.mts](../../../../packages/postgres/src/drizzle.mts) | the shims: `pg(pool)`, `prisma(client)`, `drizzle(db)`, each binding the two methods to its tool's transaction |
 
-Properties the SQL holds: `claim` uses `SELECT … FOR UPDATE`, so retries of one client serialize on the row; `advanceStamp` and `ensureStamp` allocate stamps with atomic upserts that return the new value, so concurrent first publications agree on 1 and an established stamp is never overwritten; `publish` allocates the cursor the same way and refuses a stamp that is not the record's current one; `scan` is a `LEFT JOIN` from the invalidation row to the stamp row, so a page carries the stamp of the content the loader reads, not the stamp the record had when it was last published. Counters are `bigint` with safe-range checks and are narrowed to safe integers on the way out; a driver whose tool cannot send a bigint parameter sends it as text.
+Properties the SQL holds: `claim` uses `SELECT … FOR UPDATE`, so retries of one client serialize on the row; `claimCall` uses `INSERT … ON CONFLICT DO NOTHING RETURNING` followed by `SELECT … FOR UPDATE` in the supplied transaction, so a duplicate sees the original request and response after the first transaction commits. A committed null response is a storage fault. `saveCall` checks the full creating transaction ID (`claim_tx`) and refuses overwrites. No call responses are automatically pruned. `advanceStamp` and `ensureStamp` allocate stamps with atomic upserts that return the new value, so concurrent first publications agree on 1 and an established stamp is never overwritten; `publish` allocates the cursor the same way and refuses a stamp that is not the record's current one; `scan` is a `LEFT JOIN` from the invalidation row to the stamp row, so a page carries the stamp of the content the loader reads, not the stamp the record had when it was last published. Counters are `bigint` with safe-range checks and are narrowed to safe integers on the way out; a driver whose tool cannot send a bigint parameter sends it as text.
 
 Each shim's `transaction` runs at Repeatable Read and retries serialization failures (`40001`, `40P01`; Prisma `P2034`, or `P2010` with one of those codes) a bounded number of times, re-running the whole body. `pg` opens `BEGIN ISOLATION LEVEL REPEATABLE READ` on a pooled client; `prisma` uses `$transaction(body, {isolationLevel: 'RepeatableRead', timeout})` and `$queryRawUnsafe`; `drizzle` uses `db.transaction(body, {isolationLevel: 'repeatable read'})` and rewrites `$n` placeholders into a `sql` template (`bindDrizzle`) so the tool binds the parameters itself.
 
@@ -50,6 +52,7 @@ Code: [packages/postgres/index.mts](../../../../packages/postgres/index.mts); th
 ## 10. Quality Requirements
 
 - **Every shim answers the persistence operations the same way against a real database** (claim creates and locks the row and replays the stored receipt; owner mismatch refuses; `head` is 0 for an unknown channel; `advanceStamp` 1, 2 and `ensureStamp` agree on 1 under three concurrent transactions; `publish` validates the stamp; a rolled-back transaction removes a first initialisation; `scan` joins the current stamp and reports missing metadata; savepoints roll back and release; a serialization conflict retries the whole body). Evidence: [driver-conformance.test.mjs](../../../../integration/persistence/server/driver-conformance.test.mjs), run once each for `pg`, `prisma` and `drizzle`, and the `pgDriver` retry unit test in the same file.
+- **Each call claim and response share the application's transaction with business writes.** Concurrent duplicate claims execute the body once; rollback removes both records; a different owner sees a separate claim; changed intent returns the immutable original; a committed null response and a second save are refused. A fresh claim created under an ambient savepoint can be saved after release. Evidence: [driver-conformance.test.mjs](../../../../integration/persistence/server/driver-conformance.test.mjs), run against `pg`, `prisma` and `drizzle`.
 - **Concurrent retries of one client execute once; head, scan and loader see one snapshot.** Evidence: [runtime.test.mjs](../../../../integration/persistence/server/runtime.test.mjs) `concurrent same-client retry executes once under PostgreSQL lock`, `repeatable-read runner keeps head, scan, and loader coherent across concurrent publication`.
 - **A stamp advances without a channel; one push publishing to two channels carries one stamp to both and advances each head once; an external write advances the stamp on every call while a push publishing an unchanged record does not; concurrent first publications initialize one stamp of 1; a rolled-back transaction removes a first initialization with its publication; `publish` refuses a missing or stale stamp; `scan` pairs the cursor with the current stamp** (guarantee D3). Evidence: `advanceStamp increments without a channel: no invalidation, no channel head`, `one push publishing to two channels carries the same stamp to both and advances each head once`, `an external write advances the stamp on every call; a push publishing an unchanged record does not`, `concurrent first publications initialise one stamp of 1 and never overwrite an established one`, `a rolled-back transaction removes a first initialisation together with its publication`, `publish refuses a record without metadata or with a stamp that is not its current one`, `scan pairs the invalidation cursor with the current record stamp; a missing record row is a storage defect`, `concurrent notifies of one record receive distinct stamps`.
 - **Fresh framework tables define no `request_hash`; a table installed from an earlier `migration.sql` that still carries the column serves claim, replay and gap checks unchanged, before and after the column is dropped.** Evidence: `fresh framework tables omit request_hash; a table that still carries the column keeps replaying receipts`.

@@ -51,12 +51,20 @@ fn present<'de, D: Deserializer<'de>>(
     Value::deserialize(deserializer).map(Some)
 }
 
+fn nullable_string<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(deserializer)
+}
+
 /// Every operation, in the order [`HostRequest`] declares them. The fixture
 /// and `packages/server/host-contract.mts` carry the same list; the contract
 /// test checks this one against the enum itself.
-pub const OPERATIONS: [&str; 12] = [
+pub const OPERATIONS: [&str; 14] = [
     "claim",
     "saveReceipt",
+    "claimCall",
+    "saveCall",
     "head",
     "scan",
     "savepoint",
@@ -86,6 +94,18 @@ pub enum HostRequest {
         client_id: String,
         sequence: u64,
         receipt: String,
+    },
+    /// Lock an invocation's immutable request and completed response.
+    ClaimCall {
+        owner: String,
+        call_id: String,
+        request: String,
+    },
+    /// Complete a newly claimed invocation in the caller's transaction.
+    SaveCall {
+        owner: String,
+        call_id: String,
+        response: String,
     },
     /// The channel's current head cursor.
     Head { channel: String },
@@ -141,6 +161,8 @@ impl HostRequest {
         match self {
             Self::Claim { .. } => "claim".into(),
             Self::SaveReceipt { .. } => "saveReceipt".into(),
+            Self::ClaimCall { .. } => "claimCall".into(),
+            Self::SaveCall { .. } => "saveCall".into(),
             Self::Head { .. } => "head".into(),
             Self::Scan { .. } => "scan".into(),
             Self::Savepoint { ordinal } => format!("savepoint(ordinal {ordinal})"),
@@ -156,9 +178,11 @@ impl HostRequest {
     /// The code an unusable response to this operation has always carried.
     fn invalid_code(&self) -> &'static str {
         match self {
-            Self::Claim { .. } | Self::SaveReceipt { .. } | Self::Scan { .. } => {
-                code::STORAGE_INVALID
-            }
+            Self::Claim { .. }
+            | Self::SaveReceipt { .. }
+            | Self::ClaimCall { .. }
+            | Self::SaveCall { .. }
+            | Self::Scan { .. } => code::STORAGE_INVALID,
             Self::Handle { .. } => code::HANDLER_INVALID,
             Self::Load { .. } => code::LOADER_INVALID,
             Self::Head { .. }
@@ -195,6 +219,16 @@ pub struct Claimed {
     /// Absent and `null` both mean "no stored receipt", as they always have.
     #[serde(default)]
     pub receipt: Option<String>,
+}
+
+/// The stored invocation; only the inserting transaction may execute a fresh body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClaimedCall {
+    pub fresh: bool,
+    pub request: String,
+    #[serde(deserialize_with = "nullable_string")]
+    pub response: Option<String>,
 }
 
 /// The answer to `head`: a bare counter.

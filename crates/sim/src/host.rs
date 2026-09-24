@@ -6,8 +6,9 @@ use axton_core::{PushRequest, RecordKey};
 use axton_server::{
     Host,
     host::{
-        Acknowledged, Claimed, Handled, Head, HostRequest, Invalidation as ContractInvalidation,
-        Loaded, PublicationIntent, Published, RecordRef, Scanned, Stamped,
+        Acknowledged, Claimed, ClaimedCall, Handled, Head, HostRequest,
+        Invalidation as ContractInvalidation, Loaded, PublicationIntent, Published, RecordRef,
+        Scanned, Stamped,
     },
 };
 use serde_json::{Map, Value, json};
@@ -47,6 +48,7 @@ struct Stamp {
 
 #[derive(Clone, Default)]
 struct Tables {
+    calls: BTreeMap<(String, String), (String, Option<String>)>,
     records: BTreeMap<String, Value>,
     stamps: BTreeMap<String, Stamp>,
     heads: BTreeMap<String, u64>,
@@ -551,6 +553,45 @@ impl Host for MemHost {
                             receipt: Some(receipt),
                         },
                     );
+                    response!(Acknowledged)
+                }
+                HostRequest::ClaimCall {
+                    owner,
+                    call_id,
+                    request,
+                } => {
+                    let key = (owner, call_id);
+                    if let Some((stored_request, stored_response)) = s.tables.calls.get(&key) {
+                        if stored_response.is_none() {
+                            return Err("Call has incomplete stored response".into());
+                        }
+                        response!(ClaimedCall {
+                            fresh: false,
+                            request: stored_request.clone(),
+                            response: stored_response.clone()
+                        })
+                    } else {
+                        s.tables.calls.insert(key, (request.clone(), None));
+                        response!(ClaimedCall {
+                            fresh: true,
+                            request,
+                            response: None
+                        })
+                    }
+                }
+                HostRequest::SaveCall {
+                    owner,
+                    call_id,
+                    response,
+                } => {
+                    let Some((_, stored_response)) = s.tables.calls.get_mut(&(owner, call_id))
+                    else {
+                        return Err("Call not claimed".into());
+                    };
+                    if stored_response.is_some() {
+                        return Err("Call already completed".into());
+                    }
+                    *stored_response = Some(response);
                     response!(Acknowledged)
                 }
                 HostRequest::Head { channel } => {

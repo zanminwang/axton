@@ -46,6 +46,67 @@ for(const shim of shims){
  const {database}=shim;const {driver}=database;
  const inTx=body=>driver.transaction(tx=>body(tx,(sql,params=[])=>driver.query(tx,sql,params),r=>answer(driver,tx,r)));
  const p=name=>`${shim.name}-${name}`;
+ test(`[${shim.name}] call claims commit with business writes and replay without overwriting the original`,async()=>{
+  const id=p('call-commit'), row=p('call-row');
+  const claim={op:'claimCall',owner:'alice',callId:id,request:'{"name":"first"}'};
+  const response='{"status":"succeeded","result":1}';
+  let bodies=0;
+  let signalFirst,releaseFirst;
+  const firstClaimed=new Promise(resolve=>{signalFirst=resolve;});
+  const firstGate=new Promise(resolve=>{releaseFirst=resolve;});
+  const invoke=(hold=false)=>inTx(async(tx,query,a)=>{
+   const claimed=await a(claim);
+   if(claimed.fresh){
+    if(hold){signalFirst();await firstGate;}
+    bodies++;
+    await query('INSERT INTO conformance_task(id,title) VALUES($1,$2)',[row,'once']);
+    await a({op:'saveCall',owner:'alice',callId:id,response});
+   }
+   return claimed;
+  });
+  const firstTx=invoke(true);
+  await Promise.race([firstClaimed,firstTx.then(()=>{throw new Error('first claim never held the transaction');})]);
+  let secondDone=false;
+  const secondTx=invoke().finally(()=>{secondDone=true;});
+  await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(secondDone,false,'the duplicate cannot finish before the first transaction commits');
+  releaseFirst();
+  const [first,second]=await Promise.all([firstTx,secondTx]);
+  assert.deepEqual([first.fresh,second.fresh],[true,false]);
+  assert.equal(bodies,1);
+  assert.deepEqual(await q('SELECT title FROM conformance_task WHERE id=$1',[row]),[{title:'once'}]);
+  assert.deepEqual(await q('SELECT owner_id,call_id,request,response FROM axton_call WHERE call_id=$1',[id]),[{owner_id:'alice',call_id:id,request:claim.request,response}]);
+  assert.deepEqual(await invoke(),{fresh:false,request:claim.request,response});
+  assert.deepEqual(await inTx((tx,_,a)=>a({...claim,request:'{"name":"different"}'})),{fresh:false,request:claim.request,response});
+  assert.deepEqual(await inTx((tx,_,a)=>a({...claim,owner:'bob'})),{fresh:true,request:claim.request,response:null});
+  assert.deepEqual(await q('SELECT response FROM axton_call WHERE owner_id=$1 AND call_id=$2',['bob',id]),[{response:null}]);
+  await assert.rejects(()=>inTx((tx,_,a)=>a({...claim,owner:'bob'})),/incomplete stored response/);
+  await assert.rejects(()=>inTx((tx,_,a)=>a({op:'saveCall',owner:'bob',callId:id,response})),/Call not claimed/);
+  await assert.rejects(()=>inTx((tx,_,a)=>a({op:'saveCall',owner:'alice',callId:id,response:'other'})),/Call .*already completed|Call .*not claimed/);
+ });
+ test(`[${shim.name}] rollback removes the call claim and its business write`,async()=>{
+  const id=p('call-rollback'),row=p('call-undone');
+  await assert.rejects(()=>inTx(async(tx,query,a)=>{
+   assert.deepEqual(await a({op:'claimCall',owner:'alice',callId:id,request:'{}'}),{fresh:true,request:'{}',response:null});
+   await query('INSERT INTO conformance_task(id,title) VALUES($1,$2)',[row,'undone']);
+   await a({op:'saveCall',owner:'alice',callId:id,response:'{}'});
+   throw new Error('cancel');
+  }),/cancel/);
+  assert.deepEqual(await q('SELECT * FROM axton_call WHERE call_id=$1',[id]),[]);
+  assert.deepEqual(await q('SELECT * FROM conformance_task WHERE id=$1',[row]),[]);
+ });
+ test(`[${shim.name}] a call claimed under a released savepoint can be saved by its transaction`,async()=>{
+  const id=p('call-subtransaction');
+  await inTx(async(tx,query,a)=>{
+   await query('SAVEPOINT axton_claim_nested');
+   assert.deepEqual(await a({op:'claimCall',owner:'alice',callId:id,request:'{}'}),{fresh:true,request:'{}',response:null});
+   assert.deepEqual(await query('SELECT claim_tx = pg_current_xact_id() AS owned FROM axton_call WHERE owner_id=$1 AND call_id=$2',['alice',id]),[{owned:true}]);
+   await query('RELEASE SAVEPOINT axton_claim_nested');
+   assert.deepEqual(await query('SELECT claim_tx = pg_current_xact_id() AS owned FROM axton_call WHERE owner_id=$1 AND call_id=$2',['alice',id]),[{owned:true}]);
+   await a({op:'saveCall',owner:'alice',callId:id,response:'{"ok":true}'});
+  });
+  assert.deepEqual(await q('SELECT response FROM axton_call WHERE owner_id=$1 AND call_id=$2',['alice',id]),[{response:'{"ok":true}'}]);
+ });
  test(`[${shim.name}] a push writes business rows and AXTON metadata in one transaction and a pull reads them back`,async()=>{
   const backend=createBackend({config,database,authenticate,handlers:{async edit({input,tx,publish}){await driver.query(tx,'INSERT INTO conformance_task(id,title) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET title=$2',[input.task.identity.id,input.task.patch.title]);publish({channel:p('shared')});}},loaders:{async task({ids,tx}){const rows=await driver.query(tx,'SELECT id,title FROM conformance_task WHERE id = ANY($1)',[ids.map(i=>i.id)]);return ids.map(i=>{const r=rows.find(r=>r.id===i.id);return r?{title:r.title}:null;});}}});
   const receipt=JSON.parse(await backend.push('alice',JSON.stringify({clientId:p('c'),batchSequence:1,models:{Task:1},mutations:[{ordinal:1,name:'edit',operations:[{model:'Task',op:'update',identity:{id:p('t')},values:{title:'typed'}}]}]})));

@@ -15,6 +15,19 @@
       "responses": [{"variant": "acknowledged", "value": null}]
     },
     {
+      "op": "claimCall",
+      "request": {"op": "claimCall", "owner": "alice", "callId": "call-1", "request": "{\"name\":\"edit\",\"version\":1}"},
+      "responses": [
+        {"variant": "fresh", "value": {"fresh": true, "request": "{\"name\":\"edit\",\"version\":1}", "response": null}},
+        {"variant": "replayed", "value": {"fresh": false, "request": "{\"name\":\"edit\",\"version\":1}", "response": "{\"status\":\"succeeded\"}"}}
+      ]
+    },
+    {
+      "op": "saveCall",
+      "request": {"op": "saveCall", "owner": "alice", "callId": "call-1", "response": "{\"status\":\"succeeded\"}"},
+      "responses": [{"variant": "acknowledged", "value": null}]
+    },
+    {
       "op": "head",
       "request": {"op": "head", "channel": "shared"},
       "responses": [

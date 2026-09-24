@@ -1,0 +1,13 @@
+model Todo {
+ id String
+ title String
+ note String?
+ @@id(id)
+ @@version(2)
+}
+
+@version(2) action AddTodo(todo Todo.create)
+@version(2) action UpdateTodo(todo Todo.update<title>)
+action DeleteTodo(todo Todo.delete)
+action SendEmail(to String, subject String, body String) { messageId String }
+@version(2) action SearchTodos(query String?) { todos Todo[] first Todo? count Int labels String[] hint String? }

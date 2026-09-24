@@ -11,6 +11,14 @@ pub struct Schema {
     pub enums: Vec<EnumDescriptor>,
     pub models: Vec<ModelDescriptor>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<crate::ActionDescriptor>,
+    #[serde(
+        default,
+        rename = "resultModels",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub result_models: Vec<crate::ModelReadDescriptor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requirements: Vec<RequirementDescriptor>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prerequisites: Vec<Value>,
@@ -116,8 +124,8 @@ impl Schema {
         Ok(schema)
     }
     pub fn validate(&self) -> Result<()> {
-        if self.models.is_empty() {
-            return Err(invalid("models must be nonempty"));
+        if self.models.is_empty() && self.actions.is_empty() {
+            return Err(invalid("models or actions must be nonempty"));
         }
         let mut names = BTreeSet::new();
         for en in &self.enums {
@@ -226,6 +234,7 @@ impl Schema {
                 }
             }
         }
+        self.validate_actions()?;
         Ok(())
     }
     fn validate_type(&self, ty: &ValueType) -> Result<()> {

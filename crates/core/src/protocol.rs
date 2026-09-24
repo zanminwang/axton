@@ -1,4 +1,7 @@
-use crate::{MAX_SAFE_INTEGER, Result, canonical_json, invalid};
+use crate::{
+    ActionIntent, ActionOutcome, CallCompletion, MAX_SAFE_INTEGER, Result, Schema, canonical_json,
+    invalid,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -57,10 +60,54 @@ pub struct PushRequest {
 }
 impl PushRequest {
     pub fn decode(bytes: &[u8]) -> Result<Self> {
+        Self::decode_inner(bytes, false)
+    }
+    /// Structural Action batch validation. Unsupported names/versions and
+    /// invalid argument values remain per-call failures for the server.
+    pub fn decode_action_envelope(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() > limits::PUSH_BYTES {
+            return Err(invalid("Action push exceeds byte limit"));
+        }
+        let request = Self::decode_inner(bytes, true)?;
+        let mut seen = BTreeSet::new();
+        for mutation in &request.mutations {
+            let intent: ActionIntent = serde_json::from_value(mutation.raw.clone())?;
+            if intent.name.trim().is_empty()
+                || intent.version == 0
+                || counter(intent.version).is_err()
+            {
+                return Err(invalid("invalid Action name or version"));
+            }
+            if !seen.insert(crate::normalize_call_id(&intent.call_id)?) {
+                return Err(invalid("duplicate Action callId"));
+            }
+        }
+        if request.encode()?.len() > limits::PUSH_BYTES {
+            return Err(invalid("canonical Action push exceeds byte limit"));
+        }
+        Ok(request)
+    }
+    /// Client-side known-contract validation before local writes or send.
+    /// The server uses `decode_action_envelope` and rejects unsupported
+    /// Action versions individually inside its batch transaction.
+    pub fn decode_actions(bytes: &[u8], schema: &Schema) -> Result<Self> {
+        let request = Self::decode_action_envelope(bytes)?;
+        for mutation in &request.mutations {
+            let intent: ActionIntent = serde_json::from_value(mutation.raw.clone())?;
+            let intent = intent.normalize(schema)?;
+            crate::validate_action_models(
+                schema,
+                schema.action(&intent.name, intent.version)?,
+                &request.models,
+            )?;
+        }
+        Ok(request)
+    }
+    fn decode_inner(bytes: &[u8], allow_empty_models: bool) -> Result<Self> {
         let raw: Value = serde_json::from_slice(bytes)?;
         let client_id = nonblank(&raw["clientId"])?;
         let batch_sequence = read_counter(&raw["batchSequence"], true)?;
-        let models = read_models(&raw["models"])?;
+        let models = read_models_inner(&raw["models"], allow_empty_models)?;
         let acts = raw["mutations"]
             .as_array()
             .ok_or_else(|| invalid("mutations must be array"))?;
@@ -216,11 +263,81 @@ pub struct PushReceipt {
     #[serde(rename = "batchSequence")]
     pub batch_sequence: u64,
     pub rejections: Vec<Rejection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub completions: Vec<CallCompletion>,
     pub records: Vec<AuthorityRecord>,
 }
 impl PushReceipt {
+    /// Decode an Action receipt against the frozen ordered calls. A legacy
+    /// receipt has no completion contract; only the legacy path may omit it.
+    pub fn decode_actions(bytes: &[u8], request: &PushRequest, schema: &Schema) -> Result<Self> {
+        let value: Value = serde_json::from_slice(bytes)?;
+        if value.get("completions").is_none() {
+            return Err(invalid("Action completions missing"));
+        }
+        let mut receipt = Self::decode_inner(value)?;
+        if !receipt.answers(&request.client_id, request.batch_sequence) {
+            return Err(invalid("Action receipt answers another batch"));
+        }
+        if receipt.completions.len() != request.mutations.len() {
+            return Err(invalid("Action completion count mismatch"));
+        }
+        let rejections: BTreeMap<u64, &str> = receipt
+            .rejections
+            .iter()
+            .map(|r| (r.ordinal, r.code.as_str()))
+            .collect();
+        let mut seen = BTreeSet::new();
+        let mut failures = 0;
+        for (mutation, completion) in request.mutations.iter().zip(&mut receipt.completions) {
+            let call: ActionIntent = serde_json::from_value(mutation.raw.clone())?;
+            let normalized = call.clone().normalize(schema)?;
+            let id = crate::normalize_call_id(&completion.call_id)?;
+            if completion.call_id != id || !seen.insert(id.clone()) || normalized.call_id != id {
+                return Err(invalid("Action completion callId mismatch"));
+            }
+            match &mut completion.outcome {
+                ActionOutcome::Succeeded { result } => {
+                    if rejections.contains_key(&mutation.ordinal) {
+                        return Err(invalid("succeeded Action is rejected"));
+                    }
+                    *result = crate::validate_action_result(
+                        schema,
+                        schema.action(&call.name, call.version)?,
+                        result,
+                    )?;
+                }
+                ActionOutcome::Failed { code, execution } => {
+                    if !valid_code(code)
+                        || *execution != crate::ExecutionState::Rejected
+                        || rejections.get(&mutation.ordinal) != Some(&code.as_str())
+                    {
+                        return Err(invalid("Action failure/rejection mismatch"));
+                    }
+                    failures += 1;
+                }
+            }
+        }
+        if failures != rejections.len() {
+            return Err(invalid("unexpected Action rejection"));
+        }
+        Ok(receipt)
+    }
+    /// Temporary compatibility for internal mutation-only fixtures. New
+    /// Action callers must use `decode_actions` for exact call correlation.
+    pub fn decode_legacy(bytes: &[u8]) -> Result<Self> {
+        Self::decode(bytes)
+    }
+    /// Legacy mutation-only receipt decoder. Action completions require the
+    /// frozen request and therefore cannot pass through this path.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let value: Value = serde_json::from_slice(bytes)?;
+        if value.get("completions").is_some() {
+            return Err(invalid("Action receipt requires request-aware decoder"));
+        }
+        Self::decode_inner(value)
+    }
+    fn decode_inner(value: Value) -> Result<Self> {
         if !value.is_object() {
             return Err(invalid("receipt must be an object"));
         }
@@ -257,6 +374,12 @@ impl PushReceipt {
             }
         }
         unique_records(&self.records)?;
+        let mut calls = BTreeSet::new();
+        for completion in &self.completions {
+            if !calls.insert(crate::normalize_call_id(&completion.call_id)?) {
+                return Err(invalid("duplicate completion callId"));
+            }
+        }
         if self.records.iter().any(AuthorityRecord::is_error) {
             return Err(invalid("a receipt carries authority, never a read failure"));
         }
@@ -273,10 +396,16 @@ impl PushReceipt {
 }
 /// `{"Task":2,"Note":1}`: one positive version per model, nothing else.
 pub fn read_models(value: &Value) -> Result<BTreeMap<String, u64>> {
+    read_models_inner(value, false)
+}
+pub(crate) fn read_action_models(value: &Value) -> Result<BTreeMap<String, u64>> {
+    read_models_inner(value, true)
+}
+fn read_models_inner(value: &Value, allow_empty: bool) -> Result<BTreeMap<String, u64>> {
     let object = value
         .as_object()
         .ok_or_else(|| invalid("models must declare a version per model"))?;
-    if object.is_empty() {
+    if object.is_empty() && !allow_empty {
         return Err(invalid("models must declare at least one model"));
     }
     object

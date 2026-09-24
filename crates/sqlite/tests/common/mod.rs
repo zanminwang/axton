@@ -83,6 +83,7 @@ pub fn receipt(
         client_id: c.client_id().to_string(),
         batch_sequence: sequence,
         rejections: vec![],
+        completions: vec![],
         records,
     }
 }

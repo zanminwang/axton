@@ -65,6 +65,12 @@ fn cli_action_history_versions_outputs_and_refuses_edits_atomically() {
     assert_eq!(backend["actions"][1]["outputs"][0]["type"]["name"], "int");
     assert_eq!(backend["actions"][0]["outputs"][1]["modelReadVersion"], 1);
     assert_eq!(backend["actions"][1]["outputs"][1]["modelReadVersion"], 2);
+    let client: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("schema.json")).unwrap()).unwrap();
+    assert_eq!(client["actions"].as_array().unwrap().len(), 2);
+    assert_eq!(client["resultModels"].as_array().unwrap().len(), 2);
+    assert_eq!(client["actions"][0]["outputs"][1]["modelReadVersion"], 1);
+    assert_eq!(client["resultModels"][0]["version"], 1);
     let retained = fs::read(&actions).unwrap();
     let generated = fs::read(out.join("backend.json")).unwrap();
     assert!(
@@ -74,6 +80,29 @@ fn cli_action_history_versions_outputs_and_refuses_edits_atomically() {
     );
     assert_eq!(fs::read(&actions).unwrap(), retained);
     assert_eq!(fs::read(out.join("backend.json")).unwrap(), generated);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_compiles_ordinary_only_action_without_dummy_model() {
+    let (root, input) = workspace("ordinary-action");
+    let out = root.join("out");
+    fs::write(
+        input.join("test.model"),
+        "action Send(to String) { messageId String }",
+    )
+    .unwrap();
+    let run = axton(&[input.as_os_str(), out.as_os_str()]);
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let client: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("schema.json")).unwrap()).unwrap();
+    assert_eq!(client["models"], serde_json::json!([]));
+    assert_eq!(client["actions"][0]["name"], "Send");
+    assert!(axton_core::Schema::from_value(client).is_ok());
     fs::remove_dir_all(root).unwrap();
 }
 

@@ -1,0 +1,29 @@
+{
+  "schema": {
+    "enums": [],
+    "models": [{"name":"Todo","version":2,"identity":["id"],"fields":[{"name":"id","type":{"kind":"scalar","name":"uuid"},"nullable":false},{"name":"title","type":{"kind":"scalar","name":"string"},"nullable":false},{"name":"done","type":{"kind":"scalar","name":"boolean"},"nullable":false}]}],
+    "resultModels": [{"name":"Todo","version":1,"identity":["id"],"fields":[{"name":"id","type":{"kind":"scalar","name":"uuid"},"nullable":false},{"name":"title","type":{"kind":"scalar","name":"string"},"nullable":false}],"enums":[]}],
+    "actions": [{"name":"Find","version":1,"inputs":[{"kind":"value","name":"query","type":{"kind":"scalar","name":"string"},"nullable":false,"list":false,"required":true,"cardinality":"single"}],"outputs":[{"name":"todo","kind":"model","model":"Todo","modelReadVersion":1,"cardinality":"single","source":"handlerIdentity","handlerType":{"kind":"identity","model":"Todo","fields":[{"name":"id","type":{"kind":"scalar","name":"uuid"}}]}}]}]
+  },
+  "calls": [
+    {"callId":"01890f47-1234-7123-8123-123456789abc","name":"Find","version":1,"args":{"query":"first"}},
+    {"callId":"01890f47-1234-7123-8123-123456789abd","name":"Find","version":1,"args":{"query":"second"}}
+  ],
+  "request": {"clientId":"device-1","batchSequence":4,"models":{"Todo":2},"mutations":[
+    {"ordinal":7,"callId":"01890f47-1234-7123-8123-123456789abc","name":"Find","version":1,"args":{"query":"first"}},
+    {"ordinal":8,"callId":"01890f47-1234-7123-8123-123456789abd","name":"Find","version":1,"args":{"query":"second"}}
+  ]},
+  "receipt": {
+    "clientId":"device-1","batchSequence":4,"rejections":[],
+    "completions":[
+      {"callId":"01890f47-1234-7123-8123-123456789abc","outcome":{"status":"succeeded","result":{"todo":{"id":"01890f47-1234-7123-8123-123456789abc","title":"A"}}}},
+      {"callId":"01890f47-1234-7123-8123-123456789abd","outcome":{"status":"succeeded","result":{"todo":{"id":"01890f47-1234-7123-8123-123456789abc","title":"B"}}}}
+    ],
+    "records":[{"model":"Todo","identity":{"id":"01890f47-1234-7123-8123-123456789abc"},"stamp":2,"state":{"title":"B","done":false}}]
+  },
+  "invalidReceipts": [
+    {"clientId":"device-1","batchSequence":4,"rejections":[],"completions":[{"callId":"01890f47-1234-7123-8123-123456789abc","outcome":{"status":"succeeded","result":{"todo":{"id":"01890f47-1234-7123-8123-123456789abc","title":"A"}}}}],"records":[]},
+    {"clientId":"device-1","batchSequence":4,"rejections":[],"completions":[{"callId":"01890f47-1234-7123-8123-123456789abc","outcome":{"status":"succeeded","result":{"todo":{"id":"01890f47-1234-7123-8123-123456789abc","title":"A"}}}},{"callId":"01890f47-1234-7123-8123-123456789abc","outcome":{"status":"succeeded","result":{"todo":{"id":"01890f47-1234-7123-8123-123456789abc","title":"B"}}}}],"records":[]},
+    {"clientId":"device-1","batchSequence":4,"rejections":[],"completions":[{"callId":"01890f47-1234-7123-8123-123456789abc","outcome":{"status":"succeeded","result":{"todo":{"id":"01890f47-1234-7123-8123-123456789abc","title":"A"}}}},{"callId":"01890f47-1234-7123-8123-123456789abe","outcome":{"status":"succeeded","result":{"todo":{"id":"01890f47-1234-7123-8123-123456789abc","title":"B"}}}}],"records":[]}
+  ]
+}

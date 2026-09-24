@@ -1,7 +1,10 @@
 //! Durable Action submission. The intent is persisted independently of its
 //! inferred optimistic Model operations.
-use crate::{Client, ClientStore, Mutation, Operation, OperationKind};
-use axton_core::{ActionInputDescriptor, Result, invalid, normalize_action_args};
+use crate::{ApplyReport, Client, ClientStore, Mutation, Operation, OperationKind};
+use axton_core::{
+    ActionInputDescriptor, ActionIntent, DirectActionRequest, DirectActionResponse, Result,
+    invalid, normalize_action_args,
+};
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -11,6 +14,54 @@ pub struct SubmittedCall {
 }
 
 impl<S: ClientStore> Client<S> {
+    /// Prepare a direct invocation without touching local persistence.
+    pub fn prepare_action(
+        &self,
+        name: &str,
+        version: u64,
+        args: Value,
+    ) -> Result<DirectActionRequest> {
+        let action = self.schema.action(name, version)?;
+        let args = normalize_action_args(&self.schema, action, &args)?;
+        validate_bindings(&self.schema, action, &args)?;
+        Ok(DirectActionRequest {
+            call: ActionIntent {
+                call_id: uuid::Uuid::new_v4().to_string(),
+                name: name.into(),
+                version,
+                args,
+            },
+            models: self.declared_models(),
+        })
+    }
+
+    /// Apply authoritative direct results in one short local transaction.
+    /// The transient completion is exposed only after that transaction commits.
+    pub fn apply_action_response(
+        &mut self,
+        request: &DirectActionRequest,
+        bytes: &[u8],
+    ) -> Result<ApplyReport> {
+        let response = DirectActionResponse::decode(bytes, request, &self.schema)?;
+        if response.records.is_empty() {
+            let mut report = ApplyReport::default();
+            report.completions.push(response.completion);
+            return Ok(report);
+        }
+        self.write(|engine| {
+            let mut report = engine.apply_records(&response.records)?;
+            report.completions.push(response.completion);
+            Ok(report)
+        })
+    }
+    pub fn apply_action_response_bytes(
+        &mut self,
+        request: &[u8],
+        response: &[u8],
+    ) -> Result<ApplyReport> {
+        let request = DirectActionRequest::decode(request, &self.schema)?;
+        self.apply_action_response(&request, response)
+    }
     pub fn submit_action(
         &mut self,
         name: &str,

@@ -348,6 +348,11 @@ impl PushReceipt {
     pub fn decode_legacy(bytes: &[u8]) -> Result<Self> {
         Self::decode(bytes)
     }
+    /// Structural Action receipt ingress. Client::acknowledge validates it
+    /// against the persisted frozen request and result read contracts.
+    pub fn decode_action_envelope(bytes: &[u8]) -> Result<Self> {
+        Self::decode_inner(serde_json::from_slice(bytes)?)
+    }
     /// Legacy mutation-only receipt decoder. Action completions require the
     /// frozen request and therefore cannot pass through this path.
     pub fn decode(bytes: &[u8]) -> Result<Self> {

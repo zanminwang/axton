@@ -2,7 +2,7 @@ import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { createBackend } from '../../../packages/server/index.mts';
+import { createBackend, devAuth } from '../../../packages/server/index.mts';
 import { isRetryableTransactionError } from '../../../packages/server/retryable.mts';
 import { prisma, pg, drizzle } from '../../../packages/postgres/index.mts';
 import { Pool } from 'pg';
@@ -46,6 +46,79 @@ before(async () => {
   await db.$executeRawUnsafe('INSERT INTO action_counter(id,n) VALUES(1,0)');
 });
 after(() => db.$disconnect());
+
+test("direct HTTP Action authenticates, commits, and replays the same call ID across UUID casing", async () => {
+  const app = createBackend({
+    config,
+    native,
+    database: prisma(db),
+    authenticate: devAuth(),
+    handlers: { add: handler },
+    loaders: { todo: loader },
+  });
+  const listening = await app.listen({ port: 0 });
+  const callId = "01890f47-1234-7123-8123-123456789aee";
+  const body = JSON.stringify({
+    call: {
+      callId: callId.toUpperCase(),
+      name: "Add",
+      version: 1,
+      args: { todo: { id: "direct-http", title: "D" } },
+    },
+    models: { Todo: 1 },
+  });
+  try {
+    const denied = await fetch(`${listening.url}/sync/actions`, {
+      method: "POST",
+      body,
+    });
+    assert.equal(denied.status, 401);
+    const send = (request) =>
+      fetch(`${listening.url}/sync/actions`, {
+        method: "POST",
+        headers: { authorization: "Bearer alice" },
+        body: request,
+      });
+    const first = await send(body);
+    assert.equal(first.status, 200);
+    const result = await first.json();
+    assert.equal(result.completion.callId, callId);
+    assert.equal(result.completion.outcome.status, "succeeded");
+    assert.equal(result.records[0].state.title, "D");
+    const priorHandlers = handlers;
+    const replay = await send(
+      JSON.stringify({
+        call: {
+          callId,
+          name: "Add",
+          version: 1,
+          args: { todo: { id: "direct-http", title: "D" } },
+        },
+        models: { Todo: 1 },
+      }),
+    );
+    assert.equal(replay.status, 200);
+    assert.deepEqual(await replay.json(), result);
+    assert.equal(handlers, priorHandlers);
+    const durable = JSON.parse(await app.push('alice', request('direct-replay-batch', callId.toUpperCase(), 'direct-http', 'D')));
+    assert.equal(durable.completions[0].callId, callId);
+    assert.equal(handlers, priorHandlers, 'durable replay shares the canonical direct claim');
+    const invalid = await send(JSON.stringify({ call: { callId: '01890f47-1234-7123-8123-123456789aef', name: 'Add', version: 1, args: { todo: { id: 'missing-title' } } }, models: { Todo: 1 } }));
+    assert.equal(invalid.status, 200, 'semantic validation is a per-call outcome');
+    assert.equal((await invalid.json()).completion.outcome.code, 'action.invalid');
+    assert.equal(
+      (
+        await db.$queryRawUnsafe(
+          "SELECT call_id FROM axton_call WHERE call_id=$1",
+          callId,
+        )
+      ).length,
+      1,
+    );
+  } finally {
+    await listening.close();
+  }
+});
 
 test('committed Action replays its original result after losing the response', async () => {
   const app = backend(prisma(db));

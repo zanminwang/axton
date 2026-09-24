@@ -33,9 +33,11 @@ class ServerSession {
     final token = await _token();
     if (epoch != _pushEpoch) throw StateError('connection_paused_or_closed');
     final http = HttpClient();
-    _requests.add(http);
+    if (kind != 'action') _requests.add(http);
     try {
-      final request = await http.postUrl(_endpoint('mutations', false));
+      final request = await http.postUrl(
+        _endpoint(kind == 'action' ? 'actions' : 'mutations', false),
+      );
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
       request.headers.contentType = ContentType.json;
       request.write(body);

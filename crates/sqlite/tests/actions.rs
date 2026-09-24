@@ -15,6 +15,46 @@ fn open(path: &std::path::Path, schema: Schema) -> Client<SqliteStore> {
 }
 
 #[test]
+fn direct_action_has_no_optimism_and_commits_authority_before_completion() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"), model_schema());
+    let prepared = client
+        .prepare_action(
+            "Rename",
+            1,
+            json!({"todo":{"id":"direct","title":"server"}}),
+        )
+        .unwrap();
+    assert_eq!(client.pending_count().unwrap(), 0);
+    assert_eq!(
+        client
+            .read(&RecordKey {
+                model: "Todo".into(),
+                identity: json!({"id":"direct"})
+            })
+            .unwrap(),
+        None
+    );
+    let response = json!({"completion":{"callId":prepared.call.call_id,"outcome":{"status":"succeeded","result":null}},"records":[{"model":"Todo","identity":{"id":"direct"},"stamp":1,"state":{"title":"server"}}]});
+    let report = client
+        .apply_action_response(&prepared, response.to_string().as_bytes())
+        .unwrap();
+    assert_eq!(report.completions[0].call_id, prepared.call.call_id);
+    assert_eq!(
+        client
+            .read(&RecordKey {
+                model: "Todo".into(),
+                identity: json!({"id":"direct"})
+            })
+            .unwrap()
+            .unwrap()["title"],
+        "server"
+    );
+    assert_eq!(client.pending_count().unwrap(), 0);
+    assert!(client.subscriptions().unwrap().is_empty());
+}
+
+#[test]
 fn model_free_action_persists_canonical_intent_and_freezes_after_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");

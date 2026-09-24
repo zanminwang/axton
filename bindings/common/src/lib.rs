@@ -162,6 +162,14 @@ impl RuntimeHost {
                 };
                 json!(ordinal)
             }
+            "submitAction" => {
+                let name = text(&request, "name")?;
+                let version = read_counter(&request["version"], true)?;
+                let submitted = e
+                    .client
+                    .submit_action(name, version, request["args"].clone())?;
+                json!({"callId":submitted.call_id,"ordinal":submitted.ordinal})
+            }
             "direct" => {
                 let operation: Operation = serde_json::from_value(request["operation"].clone())?;
                 if e.client.session_active() {
@@ -235,10 +243,29 @@ impl RuntimeHost {
                         }
                         None => Value::Null,
                     },
-                    "ack" => {
-                        let receipt = PushReceipt::decode(
-                            serde_json::to_string(&request["receipt"])?.as_bytes(),
+                    "prepareAction" => {
+                        let prepared = e.client.prepare_action(
+                            text(&request, "name")?,
+                            read_counter(&request["version"], true)?,
+                            request["args"].clone(),
                         )?;
+                        json!({"callId":prepared.call.call_id,"body":String::from_utf8(prepared.encode()?).map_err(|_|invalid("utf8"))?})
+                    }
+                    "applyActionResponse" => {
+                        let body = text(&request, "body")?;
+                        let response = serde_json::to_vec(&request["response"])?;
+                        serde_json::to_value(
+                            e.client
+                                .apply_action_response_bytes(body.as_bytes(), &response)?,
+                        )?
+                    }
+                    "ack" => {
+                        let bytes = serde_json::to_vec(&request["receipt"])?;
+                        let receipt = if request["receipt"].get("completions").is_some() {
+                            PushReceipt::decode_action_envelope(&bytes)?
+                        } else {
+                            PushReceipt::decode(&bytes)?
+                        };
                         serde_json::to_value(
                             e.client
                                 .acknowledge(read_counter(&request["sequence"], true)?, receipt)?,

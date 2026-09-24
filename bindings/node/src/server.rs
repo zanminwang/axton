@@ -68,6 +68,15 @@ pub async fn process_push(
     }
 }
 #[napi]
+pub async fn process_action(
+    config_json: String,
+    owner: String,
+    request_json: String,
+    callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
+) -> Result<String> {
+    axton_server::process_action(&config(&config_json)?, &owner, request_json.as_bytes(), &CallbackHost(callback)).await.map_err(reason)
+}
+#[napi]
 pub async fn process_pull(
     config_json: String,
     owner: String,

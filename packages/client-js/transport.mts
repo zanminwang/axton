@@ -1,5 +1,5 @@
 import type { Transport } from "./connection.mts";
-/** Transport for a backend started with `listen`. Push goes to `/sync/mutations`, pull to `/sync/pull`. Errors carry `status` so `refreshAuth` can react to 401. */
+/** Transport for a backend started with `listen`. Errors carry `status` so `refreshAuth` can react to 401. */
 export function httpTransport(options: {
   url: string;
   token: string | (() => string | Promise<string>);
@@ -12,7 +12,7 @@ export function httpTransport(options: {
         : options.token;
     if (signal?.aborted) throw Error("connection_closed");
     const response = await fetch(
-      `${base}/sync/${kind === "push" ? "mutations" : "pull"}`,
+      `${base}/sync/${kind === "push" ? "mutations" : kind === "action" ? "actions" : "pull"}`,
       {
         method: "POST",
         headers: {

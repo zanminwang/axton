@@ -15,6 +15,12 @@ export type Native = {
     request: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
+  processAction(
+    config: string,
+    owner: string,
+    request: string,
+    callback: (request: string) => Promise<string>,
+  ): Promise<string>;
   processPull(
     config: string,
     owner: string,
@@ -138,6 +144,7 @@ function engineError(error: unknown): unknown {
 function typedNative(native: Native): Native {
   type Async =
     | "processPush"
+    | "processAction"
     | "processPull"
     | "settleExternal"
     | "negotiateLive"
@@ -165,6 +172,7 @@ function typedNative(native: Native): Native {
   return {
     validateConfig: wrapSync("validateConfig"),
     processPush: wrap("processPush"),
+    processAction: wrap("processAction"),
     processPull: wrap("processPull"),
     settleExternal: wrap("settleExternal"),
     negotiateLive: wrap("negotiateLive"),
@@ -929,6 +937,10 @@ export function createBackend<T>(options: BackendOptions<T>) {
       run((tx, session) =>
         native.processPush(config, owner, text(request), host(tx, session)),
       ).then(reportInvalidReceipt),
+    action: (owner: string, request: Uint8Array | string) =>
+      run((tx, session) =>
+        native.processAction(config, owner, text(request), host(tx, session)),
+      ),
     pull: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
         native.processPull(config, owner, text(request), host(tx, session)),
@@ -1032,6 +1044,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
 interface HttpBackend {
   push(owner: string, request: Uint8Array | string): Promise<string>;
   pull(owner: string, request: Uint8Array | string): Promise<string>;
+  action(owner: string, request: Uint8Array | string): Promise<string>;
 }
 function createHttpHandler(options: {
   backend: HttpBackend;
@@ -1048,7 +1061,11 @@ function createHttpHandler(options: {
       response.end(typeof value === "string" ? value : JSON.stringify(value));
     };
     const path = request.url?.split("?")[0];
-    if (path !== "/sync/mutations" && path !== "/sync/pull") {
+    if (
+      path !== "/sync/mutations" &&
+      path !== "/sync/pull" &&
+      path !== "/sync/actions"
+    ) {
       send(404, { code: "not_found" });
       return;
     }
@@ -1090,7 +1107,9 @@ function createHttpHandler(options: {
       }
       const result = await (path === "/sync/mutations"
         ? options.backend.push(owner, bytes)
-        : options.backend.pull(owner, bytes));
+        : path === "/sync/actions"
+          ? options.backend.action(owner, bytes)
+          : options.backend.pull(owner, bytes));
       send(200, result);
     } catch (error) {
       const status =

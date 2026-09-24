@@ -75,11 +75,16 @@ class Client implements ReadPort, MutatePort {
   Future<void>? _tasks;
   bool _closed = false;
   RuntimeConnection? _connection;
+  void Function(Object)? _directOnError;
   bool _connecting = false;
   Completer<void>? _started;
   Future<void>? _closing;
   final _work = StreamController<void>.broadcast();
   final _changes = StreamController<void>.broadcast();
+  final _completions = StreamController<Map<String, dynamic>>.broadcast(
+    sync: true,
+  );
+  Stream<Map<String, dynamic>> get actionCompletions => _completions.stream;
   final Object _txZoneKey = Object();
   Object? _activeTxToken;
   Client._(this._worker, this._isolate, this._handle, this.clientId);
@@ -276,6 +281,88 @@ class Client implements ReadPort, MutatePort {
           Error.throwWithStackTrace(error, stack);
         }
       });
+
+  /// Internal Action seam: callback runs after local commit and before work wake.
+  Future<Map<String, dynamic>> submitAction(
+    String name,
+    int version,
+    Map<String, dynamic> args, {
+    void Function(String callId, int ordinal)? onCommitted,
+  }) {
+    if (_activeTxToken != null &&
+        identical(Zone.current[_txZoneKey], _activeTxToken))
+      return Future.error(StateError('transaction_active'));
+    return _exclusive(() async {
+      final submitted =
+          (await _send({
+                'op': 'submitAction',
+                'name': name,
+                'version': version,
+                'args': args,
+              }))
+              as Map<String, dynamic>;
+      onCommitted?.call(
+        submitted['callId'] as String,
+        submitted['ordinal'] as int,
+      );
+      _work.add(null);
+      return submitted;
+    });
+  }
+
+  Future<Map<String, dynamic>> callAction(
+    String name,
+    int version,
+    Map<String, dynamic> args,
+  ) async {
+    if (_activeTxToken != null &&
+        identical(Zone.current[_txZoneKey], _activeTxToken))
+      throw StateError('transaction_active');
+    final connection = _connection;
+    if (connection == null)
+      throw ActionTransportException('action.unavailable');
+    final prepared =
+        (await _exclusive(
+              () async => await _send({
+                'op': 'prepareAction',
+                'name': name,
+                'version': version,
+                'args': args,
+              }),
+            ))
+            as Map<String, dynamic>;
+    final response = await connection.requestAction(prepared['body'] as String);
+    if (!identical(_connection, connection))
+      throw ActionTransportException('action.execution_unknown');
+    late final Map<String, dynamic> applied;
+    try {
+      applied =
+          (await _exclusive(() async {
+                if (!identical(_connection, connection))
+                  throw ActionTransportException('action.execution_unknown');
+                return await _send({
+                  'op': 'applyActionResponse',
+                  'body': prepared['body'],
+                  'response': jsonDecode(response),
+                });
+              }))
+              as Map<String, dynamic>;
+    } on ActionTransportException {
+      rethrow;
+    } catch (error) {
+      throw ActionTransportException('action.execution_unknown', error);
+    }
+    for (final completion in applied['completions'] as List<dynamic>) {
+      _completions.add(completion as Map<String, dynamic>);
+    }
+    for (final report in applied['reports'] as List<dynamic>) {
+      _directOnError?.call(
+        AxtonReport.fromJson(report as Map<String, dynamic>),
+      );
+    }
+    return applied;
+  }
+
   Future<void> subscribe(String channel) => _setChannel(channel, true);
   Future<void> unsubscribe(String channel) => _setChannel(channel, false);
 
@@ -303,6 +390,7 @@ class Client implements ReadPort, MutatePort {
     SyncServer server, {
     void Function(Object)? onError,
     Future<void> Function()? refreshAuth,
+    Duration directTimeout = const Duration(seconds: 30),
   }) async {
     final live = ServerSession(server);
     final transport = live.push;
@@ -331,6 +419,7 @@ class Client implements ReadPort, MutatePort {
         transport: transport,
         onError: onError,
         refreshAuth: refreshAuth == null ? null : refresh,
+        directTimeout: directTimeout,
       );
       final streaming = await LiveLane.start(
         command: (event) => _exclusive(
@@ -369,6 +458,7 @@ class Client implements ReadPort, MutatePort {
         );
       });
       _connection = connection;
+      _directOnError = onError;
       unawaited(
         connection.closed.then((_) async {
           await subscription.cancel();
@@ -376,6 +466,7 @@ class Client implements ReadPort, MutatePort {
           if (identical(_connection, connection)) {
             _connection = null;
             _live = null;
+            _directOnError = null;
           }
         }),
       );
@@ -406,12 +497,18 @@ class Client implements ReadPort, MutatePort {
         action['kind'] as String,
         action['body'] as String,
       );
-      final reports = await _exclusive(
-        () => _send({'op': 'complete', 'response': jsonDecode(response)}),
-      );
+      final applied =
+          await _exclusive(
+                () =>
+                    _send({'op': 'complete', 'response': jsonDecode(response)}),
+              )
+              as Map<String, dynamic>;
+      for (final completion in applied['completions'] as List<dynamic>) {
+        _completions.add(completion as Map<String, dynamic>);
+      }
       // What the receipt or page could not apply; the client stays consistent
       // and the application hears about each one.
-      for (final report in reports as List<dynamic>) {
+      for (final report in applied['reports'] as List<dynamic>) {
         onError?.call(AxtonReport.fromJson(report as Map<String, dynamic>));
       }
     }
@@ -456,7 +553,16 @@ class Client implements ReadPort, MutatePort {
       _exclusive(() async => await _send({'op': 'freeze'}) as String?);
   Future<void> acknowledge(int sequence, Map<String, dynamic> receipt) =>
       _exclusive(() async {
-        await _send({'op': 'ack', 'sequence': sequence, 'receipt': receipt});
+        final applied =
+            (await _send({
+                  'op': 'ack',
+                  'sequence': sequence,
+                  'receipt': receipt,
+                }))
+                as Map<String, dynamic>;
+        for (final completion in applied['completions'] as List<dynamic>) {
+          _completions.add(completion as Map<String, dynamic>);
+        }
       });
   Future<Map<String, dynamic>> applyPull(Map<String, dynamic> page) =>
       _exclusive(
@@ -553,6 +659,7 @@ class Client implements ReadPort, MutatePort {
         _worker.send(null);
         _isolate.kill();
         await _changes.close();
+        await _completions.close();
         await _work.close();
         await _channels.close();
       }

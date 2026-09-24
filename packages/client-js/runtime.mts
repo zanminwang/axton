@@ -1,8 +1,10 @@
 import {
   AxtonReport,
+  directFailure,
   startConnection,
   startLiveLane,
   type Connection,
+  type DirectConnection,
   type ConnectionOptions,
   type LiveLane,
   type ReportDetails,
@@ -79,6 +81,9 @@ export function createClient<
     #syncing: Promise<void> | undefined;
     #tasks: Promise<void> | undefined;
     #connection: Connection | undefined;
+    #direct: DirectConnection | undefined;
+    #directOnError: ((error: unknown) => void) | undefined;
+    #completionListeners = new Set<(completion: any) => void>();
     #connecting = false;
     #started: Promise<void> | undefined;
     #closing: Promise<void> | undefined;
@@ -188,6 +193,76 @@ export function createClient<
       if (this.#activePublicTx?.inCallback())
         return Promise.reject(Error("transaction_active"));
       return this.#submitMutation(mutation);
+    }
+    /** Internal Action seam: register after local commit, synchronously before waking work. */
+    submitAction(
+      name: string,
+      version: number,
+      args: object,
+      onCommitted?: (callId: string, ordinal: number) => void,
+    ): Promise<{ callId: string; ordinal: number }> {
+      if (this.#activePublicTx?.inCallback())
+        return Promise.reject(Error("transaction_active"));
+      return this.#exclusive(async () => {
+        const submitted = (await this.#send({
+          op: "submitAction",
+          name,
+          version,
+          args,
+        })) as { callId: string; ordinal: number };
+        onCommitted?.(submitted.callId, submitted.ordinal);
+        this.#events.emit("work");
+        return submitted;
+      });
+    }
+    onActionCompletion(listener: (completion: any) => void): () => void {
+      this.#completionListeners.add(listener);
+      return () => this.#completionListeners.delete(listener);
+    }
+    /** Direct network work never occupies the local exclusive queue. */
+    async callAction(name: string, version: number, args: object) {
+      if (this.#activePublicTx?.inCallback()) throw Error("transaction_active");
+      const direct = this.#direct;
+      if (!direct) throw directFailure("action.unavailable");
+      const prepared = (await this.#exclusive(() =>
+        this.#send({ op: "prepareAction", name, version, args }),
+      )) as { callId: string; body: string };
+      let response: string;
+      try {
+        response = await direct.requestAction(prepared.body);
+      } catch (error) {
+        if ((error as { code?: string })?.code) throw error;
+        throw Object.assign(Error("action.execution_unknown"), {
+          code: "action.execution_unknown",
+          execution: "unknown" as const,
+          cause: error,
+        });
+      }
+      if (this.#direct !== direct)
+        throw directFailure("action.execution_unknown");
+      let applied: { completions: any[]; reports: ReportDetails[] };
+      try {
+        applied = await this.#exclusive(() => {
+          if (this.#direct !== direct)
+            throw directFailure("action.execution_unknown");
+          return this.#send({
+            op: "applyActionResponse",
+            body: prepared.body,
+            response: JSON.parse(response),
+          });
+        });
+      } catch (error) {
+        if ((error as { code?: string })?.code) throw error;
+        throw Object.assign(directFailure("action.execution_unknown"), {
+          cause: error,
+        });
+      }
+      for (const completion of applied.completions)
+        for (const listener of [...this.#completionListeners])
+          listener(completion);
+      for (const report of applied.reports)
+        this.#directOnError?.(new AxtonReport(report));
+      return applied;
     }
     #submitMutation(mutation: object): Promise<number> {
       return this.#exclusive(async () => {
@@ -324,6 +399,8 @@ export function createClient<
             await Promise.all([streaming.wake(), connection.wake()]);
           },
           close: async () => {
+            this.#direct = undefined;
+            this.#directOnError = undefined;
             this.#events.off("work", wake);
             this.#events.off("channels", channels);
             await Promise.all([streaming.close(), connection.close()]);
@@ -334,6 +411,8 @@ export function createClient<
           },
         };
         this.#connection = result;
+        this.#direct = connection;
+        this.#directOnError = options.onError;
         return result;
       } finally {
         this.#connecting = false;
@@ -355,12 +434,16 @@ export function createClient<
           );
           if (action === null) return;
           const response = await transport(action.kind, action.body);
-          const reports = (await this.#exclusive(() =>
+          const applied = (await this.#exclusive(() =>
             this.#send({ op: "complete", response: JSON.parse(response) }),
-          )) as ReportDetails[];
+          )) as { reports: ReportDetails[]; completions: any[] };
+          for (const completion of applied.completions)
+            for (const listener of [...this.#completionListeners])
+              listener(completion);
           // What the receipt or page could not apply; the client stays
           // consistent and the application hears about each one.
-          for (const report of reports) onError?.(new AxtonReport(report));
+          for (const report of applied.reports)
+            onError?.(new AxtonReport(report));
         }
       };
       this.#syncing = run().finally(() => {
@@ -401,9 +484,13 @@ export function createClient<
       return this.#exclusive(() => this.#send({ op: "freeze" }));
     }
     acknowledge(sequence: number, receipt: object) {
-      return this.#exclusive(() =>
-        this.#send({ op: "ack", sequence, receipt }),
-      );
+      return this.#exclusive(async () => {
+        const applied = await this.#send({ op: "ack", sequence, receipt });
+        for (const completion of applied.completions)
+          for (const listener of [...this.#completionListeners])
+            listener(completion);
+        return applied;
+      });
     }
     applyPull(page: object) {
       return this.#exclusive(() => this.#send({ op: "pull", page }));

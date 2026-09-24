@@ -9,8 +9,9 @@ use crate::{
 };
 use axton_core::{
     ActionInputDescriptor, ActionIntent, ActionOutcome, ActionOutputSource, AuthorityRecord,
-    CallCompletion, ExecutionState, PushReceipt, PushRequest, RecordKey, Rejection, canonical_json,
-    materialize_action_model, normalize_action_args, validate_action_result,
+    CallCompletion, DirectActionRequest, DirectActionResponse, ExecutionState, PushReceipt,
+    PushRequest, RecordKey, Rejection, canonical_json, materialize_action_model,
+    normalize_action_args, normalize_call_id, validate_action_result,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -145,6 +146,28 @@ pub async fn execute_action(
         })
         .await?;
     Ok(response)
+}
+
+/// Execute a single direct invocation in the caller's application transaction.
+/// No durable client sequence is claimed; the host must commit before replying.
+pub async fn process_action(
+    config: &Config,
+    owner: &str,
+    bytes: &[u8],
+    host: &impl Host,
+) -> Result<String> {
+    principal(owner)?;
+    let request = DirectActionRequest::decode_envelope(bytes).map_err(request_invalid)?;
+    let response = execute_action(config, owner, &request.call, &request.models, 1, host).await?;
+    let response = DirectActionResponse {
+        completion: response.completion,
+        records: response
+            .records
+            .into_iter()
+            .map(|record| current_authority(config, &request.models, record))
+            .collect::<Result<Vec<_>>>()?,
+    };
+    String::from_utf8(response.encode().map_err(internal)?).map_err(internal)
 }
 
 async fn execute_fresh(
@@ -540,8 +563,9 @@ pub async fn process_action_push(
     let mut completions = vec![];
     let mut authority: BTreeMap<String, AuthorityRecord> = BTreeMap::new();
     for mutation in &request.mutations {
-        let call: ActionIntent =
+        let mut call: ActionIntent =
             serde_json::from_value(mutation.raw.clone()).map_err(request_invalid)?;
+        call.call_id = normalize_call_id(&call.call_id).map_err(request_invalid)?;
         let response = execute_action(
             config,
             owner,

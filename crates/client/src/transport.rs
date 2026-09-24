@@ -60,14 +60,27 @@ impl SyncCycle {
         &mut self,
         client: &mut Client<S>,
         bytes: &[u8],
-    ) -> Result<Vec<Report>> {
+    ) -> Result<ApplyReport> {
         let action = self
             .active
             .clone()
             .ok_or_else(|| invalid("no transport action"))?;
         let report = if action.kind == "push" {
-            let request = PushRequest::decode(action.body.as_bytes())?;
-            let report = client.acknowledge(request.batch_sequence, PushReceipt::decode(bytes)?)?;
+            let raw: serde_json::Value = serde_json::from_str(&action.body)?;
+            let action_batch = raw["mutations"]
+                .as_array()
+                .is_some_and(|calls| calls.iter().any(|call| call.get("callId").is_some()));
+            let request = if action_batch {
+                PushRequest::decode_action_envelope(action.body.as_bytes())?
+            } else {
+                PushRequest::decode(action.body.as_bytes())?
+            };
+            let receipt = if action_batch {
+                PushReceipt::decode_action_envelope(bytes)?
+            } else {
+                PushReceipt::decode(bytes)?
+            };
+            let report = client.acknowledge(request.batch_sequence, receipt)?;
             self.completed = false;
             report
         } else {
@@ -84,7 +97,7 @@ impl SyncCycle {
             report
         };
         self.active = None;
-        Ok(report.reports)
+        Ok(report)
     }
 }
 

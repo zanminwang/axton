@@ -32,7 +32,9 @@ pub struct DirectActionRequest {
     pub models: BTreeMap<String, u64>,
 }
 impl DirectActionRequest {
-    pub fn decode(bytes: &[u8], schema: &Schema) -> Result<Self> {
+    /// Structural server ingress. Semantic Action name/version/args failures
+    /// remain per-call outcomes after the call identity has been claimed.
+    pub fn decode_envelope(bytes: &[u8]) -> Result<Self> {
         if bytes.len() > crate::limits::PUSH_BYTES {
             return Err(invalid("direct Action request exceeds byte limit"));
         }
@@ -43,9 +45,24 @@ impl DirectActionRequest {
                 .cloned()
                 .ok_or_else(|| invalid("direct Action call missing"))?,
         )?;
-        let call = call.normalize(schema)?;
-        validate_action_models(schema, schema.action(&call.name, call.version)?, &models)?;
+        let call = ActionIntent {
+            call_id: normalize_call_id(&call.call_id)?,
+            ..call
+        };
+        if call.name.trim().is_empty() {
+            return Err(invalid("direct Action name missing"));
+        }
         Ok(Self { call, models })
+    }
+    pub fn decode(bytes: &[u8], schema: &Schema) -> Result<Self> {
+        let mut request = Self::decode_envelope(bytes)?;
+        request.call = request.call.normalize(schema)?;
+        validate_action_models(
+            schema,
+            schema.action(&request.call.name, request.call.version)?,
+            &request.models,
+        )?;
+        Ok(request)
     }
     pub fn encode(&self) -> Result<Vec<u8>> {
         Ok(canonical_json(&serde_json::to_value(self)?)?.into_bytes())

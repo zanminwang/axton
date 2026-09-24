@@ -7,6 +7,15 @@ typedef Transport = Future<String> Function(String kind, String body);
 typedef ConnectionControl =
     Future<dynamic> Function(String event, int now, int entropy);
 
+class ActionTransportException implements Exception {
+  final String code;
+  final String execution = 'unknown';
+  final Object? cause;
+  ActionTransportException(this.code, [this.cause]);
+  @override
+  String toString() => code;
+}
+
 /// The controls every lane offers; the push connection fans them out to the live lane.
 abstract class LaneControls {
   Future<void> pause();
@@ -29,6 +38,8 @@ class RuntimeConnection implements LaneControls {
   final Transport _transport;
   final void Function(Object)? onError;
   final Future<void> Function()? refreshAuth;
+  final Duration directTimeout;
+  final _directRequests = <Completer<String>>{};
   final _requests = <Completer<String>>{};
   final _closed = Completer<void>();
   Future<void>? _activeSync;
@@ -43,6 +54,7 @@ class RuntimeConnection implements LaneControls {
     this._transport,
     this.onError,
     this.refreshAuth,
+    this.directTimeout,
   );
   Future<void> get closed => _closed.future;
   static Future<RuntimeConnection> start({
@@ -51,13 +63,17 @@ class RuntimeConnection implements LaneControls {
     required Transport transport,
     void Function(Object)? onError,
     Future<void> Function()? refreshAuth,
+    Duration directTimeout = const Duration(seconds: 30),
   }) async {
+    if (directTimeout.inMicroseconds <= 0)
+      throw ArgumentError.value(directTimeout, 'directTimeout');
     final connection = RuntimeConnection._(
       control,
       sync,
       transport,
       onError,
       refreshAuth,
+      directTimeout,
     );
     await connection._command('start');
     unawaited(
@@ -102,6 +118,41 @@ class RuntimeConnection implements LaneControls {
     ]).whenComplete(() {
       _requests.remove(cancellation);
     });
+  }
+
+  /// One bounded direct attempt, including token acquisition and auth refresh.
+  Future<String> requestAction(String body) async {
+    if (_stopped) throw ActionTransportException('action.unavailable');
+    final cancelled = Completer<String>();
+    _directRequests.add(cancelled);
+    final timer = Timer(directTimeout, () {
+      if (!cancelled.isCompleted)
+        cancelled.completeError(
+          ActionTransportException('action.execution_unknown'),
+        );
+    });
+    Future<String> send() async {
+      try {
+        return await _transport('action', body);
+      } on AuthenticationExpired {
+        if (refreshAuth == null) rethrow;
+        await refreshAuth!();
+        if (_stopped || cancelled.isCompleted)
+          throw ActionTransportException('action.execution_unknown');
+        return _transport('action', body);
+      }
+    }
+
+    try {
+      return await Future.any([Future.sync(send), cancelled.future]);
+    } on ActionTransportException {
+      rethrow;
+    } catch (error) {
+      throw ActionTransportException('action.execution_unknown', error);
+    } finally {
+      timer.cancel();
+      _directRequests.remove(cancelled);
+    }
   }
 
   void _cancelRequests() {
@@ -177,6 +228,10 @@ class RuntimeConnection implements LaneControls {
   Future<void> close() async {
     if (_stopped) return;
     _stopped = true;
+    for (final request in _directRequests.toList()) {
+      if (!request.isCompleted)
+        request.completeError(ActionTransportException('action.unavailable'));
+    }
     _cancelRequests();
     _notify();
     _invalidateLive?.call();

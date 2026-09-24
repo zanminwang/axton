@@ -91,7 +91,10 @@ void main() {
               'completions': [
                 {
                   'callId': mutation['callId'],
-                  'outcome': {'status': 'succeeded', 'result': result},
+                  'outcome': {
+                    'status': 'succeeded',
+                    'result': mutation['name'] == 'Ping' ? null : result,
+                  },
                 },
               ],
             }),
@@ -143,6 +146,13 @@ void main() {
         expect(outcome, isA<ActionSuccess<EchoOutput>>());
         expect((outcome as ActionSuccess<EchoOutput>).result.result, at);
         expect(outcome.result.moods, [Mood.calm, Mood.loud]);
+        final ActionCall<void> pingCall = await client.actions.ping();
+        final sdk.ActionCall<void> sdkPingCall = pingCall;
+        final ActionOutcome<void> pingOutcome = await sdkPingCall
+            .wait()
+            .timeout(const Duration(seconds: 3));
+        expect(pingOutcome, isA<ActionSuccess<void>>());
+        expect(pingCall.status, ActionStatus.succeeded);
         final direct = await client.actions.call.echo(
           at: at,
           moods: [Mood.calm],
@@ -151,7 +161,7 @@ void main() {
         expect(direct.result, at);
         expect(direct.maybe, isNull);
         await client.actions.call.ping();
-        expect(pumps, 1);
+        expect(pumps, 2);
         expect(directs, 2);
         expect((await client.syncState())['pending'], 0);
       } finally {

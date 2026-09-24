@@ -622,6 +622,11 @@ fn rejects_model_and_enum_names_the_generated_client_uses() {
         "Rejection",
         "Mutate",
         "GeneratedClient",
+        "Actions",
+        "DirectCalls",
+        "ActionPort",
+        "ActionContext",
+        "ActionRejected",
         "Transaction",
     ] {
         let e = compile(&format!("model {name} {{ id UUID @@id(id) }}")).unwrap_err();
@@ -1163,6 +1168,26 @@ fn action_generated_identifiers_reject_current_collisions_with_positions() {
             "ActionBackendContract",
         ),
         (
+            "model Actions { id String @@id(id) } action Fetch()",
+            "Actions",
+        ),
+        (
+            "enum DirectCalls { open } model Todo { id String @@id(id) } action Fetch()",
+            "DirectCalls",
+        ),
+        (
+            "model ActionPort { id String @@id(id) } action Fetch()",
+            "ActionPort",
+        ),
+        (
+            "enum ActionContext { open } model Todo { id String @@id(id) } action Fetch()",
+            "ActionContext",
+        ),
+        (
+            "model ActionRejected { id String @@id(id) } action Fetch()",
+            "ActionRejected",
+        ),
+        (
             "model Todo { id String @@id(id) } model ActionTodoModel { id String @@id(id) } action Fetch()",
             "ActionTodoModel",
         ),
@@ -1174,7 +1199,9 @@ fn action_generated_identifiers_reject_current_collisions_with_positions() {
     for (source, name) in cases {
         let error = compile(source).unwrap_err();
         assert!(
-            error.contains(name) && error.contains("Action") && error.starts_with("1:"),
+            error.contains(name)
+                && (error.contains("Action") || error.contains("generated client"))
+                && error.starts_with("1:"),
             "{source}: {error}"
         );
     }

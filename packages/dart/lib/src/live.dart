@@ -33,11 +33,9 @@ class ServerSession {
     final token = await _token();
     if (epoch != _pushEpoch) throw StateError('connection_paused_or_closed');
     final http = HttpClient();
-    if (kind != 'action') _requests.add(http);
+    _requests.add(http);
     try {
-      final request = await http.postUrl(
-        _endpoint(kind == 'action' ? 'actions' : 'mutations', false),
-      );
+      final request = await http.postUrl(_endpoint('mutations', false));
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
       request.headers.contentType = ContentType.json;
       request.write(body);
@@ -50,6 +48,49 @@ class ServerSession {
     } finally {
       _requests.remove(http);
       http.close(force: true);
+    }
+  }
+
+  /// A direct Action owns its HTTP client. Its cancellation is independent of
+  /// push pause and closes the socket even while the response is stalled.
+  Future<String> action(String body, Future<void> cancellation) async {
+    var cancelled = false;
+    HttpClient? http;
+    final stopped = Completer<String>();
+    unawaited(
+      cancellation.then((_) {
+        cancelled = true;
+        http?.close(force: true);
+        if (!stopped.isCompleted)
+          stopped.completeError(StateError('action.execution_unknown'));
+      }),
+    );
+    final sending = Future<String>(() async {
+      final token = await _token();
+      if (cancelled) throw StateError('action.execution_unknown');
+      final client = HttpClient();
+      http = client;
+      try {
+        final request = await client.postUrl(_endpoint('actions', false));
+        if (cancelled) throw StateError('action.execution_unknown');
+        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+        request.headers.contentType = ContentType.json;
+        request.write(body);
+        final response = await request.close();
+        final result = await utf8.decoder.bind(response).join();
+        if (response.statusCode == 401) throw const AuthenticationExpired();
+        if (response.statusCode < 200 || response.statusCode >= 300)
+          throw HttpException('action failed: ${response.statusCode} $result');
+        return result;
+      } finally {
+        client.close(force: true);
+      }
+    });
+    try {
+      return await Future.any([sending, stopped.future]);
+    } finally {
+      http = null;
+      if (!stopped.isCompleted) stopped.complete('');
     }
   }
 

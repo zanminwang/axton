@@ -19,6 +19,12 @@ test("direct attempt is bounded even when transport ignores abort", async () => 
     await connection.close();
   }
 });
+test("direct timeout rejects values outside the JavaScript timer range", async () => {
+  await assert.rejects(
+    startConnection(async () => ({ type: "idle" }), async () => {}, async () => "ok", { directTimeoutMs: 2_147_483_648 }),
+    /directTimeoutMs/,
+  );
+});
 test("direct request completes while durable delivery is blocked", async () => {
   let entered;
   const blocked = new Promise(resolve => { entered = resolve; });
@@ -93,6 +99,42 @@ test("raw direct Action fails immediately without an active connection", async (
     await client.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+test("raw Action discard and rebuild deliver terminal call identities", async () => {
+  const { Client } = await import("../../../packages/client-js/index.mts");
+  const { mkdtemp, rm, readFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const directory = await mkdtemp(join(tmpdir(), "axton-action-discard-"));
+  const schema = JSON.parse(await readFile(new URL("../../../fixtures/schemas/entry.json", import.meta.url), "utf8"));
+  schema.actions = [{ name: "Ping", version: 1, inputs: [], outputs: [] }];
+  const breaking = structuredClone(schema);
+  breaking.models[0].fields.push({ name: "due", nullable: false, type: { kind: "scalar", name: "string" } });
+  try {
+    for (const frozen of [false, true]) {
+      const path = join(directory, frozen ? "frozen" : "unsent");
+      const original = await Client.open({ path, schema });
+      const delivered = [];
+      original.onActionCompletion(value => delivered.push(value));
+      const dropped = await original.submitAction("Ping", 1, {});
+      await original.drop(dropped.ordinal);
+      assert.equal(delivered[0].callId, dropped.callId);
+      assert.equal(delivered[0].outcome.code, "dropped");
+      const pending = await original.submitAction("Ping", 1, {});
+      if (frozen) await original.freeze();
+      await original.close();
+      const reopened = await Client.open({ path, schema: breaking });
+      const abandoned = [];
+      reopened.onActionCompletion(value => abandoned.push(value));
+      try {
+        const report = await reopened.rebuild({ discardPending: true });
+        assert.deepEqual(report.abandonedCalls, [{ callId: pending.callId, frozen }]);
+        assert.equal(abandoned[0].callId, pending.callId);
+        assert.equal(abandoned[0].outcome.code, "abandoned");
+        assert.equal(abandoned[0].outcome.execution, frozen ? "unknown" : "rejected");
+      } finally { await reopened.close(); }
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 test("a waiting direct network response leaves local reads free and cannot apply after close", async () => {
   const { createClient } = await import("../../../packages/client-js/runtime.mts");

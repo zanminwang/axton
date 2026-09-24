@@ -6,7 +6,7 @@ export type Transport = (
 export type ConnectionOptions = {
   onError?: (error: unknown) => void;
   refreshAuth?: () => Promise<void>;
-  /** Maximum duration of one direct Action attempt, including token acquisition and authentication refresh. Default 30000 ms. */
+  /** Maximum duration of one direct Action attempt, including token acquisition and authentication refresh. Integer 1..2147483647 ms; default 30000 ms. */
   directTimeoutMs?: number;
 };
 export type Connection = {
@@ -28,8 +28,12 @@ export async function startConnection(
   options: ConnectionOptions = {},
 ): Promise<DirectConnection> {
   const directTimeoutMs = options.directTimeoutMs ?? 30_000;
-  if (!Number.isSafeInteger(directTimeoutMs) || directTimeoutMs <= 0)
-    throw Error("directTimeoutMs must be a positive finite integer");
+  if (
+    !Number.isSafeInteger(directTimeoutMs) ||
+    directTimeoutMs <= 0 ||
+    directTimeoutMs > 2_147_483_647
+  )
+    throw Error("directTimeoutMs must be an integer from 1 to 2147483647");
   let epoch = 0;
   let stopped = false;
   let paused = false;

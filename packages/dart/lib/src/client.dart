@@ -319,7 +319,7 @@ class Client implements ReadPort, MutatePort {
         identical(Zone.current[_txZoneKey], _activeTxToken))
       throw StateError('transaction_active');
     final connection = _connection;
-    if (connection == null)
+    if (connection == null || !connection.directAvailable || _closing != null)
       throw ActionTransportException('action.unavailable');
     final prepared =
         (await _exclusive(
@@ -332,13 +332,17 @@ class Client implements ReadPort, MutatePort {
             ))
             as Map<String, dynamic>;
     final response = await connection.requestAction(prepared['body'] as String);
-    if (!identical(_connection, connection))
+    if (!identical(_connection, connection) ||
+        !connection.directAvailable ||
+        _closing != null)
       throw ActionTransportException('action.execution_unknown');
     late final Map<String, dynamic> applied;
     try {
       applied =
           (await _exclusive(() async {
-                if (!identical(_connection, connection))
+                if (!identical(_connection, connection) ||
+                    !connection.directAvailable ||
+                    _closing != null)
                   throw ActionTransportException('action.execution_unknown');
                 return await _send({
                   'op': 'applyActionResponse',
@@ -417,6 +421,7 @@ class Client implements ReadPort, MutatePort {
         ),
         sync: (transport) => _startSync(transport, true, onError),
         transport: transport,
+        directCarrier: live.action,
         onError: onError,
         refreshAuth: refreshAuth == null ? null : refresh,
         directTimeout: directTimeout,
@@ -592,11 +597,23 @@ class Client implements ReadPort, MutatePort {
   /// schema this client asked for. Refused while unsent mutations remain
   /// unless [discardPending]; the report says what the old file keeps.
   Future<Map<String, dynamic>> rebuild({bool discardPending = false}) =>
-      _exclusive(
-        () async =>
+      _exclusive(() async {
+        final report =
             (await _send({'op': 'rebuild', 'discardPending': discardPending}))
-                as Map<String, dynamic>,
-      );
+                as Map<String, dynamic>;
+        for (final abandoned in report['abandonedCalls'] as List<dynamic>) {
+          final call = abandoned as Map<String, dynamic>;
+          _completions.add({
+            'callId': call['callId'],
+            'outcome': {
+              'status': 'failed',
+              'code': 'abandoned',
+              'execution': call['frozen'] == true ? 'unknown' : 'rejected',
+            },
+          });
+        }
+        return report;
+      });
   Future<List<Map<String, dynamic>>> pendingTasks() => _exclusive(
     () async =>
         (await _send({'op': 'tasks'}) as List).cast<Map<String, dynamic>>(),
@@ -606,7 +623,12 @@ class Client implements ReadPort, MutatePort {
     _work.add(null);
   });
   Future<void> drop(int ordinal) => _exclusive(() async {
-    await _send({'op': 'drop', 'ordinal': ordinal});
+    final result =
+        (await _send({'op': 'drop', 'ordinal': ordinal}))
+            as Map<String, dynamic>;
+    for (final completion in result['completions'] as List<dynamic>) {
+      _completions.add(completion as Map<String, dynamic>);
+    }
     _work.add(null);
   });
   Future<void> dismissRejection(int ordinal) => _exclusive(() async {

@@ -2,9 +2,147 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:axton/axton.dart';
+import 'package:axton/src/live.dart' show ServerSession;
 import 'package:test/test.dart';
 
 void main() {
+  Future<void> assertSocketClosed({required bool closeConnection}) async {
+    final directory = await Directory.systemTemp.createTemp(
+      'axton-direct-abort-',
+    );
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final entered = Completer<void>();
+    final disconnected = Completer<void>();
+    Socket? accepted;
+    final subscription = server.listen((socket) {
+      accepted = socket;
+      socket.listen(
+        (_) {
+          if (!entered.isCompleted) entered.complete();
+        },
+        onDone: () {
+          if (!disconnected.isCompleted) disconnected.complete();
+        },
+        onError: (Object _) {
+          if (!disconnected.isCompleted) disconnected.complete();
+        },
+      );
+    });
+    final client = await Client.open(
+      path: '${directory.path}/db',
+      schema: {
+        'enums': [],
+        'models': [],
+        'actions': [
+          {'name': 'Ping', 'version': 1, 'inputs': [], 'outputs': []},
+        ],
+      },
+      libraryPath: Platform.environment['AXTON_LIBRARY']!,
+    );
+    RuntimeConnection? connection;
+    try {
+      connection = await client.connect(
+        SyncServer(
+          url: 'http://127.0.0.1:${server.port}',
+          token: () => 'alice',
+        ),
+        directTimeout: Duration(milliseconds: closeConnection ? 1000 : 100),
+      );
+      final pending = client.callAction('Ping', 1, {});
+      final observed = expectLater(
+        pending,
+        throwsA(isA<ActionTransportException>()),
+      );
+      await entered.future.timeout(const Duration(seconds: 1));
+      if (closeConnection) await connection.close();
+      await observed;
+      await disconnected.future.timeout(const Duration(milliseconds: 300));
+    } finally {
+      await connection?.close();
+      await client.close();
+      accepted?.destroy();
+      await subscription.cancel();
+      await server.close();
+      await directory.delete(recursive: true);
+    }
+  }
+
+  test(
+    'direct timeout closes its actual HTTP socket',
+    () async => assertSocketClosed(closeConnection: false),
+  );
+  test(
+    'direct close closes its actual HTTP socket',
+    () async => assertSocketClosed(closeConnection: true),
+  );
+
+  test('background pause does not invalidate a direct token wait', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final token = Completer<String>();
+    final received = Completer<String>();
+    final served = server.listen((request) async {
+      received.complete(request.uri.path);
+      await utf8.decoder.bind(request).join();
+      request.response.write('ok');
+      await request.response.close();
+    });
+    final session = ServerSession(
+      SyncServer(
+        url: 'http://127.0.0.1:${server.port}',
+        token: () => token.future,
+      ),
+    );
+    final cancellation = Completer<void>();
+    try {
+      final direct = session.action('{}', cancellation.future);
+      session.cancelPush();
+      token.complete('alice');
+      expect(await direct, 'ok');
+      expect(await received.future, '/sync/actions');
+    } finally {
+      cancellation.complete();
+      await served.cancel();
+      await server.close(force: true);
+    }
+  });
+  test(
+    'cancelling one direct HTTP attempt leaves a sibling request alive',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final firstSeen = Completer<void>();
+      final served = server.listen((request) async {
+        final body = await utf8.decoder.bind(request).join();
+        if (body == 'first') {
+          firstSeen.complete();
+          return;
+        }
+        request.response.write('second-ok');
+        await request.response.close();
+      });
+      final session = ServerSession(
+        SyncServer(
+          url: 'http://127.0.0.1:${server.port}',
+          token: () => 'alice',
+        ),
+      );
+      final cancelFirst = Completer<void>();
+      final cancelSecond = Completer<void>();
+      try {
+        final first = session.action('first', cancelFirst.future);
+        final failed = expectLater(first, throwsA(anything));
+        await firstSeen.future;
+        final second = session.action('second', cancelSecond.future);
+        cancelFirst.complete();
+        await failed;
+        expect(await second, 'second-ok');
+      } finally {
+        if (!cancelFirst.isCompleted) cancelFirst.complete();
+        if (!cancelSecond.isCompleted) cancelSecond.complete();
+        await served.cancel();
+        await server.close(force: true);
+      }
+    },
+  );
   test('wake while idle decision is in flight is retained', () async {
     final gate = Completer<void>();
     var calls = 0;
@@ -217,6 +355,156 @@ void main() {
         await client.close();
         await served.cancel();
         await server.close(force: true);
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+  test(
+    'response ready during close cannot apply behind a local transaction',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'axton-direct-close-race-',
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final entered = Completer<Map<String, dynamic>>();
+      final releaseResponse = Completer<void>();
+      final responseSent = Completer<void>();
+      final served = server.listen((request) async {
+        final body =
+            jsonDecode(await utf8.decoder.bind(request).join())
+                as Map<String, dynamic>;
+        entered.complete(body);
+        await releaseResponse.future;
+        request.response.write(
+          jsonEncode({
+            'completion': {
+              'callId': (body['call'] as Map)['callId'],
+              'outcome': {'status': 'succeeded', 'result': null},
+            },
+            'records': [],
+          }),
+        );
+        await request.response.close();
+        responseSent.complete();
+      });
+      final client = await Client.open(
+        path: '${directory.path}/db',
+        schema: {
+          'enums': [],
+          'models': [],
+          'actions': [
+            {'name': 'Ping', 'version': 1, 'inputs': [], 'outputs': []},
+          ],
+        },
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
+      );
+      final completions = <Map<String, dynamic>>[];
+      final observedCompletions = client.actionCompletions.listen(
+        completions.add,
+      );
+      RuntimeConnection? connection;
+      final hold = Completer<void>();
+      try {
+        connection = await client.connect(
+          SyncServer(
+            url: 'http://127.0.0.1:${server.port}',
+            token: () => 'alice',
+          ),
+        );
+        final pending = client.callAction('Ping', 1, {});
+        final failed = expectLater(
+          pending,
+          throwsA(isA<ActionTransportException>()),
+        );
+        await entered.future;
+        final txEntered = Completer<void>();
+        final transaction = client.transaction((_) async {
+          txEntered.complete();
+          await hold.future;
+        });
+        await txEntered.future;
+        releaseResponse.complete();
+        await responseSent.future;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        final closing = connection.close();
+        hold.complete();
+        await transaction;
+        await closing;
+        await failed;
+        expect(completions, isEmpty);
+      } finally {
+        if (!hold.isCompleted) hold.complete();
+        if (!releaseResponse.isCompleted) releaseResponse.complete();
+        await connection?.close();
+        await observedCompletions.cancel();
+        await client.close();
+        await served.cancel();
+        await server.close(force: true);
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+  test(
+    'Dart Action discard and rebuild streams carry terminal call identities',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'axton-dart-action-discard-',
+      );
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      schema['actions'] = [
+        {'name': 'Ping', 'version': 1, 'inputs': [], 'outputs': []},
+      ];
+      final breaking = jsonDecode(jsonEncode(schema)) as Map<String, dynamic>;
+      ((breaking['models'] as List).first['fields'] as List).add({
+        'name': 'due',
+        'nullable': false,
+        'type': {'kind': 'scalar', 'name': 'string'},
+      });
+      try {
+        for (final frozen in [false, true]) {
+          final path = '${directory.path}/${frozen ? 'frozen' : 'unsent'}';
+          final original = await Client.open(
+            path: path,
+            schema: schema,
+            libraryPath: Platform.environment['AXTON_LIBRARY']!,
+          );
+          final delivered = <Map<String, dynamic>>[];
+          final sub = original.actionCompletions.listen(delivered.add);
+          final dropped = await original.submitAction('Ping', 1, {});
+          await original.drop(dropped['ordinal'] as int);
+          expect(delivered.single['callId'], dropped['callId']);
+          expect((delivered.single['outcome'] as Map)['code'], 'dropped');
+          final pending = await original.submitAction('Ping', 1, {});
+          if (frozen) await original.freeze();
+          await sub.cancel();
+          await original.close();
+          final reopened = await Client.open(
+            path: path,
+            schema: breaking,
+            libraryPath: Platform.environment['AXTON_LIBRARY']!,
+          );
+          final abandoned = <Map<String, dynamic>>[];
+          final rebuildSub = reopened.actionCompletions.listen(abandoned.add);
+          try {
+            final report = await reopened.rebuild(discardPending: true);
+            expect(report['abandonedCalls'], [
+              {'callId': pending['callId'], 'frozen': frozen},
+            ]);
+            expect(abandoned.single['callId'], pending['callId']);
+            expect(
+              (abandoned.single['outcome'] as Map)['execution'],
+              frozen ? 'unknown' : 'rejected',
+            );
+          } finally {
+            await rebuildSub.cancel();
+            await reopened.close();
+          }
+        }
+      } finally {
         await directory.delete(recursive: true);
       }
     },

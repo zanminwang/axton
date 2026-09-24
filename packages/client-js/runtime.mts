@@ -38,6 +38,7 @@ export type RebuildReport = {
   reason: string;
   leftPending: number;
   leftDirect: number;
+  abandonedCalls: { callId: string; frozen: boolean }[];
 };
 /** The open-time schema check: whether this open rebuilt, or is waiting to. */
 export type SchemaState = {
@@ -515,6 +516,16 @@ export function createClient<
     ): Promise<RebuildReport> {
       return this.#exclusive(() =>
         this.#send({ op: "rebuild", ...options }).then((value) => {
+          for (const abandoned of value.abandonedCalls ?? [])
+            for (const listener of [...this.#completionListeners])
+              listener({
+                callId: abandoned.callId,
+                outcome: {
+                  status: "failed",
+                  code: "abandoned",
+                  execution: abandoned.frozen ? "unknown" : "rejected",
+                },
+              });
           this.#events.emit("change");
           this.#events.emit("work");
           return value;
@@ -535,8 +546,11 @@ export function createClient<
     drop(ordinal: number) {
       return this.#exclusive(() =>
         this.#send({ op: "drop", ordinal }).then((value) => {
+          for (const completion of value.completions)
+            for (const listener of [...this.#completionListeners])
+              listener(completion);
           this.#events.emit("work");
-          return value;
+          return undefined;
         }),
       );
     }

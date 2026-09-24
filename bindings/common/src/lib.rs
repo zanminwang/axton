@@ -283,9 +283,7 @@ impl RuntimeHost {
                         Value::Null
                     }
                     "drop" => {
-                        e.client
-                            .drop_mutation(read_counter(&request["ordinal"], true)?)?;
-                        Value::Null
+                        json!({"completions":e.client.drop_action(read_counter(&request["ordinal"], true)?)?})
                     }
                     "dismiss" => {
                         e.client
@@ -326,7 +324,7 @@ impl RuntimeHost {
                         let report = e.client.rebuild(discard)?;
                         e.cycle = SyncCycle::default();
                         e.live = LiveSession::default();
-                        json!({"oldFile":report.old_file,"newFile":report.new_file,"reason":report.reason,"leftPending":report.left_pending,"leftDirect":report.left_direct})
+                        json!({"oldFile":report.old_file,"newFile":report.new_file,"reason":report.reason,"leftPending":report.left_pending,"leftDirect":report.left_direct,"abandonedCalls":abandoned_json(&report.abandoned_calls)})
                     }
                     _ => return Err(invalid(format!("unknown client command {op}"))),
                 }
@@ -342,8 +340,14 @@ fn schema_json(state: &SchemaState) -> Value {
     json!({
         "rebuilt": state.rebuilt,
         "pending": state.pending.as_ref().map(|p| json!({"oldFile":p.old_file,"reason":p.reason,"pending":p.pending,"direct":p.direct})),
-        "lastRebuild": state.last_rebuild.as_ref().map(|r| json!({"oldFile":r.old_file,"newFile":r.new_file,"reason":r.reason,"leftPending":r.left_pending,"leftDirect":r.left_direct})),
+        "lastRebuild": state.last_rebuild.as_ref().map(|r| json!({"oldFile":r.old_file,"newFile":r.new_file,"reason":r.reason,"leftPending":r.left_pending,"leftDirect":r.left_direct,"abandonedCalls":abandoned_json(&r.abandoned_calls)})),
     })
+}
+fn abandoned_json(calls: &[AbandonedCall]) -> Vec<Value> {
+    calls
+        .iter()
+        .map(|call| json!({"callId":call.call_id,"frozen":call.frozen}))
+        .collect()
 }
 fn read_now(request: &Value) -> Result<u64> {
     request

@@ -128,6 +128,125 @@ void main() {
     expect(outcome.error.code, 'dropped');
   });
 
+  test('rebuild discard settles live unsent and frozen handles', () async {
+    final schema =
+        jsonDecode(
+              await File('../../fixtures/schemas/entry.json').readAsString(),
+            )
+            as Map<String, dynamic>;
+    schema['actions'] = [
+      {'name': 'Ping', 'version': 1, 'inputs': [], 'outputs': []},
+    ];
+    final breaking = jsonDecode(jsonEncode(schema)) as Map<String, dynamic>;
+    ((breaking['models'] as List).first['fields'] as List).add({
+      'name': 'due',
+      'nullable': false,
+      'type': {'kind': 'scalar', 'name': 'string'},
+    });
+    for (final frozen in [false, true]) {
+      final path = '${directory.path}/${frozen ? 'frozen' : 'unsent'}';
+      final old = await Client.open(
+        path: path,
+        schema: schema,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
+      );
+      await old.invokeAction<void>('Ping', 1, {}, (_) {});
+      await old.close();
+      final reopened = await Client.open(
+        path: path,
+        schema: breaking,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
+      );
+      try {
+        final call = await reopened.invokeAction<void>('Ping', 1, {}, (_) {});
+        final waiting = call.wait();
+        if (frozen) await reopened.freeze();
+        final report = await reopened.rebuild(discardPending: true);
+        expect(
+          (report['abandonedCalls'] as List).any(
+            (entry) => entry['frozen'] == frozen,
+          ),
+          isTrue,
+        );
+        final outcome = await waiting as ActionFailure<void>;
+        expect(outcome.error.code, 'abandoned');
+        expect(outcome.error.execution, frozen ? 'unknown' : 'rejected');
+        expect(call.status, ActionStatus.failed);
+      } finally {
+        await reopened.close();
+      }
+    }
+  });
+
+  test(
+    'dropping an unsent Action settles its live lifecycle dependent',
+    () async {
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      schema['actions'] = [
+        {
+          'name': 'Add',
+          'version': 1,
+          'inputs': [
+            {
+              'kind': 'model',
+              'name': 'entry',
+              'model': 'Entry',
+              'operation': 'create',
+              'cardinality': 'single',
+            },
+          ],
+          'outputs': [],
+        },
+        {
+          'name': 'Edit',
+          'version': 1,
+          'inputs': [
+            {
+              'kind': 'model',
+              'name': 'entry',
+              'model': 'Entry',
+              'operation': 'update',
+              'cardinality': 'single',
+            },
+          ],
+          'outputs': [],
+        },
+      ];
+      final local = await Client.open(
+        path: '${directory.path}/dependent',
+        schema: schema,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
+      );
+      try {
+        final created = await local.invokeAction<void>('Add', 1, {
+          'entry': {'id': 'e', 'text': 'A'},
+        }, (_) {});
+        final dependent = await local.invokeAction<void>('Edit', 1, {
+          'entry': {'id': 'e', 'text': 'B'},
+        }, (_) {});
+        final waiting = dependent.wait();
+        final state = await local.recordSyncState('Entry', {'id': 'e'});
+        await local.drop((state['pending'] as List).first['ordinal'] as int);
+        expect(
+          (await created.wait() as ActionFailure<void>).error.code,
+          'dropped',
+        );
+        expect(
+          (await waiting as ActionFailure<void>).error.code,
+          'dependency.rejected',
+        );
+        expect(dependent.status, ActionStatus.failed);
+        expect((await local.syncState())['pending'], 0);
+      } finally {
+        await local.close();
+      }
+    },
+  );
+
   test(
     'typed actions and standalone direct reject inside a transaction',
     () async {
@@ -329,6 +448,95 @@ void main() {
       await server.close(force: true);
     }
   });
+
+  test(
+    'throwing direct diagnostic preserves applied result and reaches the Zone',
+    () async {
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      schema['actions'] = [
+        {'name': 'Ping', 'version': 1, 'inputs': [], 'outputs': []},
+      ];
+      final local = await Client.open(
+        path: '${directory.path}/direct-diagnostic',
+        schema: schema,
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var requests = 0;
+      final served = server.listen((request) async {
+        if (request.uri.path != '/sync/actions') {
+          request.response.statusCode = 404;
+          await request.response.close();
+          return;
+        }
+        final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+        requests++;
+        request.response.write(
+          jsonEncode({
+            'completion': {
+              'callId': (body['call'] as Map)['callId'],
+              'outcome': {'status': 'succeeded', 'result': null},
+            },
+            'records': [
+              {
+                'model': 'Entry',
+                'identity': {'id': 'e'},
+                'stamp': 1,
+                'state': {
+                  'text': requests == 1 ? 'first' : 'second',
+                  'note': null,
+                },
+              },
+            ],
+          }),
+        );
+        await request.response.close();
+      });
+      final diagnostic = StateError('diagnostic failed');
+      final observed = <Object>[];
+      try {
+        final connection = await local.connect(
+          SyncServer(
+            url: 'http://127.0.0.1:${server.port}',
+            token: () => 'alice',
+          ),
+          onError: (_) => throw diagnostic,
+        );
+        try {
+          expect(
+            await local.invokeDirectAction<String>(
+              'Ping',
+              1,
+              {},
+              (_) => 'first',
+            ),
+            'first',
+          );
+          final result = Completer<String>();
+          runZonedGuarded(() {
+            local
+                .invokeDirectAction<String>('Ping', 1, {}, (_) => 'decoded')
+                .then(result.complete, onError: result.completeError);
+          }, (error, stack) => observed.add(error));
+          expect(
+            await result.future.timeout(const Duration(seconds: 2)),
+            'decoded',
+          );
+        } finally {
+          await connection.close();
+        }
+        expect(observed, [same(diagnostic)]);
+      } finally {
+        await local.close();
+        await served.cancel();
+        await server.close(force: true);
+      }
+    },
+  );
 
   test('standalone direct write commits locally and wakes watch', () async {
     final schema =

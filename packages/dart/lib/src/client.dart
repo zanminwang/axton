@@ -453,9 +453,13 @@ class Client implements WritePort, MutatePort {
       (applied['completions'] as List).cast<Map<String, dynamic>>(),
     );
     for (final report in applied['reports'] as List<dynamic>) {
-      _directOnError?.call(
-        AxtonReport.fromJson(report as Map<String, dynamic>),
-      );
+      try {
+        _directOnError?.call(
+          AxtonReport.fromJson(report as Map<String, dynamic>),
+        );
+      } catch (error, stack) {
+        Zone.current.handleUncaughtError(error, stack);
+      }
     }
     return applied;
   }

@@ -71,6 +71,17 @@ import {
   type ActionCall,
 } from "./actions.mts";
 
+/** Report application callback failures without changing an applied Action outcome. */
+function reportActionCallbackError(error: unknown): void {
+  if (typeof globalThis.reportError === "function") {
+    globalThis.reportError(error);
+  } else {
+    setTimeout(() => {
+      throw error;
+    }, 0);
+  }
+}
+
 /** Hosts share the Rust action executor and supply only their carrier, transaction scope and network. */
 export function createClient<
   Tx extends {
@@ -294,7 +305,11 @@ export function createClient<
       for (const completion of completions) this.#actions.complete(completion);
       for (const completion of completions)
         for (const listener of [...this.#completionListeners])
-          listener(completion);
+          try {
+            listener(completion);
+          } catch (error) {
+            reportActionCallbackError(error);
+          }
     }
     /** Direct network work never occupies the local exclusive queue. */
     async callAction(name: string, version: number, args: object) {
@@ -336,7 +351,11 @@ export function createClient<
       }
       this.#deliverCompletions(applied.completions);
       for (const report of applied.reports)
-        this.#directOnError?.(new AxtonReport(report));
+        try {
+          this.#directOnError?.(new AxtonReport(report));
+        } catch (error) {
+          reportActionCallbackError(error);
+        }
       return applied;
     }
     #submitMutation(mutation: object): Promise<number> {

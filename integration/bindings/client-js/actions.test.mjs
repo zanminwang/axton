@@ -144,6 +144,115 @@ test("durable invocation registers before wake and drop settles its handle", asy
   });
 });
 
+test("dropping an unsent Action settles its live lifecycle dependent", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "axton-action-dependent-"));
+  const schema = JSON.parse(
+    await readFile(
+      new URL("../../../fixtures/schemas/entry.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  schema.actions = [
+    {
+      name: "Add",
+      version: 1,
+      inputs: [
+        {
+          kind: "model",
+          name: "entry",
+          model: "Entry",
+          operation: "create",
+          cardinality: "single",
+        },
+      ],
+      outputs: [],
+    },
+    {
+      name: "Edit",
+      version: 1,
+      inputs: [
+        {
+          kind: "model",
+          name: "entry",
+          model: "Entry",
+          operation: "update",
+          cardinality: "single",
+        },
+      ],
+      outputs: [],
+    },
+  ];
+  const client = await Client.open({ path: join(directory, "db"), schema });
+  try {
+    const created = await client.invokeAction(
+      "Add",
+      1,
+      { entry: { id: "e", text: "A" } },
+      () => undefined,
+    );
+    const dependent = await client.invokeAction(
+      "Edit",
+      1,
+      { entry: { id: "e", text: "B" } },
+      () => undefined,
+    );
+    const waiting = dependent.wait();
+    await client.drop(
+      (await client.syncState("Entry", { id: "e" })).pending[0].ordinal,
+    );
+    assert.equal((await created.wait()).error.code, "dropped");
+    assert.equal((await waiting).error.code, "dependency.rejected");
+    assert.equal(dependent.status, "failed");
+    assert.equal((await client.syncState()).pending, 0);
+  } finally {
+    await client.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("rebuild discard settles live unsent and frozen handles with distinct execution", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "axton-action-rebuild-"));
+  const schema = JSON.parse(
+    await readFile(
+      new URL("../../../fixtures/schemas/entry.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  schema.actions = [{ name: "Ping", version: 1, inputs: [], outputs: [] }];
+  const breaking = structuredClone(schema);
+  breaking.models[0].fields.push({
+    name: "due",
+    nullable: false,
+    type: { kind: "scalar", name: "string" },
+  });
+  try {
+    for (const frozen of [false, true]) {
+      const path = join(directory, frozen ? "frozen" : "unsent");
+      const old = await Client.open({ path, schema });
+      await old.invokeAction("Ping", 1, {}, () => undefined);
+      await old.close();
+      const client = await Client.open({ path, schema: breaking });
+      try {
+        const call = await client.invokeAction("Ping", 1, {}, () => undefined);
+        const waiting = call.wait();
+        if (frozen) await client.freeze();
+        const report = await client.rebuild({ discardPending: true });
+        assert.ok(
+          report.abandonedCalls.some((entry) => entry.frozen === frozen),
+        );
+        const outcome = await waiting;
+        assert.equal(outcome.error.code, "abandoned");
+        assert.equal(outcome.error.execution, frozen ? "unknown" : "rejected");
+        assert.equal(call.status, "failed");
+      } finally {
+        await client.close();
+      }
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("close fails a durable handle before wait is called", async () => {
   await withClient(async (client) => {
     const call = await client.invokeAction("Ping", 1, {}, () => undefined);
@@ -203,15 +312,23 @@ test("the real native pump settles a waiting handle before a throwing diagnostic
     },
   }));
   const client = await PumpClient.open({ path: join(directory, "db"), schema });
+  const previousReportError = globalThis.reportError;
+  const diagnostic = Error("diagnostic failed");
+  const observedErrors = [];
+  globalThis.reportError = (error) => observedErrors.push(error);
   try {
     const connection = await client.connect({
       url: "http://unused",
       token: "token",
     });
     client.onActionCompletion(() => {
-      throw Error("diagnostic failed");
+      throw diagnostic;
     });
     const call = await client.invokeAction("Ping", 1, {}, () => undefined);
+    const deadline = Date.now() + 1000;
+    while (call.status === "pending" && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(call.status, "succeeded", "the pump completes without wait()");
     const outcome = await Promise.race([
       call.wait(),
       new Promise((_, reject) =>
@@ -221,9 +338,11 @@ test("the real native pump settles a waiting handle before a throwing diagnostic
     assert.deepEqual(outcome, { result: undefined, error: null });
     assert.equal(call.status, "succeeded");
     assert.equal(requests, 1);
+    assert.deepEqual(observedErrors, [diagnostic]);
     assert.equal((await client.syncState()).pending, 0);
     await connection.close();
   } finally {
+    globalThis.reportError = previousReportError;
     await client.close();
     await rm(directory, { recursive: true, force: true });
   }
@@ -274,6 +393,105 @@ test("direct invocation decodes a committed response and maps unavailable transp
     assert.equal((await client.syncState()).pending, 0);
     await connection.close();
   } finally {
+    await client.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a throwing direct completion listener leaves the committed result intact", async () => {
+  const native = createRequire(import.meta.url)(
+    "../../../bindings/node/axton-node.node",
+  );
+  const directory = await mkdtemp(
+    join(tmpdir(), "axton-action-direct-listener-"),
+  );
+  const schema = JSON.parse(
+    await readFile(
+      new URL("../../../fixtures/schemas/entry.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  schema.actions = [{ name: "Ping", version: 1, inputs: [], outputs: [] }];
+  let requests = 0;
+  const DirectClient = createClient(native, Transaction, () => ({
+    open() {},
+    push: async (_kind, bodyText) => {
+      const body = JSON.parse(bodyText);
+      requests++;
+      return JSON.stringify({
+        completion: {
+          callId: body.call.callId,
+          outcome:
+            requests === 3
+              ? {
+                  status: "failed",
+                  code: "handler.failed",
+                  execution: "rejected",
+                }
+              : { status: "succeeded", result: null },
+        },
+        records:
+          requests === 3
+            ? []
+            : [
+                {
+                  model: "Entry",
+                  identity: { id: "e" },
+                  stamp: 1,
+                  state: {
+                    text: requests === 1 ? "first" : "second",
+                    note: null,
+                  },
+                },
+              ],
+      });
+    },
+  }));
+  const client = await DirectClient.open({
+    path: join(directory, "db"),
+    schema,
+  });
+  const previous = globalThis.reportError;
+  const diagnostic = Error("diagnostic failed");
+  const reportDiagnostic = Error("report diagnostic failed");
+  const observed = [];
+  globalThis.reportError = (error) => observed.push(error);
+  try {
+    const connection = await client.connect(
+      { url: "http://unused", token: "token" },
+      {
+        onError: () => {
+          throw reportDiagnostic;
+        },
+      },
+    );
+    client.onActionCompletion(() => {
+      throw diagnostic;
+    });
+    assert.equal(
+      await client.invokeDirectAction("Ping", 1, {}, () => "seeded"),
+      "seeded",
+    );
+    assert.equal(
+      await client.invokeDirectAction("Ping", 1, {}, () => "decoded"),
+      "decoded",
+    );
+    await assert.rejects(
+      client.invokeDirectAction("Ping", 1, {}, () => undefined),
+      (error) =>
+        error instanceof ActionError &&
+        error.code === "handler.failed" &&
+        error.execution === "rejected",
+    );
+    assert.deepEqual(observed, [
+      diagnostic,
+      diagnostic,
+      reportDiagnostic,
+      diagnostic,
+    ]);
+    await connection.close();
+  } finally {
+    globalThis.reportError = previous;
     await client.close();
     await rm(directory, { recursive: true, force: true });
   }

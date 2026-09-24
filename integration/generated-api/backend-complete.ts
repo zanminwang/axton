@@ -29,5 +29,5 @@ export const backend = createBackend<Tx>({
   authenticate: devAuth(),
   handlers,
   loaders,
-  native: { validateConfig() {}, processPush: async () => "", processPull: async () => "", settleExternal: async () => "", negotiateLive: async () => "", pullLive: async () => "", liveEvent: () => "[]", liveClose() {} },
+  native: { validateConfig() {}, processPush: async () => "", processAction: async () => "", processPull: async () => "", settleExternal: async () => "", negotiateLive: async () => "", pullLive: async () => "", liveEvent: () => "[]", liveClose() {} },
 });

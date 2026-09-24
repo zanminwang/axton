@@ -1,4 +1,5 @@
 import 'connection.dart';
+import 'actions.dart';
 import 'live.dart';
 import 'port.dart';
 import 'dart:async';
@@ -63,7 +64,7 @@ void _nativeWorker(List<Object?> args) {
 }
 
 /// Typed generated model APIs delegate to this generic native client.
-class Client implements ReadPort, MutatePort {
+class Client implements WritePort, MutatePort {
   final SendPort _worker;
   final Isolate _isolate;
   final int _handle;
@@ -85,6 +86,36 @@ class Client implements ReadPort, MutatePort {
     sync: true,
   );
   Stream<Map<String, dynamic>> get actionCompletions => _completions.stream;
+  late final ActionObservers _actionObservers = ActionObservers();
+  void _deliverCompletions(Iterable<Map<String, dynamic>> completions) {
+    final events = completions.toList();
+    // Settle every internal waiter before invoking application stream listeners.
+    for (final event in events) {
+      _actionObservers.complete(event);
+    }
+    for (final event in events) {
+      _completions.add(event);
+    }
+  }
+
+  ActionError _publicActionError(Object error) {
+    if (error is ActionError) return error;
+    if (error is ActionTransportException) {
+      return ActionError(
+        error.code,
+        execution: error.execution,
+        cause: error.cause,
+      );
+    }
+    final transactionActive =
+        error is StateError && error.message == 'transaction_active';
+    return ActionError(
+      transactionActive ? 'transaction_active' : 'action.transport_failed',
+      execution: transactionActive ? 'rejected' : 'unknown',
+      cause: error,
+    );
+  }
+
   final Object _txZoneKey = Object();
   Object? _activeTxToken;
   Client._(this._worker, this._isolate, this._handle, this.clientId);
@@ -263,6 +294,68 @@ class Client implements ReadPort, MutatePort {
     return _submitMutation(mutation);
   }
 
+  /// One framework-owned local transaction; no backend work is queued.
+  Future<void> direct(Map<String, dynamic> operation) {
+    if (_activeTxToken != null &&
+        identical(Zone.current[_txZoneKey], _activeTxToken)) {
+      return Future.error(StateError('transaction_active'));
+    }
+    return transaction((tx) => tx.direct(operation));
+  }
+
+  Future<ActionCall<T>> invokeAction<T>(
+    String name,
+    int version,
+    Map<String, dynamic> args,
+    T Function(dynamic) decode,
+  ) async {
+    ActionCall<T>? call;
+    try {
+      await submitAction(
+        name,
+        version,
+        args,
+        onCommitted: (callId, _) {
+          call = _actionObservers.register(callId, decode);
+        },
+      );
+    } catch (error) {
+      throw _publicActionError(error);
+    }
+    return call!;
+  }
+
+  Future<T> invokeDirectAction<T>(
+    String name,
+    int version,
+    Map<String, dynamic> args,
+    T Function(dynamic) decode,
+  ) async {
+    late final Map<String, dynamic> applied;
+    try {
+      applied = await callAction(name, version, args);
+    } catch (error) {
+      throw _publicActionError(error);
+    }
+    final completions = applied['completions'] as List?;
+    if (completions == null || completions.isEmpty) {
+      throw const ActionError('action.observation_failed');
+    }
+    final completion = completions.first as Map;
+    final outcome = completion['outcome'] as Map;
+    if (outcome['status'] != 'succeeded') {
+      throw ActionError(
+        outcome['code'] as String? ?? 'action.failed',
+        execution: outcome['execution'] as String? ?? 'rejected',
+      );
+    }
+    try {
+      return decode(outcome['result']);
+    } catch (error) {
+      throw ActionError('action.observation_failed', cause: error);
+    }
+  }
+
   Future<int> _submitMutation(Map<String, dynamic> mutation) =>
       _exclusive(() async {
         await _send({'op': 'begin'});
@@ -356,9 +449,9 @@ class Client implements ReadPort, MutatePort {
     } catch (error) {
       throw ActionTransportException('action.execution_unknown', error);
     }
-    for (final completion in applied['completions'] as List<dynamic>) {
-      _completions.add(completion as Map<String, dynamic>);
-    }
+    _deliverCompletions(
+      (applied['completions'] as List).cast<Map<String, dynamic>>(),
+    );
     for (final report in applied['reports'] as List<dynamic>) {
       _directOnError?.call(
         AxtonReport.fromJson(report as Map<String, dynamic>),
@@ -508,9 +601,9 @@ class Client implements ReadPort, MutatePort {
                     _send({'op': 'complete', 'response': jsonDecode(response)}),
               )
               as Map<String, dynamic>;
-      for (final completion in applied['completions'] as List<dynamic>) {
-        _completions.add(completion as Map<String, dynamic>);
-      }
+      _deliverCompletions(
+        (applied['completions'] as List).cast<Map<String, dynamic>>(),
+      );
       // What the receipt or page could not apply; the client stays consistent
       // and the application hears about each one.
       for (final report in applied['reports'] as List<dynamic>) {
@@ -565,9 +658,9 @@ class Client implements ReadPort, MutatePort {
                   'receipt': receipt,
                 }))
                 as Map<String, dynamic>;
-        for (final completion in applied['completions'] as List<dynamic>) {
-          _completions.add(completion as Map<String, dynamic>);
-        }
+        _deliverCompletions(
+          (applied['completions'] as List).cast<Map<String, dynamic>>(),
+        );
       });
   Future<Map<String, dynamic>> applyPull(Map<String, dynamic> page) =>
       _exclusive(
@@ -601,17 +694,19 @@ class Client implements ReadPort, MutatePort {
         final report =
             (await _send({'op': 'rebuild', 'discardPending': discardPending}))
                 as Map<String, dynamic>;
-        for (final abandoned in report['abandonedCalls'] as List<dynamic>) {
-          final call = abandoned as Map<String, dynamic>;
-          _completions.add({
-            'callId': call['callId'],
-            'outcome': {
-              'status': 'failed',
-              'code': 'abandoned',
-              'execution': call['frozen'] == true ? 'unknown' : 'rejected',
-            },
-          });
-        }
+        _deliverCompletions(
+          (report['abandonedCalls'] as List).map((abandoned) {
+            final call = abandoned as Map<String, dynamic>;
+            return {
+              'callId': call['callId'],
+              'outcome': {
+                'status': 'failed',
+                'code': 'abandoned',
+                'execution': call['frozen'] == true ? 'unknown' : 'rejected',
+              },
+            };
+          }),
+        );
         return report;
       });
   Future<List<Map<String, dynamic>>> pendingTasks() => _exclusive(
@@ -626,9 +721,9 @@ class Client implements ReadPort, MutatePort {
     final result =
         (await _send({'op': 'drop', 'ordinal': ordinal}))
             as Map<String, dynamic>;
-    for (final completion in result['completions'] as List<dynamic>) {
-      _completions.add(completion as Map<String, dynamic>);
-    }
+    _deliverCompletions(
+      (result['completions'] as List).cast<Map<String, dynamic>>(),
+    );
     _work.add(null);
   });
   Future<void> dismissRejection(int ordinal) => _exclusive(() async {
@@ -670,6 +765,7 @@ class Client implements ReadPort, MutatePort {
   Future<void> close() => _closing ??= _finishClose();
 
   Future<void> _finishClose() async {
+    _actionObservers.close();
     await _started?.future;
     await _connection?.close();
     await _exclusive(() async {

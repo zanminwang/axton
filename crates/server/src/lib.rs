@@ -1,8 +1,10 @@
 //! Server protocol orchestration. Host calls run in the application's outer transaction.
+mod actions;
 pub mod error;
 pub mod host;
 pub mod live;
 mod readback;
+pub use actions::{ActionResponse, execute_action, process_action_push};
 use axton_core::{
     AuthorityRecord, CursorRange, PullPage, PullRequest, PushReceipt, PushRequest, RecordKey,
     Rejection, Schema, limits, read_counter,

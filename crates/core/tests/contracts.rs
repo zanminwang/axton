@@ -280,34 +280,71 @@ fn action_model_operands_and_delete_results_use_exact_identity_objects() {
     raw["actions"][0]["outputs"] = json!([{"name":"todo","kind":"deleteIdentity","model":"Todo","cardinality":"single","source":{"inputIdentity":"todo"}}]);
     let schema = Schema::from_value(raw).unwrap();
     let action = schema.action("Find", 1).unwrap();
-    let normalized = normalize_action_args(
-        &schema,
-        action,
-        &json!({"todo":{"identity":{"id":ID},"patch":{"title":"B"}}}),
-    )
-    .unwrap();
-    assert_eq!(normalized["todo"]["identity"]["id"], ID.to_lowercase());
+    let normalized =
+        normalize_action_args(&schema, action, &json!({"todo":{"id":ID,"title":"B"}})).unwrap();
+    assert_eq!(normalized["todo"]["id"], ID.to_lowercase());
+    assert!(normalize_action_args(&schema, action, &json!({"todo":{"id":7,"title":"B"}})).is_err());
     assert!(
-        normalize_action_args(
-            &schema,
-            action,
-            &json!({"todo":{"identity":ID,"patch":{"title":"B"}}})
-        )
-        .is_err()
-    );
-    assert!(
-        normalize_action_args(
-            &schema,
-            action,
-            &json!({"todo":{"identity":{"id":ID},"patch":{"done":true}}})
-        )
-        .is_err()
+        normalize_action_args(&schema, action, &json!({"todo":{"id":ID,"done":true}})).is_err()
     );
     assert_eq!(
         validate_action_result(&schema, action, &json!({"todo":{"id":ID}})).unwrap()["todo"]["id"],
         ID.to_lowercase()
     );
     assert!(validate_action_result(&schema, action, &json!({"todo":ID})).is_err());
+}
+
+#[test]
+fn flat_update_and_delete_keep_model_fields_named_identity_or_patch() {
+    let mut raw: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/action-results.json"
+    ))
+    .unwrap();
+    let schema = &mut raw["schema"];
+    schema["models"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"identity","type":{"kind":"scalar","name":"string"},"nullable":true}));
+    schema["models"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"patch","type":{"kind":"scalar","name":"string"},"nullable":true}));
+    schema["actions"][0]["inputs"] = json!([{"kind":"model","name":"todo","model":"Todo","operation":"update","cardinality":"single","allowedPatchFields":["identity","patch"]}]);
+    schema["actions"][0]["outputs"] = json!([]);
+    let schema: Schema = serde_json::from_value(schema.clone()).unwrap();
+    schema.validate().unwrap();
+    let action = schema.action("Find", 1).unwrap();
+    assert_eq!(
+        normalize_action_args(&schema, action, &json!({"todo":{"id":ID,"identity":"x"}})).unwrap(),
+        json!({"todo":{"id":ID.to_lowercase(),"identity":"x"}})
+    );
+    assert!(
+        normalize_action_args(&schema, action, &json!({"todo":{"id":ID,"done":true}})).is_err()
+    );
+}
+
+#[test]
+fn flat_composite_delete_accepts_only_the_identity_fields() {
+    let schema = Schema::from_value(json!({"enums":[],"models":[{"name":"Book","identity":["slug","edition"],"fields":[{"name":"slug","type":{"kind":"scalar","name":"string"},"nullable":false},{"name":"edition","type":{"kind":"scalar","name":"int"},"nullable":false},{"name":"title","type":{"kind":"scalar","name":"string"},"nullable":false}]}],"actions":[{"name":"Delete","version":1,"inputs":[{"kind":"model","name":"book","model":"Book","operation":"delete","cardinality":"single"}],"outputs":[]}]})).unwrap();
+    let action = schema.action("Delete", 1).unwrap();
+    assert_eq!(
+        normalize_action_args(
+            &schema,
+            action,
+            &json!({"book":{"edition":2,"slug":"edition-2"}})
+        )
+        .unwrap(),
+        json!({"book":{"slug":"edition-2","edition":2}})
+    );
+    assert!(
+        normalize_action_args(
+            &schema,
+            action,
+            &json!({"book":{"slug":"edition-2","edition":2,"title":"extra"}})
+        )
+        .is_err()
+    );
+    assert!(normalize_action_args(&schema, action, &json!({"book":{"slug":"edition-2"}})).is_err());
 }
 
 #[test]

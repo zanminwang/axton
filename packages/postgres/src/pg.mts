@@ -1,6 +1,7 @@
 import type { DriverOptions, PostgresDriver } from "./driver.mts";
-import { RETRYABLE_SQLSTATES, withRetries } from "./driver.mts";
+import { withRetries } from "./driver.mts";
 import { persistence } from "./persistence.mts";
+import { isRetryableTransactionError } from "../../server/retryable.mts";
 
 /** The part of a `pg` client AXTON uses; `pg.PoolClient` satisfies it. */
 export interface PgClient {
@@ -14,9 +15,6 @@ export interface PgClient {
 export interface PgPool {
   connect(): Promise<PgClient>;
 }
-
-const sqlstate = (error: unknown): string | undefined =>
-  (error as { code?: string } | null)?.code;
 
 /** `pg` bigint parameters are sent as text; everything else as is. */
 const bind = (params: readonly unknown[]): unknown[] =>
@@ -54,7 +52,7 @@ export function pgDriver(
             client.release(broken);
           }
         },
-        (error) => RETRYABLE_SQLSTATES.has(sqlstate(error) ?? ""),
+        isRetryableTransactionError,
         options.retries ?? 3,
       ),
     query: async (client, sql, params) =>

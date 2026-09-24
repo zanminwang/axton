@@ -24,9 +24,19 @@ export type SaveReceiptRequest = {
   receipt: string;
 };
 /** Lock one call's immutable intent and its completed response. */
-export type ClaimCallRequest = { op: "claimCall"; owner: string; callId: string; request: string };
+export type ClaimCallRequest = {
+  op: "claimCall";
+  owner: string;
+  callId: string;
+  request: string;
+};
 /** Save a complete response for a fresh claim in the same transaction. */
-export type SaveCallRequest = { op: "saveCall"; owner: string; callId: string; response: string };
+export type SaveCallRequest = {
+  op: "saveCall";
+  owner: string;
+  callId: string;
+  response: string;
+};
 /** The channel's current head cursor. */
 export type HeadRequest = { op: "head"; channel: string };
 /** Invalidation rows after `after`, at most `limit` of them, in cursor order. */
@@ -49,6 +59,15 @@ export type HandleRequest = {
   version: number;
   arguments: Record<string, unknown>;
   owner: string;
+  ordinal: number;
+};
+export type HandleActionRequest = {
+  op: "handleAction";
+  name: string;
+  version: number;
+  arguments: Record<string, unknown>;
+  owner: string;
+  callId: string;
   ordinal: number;
 };
 /**
@@ -99,6 +118,7 @@ export type HostRequest =
   | RollbackRequest
   | ReleaseRequest
   | HandleRequest
+  | HandleActionRequest
   | LoadRequest
   | AdvanceStampRequest
   | EnsureStampRequest
@@ -109,7 +129,7 @@ export type HostOperation = HostRequest["op"];
 /** The subset a [Persistence] answers: everything that is not application code. */
 export type PersistenceRequest = Exclude<
   HostRequest,
-  HandleRequest | LoadRequest
+  HandleRequest | HandleActionRequest | LoadRequest
 >;
 
 /** The answer to an operation whose only answer is "done". */
@@ -122,7 +142,11 @@ export type Claimed = {
   receipt: string | null;
 };
 /** An existing ID returns its original request, even when the incoming intent differs. */
-export type ClaimedCall = { fresh: boolean; request: string; response: string | null };
+export type ClaimedCall = {
+  fresh: boolean;
+  request: string;
+  response: string | null;
+};
 /** The answer to `head`: a bare counter. */
 export type Head = number;
 /**
@@ -168,6 +192,14 @@ export type Handled =
   | { changes: HostRecordRef[]; publications: PublicationIntent[] }
   | { rejection: string }
   | { error: string };
+export type HandledAction =
+  | {
+      outputs: Record<string, unknown>;
+      changes: HostRecordRef[];
+      publications: PublicationIntent[];
+    }
+  | { rejection: string }
+  | { error: string };
 /**
  * The answer to `load`: one entry per identity, `null` for a record that does
  * not exist for this caller, a refusal the engine records as the mutation's
@@ -191,6 +223,7 @@ export type HostResponse = {
   rollback: Acknowledged;
   release: Acknowledged;
   handle: Handled;
+  handleAction: HandledAction;
   load: Loaded;
   advanceStamp: Stamped;
   ensureStamp: Stamped;
@@ -212,6 +245,7 @@ const OPERATIONS: Record<HostOperation, true> = {
   rollback: true,
   release: true,
   handle: true,
+  handleAction: true,
   load: true,
   advanceStamp: true,
   ensureStamp: true,

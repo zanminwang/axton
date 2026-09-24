@@ -514,7 +514,9 @@ pub fn normalize_action_args(
         };
         normalized.insert(input.name().to_string(), result);
     }
-    Ok(Value::Object(normalized))
+    let normalized = Value::Object(normalized);
+    validate_action_bindings(&input_schema, action, &normalized)?;
+    Ok(normalized)
 }
 fn normalize_cardinality(
     value: &Value,
@@ -560,15 +562,36 @@ fn normalize_model_input(
             Ok(Value::Object(result))
         }
         "delete" => {
-            let object = exact_object(value, &["identity"])?;
-            Ok(
-                serde_json::json!({"identity":schema.record_key(model, &object["identity"])?.identity}),
-            )
+            let object = value
+                .as_object()
+                .ok_or_else(|| invalid("delete input must be object"))?;
+            let key = schema.record_key(model, value)?;
+            if object.len() != key.identity.as_object().unwrap().len() {
+                return Err(invalid("delete input has nonidentity fields"));
+            }
+            Ok(key.identity)
         }
         "update" => {
-            let object = exact_object(value, &["identity", "patch"])?;
-            let identity = schema.record_key(model, &object["identity"])?.identity;
-            let patch = schema.validate_patch(model, &object["patch"])?;
+            let object = value
+                .as_object()
+                .ok_or_else(|| invalid("update input must be object"))?;
+            let descriptor = schema.model(model)?;
+            let identity: Map<String, Value> = descriptor
+                .identity
+                .iter()
+                .filter_map(|field| {
+                    object
+                        .get(field)
+                        .map(|value| (field.clone(), value.clone()))
+                })
+                .collect();
+            let identity = schema.record_key(model, &Value::Object(identity))?.identity;
+            let patch: Map<String, Value> = object
+                .iter()
+                .filter(|(name, _)| !descriptor.identity.contains(name))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect();
+            let patch = schema.validate_patch(model, &Value::Object(patch))?;
             if let Some(allowed) = allowed
                 && patch
                     .as_object()
@@ -578,19 +601,132 @@ fn normalize_model_input(
             {
                 return Err(invalid("disallowed Action patch field"));
             }
-            Ok(serde_json::json!({"identity":identity,"patch":patch}))
+            let mut flat = identity.as_object().unwrap().clone();
+            flat.extend(patch.as_object().unwrap().clone());
+            Ok(Value::Object(flat))
         }
         _ => Err(invalid("invalid Action operation")),
     }
 }
-fn exact_object<'a>(value: &'a Value, keys: &[&str]) -> Result<&'a Map<String, Value>> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| invalid("expected Action object"))?;
-    if object.len() != keys.len() || keys.iter().any(|k| !object.contains_key(*k)) {
-        return Err(invalid("invalid Action object fields"));
+
+/// Shared relation binding check for durable submission and server execution.
+pub fn validate_action_bindings(
+    schema: &Schema,
+    action: &ActionDescriptor,
+    args: &Value,
+) -> Result<()> {
+    for input in &action.inputs {
+        let ActionInputDescriptor::Model {
+            name,
+            model,
+            operation,
+            cardinality,
+            metadata,
+            ..
+        } = input
+        else {
+            continue;
+        };
+        let target = &args[name];
+        let targets: Vec<&Value> = match cardinality.as_str() {
+            "optional" if target.is_null() => vec![],
+            "list" => target
+                .as_array()
+                .ok_or_else(|| invalid("invalid Action list"))?
+                .iter()
+                .collect(),
+            _ => vec![target],
+        };
+        if targets.is_empty() {
+            continue;
+        }
+        for binding in metadata
+            .get("bindings")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let source_name = binding["slot"]
+                .as_str()
+                .ok_or_else(|| invalid("invalid Action binding slot"))?;
+            let source_input = action
+                .inputs
+                .iter()
+                .find(|input| input.name() == source_name)
+                .ok_or_else(|| invalid("unknown Action binding source"))?;
+            let ActionInputDescriptor::Model {
+                model: source_model,
+                cardinality: source_cardinality,
+                ..
+            } = source_input
+            else {
+                return Err(invalid("Action binding source must be a Model"));
+            };
+            if source_cardinality != "single" {
+                return Err(invalid("Action binding source must be single"));
+            }
+            let source = &args[source_name];
+            if source.is_null() {
+                return Err(invalid("Action binding source missing"));
+            }
+            let source_desc = schema.model(source_model)?;
+            let source_identity: Map<String, Value> = source_desc
+                .identity
+                .iter()
+                .filter_map(|field| {
+                    source
+                        .get(field)
+                        .map(|value| (field.clone(), value.clone()))
+                })
+                .collect();
+            let source_identity = schema
+                .record_key(source_model, &Value::Object(source_identity))?
+                .identity;
+            let fields = binding["fields"]
+                .as_array()
+                .ok_or_else(|| invalid("invalid Action binding fields"))?;
+            let local: Vec<&str> = fields
+                .iter()
+                .map(|v| {
+                    v.as_str()
+                        .ok_or_else(|| invalid("invalid Action binding field"))
+                })
+                .collect::<Result<_>>()?;
+            if local.len() != source_desc.identity.len() {
+                return Err(invalid("Action binding identity arity mismatch"));
+            }
+            let target_desc = schema.model(model)?;
+            for (field, source_field) in local.iter().zip(&source_desc.identity) {
+                let target_type = &target_desc
+                    .fields
+                    .iter()
+                    .find(|candidate| candidate.name == *field)
+                    .ok_or_else(|| invalid("Action binding target field missing"))?
+                    .value_type;
+                let source_type = &source_desc
+                    .fields
+                    .iter()
+                    .find(|candidate| &candidate.name == source_field)
+                    .ok_or_else(|| invalid("Action binding source field missing"))?
+                    .value_type;
+                if serde_json::to_value(target_type)? != serde_json::to_value(source_type)? {
+                    return Err(invalid("Action binding field type mismatch"));
+                }
+            }
+            for target in &targets {
+                for (field, source_field) in local.iter().zip(&source_desc.identity) {
+                    if let Some(actual) = target.get(field) {
+                        if actual != &source_identity[source_field] {
+                            return Err(invalid("Action binding mismatch"));
+                        }
+                    } else if operation == "create" {
+                        return Err(invalid("Action binding create field missing"));
+                    }
+                }
+            }
+        }
     }
-    Ok(object)
+    Ok(())
 }
 pub fn validate_action_result(
     schema: &Schema,

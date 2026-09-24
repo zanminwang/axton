@@ -77,6 +77,95 @@ fn action_create_and_queue_rollback_together_on_failed_optimism() {
 }
 
 #[test]
+fn flat_update_preserves_omission_and_restricted_fields_in_queued_operation() {
+    let mut raw = serde_json::to_value(model_schema()).unwrap();
+    raw["models"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"note","type":{"kind":"scalar","name":"string"},"nullable":true}));
+    raw["actions"][1]["inputs"][0]["allowedPatchFields"] = json!(["title"]);
+    let schema = Schema::from_value(raw).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"), schema);
+    client
+        .transaction(|tx| {
+            tx.direct(Operation {
+                model: "Todo".into(),
+                op: OperationKind::Create,
+                identity: json!({"id":"t"}),
+                values: Some(json!({"title":"A","note":"kept"})),
+            })
+        })
+        .unwrap();
+    assert!(
+        client
+            .submit_action("Rename", 1, json!({"todo":{"id":"t","note":"blocked"}}))
+            .is_err()
+    );
+    client
+        .submit_action("Rename", 1, json!({"todo":{"id":"t","title":"B"}}))
+        .unwrap();
+    let rows = client
+        .read_sql(
+            "SELECT identity, \"values\" FROM axton_mutation_operation",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(rows[0]["identity"].as_str().unwrap()).unwrap(),
+        json!({"id":"t"})
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(rows[0]["values"].as_str().unwrap()).unwrap(),
+        json!({"title":"B"})
+    );
+    assert_eq!(
+        client
+            .read_sql("SELECT note FROM Todo WHERE id='t'", &[])
+            .unwrap()[0]["note"],
+        "kept"
+    );
+}
+
+#[test]
+fn flat_composite_delete_queues_identity_without_public_wrappers() {
+    let schema = Schema::from_value(json!({"enums":[],"models":[{"name":"Book","identity":["slug","edition"],"fields":[{"name":"slug","type":{"kind":"scalar","name":"string"},"nullable":false},{"name":"edition","type":{"kind":"scalar","name":"int"},"nullable":false},{"name":"title","type":{"kind":"scalar","name":"string"},"nullable":false}]}],"actions":[{"name":"Delete","version":1,"inputs":[{"kind":"model","name":"book","model":"Book","operation":"delete","cardinality":"single"}],"outputs":[]}]})).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"), schema);
+    client
+        .transaction(|tx| {
+            tx.direct(Operation {
+                model: "Book".into(),
+                op: OperationKind::Create,
+                identity: json!({"slug":"s","edition":2}),
+                values: Some(json!({"title":"A"})),
+            })
+        })
+        .unwrap();
+    client
+        .submit_action("Delete", 1, json!({"book":{"edition":2,"slug":"s"}}))
+        .unwrap();
+    let rows = client
+        .read_sql(
+            "SELECT identity,op,\"values\" FROM axton_mutation_operation",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(rows[0]["identity"].as_str().unwrap()).unwrap(),
+        json!({"slug":"s","edition":2})
+    );
+    assert_eq!(rows[0]["op"], "delete");
+    assert!(rows[0]["values"].is_null());
+    assert_eq!(
+        client
+            .read_sql("SELECT COUNT(*) AS n FROM Book", &[])
+            .unwrap()[0]["n"],
+        0
+    );
+}
+
+#[test]
 fn receipt_completion_is_correlated_and_transient() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");
@@ -126,11 +215,7 @@ fn rejecting_parent_completes_unsent_lifecycle_dependent() {
         .submit_action("Add", 1, json!({"todo":{"id":"t","title":"A"},"gone":[]}))
         .unwrap();
     let child = client
-        .submit_action(
-            "Rename",
-            1,
-            json!({"todo":{"identity":{"id":"t"},"patch":{"title":"B"}}}),
-        )
+        .submit_action("Rename", 1, json!({"todo":{"id":"t","title":"B"}}))
         .unwrap();
     let frozen = client.freeze().unwrap().unwrap();
     let request = PushRequest::decode_actions(&frozen, &model_schema()).unwrap();
@@ -326,11 +411,7 @@ fn additive_model_field_keeps_frozen_bytes_and_accepts_old_result_snapshot() {
         })
         .unwrap();
     let call = client
-        .submit_action(
-            "Rename",
-            1,
-            json!({"todo":{"identity":{"id":"t"},"patch":{"title":"B"}}}),
-        )
+        .submit_action("Rename", 1, json!({"todo":{"id":"t","title":"B"}}))
         .unwrap();
     let frozen = client.freeze().unwrap().unwrap();
     let frozen_reads = client
@@ -426,11 +507,7 @@ fn same_schema_receipt_cannot_omit_a_declared_nullable_result_field() {
         })
         .unwrap();
     let call = client
-        .submit_action(
-            "Rename",
-            1,
-            json!({"todo":{"identity":{"id":"t"},"patch":{"title":"B"}}}),
-        )
+        .submit_action("Rename", 1, json!({"todo":{"id":"t","title":"B"}}))
         .unwrap();
     client.freeze().unwrap();
     let mut receipt = PushReceipt {
@@ -481,11 +558,7 @@ fn upgraded_server_may_return_new_fields_for_an_old_frozen_result_contract() {
         })
         .unwrap();
     let call = client
-        .submit_action(
-            "Rename",
-            1,
-            json!({"todo":{"identity":{"id":"t"},"patch":{"title":"B"}}}),
-        )
+        .submit_action("Rename", 1, json!({"todo":{"id":"t","title":"B"}}))
         .unwrap();
     let frozen = client.freeze().unwrap().unwrap();
     drop(client);
@@ -548,11 +621,7 @@ fn explicit_rebuild_reports_abandoned_frozen_and_unsent_calls() {
         .unwrap();
     client.freeze().unwrap();
     let unsent = client
-        .submit_action(
-            "Rename",
-            1,
-            json!({"todo":{"identity":{"id":"t"},"patch":{"title":"B"}}}),
-        )
+        .submit_action("Rename", 1, json!({"todo":{"id":"t","title":"B"}}))
         .unwrap();
     drop(client);
     let mut raw = serde_json::to_value(old).unwrap();
@@ -633,11 +702,7 @@ fn legacy_discard_refuses_a_legacy_parent_with_action_descendant() {
         })
         .unwrap();
     let child = client
-        .submit_action(
-            "Rename",
-            1,
-            json!({"todo":{"identity":{"id":"t"},"patch":{"title":"B"}}}),
-        )
+        .submit_action("Rename", 1, json!({"todo":{"id":"t","title":"B"}}))
         .unwrap();
     assert!(client.drop_mutation(parent).is_err());
     assert_eq!(client.pending_count().unwrap(), 2);

@@ -905,6 +905,50 @@ action Rename(child Child.update<title>)
 }
 
 #[test]
+fn retained_generated_action_binding_validates_without_relation_snapshots() {
+    let source = "model Parent { id String children Child[] @@id(id) } model Child { id String parentId String parent Parent @reference(via: [parentId]) @@id(id) } action Add(parent Parent.create, child Child.create(parent: parent))";
+    let mut config = axton_compiler::compile(source).unwrap();
+    let models = axton_compiler::reconcile_model_history(&config, None).unwrap();
+    let retained_models: Vec<_> = models["models"]
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|versions| versions.as_object().unwrap().values().cloned())
+        .collect();
+    config["backendModels"] = serde_json::json!(retained_models);
+    let history = axton_compiler::reconcile_action_history(&config, None).unwrap();
+    let snapshot = history["actions"]["Add"]["1"].clone();
+    assert!(
+        snapshot["input"]["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|model| model.get("relations").is_none())
+    );
+    let mut schema = config["schema"].clone();
+    schema["actions"] = serde_json::json!([snapshot]);
+    schema["resultModels"] = serde_json::json!(retained_models);
+    let schema = axton_core::Schema::from_value(schema).unwrap();
+    let action = schema.action("Add", 1).unwrap();
+    assert!(
+        axton_core::normalize_action_args(
+            &schema,
+            action,
+            &serde_json::json!({"parent":{"id":"p"},"child":{"id":"c","parentId":"p"}})
+        )
+        .is_ok()
+    );
+    assert!(
+        axton_core::normalize_action_args(
+            &schema,
+            action,
+            &serde_json::json!({"parent":{"id":"p"},"child":{"id":"c","parentId":"other"}})
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn action_typescript_emits_flattened_operands_and_separate_client_contract() {
     let v = compile("model Todo { id String title String @@id(id) } action AddTodo(todo Todo.create, patch Todo.update<title>?, gone Todo.delete[], label String?) { related Todo? matches Todo[] count Int }").unwrap();
     let ts = axton_compiler::typescript(&v);

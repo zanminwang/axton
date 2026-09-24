@@ -69,6 +69,15 @@
       ]
     },
     {
+      "op": "handleAction",
+      "request": {"op": "handleAction", "name": "Send", "version": 1, "arguments": {}, "owner": "alice", "callId": "01890f47-1234-7123-8123-123456789abc", "ordinal": 1},
+      "responses": [
+        {"variant": "settled", "value": {"outputs": {"message": "sent"}, "changes": [], "publications": []}},
+        {"variant": "rejected", "value": {"rejection": "send.refused"}},
+        {"variant": "failed", "value": {"error": "handler failure"}}
+      ]
+    },
+    {
       "op": "load",
       "request": {"op": "load", "model": "Task", "version": 1, "identities": [{"id": "t-1"}, {"id": "t-2"}], "owner": "alice"},
       "responses": [

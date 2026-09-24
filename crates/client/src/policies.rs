@@ -151,12 +151,11 @@ fn slots(
             };
             let mut keys = Vec::new();
             for value in values {
-                let identity = value.get("identity").unwrap_or(value);
                 let mut fields = serde_json::Map::new();
                 for field in &schema.model(model)?.identity {
                     fields.insert(
                         field.clone(),
-                        identity
+                        value
                             .get(field)
                             .ok_or_else(|| invalid("Action input identity missing"))?
                             .clone(),

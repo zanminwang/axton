@@ -57,14 +57,15 @@ pub async fn process_push(
     request_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
-    axton_server::process_push(
-        &config(&config_json)?,
-        &owner,
-        request_json.as_bytes(),
-        &CallbackHost(callback),
-    )
-    .await
-    .map_err(reason)
+    let decoded = config(&config_json)?;
+    let action_batch = serde_json::from_str::<Value>(&request_json).ok()
+        .and_then(|request| request.get("mutations")?.as_array().cloned())
+        .is_some_and(|calls| calls.iter().any(|call| call.get("callId").is_some()));
+    if action_batch {
+        axton_server::process_action_push(&decoded, &owner, request_json.as_bytes(), &CallbackHost(callback)).await.map_err(reason)
+    } else {
+        axton_server::process_push(&decoded, &owner, request_json.as_bytes(), &CallbackHost(callback)).await.map_err(reason)
+    }
 }
 #[napi]
 pub async fn process_pull(

@@ -58,7 +58,12 @@ export async function answer<Tx>(
       return acknowledged;
     }
     case "claimCall": {
-      const inserted = await q(SQL.CLAIM_CALL_INSERT, r.owner, r.callId, r.request);
+      const inserted = await q(
+        SQL.CLAIM_CALL_INSERT,
+        r.owner,
+        r.callId,
+        r.request,
+      );
       const rows = await q(SQL.CLAIM_CALL_LOCK, r.owner, r.callId);
       if (rows.length !== 1) throw new Error("Failed to lock call");
       const row = rows[0]!;
@@ -73,7 +78,8 @@ export async function answer<Tx>(
     }
     case "saveCall": {
       const rows = await q(SQL.SAVE_CALL, r.owner, r.callId, r.response);
-      if (rows.length !== 1) throw new Error("Call not claimed or already completed");
+      if (rows.length !== 1)
+        throw new Error("Call not claimed or already completed");
       const acknowledged: Acknowledged = null;
       return acknowledged;
     }
@@ -155,6 +161,7 @@ export async function answer<Tx>(
       return acknowledged;
     }
     case "handle":
+    case "handleAction":
     case "load":
       break;
     default: {

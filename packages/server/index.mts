@@ -4,6 +4,7 @@ import type { IncomingMessage, RequestListener, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket } from "ws";
 import type { HostRequest } from "./host-contract.mts";
+import { isRetryableTransactionError } from "./retryable.mts";
 export { WebSocket } from "ws";
 const require = createRequire(import.meta.url);
 export type Native = {
@@ -253,6 +254,18 @@ export type Loader<Tx, Identity = any, Row = object> = (
 /** Every retained version of one mutation, or a bare function as shorthand for a v1-only contract. */
 export type HandlerRegistration<Tx> =
   Handler<Tx> | { [version: `v${number}`]: Handler<Tx> };
+export type ActionHandler<Tx, Args = any, Outputs = any> = (call: {
+  ctx: {
+    tx: Tx;
+    userId: string;
+    callId: string;
+    changes: Changes;
+    publish: Publish;
+  };
+  args: Args;
+}) => Promise<Outputs | void>;
+export type ActionHandlerRegistration<Tx> =
+  ActionHandler<Tx> | { [version: `v${number}`]: ActionHandler<Tx> };
 /** Every retained version of one model's read contract, or a bare function as shorthand for a v1-only model. */
 export type LoaderRegistration<Tx> =
   Loader<Tx> | { [version: `v${number}`]: Loader<Tx> };
@@ -337,7 +350,10 @@ export interface BackendOptions<T> {
   config: object;
   database: Database<T>;
   authenticate: Authenticate;
-  handlers: Record<string, HandlerRegistration<T>>;
+  handlers: Record<
+    string,
+    HandlerRegistration<T> | ActionHandlerRegistration<T>
+  >;
   loaders: Record<string, LoaderRegistration<T>>;
   loaderHooks?: Record<
     string,
@@ -449,7 +465,20 @@ export function createBackend<T>(options: BackendOptions<T>) {
   const onError: (error: unknown) => void =
     options.onError ?? ((error) => console.error(error));
   const descriptor = options.config as {
-    schema?: { models?: { name: string; version?: number }[] };
+    schema?: {
+      models?: { name: string; version?: number; identity?: string[] }[];
+      actions?: {
+        name: string;
+        version: number;
+        inputs?: {
+          kind: string;
+          name: string;
+          model?: string;
+          cardinality?: string;
+        }[];
+        outputs?: { source: unknown }[];
+      }[];
+    };
     mutations?: MutationDescriptor[];
     models?: { name: string; version: number }[];
   };
@@ -515,6 +544,32 @@ export function createBackend<T>(options: BackendOptions<T>) {
       handler: registered.get(m.name)!.get(m.version)!,
       slots: m.slots ?? [],
     });
+  const actionVersions = new Map<string, number[]>();
+  for (const action of descriptor.schema?.actions ?? [])
+    actionVersions.set(
+      action.name,
+      [...(actionVersions.get(action.name) ?? []), action.version].sort(
+        (a, b) => a - b,
+      ),
+    );
+  const actionHandlers = new Map<string, ActionHandler<T>>();
+  for (const [name, versions] of actionVersions) {
+    const registered = versioned<ActionHandler<T>>(
+      "handler",
+      name,
+      lowerFirst(name),
+      versions,
+      options.handlers[lowerFirst(name)],
+    );
+    for (const [version, handler] of registered)
+      actionHandlers.set(`${name}:${version}`, handler);
+  }
+  const actionTable = new Map(
+    (descriptor.schema?.actions ?? []).map((action) => [
+      `${action.name}:${action.version}`,
+      action,
+    ]),
+  );
   const sessions = new Map<T, Session>();
   const wakes = new WakeHub();
   /**
@@ -635,6 +690,54 @@ export function createBackend<T>(options: BackendOptions<T>) {
             });
             result = collected.settlement();
           } catch (error) {
+            if (isRetryableTransactionError(error)) throw error;
+            result = refusal(error);
+          }
+        } else if (req.op === "handleAction") {
+          const action = actionTable.get(`${req.name}:${req.version}`);
+          const handler = actionHandlers.get(`${req.name}:${req.version}`);
+          if (!action || !handler)
+            throw new Error(
+              `Missing Action handler ${req.name} v${req.version}`,
+            );
+          const args = { ...req.arguments };
+          const collected = collect();
+          for (const input of action.inputs ?? []) {
+            if (input.kind !== "model" || !input.model) continue;
+            const identityFields =
+              schemaModels.find((model) => model.name === input.model)
+                ?.identity ?? [];
+            const shape = (value: unknown): unknown => {
+              if (value === null || value === undefined) return null;
+              const record = value as Record<string, unknown>;
+              const identity = Object.fromEntries(
+                identityFields.map((field) => [field, record[field]]),
+              );
+              return tag({ ...record }, { model: input.model!, identity });
+            };
+            const value = args[input.name];
+            args[input.name] =
+              input.cardinality === "list"
+                ? (value as unknown[]).map(shape)
+                : shape(value);
+          }
+          try {
+            const outputs = await handler({
+              ctx: {
+                tx,
+                userId: req.owner,
+                callId: req.callId,
+                changes: collected.changes,
+                publish: collected.publish,
+              },
+              args,
+            });
+            result = {
+              outputs: outputs === undefined ? {} : outputs,
+              ...collected.settlement(),
+            };
+          } catch (error) {
+            if (isRetryableTransactionError(error)) throw error;
             result = refusal(error);
           }
         } else if (req.op === "load") {
@@ -662,6 +765,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
             ]?.prepareForViewer(call);
             rows = await loader(call);
           } catch (error) {
+            if (isRetryableTransactionError(error)) throw error;
             refused = refusal(error);
           }
           if (refused) return callbackJson(refused);

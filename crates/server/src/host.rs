@@ -60,7 +60,7 @@ fn nullable_string<'de, D: Deserializer<'de>>(
 /// Every operation, in the order [`HostRequest`] declares them. The fixture
 /// and `packages/server/host-contract.mts` carry the same list; the contract
 /// test checks this one against the enum itself.
-pub const OPERATIONS: [&str; 14] = [
+pub const OPERATIONS: [&str; 15] = [
     "claim",
     "saveReceipt",
     "claimCall",
@@ -71,6 +71,7 @@ pub const OPERATIONS: [&str; 14] = [
     "rollback",
     "release",
     "handle",
+    "handleAction",
     "load",
     "advanceStamp",
     "ensureStamp",
@@ -130,6 +131,15 @@ pub enum HostRequest {
         owner: String,
         ordinal: u64,
     },
+    /// Execute one generated Action handler with its normalized flat arguments.
+    HandleAction {
+        name: String,
+        version: u64,
+        arguments: Value,
+        owner: String,
+        call_id: String,
+        ordinal: u64,
+    },
     /// Load the current state of these identities as the records of one
     /// retained model read contract (`version`), for this caller. Loads name
     /// no channel: the same identity, version and stamp describe the same
@@ -169,6 +179,7 @@ impl HostRequest {
             Self::Rollback { ordinal } => format!("rollback(ordinal {ordinal})"),
             Self::Release { ordinal } => format!("release(ordinal {ordinal})"),
             Self::Handle { ordinal, .. } => format!("handle(ordinal {ordinal})"),
+            Self::HandleAction { ordinal, .. } => format!("handleAction(ordinal {ordinal})"),
             Self::Load { .. } => "load".into(),
             Self::AdvanceStamp { .. } => "advanceStamp".into(),
             Self::EnsureStamp { .. } => "ensureStamp".into(),
@@ -183,7 +194,7 @@ impl HostRequest {
             | Self::ClaimCall { .. }
             | Self::SaveCall { .. }
             | Self::Scan { .. } => code::STORAGE_INVALID,
-            Self::Handle { .. } => code::HANDLER_INVALID,
+            Self::Handle { .. } | Self::HandleAction { .. } => code::HANDLER_INVALID,
             Self::Load { .. } => code::LOADER_INVALID,
             Self::Head { .. }
             | Self::Savepoint { .. }
@@ -356,6 +367,79 @@ pub enum Handled {
     Failed {
         error: String,
     },
+}
+
+/// Action handlers return explicit named fields in addition to change and publication intents.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged, try_from = "HandledActionWire")]
+pub enum HandledAction {
+    Settled {
+        outputs: Value,
+        changes: Vec<RecordRef>,
+        publications: Vec<PublicationIntent>,
+    },
+    Rejected {
+        rejection: String,
+    },
+    Failed {
+        error: String,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HandledActionWire {
+    #[serde(default, deserialize_with = "present")]
+    outputs: Option<Value>,
+    #[serde(default, deserialize_with = "present")]
+    changes: Option<Value>,
+    #[serde(default, deserialize_with = "present")]
+    publications: Option<Value>,
+    #[serde(default, deserialize_with = "present")]
+    rejection: Option<Value>,
+    #[serde(default, deserialize_with = "present")]
+    error: Option<Value>,
+}
+
+impl TryFrom<HandledActionWire> for HandledAction {
+    type Error = String;
+    fn try_from(wire: HandledActionWire) -> std::result::Result<Self, String> {
+        match (
+            wire.outputs,
+            wire.changes,
+            wire.publications,
+            wire.rejection,
+            wire.error,
+        ) {
+            (None, None, None, Some(rejection), None) => rejection
+                .as_str()
+                .filter(|code| valid_code(code))
+                .map(|code| Self::Rejected {
+                    rejection: code.into(),
+                })
+                .ok_or_else(|| "invalid rejection code".into()),
+            (None, None, None, None, Some(error)) => error
+                .as_str()
+                .map(|error| Self::Failed {
+                    error: error.into(),
+                })
+                .ok_or_else(|| "invalid handler error".into()),
+            (Some(outputs), Some(changes), Some(publications), None, None)
+                if outputs.is_object() =>
+            {
+                let changes: Vec<RecordRef> = serde_json::from_value(changes)
+                    .map_err(|error| format!("invalid handler changes: {error}"))?;
+                let publications: Vec<PublicationIntent> = serde_json::from_value(publications)
+                    .map_err(|error| format!("invalid handler publications: {error}"))?;
+                Ok(Self::Settled {
+                    outputs,
+                    changes,
+                    publications,
+                })
+            }
+            _ => Err("invalid Action handler settlement".into()),
+        }
+    }
 }
 
 #[derive(Deserialize)]

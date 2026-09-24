@@ -1,8 +1,8 @@
 //! The host operation contract: the shared fixture round-trips through the
 //! Rust types, and a malformed request or response is refused per operation.
 use axton_server::host::{
-    Acknowledged, Claimed, ClaimedCall, Handled, Head, HostRequest, Invalidation, Loaded,
-    OPERATIONS, PublicationIntent, Published, RecordRef, Scanned, Stamped,
+    Acknowledged, Claimed, ClaimedCall, Handled, HandledAction, Head, HostRequest, Invalidation,
+    Loaded, OPERATIONS, PublicationIntent, Published, RecordRef, Scanned, Stamped,
 };
 use serde_json::{Value, json};
 
@@ -29,6 +29,7 @@ fn round_trip_response(op: &str, value: &Value) -> Result<Value, String> {
         "head" => round!(Head),
         "scan" => round!(Scanned),
         "handle" => round!(Handled),
+        "handleAction" => round!(HandledAction),
         "load" => round!(Loaded),
         "advanceStamp" | "ensureStamp" => round!(Stamped),
         "publish" => round!(Published),

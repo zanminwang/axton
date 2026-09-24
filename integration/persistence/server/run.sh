@@ -14,3 +14,4 @@ export DATABASE_URL="postgresql://$(id -un)@127.0.0.1:$port/postgres"
 # Test files run in parallel by default; both apply migration.sql to one cluster, so keep them sequential.
 node --test "$root/integration/persistence/server/driver-conformance.test.mjs"
 node --test "$root/integration/persistence/server/runtime.test.mjs" "$root/integration/persistence/server/host-contract.test.mjs"
+node --test "$root/integration/persistence/server/actions.test.mjs"

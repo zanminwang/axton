@@ -77,6 +77,24 @@ await client.actions.call.sendEmail({ to: 'a', subject: 'b', body: 'c' });
             "await client.actions.call.sendEmail({ to: 'a', subject: 'b', body: 'c' });\n",
         ])
 
+    def test_routes_dart_action_snippets_to_generated_action_fixture(self):
+        markdown = '''```dart
+await client.close();
+```
+```dart title="action-contract"
+final result = await client.actions.call.getTodos();
+```
+'''
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'guide.md').write_text(markdown)
+            with patch('check_examples.ROOT', root):
+                ordinary = snippets('dart', ['guide.md'])
+                action = snippets('dart', ['guide.md'], context='action')
+        self.assertEqual([code for _, code in ordinary], ['await client.close();\n'])
+        self.assertEqual([code for _, code in action],
+                         ['final result = await client.actions.call.getTodos();\n'])
+
 
 if __name__ == '__main__':
     unittest.main()

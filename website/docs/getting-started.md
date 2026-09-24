@@ -35,11 +35,11 @@ model Todo {
   @@id(id)
 }
 
-mutation AddTodo { todo Todo.create }
-mutation SetTodoDone { todo Todo.update<done> }
+action AddTodo(todo Todo.create)
+action SetTodoDone(todo Todo.update<done>)
 ```
 
-`AddTodo` creates a task and `SetTodoDone` changes only `done`. The compiler generates the typed client for the app and the typed `Handlers`/`Loaders` for the backend from this one file.
+`AddTodo` creates a task and `SetTodoDone` changes only `done`. Each implicitly returns the resulting `Todo` snapshot. The compiler generates both durable `client.actions.addTodo` / `setTodoDone` and direct `client.actions.call` methods, plus typed backend `Handlers` / `Loaders` from this file.
 
 ## 2. Start the backend
 
@@ -69,13 +69,13 @@ Each installation keeps its own database and client identity, so the two simulat
 2. Mark it done on Bob's phone. Both lists converge.
 3. Interrupt one phone's connection to the backend (the simulator runner below does this with a per-phone proxy), add a task and complete it. Both writes commit locally and stay queued. Relaunch the app: the rows, the queue and the client identity survive. Restore networking: the create is pushed before its dependent update, missed changes are caught up over HTTP, and the live stream resumes.
 
-The backend trims titles, rejects empty ones (`todo.title_empty`), requires the creator to be the authenticated user, and reports a primary-key collision as `todo.id_conflict`. A rejected mutation's optimistic change is removed locally and the rejection is recorded for the app.
+The backend trims titles, rejects empty ones (`todo.title_empty`), requires the creator to be the authenticated user, and reports a primary-key collision as `todo.id_conflict`. A rejected Action's optimistic change is removed locally; its handle resolves with `ActionError` and the rejection remains inspectable.
 
 ## Understand the files
 
 | File | Role |
 | --- | --- |
-| [models/todo.model](https://github.com/zanminwang/axton/blob/main/examples/todo/models/todo.model) | Record schema and mutation contract |
+| [models/todo.model](https://github.com/zanminwang/axton/blob/main/examples/todo/models/todo.model) | Model and Action contract |
 | [generate.sh](https://github.com/zanminwang/axton/blob/main/examples/todo/generate.sh) | Compiles the schema into `generated/node` and `generated/mobile` |
 | [server.mts](https://github.com/zanminwang/axton/blob/main/examples/todo/server.mts) | Handlers, loaders, development authentication and database setup |
 | [seed.mts](https://github.com/zanminwang/axton/blob/main/examples/todo/seed.mts) | Create-if-missing demo users and tasks |

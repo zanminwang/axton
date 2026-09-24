@@ -25,52 +25,55 @@ Here `render` is your UI's update function. Subscribing records the desired chan
 
 Use channel names that your backend publishes to, and subscribe when the client needs to receive changes other clients make. A channel is not a database query or an authorization token. Loaders decide which requested records the authenticated user may see.
 
-## Receive mutation results
+## Receive Action results
 
-**A subscription is not required to see your own result.** A mutation's local changes are an optimistic prediction. Its receipt confirms that the backend accepted the operation and carries the final content of every record the handler changed, read back by your loader in the handler's transaction. AXTON replaces the prediction with that content as soon as the receipt arrives: a normalized value shows up, and a record the backend refused to create disappears with the rejection. Your loader must return the resulting record for that user, exactly as it would for a page.
+**A subscription is not required to see your own result.** A durable Action's inferred local Model changes are optimistic. Its handle's `wait()` returns the final per-invocation result or an error. The receipt also carries batch-final authority for changed records, read through the Loader in the handler transaction. AXTON applies that authority and replays later pending edits over it. Thus the result snapshot and current local Model view can differ. A direct Action has no automatic local optimism or durable queue; its response carries its result and applies authority through the same local state path.
 
 Subscribe with `client.channels.subscribe(channel)` as above when the client needs changes made elsewhere: by other users, by background jobs, or by handlers that touch records without reporting them. Subscription starts synchronization; it does not wait for initial data. Use `watch` to observe the records, and wait for an existing record to be available locally before updating it.
 
-You can send mutations without subscribing to any channel. The receipt still corrects the local row to the server's result; what you do not receive is later changes to that record from elsewhere. If you subscribe to a channel the handler publishes to, the page for your own change carries the same stamp as the receipt and rewrites nothing, whichever arrives first.
+You can send Actions without subscribing to any channel. The receipt still corrects the local row to the server's batch-final state; what you do not receive is later changes from elsewhere. If you subscribe to a channel the handler publishes to, the page for your own change carries the same stamp as the receipt and rewrites nothing, whichever arrives first.
 
 ## Work offline
 
 === "TypeScript"
 
-    ```ts
+    ```ts title="action-contract"
     await client.connection!.pause();
-    await client.mutate.edit({
-      entry: { identity: { id: 'entry-1' }, values: { text: '  Draft  ' } },
+    const call = await client.actions.addTodo({
+      todo: { id: 'todo-offline', title: 'Draft', state: 'open', note: null },
+      gone: [], status: null, tags: [],
     });
-    console.log((await client.models.entry.get({ id: 'entry-1' }))?.text);
+    console.log((await client.models.todo.get({ id: 'todo-offline' }))?.title);
     await client.connection!.resume();
+    const outcome = await call.wait();
+    if (outcome.error) console.error(outcome.error.code);
     ```
 
 === "Flutter"
 
-    ```dart
+    ```dart title="action-contract"
     await client.connection!.pause();
-    await client.mutate.edit(
-      entry: const EditEntryUpdate(
-        identity: EntryIdentity(id: 'entry-1'),
-        text: Present('  Draft  '),
-      ),
+    final call = await client.actions.addTodo(
+      todo: const Todo(id: 'todo-offline', title: 'Draft', state: Status.open, note: null),
+      gone: const [], status: null, tags: const [],
     );
-    print((await client.models.entry.get(const EntryIdentity(id: 'entry-1')))?.text);
+    print((await client.models.todo.get(const TodoIdentity(id: 'todo-offline')))?.title);
     await client.connection!.resume();
+    final outcome = await call.wait();
+    if (outcome is ActionFailure<AddTodoOutput>) print(outcome.error.code);
     ```
 
-This assumes `GeneratedClient.open` was given `server` and the record has already arrived locally. Without it the client is local-only until you call `client.connect`. Dart uses the same `pause`/`resume` methods with its typed mutation arguments.
+This assumes `GeneratedClient.open` was given `server`; otherwise call `client.connect` before resuming. The Action's create operand is visible locally while the connection is paused. Dart uses the same `pause`/`resume` methods.
 
-A `client.mutate` call's completion confirms its local commit. It does not mean the server has accepted the operation. Display pending and rejected state using the record's [syncState](runtime.md#pending-work-and-recovery) when that distinction matters to the UI.
+The returned handle confirms the local commit. It does not mean the server has accepted the Action; `wait()` observes the terminal outcome. Display pending and rejected state using the record's [syncState](runtime.md#pending-work-and-recovery) when that distinction matters to the UI.
 
-You can close and reopen the same local database without losing queued changes. Keep the same backend database as well: replacing a backend's receipt/cursor history with an empty database is a reset, not a temporary network interruption. The tutorial's `offline` / `online` commands preserve both databases.
+You can close and reopen the same local database without losing queued intent. A new client handle cannot retrieve a past result from client memory. Keep the same backend database as well: replacing its outcome/receipt/cursor history with an empty database is a reset, not a temporary network interruption. The tutorial's `offline` / `online` commands preserve both databases.
 
 ## Understand acceptance and rejection
 
-After a local mutation, the connection pushes its frozen request. A successful receipt completes the batch at once: the runtime applies the server's content for every record the accepted mutations changed, removes the completed mutations and replays remaining local changes, in one local transaction. This lets a handler's normalized result replace the optimistic value without waiting for any channel. One batch is in flight at a time, so later mutations complete after earlier ones.
+After a durable Action is accepted locally, the connection pushes its frozen request. A successful receipt completes the batch at once: the runtime applies server authority for changed records, removes completed queue entries and replays remaining local changes in one local transaction. One batch is in flight at a time. The handle's result stays the snapshot of its own invocation, even when later work in the batch changes the record.
 
-If a handler rejects the mutation, AXTON removes that mutation's optimistic contribution and retains its rejection code locally. Later valid pending work may still affect the displayed record, so rollback is not necessarily a return to the value the user saw before all edits.
+If a handler rejects an Action, AXTON removes its optimistic contribution and retains the rejection code locally. Later valid pending work may still affect the displayed record, so rollback is not necessarily a return to the value the user saw before all edits.
 
 === "TypeScript"
 
@@ -92,13 +95,13 @@ If a handler rejects the mutation, AXTON removes that mutation's optimistic cont
     await client.dismissRejection(rejectionOrdinal);
     ```
 
-`rejectionOrdinal` is taken from the rejection you handled. Dismissing only clears the inbox entry. Retrying the business action means creating a new mutation after resolving its cause. `drop(ordinal)` is for eligible unsent mutations; it cannot cancel a request whose server outcome is unknown.
+`rejectionOrdinal` is taken from the rejection you handled. Dismissing only clears the inbox entry. Retrying the business Action means making a new call after resolving its cause. `drop(ordinal)` is for eligible unsent work; it cannot cancel a request whose server outcome is unknown.
 
 ## Recover from connection failures
 
-Provide `onError` to record background failures, and `refreshAuth` if your credentials can expire. Records that could not be applied also reach `onError`, as an `AxtonReport` with a `kind`: `readFailed` when the server could not read the record, `skipped` when the local schema refused it, `conflict`, or `diverged` when a pending edit no longer applies to newer server state. A diverged edit is still sent, and `models.<name>.syncState(identity)` marks it `diverged` until the server answers it. Let the runtime retry frozen work; do not generate a new mutation merely because the original request timed out. The backend may already have committed it and retained its receipt.
+Provide `onError` to record background failures, and `refreshAuth` if your credentials can expire. Records that could not be applied also reach `onError`, as an `AxtonReport` with a `kind`: `readFailed` when the server could not read the record, `skipped` when the local schema refused it, `conflict`, or `diverged` when a pending edit no longer applies to newer server state. A diverged edit is still sent, and `models.<name>.syncState(identity)` marks it `diverged` until the server answers it. Let the runtime retry frozen work; do not create a new Action merely because the original request timed out. The backend may already have committed it and retained its outcome.
 
-Use `wake()` after an application event that should prompt another scheduling check. Use `resume()` after explicitly pausing. A closed connection cannot resume; create a new one with `client.connect` or reopen the client.
+Use `wake()` after an application event that should prompt another scheduling check. Use `resume()` after explicitly pausing. A closed connection cannot resume; create a new one with `client.connect` or reopen the client. Direct Action requests use a finite timeout; an `unknown` execution status can mean the backend committed but the client did not observe the response.
 
 On connection or reconnection, AXTON establishes the WebSocket subscription and receives the current position of each channel. If every saved cursor is already there, it streams at once. Otherwise it sends one HTTP pull for all channels, holding changes that arrive meanwhile, then continues with WebSocket updates. Both sources use the same Rust page processing: each page applies as one transaction, covered pages are discarded, overlapping pages apply their unseen changes, and gaps trigger HTTP recovery from saved progress. Subscription changes replace the session; pages from replaced or canceled sessions cannot update local data.
 

@@ -2,7 +2,7 @@
 
 Your backend implements the write path through handlers and the read/sync path through loaders. The compiler generates their TypeScript interfaces from your schema. AXTON supplies protocol processing; your application supplies business logic, authorization and a database transaction.
 
-Examples use the `Entry` / `Edit` schema of the [round-trip fixture](https://github.com/zanminwang/axton/blob/main/integration/e2e/fixtures/round-trip/models/entry.model), which keeps a nullable field and an update patch that the [To-do example](../getting-started.md) does not need. The complete working implementation is [server.mts](https://github.com/zanminwang/axton/blob/main/integration/e2e/fixtures/round-trip/server.mts); the To-do backend is [examples/todo/server.mts](https://github.com/zanminwang/axton/blob/main/examples/todo/server.mts).
+Action signatures below follow the [generated Action fixture](https://github.com/zanminwang/axton/blob/main/integration/action-contract/schema.model). The background-write example uses an independent `Entry` Model fixture. The working To-do backend is [examples/todo/server.mts](https://github.com/zanminwang/axton/blob/main/examples/todo/server.mts).
 
 ## createBackend
 
@@ -33,7 +33,7 @@ The generated `Options<Tx>` requires:
 | --- | --- |
 | `database: Database<Tx>` | A PostgreSQL shim, `pg(pool)`, `prisma(client)` or `drizzle(db)`, or `persistence(driver)` over your own driver ([Database](database.md)) |
 | `authenticate: Authenticate` | Resolve the caller's user identity or reject the request |
-| `handlers: Handlers<Tx>` | Implement each supported mutation version |
+| `handlers: Handlers<Tx>` | Implement each retained Action version |
 | `loaders: Loaders<Tx>` | Implement the read function for each supported model version |
 
 Optional options are `translateRejection`, `onError`, `loaderHooks` and `native`, described below. The generated function binds the schema and returns the backend synchronously. The generic function in `packages/server/index.mts` additionally requires `config`; normal generated integrations do not pass it.
@@ -49,103 +49,79 @@ The Rust runtime processes the sync protocol and nothing else. The rules below a
 | Child deletion | Your handler. `onTargetDelete: delete` is a client-side cascade: the client deletes the children locally, and those deletes never reach the server. A handler that deletes a parent must delete its children itself, report them with `changes.add` and publish them to each channel that delivered them. | Reads the parent back as deleted and delivers it; a child the handler did not report stays on other clients until a channel delivers it. |
 | Client identity | Each signed-in user gets their own local client database. A client id is bound to the first user that pushed with it; a push from another user with the same client id answers `403 client.owner_mismatch`, and there is no reassignment. | Stores the owner with the client row. |
 | Backend language | TypeScript on Node, through the generated `createBackend`. The Dart package is a client SDK; there is no Dart or Rust-hosted backend. | Runs the same Rust engine inside the Node addon. |
-| Prerequisite expressions | `@requires(Name(field: self))` is the only supported form: every argument is `self`, the value of the annotated field. The runner that satisfies prerequisites is client code. | Never sees prerequisites; they gate when the client sends a mutation, not what the backend receives. |
+| Prerequisite expressions | `@requires(Name(field: self))` is the only supported form: every argument is `self`, the value of the annotated field. The runner that satisfies prerequisites is client code. | Never sees prerequisites; they gate when the client sends a durable Action, not what the backend receives. |
 
 These are accepted limits of the current runtime, not planned features. See [deployment](deployment.md) for the process and network boundaries.
 
 ## Handlers
 
-A handler writes to your database. AXTON then reads every record the mutation changed back through your loader, in the same transaction, and returns that content to the client in the receipt. The simplest handler performs the write and nothing else:
+A handler receives `{ ctx, args }`: `ctx` holds the trusted transaction, authenticated user, call ID, changes and publisher; `args` holds decoded caller inputs. In the snippets, `Tx` stands for the transaction type supplied by your database adapter. The handler writes to your database and returns explicit output values. AXTON resolves Model outputs through the corresponding versioned Loader in the same transaction. For a durable Action, it also reads final changed records into the receipt, independently of each invocation's result snapshot. Database work and framework metadata share the transaction; external effects such as sending email do not become atomic with it. Use an application outbox or equivalent design where that distinction matters.
 
-```ts
-// handlers.ts
-import type { Prisma } from '@prisma/client';
-import { MutationRejected, type Handlers } from './generated/backend.ts';
+```ts title="action-contract"
+import { ActionRejected, type Handlers } from './generated/backend.ts';
 
-export const handlers: Handlers<Prisma.TransactionClient> = {
-  async edit({ input, tx, userId }) {
-    // In your application, check userId's write permission here.
-    const { identity, patch } = input.entry;
-    if (patch.text === 'reject') throw new MutationRejected('entry.denied');
-    await tx.entry.update({
-      where: identity,
-      data: {
-        ...patch,
-        ...(typeof patch.text === 'string' ? { text: patch.text.trim() } : {}),
-      },
-    });
-  },
-};
+// saveTodo is application code that writes to the business database.
+const handleAddTodoV2: Handlers<Tx>['addTodo']['v2'] =
+  async ({ ctx, args }) => {
+    if (!args.todo.title.trim()) throw new ActionRejected('todo.title_empty');
+    await saveTodo(ctx.tx, args.todo);
+    ctx.changes.add(args.todo);
+    ctx.publish({ channel: 'todos' });
+    return { relatedTodo: null, matches: [], count: 1, state: null };
+  };
 ```
 
-The client that sent the mutation receives the trimmed text from the receipt, with or without a subscription. Other clients learn of the change only if the handler publishes it to a channel they subscribe to:
+The implicit `todo` result resolves through the `Todo` Loader at this invocation. Explicit `relatedTodo` and `matches` are identity-selected Model outputs; `count` and `state` are ordinary outputs. The client that queued this Action receives its result and batch-final record authority without a subscription. Other clients learn of the change through a published channel.
 
-```ts
-// handlers.ts
-import type { Prisma } from '@prisma/client';
-import { Entry, MutationRejected, type Handlers } from './generated/backend.ts';
+```ts title="action-contract"
+import { type Handlers } from './generated/backend.ts';
 
-export const handlers: Handlers<Prisma.TransactionClient> = {
-  async edit({ input, tx, userId, changes, publish }) {
-    const { identity, patch } = input.entry;
-    if (patch.text === 'reject') throw new MutationRejected('entry.denied');
-    await tx.entry.update({ where: identity, data: patch });
-    // A write to a record the uploaded operations did not name: report it.
-    await tx.entry.update({ where: { id: 'entry-2' }, data: { text: 'also touched' } });
-    changes.add(Entry({ id: 'entry-2' }));
-    // Distribute this mutation's changes to the channel's subscribers.
-    publish({ channel: 'book:demo' });
-  },
-};
+const handleGetTodos: Handlers<Tx>['getTodos'] =
+  async ({ ctx }) => {
+    const ids = await visibleTodoIds(ctx.tx, ctx.userId); // application function
+    return { todos: ids.map(id => ({ id })) };
+  };
 ```
 
-These reproduce the demo's normalization and rejection behavior. They are not an application permission policy; the demo trusts its development user.
+Returning identity objects lets the Loader resolve the visible records in order, including repeated identities. Authorization remains the application's responsibility.
 
-`HandlerCall<Tx, Input>` contains:
+`ActionContext<Tx>` contains:
 
 | Field | Meaning |
 | --- | --- |
-| `input` | Generated mutation input, such as `EditInput`; update slots have `identity` and `patch` |
 | `tx` | Your database transaction object |
 | `userId` | Authenticated caller; use it for business authorization |
-| `changes` | The records this mutation changed: `changes.records` starts as the records the uploaded operations target; `changes.add(record)` reports one more |
-| `publish` | Synchronous function for publishing changed records to a channel; see [Publishing](#publishing) |
+| `callId` | Stable identity of this Action invocation, including retries |
+| `changes` | The records this Action changed; `changes.add(record)` reports an additional record |
+| `publish` | Synchronous function for publishing records to a channel; see [Publishing](#publishing) |
 
-A handler returns `Promise<void>`; its return value is ignored. When it returns, AXTON allocates a new **stamp** for every record in `changes`, whether or not the values differ from before, reads each of them back through the loader of the model version the client declared, and puts the results in the receipt. A record the handler changed without reporting it is not stamped, not read back and not in the receipt: use `changes.add` for every write beyond the uploaded operations, a related row you update or a child you delete included. Reporting is not publishing; nothing reaches other clients until the handler calls `publish`.
+A handler returns the generated explicit output shape, or no value when the Action has no explicit outputs. On durable delivery, AXTON allocates a **stamp** for each changed record and reads its batch-final content through the Loader into the receipt. Report every business record changed beyond the inferred Model operands with `changes.add`. Reporting is not publishing; other clients receive records only through channels the handler publishes.
 
 A loader is channel-independent: the row it returns for a record is the row every client receives for it, in the receipt, in a catch-up page and on the live stream, at the same stamp. What a loader may vary by is `userId`.
 
-One mutation can have several slots and perform several business writes. AXTON runs it in a savepoint inside the batch transaction. The schema describes the local operation and typed input; it does not require the backend to replay the same database operations. The backend can normalize values or use different tables.
+One Action can have several operands and perform several business writes in one savepoint. The schema's Model operands describe local optimism; the backend can normalize values or use different tables.
 
-`handlers.edit` holds every retained version of `Edit`. While only v1 is retained, the function above is shorthand for `{ v1: ... }`. Once a second version is retained, register each one explicitly and keep them all while clients can still send those versions:
+`handlers.addTodo` holds every retained version of `AddTodo`. The fixture retains v1 and v2, so register both:
 
 ```text
-handlers.edit = {
-  v1: handleOriginalEdit,   // receives EditV1Input
-  v2: handleNewEdit,        // receives EditInput
+handlers.addTodo = {
+  v1: handleOriginalAddTodo, // receives AddTodoV1Input
+  v2: handleAddTodoV2,       // receives AddTodoInput
 };
 ```
 
-A bare function always means v1, never the latest version, so a mutation whose retained versions are not exactly v1 refuses it at startup, as does a missing version, an unknown `v<n>` key or a value that is not a function. A request reaches only the handler of the version it names; there is no fallback. A mutation naming a known but unsupported version is rejected `mutation_version_unsupported` without calling any handler; the rest of the batch is unaffected.
+A bare function means v1 only. A missing retained version, unknown version key or non-function value is refused at startup. Dispatch uses the requested Action version and never falls back to another. An unsupported version is a per-call rejection.
 
-Any other error a handler throws — not `MutationRejected`, not a code `translateRejection` maps — rejects that mutation with `handler.failed`, is reported to `onError`, and the rest of the batch commits ([#95](https://github.com/zanminwang/axton/issues/95)).
+An error that is neither `ActionRejected` nor translated to a business code rejects that Action with `handler.failed` and reaches `onError`. Independent valid calls in the batch can still commit. A retryable database transaction error instead retries the transaction; it is not saved as a permanent business rejection.
 
 ## Loaders
 
-```ts
-// loaders.ts
-import type { Prisma } from '@prisma/client';
+```ts title="action-contract"
 import type { Loaders } from './generated/backend.ts';
 
-export const loaders: Loaders<Prisma.TransactionClient> = {
-  async entry({ ids, tx, userId }) {
-    // Replace this demo policy with your application's authorization rules.
-    if (userId !== 'demo-user') {
-      return ids.map(() => null);
-    }
-    return Promise.all(ids.map(identity => tx.entry.findUnique({ where: identity })));
-  },
-};
+const loadTodoV2: Loaders<Tx>['todo']['v2'] =
+  async ({ ids, tx, userId }) =>
+    Promise.all(ids.map(id => loadVisibleTodo(tx, userId, id)));
 ```
 
 `LoaderCall<Tx, Identity>` contains:
@@ -156,20 +132,20 @@ export const loaders: Loaders<Prisma.TransactionClient> = {
 | `tx` | Your transaction, shared with sync persistence for this request |
 | `userId` | Caller whose visibility must be checked |
 
-A loader is not told which channel, if any, asked: it serves the receipt of the client's own mutation, catch-up pages and the live stream alike, so the same identity, model version and stamp always describe the same content.
+A Loader is not told which channel, if any, asked: it serves Action Model outputs, durable authority readback, catch-up pages and the live stream. It sees the same application transaction during Action execution.
 
 A loader returns `Promise<readonly (Record | null)[]>`. Return exactly one item per identity, in the same order. Do not filter out missing rows or return a differently ordered database result directly.
 
-`loaders.entry` holds every retained version of the `Entry` read contract, exactly as `handlers.edit` holds mutation versions. While only v1 is retained, the function above is shorthand for `{ v1: ... }`. Once the model has a second version, register each one and keep both while clients of the older version can still read:
+`loaders.todo` holds every retained version of the `Todo` read contract. The Action fixture retains v1 and v2, so register both while older clients or Action results use v1:
 
 ```text
-loaders.entry = {
-  v1: loadOriginalEntry,   // returns EntryV1 rows: the fields and enum values of v1
-  v2: loadNewEntry,        // returns Entry rows
+loaders.todo = {
+  v1: loadTodoV1, // returns TodoV1 rows
+  v2: loadTodoV2, // returns Todo rows
 };
 ```
 
-The generated `EntryV1` type is the record shape published for v1, so a v1 loader maps your current rows into it; AXTON does not convert between versions. A row with a field outside the served version's contract fails only that record, with `loader.invalid`, and is reported to `onError`. Registration is checked at startup like handlers: a bare function means v1 only, and a missing version, an unknown `v<n>` key or a non-function value is refused. A load reaches only the loader of the version it names.
+The generated `TodoV1` type is the record shape published for v1, so a v1 Loader maps current rows into it; AXTON does not convert between versions. Registration is checked at startup like handlers: a bare function means v1 only, and missing/unknown versions or non-function values are refused. A load reaches only the version it names.
 
 What each item may be:
 
@@ -177,29 +153,25 @@ What each item may be:
 | --- | --- | --- |
 | A row object | The record's current state for this user | Delivered with the record's current stamp |
 | `null` | The record does not exist, or this user must not see it | Delivered as a deletion. A newer stamp clears the authoritative row, whichever channel delivered it; the client keeps the stamp so older content cannot bring the record back; pending local operations are replayed on that state. |
-| a thrown `MutationRejected` (or an error `translateRejection` maps to a code) | A refused read | In a push, the mutation whose result is being read back is rejected with that code and rolled back. In a pull, that record is delivered as an error with that code: the client keeps its local copy and reports it, and the rest of the page applies |
-| any other thrown error | A failure | Reported to `onError` (default `console.error`). In a push, the mutation whose result is being read back is rejected with `loader.failed` and the rest of the batch commits; in a pull, that record is delivered as a `loader.failed` error and the rest of the page applies ([#95](https://github.com/zanminwang/axton/issues/95)) |
+| a thrown `ActionRejected` (or an error `translateRejection` maps to a code) | A refused read | During Action execution, that call is rejected with the code and rolled back. In a pull, that record is delivered as an error with that code: the client keeps its local copy and reports it, and the rest of the page applies |
+| any other thrown error | A failure | Reported to `onError` (default `console.error`). During Action execution, the call is rejected with `loader.failed`; in a pull, that record is delivered as a `loader.failed` error and the rest of the page applies |
 | `undefined`, a missing entry, a non-array result, a nonfinite number | A defect | Reported to `onError` and treated like a thrown error: only the records it affects fail. It is never read as `null` |
 
 A row object must match the generated model type exactly. Include every non-identity field: a nullable field that is absent reads as `null`, but an absent non-nullable field is a defect. The identity fields may be present. Any other property, such as an extra database column or a relation object, is a defect. Map your rows to the model type rather than returning a wider database row.
 
-Loaders run during synchronization and during a push's readback, not when the app calls local `get`, `query` or `watch`. A malformed result is never skipped silently: the affected record arrives as an error change, or the mutation being read back is rejected with `loader.invalid`, and `onError` hears about it.
+Loaders run during synchronization and Action execution, not when the app calls local `get`, `query` or `watch`. A malformed result is never skipped silently: the affected record arrives as an error change, or the Action being read back is rejected with `loader.invalid`, and `onError` hears about it.
 
 ## Publishing
 
-`publish({ channel })` distributes the mutation's final change set, records added with `changes.add` after the call included, to `channel`. `publish({ channel, records })` distributes exactly `records` instead: a subset, or records the mutation did not change (an empty array publishes nothing). Publishing does not broadcast the supplied object's field values; subscribers receive what the loader returns.
+`ctx.publish({ channel })` distributes the Action's final change set, including records added with `ctx.changes.add` after the call. `ctx.publish({ channel, records })` distributes exactly `records`: a subset, or records the Action did not change (an empty array publishes nothing). Publishing does not broadcast the supplied object's field values; subscribers receive what the Loader returns.
 
-```ts
-import type { Prisma } from '@prisma/client';
-import { Entry, type Handlers } from './generated/backend.ts';
+```ts title="action-contract"
+import { Todo, type ActionContext } from './generated/backend.ts';
 
-export const handlers: Handlers<Prisma.TransactionClient> = {
-  async edit({ input, tx, publish }) {
-    await tx.entry.update({ where: input.entry.identity, data: input.entry.patch });
-    publish({ channel: 'book:demo' });
-    publish({ channel: 'book:archive', records: [Entry({ id: 'entry-1' })] });
-  },
-};
+function announce(ctx: ActionContext<unknown>) {
+  ctx.publish({ channel: 'todos' });
+  ctx.publish({ channel: 'archive', records: [Todo({ id: 'todo-1' })] });
+}
 ```
 
 | Interface | Shape |
@@ -207,12 +179,12 @@ export const handlers: Handlers<Prisma.TransactionClient> = {
 | `RecordRef` | `{ model: string, identity: object }` |
 | `PublishArgs` | `{ channel: string, records?: readonly (RecordRef | object)[] }` |
 | `Changes` | `{ records: readonly RecordRef[], add(record: RecordRef | object): void }` |
-| Generated model reference function | `Entry(identity: EntryIdentity): RecordRef` |
+| Generated model reference function | `Todo(identity: TodoIdentity): RecordRef` |
 | Handler `publish` | `(args: PublishArgs) => void` |
 
-The channel must be nonblank. Decoded handler slots such as `input.entry` carry record-reference metadata and can be passed to `changes.add` and `publish` directly. Spreading or cloning a slot can lose this metadata; use the generated model reference function when constructing a reference yourself. The low-level `RECORD` symbol marks these decoded references; applications normally do not need to manipulate it.
+The channel must be nonblank. Decoded Model operands such as `args.todo` carry record-reference metadata and can be passed to `ctx.changes.add` and `ctx.publish` directly. Spreading or cloning an operand can lose this metadata; use the generated Model reference function when constructing a reference yourself.
 
-Publish to every channel that distributes a changed record, including when its loader should now return null. AXTON does not infer publications from writes to your database. Several calls are allowed; none is required, and a handler that publishes nothing still succeeds with its records in the receipt.
+Publish to every channel that distributes a changed record, including when its Loader should now return null. AXTON does not infer publications from writes to your database. Several calls are allowed; none is required, and a handler that publishes nothing can still complete its Action result and durable receipt.
 
 A change allocates one **stamp** per record; publishing allocates a **cursor** in each channel and carries that same stamp to all of them. Publishing an unchanged record reuses its current stamp (a record that has never been stamped gets its first one). Stamps prevent older content delivered later, on any channel, from overwriting newer content. See [concepts](../concepts.md).
 
@@ -226,25 +198,25 @@ A change allocates one **stamp** per record; publishing allocates a **cursor** i
 
 | Interface | Use |
 | --- | --- |
-| `new MutationRejected(code)` | Reject a business operation with a stable machine-readable code |
+| `new ActionRejected(code)` | Reject one Action with a stable machine-readable code |
 | `translateRejection(error)` | Return a stable rejection code for a known application error; return null/undefined for other errors |
 | `onError(error)` | Log server failures that are returned to the client as a generic server error |
 | `EngineError` | A failure from the native engine: `code` (stable), `message` (readable, may change), `details` (fields the code promises) |
 
-Codes must match `^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$`, such as `entry.denied`. An invalid code is itself an error. A recognized business rejection rolls back that mutation's business writes, stamps and publications and is included in the receipt. A loader that throws one while a push reads the mutation's results back rejects that mutation the same way. The client rolls back its optimistic change and retains a rejection entry. A network error is not a business rejection and must not cause a duplicate business action.
+Codes must match `^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$`, such as `todo.title_empty`. A recognized business rejection rolls back that Action's business writes, stamps and publications. For a queued call, `wait()` returns an `ActionError` outcome and the optimistic Model change rolls back; the durable rejection remains inspectable until dismissed. For a direct call, the promise rejects with `ActionError`. An unknown transport outcome can be retried with the same call identity; it is not evidence that the handler did nothing.
 
-Rejection codes appear in a mutation's receipt entry, never in an HTTP status or a thrown request failure: `entry.denied`-style codes you or `translateRejection` produce; `mutation_version_unsupported` for a mutation naming an unregistered version; `model_version_unsupported` for a handler that changed a model the client did not declare or declared at an unretained version; `handler.failed` for any other error a handler threw; `loader.failed` for any other error a loader threw while a push read a mutation's results back. Each rejects only that one mutation; the rest of the batch commits ([#95](https://github.com/zanminwang/axton/issues/95)).
+Business codes come from `ActionRejected` or `translateRejection`; `action_version_unsupported`, `handler.failed`, `loader.failed` and `model_version_unsupported` identify framework failures attributable to one call. A durable receipt records each call's outcome. Independent valid calls in the batch can commit. A direct response carries the same final outcome for that call.
 
-Unexpected exceptions that are not one of the above — a persistence fault, a failed `rollback`, or any host callback failure the engine cannot classify as a mutation outcome — abort the whole delivery transaction. Do not translate every exception into a rejection: a database outage or programming error should remain a retryable request failure. `onError` receives failures including authentication exceptions, persistence faults, publication errors, live-drain failures, and every `handler.failed`/`loader.failed` error (the underlying thrown error, not just the code).
+Infrastructure errors that make the transaction unusable abort delivery for retry. `onError` receives diagnostic failures, including handler and Loader exceptions. Diagnostic callback exceptions after a committed outcome cannot replace its result, repeat its handler or become a transport error; SDKs report those callback exceptions through their runtime uncaught-error channel.
 
-Protocol refusals are answered with a status and a JSON body chosen by the engine error's `code`. Rewording a message never changes a status. `mutation_version_unsupported` and `model_version_unsupported` no longer abort a push at the HTTP level — see the rejection codes above; `model_version_unsupported` stays a whole-request `409` for pull and live subscribe, which still check declarations up front.
+Protocol refusals use a status and JSON body chosen by the engine error's `code`; message text may change. Per-Action content errors are outcomes, while a pull or live subscription with an unsupported Model declaration receives a whole-request `409`.
 
 | Code | HTTP status | Meaning |
 | --- | --- | --- |
 | `request.invalid` | 400 | Malformed body, or a pull cursor ahead of the channel head |
 | `client.owner_mismatch` | 403 | The client identity belongs to another user |
 | `gap`, `overlap` | 409 | The batch sequence is not the next one and not a retry of the last |
-| `model_version_unsupported` | 409 | Pull and live subscribe only: a model read contract this backend does not serve — the client declared an unknown model or an unretained version (body adds `model` and `version`), or a page holds a model the client did not declare (body adds `model`). On the WebSocket the handshake closes with `1002` and this code as the reason. Inside a push, this is a per-mutation rejection code instead (above), not an HTTP status. |
+| `model_version_unsupported` | 409 | Pull and live subscribe: a Model read contract this backend does not serve. During Action execution it is a per-call failure. |
 | `handler.invalid` | 500 `{ code: "server" }` | The handler's settlement could not be used: an invalid rejection code, or a change or publication naming a record without a model or an object identity |
 | anything else | 500 `{ code: "server" }` | A server-side failure; the `EngineError` or thrown error goes to `onError` |
 
@@ -254,7 +226,8 @@ Protocol refusals are answered with a status and a JSON body chosen by the engin
 
 | Route | Purpose |
 | --- | --- |
-| `POST /sync/mutations` | Receive mutation batches |
+| `POST /sync/mutations` | Receive durable Action batches |
+| `POST /sync/actions` | Execute one direct Action and return its result |
 | `POST /sync/pull` | Materialize changed records through loaders for catch-up and gap recovery |
 | `/sync/live` (WebSocket) | Subscribe to channels and stream ongoing record changes |
 

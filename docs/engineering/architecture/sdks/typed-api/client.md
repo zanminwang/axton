@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-An application should write `client.mutate.editEntry(...)` and `client.models.entry.watch(...)` and never see JSON or cursors. The client typed API is that layer: a generic runtime class per language that knows how to talk to Rust, and generated classes that give it the application's model names and types.
+An application writes `client.actions.addTodo(...)` and `client.models.todo.watch(...)` without seeing JSON or cursors. The client typed API consists of a generic runtime class per language and generated classes carrying the application's Model and Action names and types.
 
 ## 3. Context and Scope
 
@@ -12,10 +12,11 @@ What an application sees:
 | --- | --- |
 | `GeneratedClient.open({path, server?, connection?})` | open the local database; with `server`, connect and keep syncing |
 | `client.models.<model>.get / query / watch / <relation>` | reads on the last commit; `watch` re-emits when results change |
-| `client.mutate.<mutation>(args)` | one named mutation in its own local transaction |
+| `client.actions.<name>(args)` | commit a durable Action intent and inferred Model optimism locally; return `ActionCall<Output>` |
+| `client.actions.call.<name>(args)` | execute a direct Action and return its final output |
 | `client.transaction(tx => …)` with `tx.models.<model>.create / update / delete` | local reads and direct writes in one local transaction |
 | `client.channels.subscribe / unsubscribe` | choose which server channels to follow |
-| `client.syncState()`, `client.models.<model>.syncState(identity)` | the client's and one record's sync state; the record form is typed by model and mutation names |
+| `client.syncState()`, `client.models.<model>.syncState(identity)` | the client's and one record's local sync state |
 | `clientId`, `connect()`, `pendingTasks()`, `setReadiness()`, `runPrerequisites()`, `drop()`, `dismissRejection()`, `querySpec()`, `readSql()`, `close()` | identity, connection, recovery and escape hatches, on the same object |
 
 Every call becomes one command through the [bindings](../bindings.md). Generated code depends on the runtime package (`@axton/client`, `package:axton`); the generic runtime depends on nothing generated.
@@ -26,19 +27,19 @@ A queued call returns its handle after initial local acceptance and commit; that
 
 ## 5. Building Block View
 
-- **Ports.** Read, write, live, and mutation ports separate capabilities: a write port adds `direct` to reads; a live port adds `watch`; a mutation port belongs to the client facade. A transaction implements the write port and cannot watch or enqueue a named mutation. [Generated code](../../compiler/generate.md) binds model and mutation classes to these ports.
+- **Ports.** Read, write and live ports separate capabilities: a write port adds local direct writes to reads; a live port adds `watch`. A transaction implements the write port and cannot watch or invoke an Action. [Generated code](../../compiler/generate.md) binds Model and Action classes to these ports.
 - **TypeScript hosts.** Node and React Native share [client orchestration](../../../../../packages/client-js/runtime.mts). Each entry point supplies its native string carrier, transaction scope, and server transport. Node retains AsyncLocalStorage savepoints; React Native uses an explicit transaction scope without a nested-savepoint API.
-- **Client.** One promise chain per client serializes every command, so calls from the application, the connection and watchers never interleave inside Rust. `transaction` sends `begin`, runs the body against a transaction object, then `finish` and `commit`, or `rollback` on any error. A standalone `client.mutate` privately encloses optimistic writes and enqueueing in one SQLite transaction, then returns a local ordinal after commit.
+- **Client.** One promise chain per client serializes local commands, so calls from the application, the connection and watchers never interleave inside Rust. `transaction` sends `begin`, runs the body against a transaction object, then `finish` and `commit`, or `rollback` on any error. A durable Action privately encloses inferred optimistic writes and enqueueing in one SQLite transaction, then returns a handle after commit. A direct Action performs network I/O outside the long local database section and applies returned authority in a short transaction.
 - **Transaction.** Commands are queued in submission order and marked as belonging to the transaction. `finish` fails if any command was never awaited, if any command failed even though the application caught the error, or if savepoints overlapped. `savepoint(body)` nests via async context (TypeScript) or zone values (Dart) so a failure inside it is confined to that scope.
-- **Captured client guard.** A `client.mutate` call from its own active transaction callback fails before it can wait on the client's queue. Node uses async context and Dart a zone token to identify that callback. React Native rejects any `client.mutate` while a public transaction is active, including an unrelated concurrent caller; retry after the transaction settles. [Client runtime](../../../../../packages/client-js/runtime.mts) owns the shared guard and enqueue flow.
+- **Captured client guard.** An Action call from its own active transaction callback fails before it can wait on the client's queue. Node uses async context and Dart a zone token to identify that callback. React Native rejects Actions while a public transaction is active; retry after the transaction settles. [Client runtime](../../../../../packages/client-js/runtime.mts) owns the shared guard and enqueue flow.
 - **Watch.** Re-runs the query after every commit notification and emits only when the JSON result differs; Dart exposes a broadcast stream.
-- **Generated code.** Types, codecs (dates to `Date`/`DateTime`), mutation builders, model classes and the two facades `GeneratedClient` and `GeneratedTransaction` ([Compiler / Generate](../../compiler/generate.md)). The client owns named mutations and watch; the transaction owns local model reads and writes. Presence is expressed as an omitted key versus `null` in TypeScript and as `Present<T>?` in Dart; both encode to the same wire patch.
+- **Generated code.** Types, codecs (dates to `Date`/`DateTime`), Action input/output bindings, Model classes and the two facades `GeneratedClient` and `GeneratedTransaction` ([Compiler / Generate](../../compiler/generate.md)). The client owns Actions and watch; the transaction owns local Model reads and writes. Presence is expressed as an omitted key versus `null` in TypeScript and as `Present<T>?` in Dart; both encode to the same wire patch.
 
 Code: [React Native adapter](../../../../../packages/client-react-native/index.ts), [shared runtime](../../../../../packages/client-js/runtime.mts), [client-js/index.mts](../../../../../packages/client-js/index.mts), [client-js/transaction.mts](../../../../../packages/client-js/transaction.mts), [dart/client.dart](../../../../../packages/dart/lib/src/client.dart), [dart/port.dart](../../../../../packages/dart/lib/src/port.dart).
 
 ## 9. Architecture Decisions
 
-**One client object ([#133](https://github.com/zanminwang/axton/issues/133)).** The generated client is the only client an application sees. It keeps the `models` / `mutate` / `channels` namespaces (mutation names are schema-chosen and may span models, so they never share a namespace with model built-ins) and carries the runtime members directly; the runtime `Client` is an internal handle (`client.client`) used by the framework's own tests. The per-record sync state lives beside `get` and `query` on each model and is typed by that model's identity; its pending names are a union of the schema's mutations (TypeScript) or strings (Dart).
+**One client object ([#133](https://github.com/zanminwang/axton/issues/133)).** The generated client is the application surface. It exposes `models`, `actions` and `channels` and carries runtime members directly; the runtime `Client` is an internal handle (`client.client`) used by framework tests. Action-only and Model-only schemas do not emit an empty obsolete `mutate` facade. The per-record sync state lives beside `get` and `query` on each Model and is typed by its identity.
 
 **Automatic model-version declaration ([#91](https://github.com/zanminwang/axton/issues/91)).** Generated client configuration identifies the [model versions](../../schema/models.md#9-architecture-decisions) expected by its generated types: the schema embedded in `generated.ts` and `generated.dart` carries each model's `version`, and `open` passes it to the Rust runtime unchanged. The runtime declares those read contracts to the server as `models` on every pull and on the subscribe frame ([Protocol / Pull](../../protocol/pull.md)); application code does not supply versions on each `channels.subscribe(...)` call. HTTP catch-up and WebSocket delivery must use the same selected contracts. This adds no protocol policy to the SDK: generated metadata passes through bindings to the runtime. Wire placement and validation remain to be designed; read-error behavior follows [failure isolation](../../server/engine/pull.md#9-architecture-decisions).
 

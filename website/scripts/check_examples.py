@@ -60,8 +60,9 @@ declare const stop: () => void;
                         '--allowImportingTsExtensions', str(ts)], cwd=ROOT, check=True)
     with tempfile.TemporaryDirectory(prefix='.docs-check-', dir=ROOT / 'integration/action-contract') as temp:
         action = Path(temp) / 'examples.mts'
-        action.write_text('''import type { ActionClientContract, TodoCreate } from '../generated.ts';
-declare const client: ActionClientContract;
+        action.write_text('''import type { TodoCreate } from '../generated.ts';
+import type { GeneratedClient } from '../client.ts';
+declare const client: GeneratedClient;
 ''' + '\n'.join(f'// {source}\nasync function example{i}() {{\n{code}\n}}'
                   for i, (source, code) in enumerate(snippets('ts', context='action'))))
         subprocess.run([str(ROOT / 'node_modules/.bin/tsc'), '--noEmit', '--strict',
@@ -75,7 +76,6 @@ declare const client: ActionClientContract;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:axton/axton.dart';
 import '../../../integration/e2e/fixtures/round-trip/generated/generated.dart';
 late GeneratedClient client;
 late StreamSubscription<List<Entry>> subscription;
@@ -89,6 +89,14 @@ Future<void> uploadFile(dynamic key) async {}
 ''' + '\n'.join(f'// {source}\nFuture<void> example{i}() async {{\n{code}\n}}'
                   for i, (source, code) in enumerate(snippets('dart'))))
         subprocess.run(['dart', 'analyze', str(dart)], cwd=ROOT / 'packages/dart', check=True)
+    with tempfile.TemporaryDirectory(prefix='.docs-check-', dir=ROOT / 'integration/action-contract') as temp:
+        dart = Path(temp) / 'examples.dart'
+        dart.write_text('''// ignore_for_file: unused_local_variable
+import '../generated.dart';
+late GeneratedClient client;
+''' + '\n'.join(f'// {source}\nFuture<void> example{i}() async {{\n{code}\n}}'
+                  for i, (source, code) in enumerate(snippets('dart', context='action'))))
+        subprocess.run(['dart', 'analyze', str(dart)], cwd=ROOT / 'integration/action-contract', check=True)
     with tempfile.TemporaryDirectory(prefix='.docs-check-', dir=ROOT / 'integration/e2e/fixtures/round-trip') as temp:
         backend = Path(temp) / 'backend.mts'
         backend.write_text('''import { PrismaClient, type Prisma } from '@prisma/client';
@@ -111,6 +119,19 @@ declare const publish: Publish;
                         '--exactOptionalPropertyTypes', '--skipLibCheck', '--target', 'ES2022',
                         '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
                         '--allowImportingTsExtensions', str(backend)], cwd=ROOT, check=True)
+    with tempfile.TemporaryDirectory(prefix='.docs-check-', dir=ROOT / 'integration/action-contract') as temp:
+        backend = Path(temp) / 'backend.mts'
+        backend.write_text('''import { Todo, ActionRejected, type ActionContext, type Handlers, type Loaders, type TodoIdentity } from '../backend.ts';
+type Tx = unknown;
+declare function saveTodo(tx: Tx, todo: unknown): Promise<void>;
+declare function visibleTodoIds(tx: Tx, userId: string): Promise<string[]>;
+declare function loadVisibleTodo(tx: Tx, userId: string, id: TodoIdentity): Promise<Todo | null>;
+''' + '\n'.join(f'// {source}\nasync function example{i}() {{\n{code}\n}}'
+                  for i, (source, code) in enumerate(snippets('ts', BACKEND_SOURCES, context='action'))))
+        subprocess.run([str(ROOT / 'node_modules/.bin/tsc'), '--noEmit', '--strict',
+                        '--exactOptionalPropertyTypes', '--skipLibCheck', '--target', 'ES2022',
+                        '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
+                        '--allowImportingTsExtensions', str(backend)], cwd=ROOT, check=True)
     with tempfile.TemporaryDirectory(prefix='axton-docs-schema-') as temp:
         for i, (source, code) in enumerate(snippets('text', ['website/docs/schema/define.md'])):
             directory = Path(temp) / str(i)
@@ -119,7 +140,7 @@ declare const publish: Publish;
             subprocess.run([str(ROOT / 'target/debug/axton'), 'compile', str(directory),
                             str(directory / 'generated')], cwd=ROOT, check=True)
             print(f'Compiled schema from {source}')
-    print(f"Typechecked {len(snippets('ts')) + len(snippets('ts', BACKEND_SOURCES))} TypeScript, {len(snippets('ts', context='action'))} Action TypeScript and {len(snippets('dart'))} Dart documentation snippets.")
+    print(f"Typechecked {len(snippets('ts')) + len(snippets('ts', BACKEND_SOURCES))} TypeScript, {len(snippets('ts', context='action')) + len(snippets('ts', BACKEND_SOURCES, context='action'))} Action TypeScript, {len(snippets('dart'))} Dart and {len(snippets('dart', context='action'))} Action Dart documentation snippets.")
 
 
 if __name__ == '__main__':

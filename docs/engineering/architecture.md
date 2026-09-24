@@ -9,7 +9,7 @@ Five parts carry the product: three define what synchronization guarantees, two 
 | Core part | Why |
 | --- | --- |
 | [Protocol](architecture/protocol/README.md) | The wire contract the two engines agree on: receipts, pages, stamps, cursors. Changing it changes the product. |
-| [Client / Engine](architecture/client/engine/README.md) | Optimistic writes, the mutation queue, authority applied by stamp, completion from receipts. |
+| [Client / Engine](architecture/client/engine/README.md) | Optimistic writes, the durable Action queue, authority applied by stamp, completion from receipts. |
 | [Client / Frontend interface](architecture/client/frontend-interface.md) | What a frontend author writes against: reads, writes, transactions, subscriptions and status, one command at a time. |
 | [Server / Engine](architecture/server/engine/README.md) | Per-mutation execution and readback, publication, receipts, pages by cursor. The client engine's counterpart. |
 | [Server / Backend interface](architecture/server/backend-interface.md) | What a backend author writes against: the host contract between handlers/loaders and the engine. |
@@ -20,15 +20,17 @@ The compiler is a tool, the SDKs and connections carry bytes, storage and persis
 
 The tree stops at three levels: AXTON, a component, a part. A part that has internal structure keeps its own tree in its README and owns every page below it; nothing deeper appears here.
 
-- **[Schema](architecture/schema/README.md)** — User-written, language-independent definitions of models, fields, types, identities and mutations.
+- **[Schema](architecture/schema/README.md)** — User-written, language-independent definitions of Models, fields, identities and Actions.
   - **[Types](architecture/schema/types.md)** — Scalar and enum types, lists and nullability.
   - **[Models](architecture/schema/models.md)** — Fields, identities, unique constraints and read-contract versions.
   - **[Relations](architecture/schema/relations.md)** — References, inverse relations and deletion rules.
   - **[Mutations](architecture/schema/mutations.md)** — Operation groups, argument bindings, versions and sequencing.
+  - **[Actions](architecture/schema/actions.md)** — Versioned inputs and outputs for durable and direct backend calls.
   - **[Prerequisites](architecture/schema/prerequisites.md)** — Prerequisite declarations and references.
 - ★ **[Protocol](architecture/protocol/README.md)** — Language-independent push, pull, receipt and subscription message formats.
   - **[Common](architecture/protocol/common.md)** — Shared fields, counters and encoding conventions.
-  - **[Push](architecture/protocol/push.md)** — Mutation batches, receipts carrying record authority, and rejections.
+  - **[Push](architecture/protocol/push.md)** — Durable Action batches, receipts carrying per-call outcomes and record authority.
+  - **[Direct Actions](architecture/protocol/actions.md)** — Request/response envelope and replay by call ID.
   - **[Pull](architecture/protocol/pull.md)** — Requests, record changes, cursors and pagination.
   - **[Subscriptions](architecture/protocol/subscriptions.md)** — WebSocket subscription requests and acknowledgments.
 - **[Compiler (Rust)](architecture/compiler/README.md)** — Compile schemas and generate typed interfaces.

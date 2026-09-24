@@ -208,6 +208,8 @@ Implement deliverServerResponse and queueSize using the fixture's real transport
 
 ### Task 7: Integrate Action fixtures, histories and application examples
 
+**Execution partition:** After the accepted Task 6 baseline, compiler/To-do/runners, new real SQLite–PostgreSQL Action E2E coverage, and public documentation/example checking proceed in three separate isolated worktrees. Integrate the committed partitions, then verify and review them together before Task 8. This changes work ownership only; the API and acceptance scope below are unchanged.
+
 **Files:** Modify integration/action-contract and integration/generated-api fixtures/runners, fixtures/schema sources, affected examples, docs/engineering/architecture/{protocol,client,server,sdks}, website/docs/frontend/client-api.md and API index; adjust scripts/test.sh to include new Action coverage.
 
 **Consumes:** working compiler and runtime boundaries. **Produces:** runnable documented Action API and removal of obsolete public transaction/mutation examples.

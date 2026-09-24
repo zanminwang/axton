@@ -54,8 +54,11 @@ for(const shim of shims){
   let signalFirst,releaseFirst;
   const firstClaimed=new Promise(resolve=>{signalFirst=resolve;});
   const firstGate=new Promise(resolve=>{releaseFirst=resolve;});
-  const invoke=(hold=false)=>inTx(async(tx,query,a)=>{
-   const claimed=await a(claim);
+  const invoke=(hold=false,onClaimStart)=>inTx(async(tx,query,a)=>{
+   const pid=onClaimStart?Number((await query('SELECT pg_backend_pid() AS pid'))[0].pid):null;
+   const claimPending=a(claim);
+   onClaimStart?.(pid);
+   const claimed=await claimPending;
    if(claimed.fresh){
     if(hold){signalFirst();await firstGate;}
     bodies++;
@@ -67,11 +70,21 @@ for(const shim of shims){
   const firstTx=invoke(true);
   await Promise.race([firstClaimed,firstTx.then(()=>{throw new Error('first claim never held the transaction');})]);
   let secondDone=false;
-  const secondTx=invoke().finally(()=>{secondDone=true;});
-  await new Promise(resolve=>setTimeout(resolve,20));
-  assert.equal(secondDone,false,'the duplicate cannot finish before the first transaction commits');
+  let signalSecond;
+  const secondClaimStarted=new Promise(resolve=>{signalSecond=resolve;});
+  const secondTx=invoke(false,signalSecond).finally(()=>{secondDone=true;});
+  const secondPid=await secondClaimStarted;
+  let blocked=false;
+  for(let attempt=0;attempt<100;attempt++){
+   const rows=await q('SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1',[secondPid]);
+   if(rows[0]?.wait_event_type==='Lock'){blocked=true;break;}
+   await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  const finishedBeforeCommit=secondDone;
   releaseFirst();
   const [first,second]=await Promise.all([firstTx,secondTx]);
+  assert.equal(finishedBeforeCommit,false,'the duplicate cannot finish before the first transaction commits');
+  assert.equal(blocked,true,'the second claim reached PostgreSQL and waited on the first transaction');
   assert.deepEqual([first.fresh,second.fresh],[true,false]);
   assert.equal(bodies,1);
   assert.deepEqual(await q('SELECT title FROM conformance_task WHERE id=$1',[row]),[{title:'once'}]);

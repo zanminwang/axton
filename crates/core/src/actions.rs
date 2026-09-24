@@ -693,18 +693,28 @@ fn normalize_result_model(
         .filter_map(|k| object.get(k).map(|v| (k.clone(), v.clone())))
         .collect();
     let key = local.record_key(model, &Value::Object(identity))?;
-    if object.len() != descriptor.fields.len()
-        || object
-            .keys()
-            .any(|key| !descriptor.fields.iter().any(|f| &f.name == key))
+    if object
+        .keys()
+        .any(|key| !descriptor.fields.iter().any(|f| &f.name == key))
     {
-        return Err(invalid("Model result must contain exactly read fields"));
+        return Err(invalid("Model result contains undeclared read field"));
     }
-    let state_fields: Map<String, Value> = object
+    let mut state_fields: Map<String, Value> = object
         .iter()
         .filter(|(key, _)| !descriptor.identity.contains(key))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
+    // A compatible read-contract addition may have happened while this call
+    // was frozen. Its earlier snapshot could not contain the new field.
+    for field in &descriptor.fields {
+        if !descriptor.identity.contains(&field.name)
+            && !field.nullable
+            && !state_fields.contains_key(&field.name)
+            && let Some(default) = &field.default
+        {
+            state_fields.insert(field.name.clone(), default.clone());
+        }
+    }
     let state = local.validate_state(model, &Value::Object(state_fields))?;
     let mut result = key.identity.as_object().unwrap().clone();
     result.extend(state.as_object().unwrap().clone());

@@ -12,6 +12,15 @@ pub(crate) fn derive<S: ClientStore>(
 ) -> Result<()> {
     let queue = engine.queued()?;
     let schema = engine.schema;
+    let requirements: Vec<axton_core::RequirementDescriptor> = if mutation.call_id.is_some() {
+        let action = schema.action(&mutation.name, mutation.version)?;
+        match action.policy.get("requirements") {
+            Some(value) => serde_json::from_value(value.clone())?,
+            None => schema.requirements.clone(),
+        }
+    } else {
+        schema.requirements.clone()
+    };
     let mut lifecycle: BTreeSet<_> = mutation.lifecycle_dependencies.iter().copied().collect();
     for op in &mutation.operations {
         let key = schema.record_key(&op.model, &op.identity)?;
@@ -33,7 +42,7 @@ pub(crate) fn derive<S: ClientStore>(
                 }
             }
         }
-        for requirement in schema.requirements.iter().filter(|r| r.model == op.model) {
+        for requirement in requirements.iter().filter(|r| r.model == op.model) {
             let Some(value) = op
                 .values
                 .as_ref()
@@ -56,7 +65,7 @@ pub(crate) fn derive<S: ClientStore>(
     mutation.prerequisites.dedup();
     let mut sequences: BTreeSet<_> = mutation.sequence_dependencies.iter().copied().collect();
     if let Some(policy) = policy_fn(schema, mutation) {
-        let current = slots(schema, mutation, policy)?;
+        let current = slots(schema, mutation, &policy)?;
         if let Some(after) = policy["sequence"]["after"].as_array() {
             for reference_spec in after {
                 let name = reference_spec["name"]
@@ -69,7 +78,7 @@ pub(crate) fn derive<S: ClientStore>(
                     let Some(prior_policy) = policy_fn(schema, &prior.mutation) else {
                         continue;
                     };
-                    let targets = slots(schema, &prior.mutation, prior_policy)?;
+                    let targets = slots(schema, &prior.mutation, &prior_policy)?;
                     let mut matches = true;
                     for (target, path) in arguments {
                         let path = path
@@ -95,11 +104,22 @@ pub(crate) fn derive<S: ClientStore>(
     mutation.sequence_dependencies = sequences.into_iter().collect();
     Ok(())
 }
-fn policy_fn<'a>(schema: &'a Schema, mutation: &Mutation) -> Option<&'a Value> {
+fn policy_fn(schema: &Schema, mutation: &Mutation) -> Option<Value> {
+    if mutation.call_id.is_some() {
+        let action = schema.action(&mutation.name, mutation.version).ok()?;
+        let slots: Vec<Value> = action.inputs.iter().filter_map(|input| match input {
+            axton_core::ActionInputDescriptor::Model { name, model, operation, cardinality, .. } => Some(json!({"name":name,"model":model,"operation":operation,"cardinality":cardinality})),
+            _ => None,
+        }).collect();
+        return Some(
+            json!({"slots":slots,"sequence":action.policy.get("sequence").cloned().unwrap_or(Value::Null)}),
+        );
+    }
     schema
         .client_policies
         .iter()
         .find(|p| p["name"] == mutation.name && p["version"].as_u64() == Some(mutation.version))
+        .cloned()
 }
 fn slots(
     schema: &Schema,
@@ -107,6 +127,47 @@ fn slots(
     policy: &Value,
 ) -> Result<BTreeMap<String, Vec<RecordKey>>> {
     let mut result = BTreeMap::new();
+    if let Some(args) = &mutation.args {
+        let action = schema.action(&mutation.name, mutation.version)?;
+        for input in &action.inputs {
+            let axton_core::ActionInputDescriptor::Model {
+                name,
+                model,
+                cardinality,
+                ..
+            } = input
+            else {
+                continue;
+            };
+            let value = &args[name];
+            let values: Vec<&Value> = match cardinality.as_str() {
+                "optional" if value.is_null() => vec![],
+                "list" => value
+                    .as_array()
+                    .ok_or_else(|| invalid("invalid Action list"))?
+                    .iter()
+                    .collect(),
+                _ => vec![value],
+            };
+            let mut keys = Vec::new();
+            for value in values {
+                let identity = value.get("identity").unwrap_or(value);
+                let mut fields = serde_json::Map::new();
+                for field in &schema.model(model)?.identity {
+                    fields.insert(
+                        field.clone(),
+                        identity
+                            .get(field)
+                            .ok_or_else(|| invalid("Action input identity missing"))?
+                            .clone(),
+                    );
+                }
+                keys.push(schema.record_key(model, &Value::Object(fields))?);
+            }
+            result.insert(name.clone(), keys);
+        }
+        return Ok(result);
+    }
     let mut at = 0;
     for slot in policy["slots"]
         .as_array()

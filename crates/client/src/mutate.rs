@@ -4,8 +4,8 @@ use crate::ddl::before_table;
 use crate::engine::Engine;
 use crate::rows::merge_identity;
 use crate::store::ClientStore;
-use crate::{Mutation, Operation, OperationKind, policies};
-use axton_core::{RecordKey, Result, Schema, invalid};
+use crate::{Mutation, Operation, OperationKind, actions, policies};
+use axton_core::{ActionIntent, RecordKey, Result, Schema, invalid};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -238,9 +238,37 @@ impl<S: ClientStore> Engine<'_, S> {
     pub fn enqueue(&mut self, mut mutation: Mutation) -> Result<u64> {
         if mutation.name.trim().is_empty()
             || mutation.version == 0
-            || mutation.operations.is_empty()
+            || (mutation.operations.is_empty() && mutation.call_id.is_none())
         {
             return Err(invalid("invalid named mutation"));
+        }
+        if mutation.call_id.is_some() != mutation.args.is_some() {
+            return Err(invalid("Action identity and args must appear together"));
+        }
+        if let (Some(call_id), Some(args)) = (&mutation.call_id, &mutation.args) {
+            let intent = ActionIntent {
+                call_id: call_id.clone(),
+                name: mutation.name.clone(),
+                version: mutation.version,
+                args: args.clone(),
+            }
+            .normalize(self.schema)?;
+            let descriptor = self.schema.action(&intent.name, intent.version)?;
+            actions::validate_bindings(self.schema, descriptor, &intent.args)?;
+            let expected = actions::derive_operations(self.schema, descriptor, &intent.args)?;
+            if intent.call_id != *call_id
+                || intent.args != *args
+                || serde_json::to_value(expected)? != serde_json::to_value(&mutation.operations)?
+                || !mutation.companion.is_empty()
+                || !mutation.effects.is_empty()
+                || !mutation.prerequisites.is_empty()
+                || !mutation.lifecycle_dependencies.is_empty()
+                || !mutation.sequence_dependencies.is_empty()
+            {
+                return Err(invalid(
+                    "Action queue row does not match its canonical intent",
+                ));
+            }
         }
         for dependency in mutation
             .lifecycle_dependencies

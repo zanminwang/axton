@@ -2,7 +2,7 @@
 use crate::engine::{Engine, as_u64};
 use crate::store::ClientStore;
 use crate::{Mutation, Operation, OperationKind};
-use axton_core::{RecordKey, Rejection, Result, invalid};
+use axton_core::{RecordKey, Rejection, Result, canonical_json, invalid};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -125,13 +125,16 @@ impl<S: ClientStore> Engine<'_, S> {
         Ok(())
     }
     pub fn insert_mutation(&mut self, ordinal: u64, mutation: &Mutation) -> Result<()> {
+        let args = mutation.args.as_ref().map(canonical_json).transpose()?;
         self.exec(
             "axton_mutation",
-            "INSERT INTO axton_mutation (ordinal, name, version, push) VALUES (?,?,?,NULL)",
+            "INSERT INTO axton_mutation (ordinal, name, version, push, call_id, args) VALUES (?,?,?,NULL,?,?)",
             &[
                 json!(ordinal),
                 json!(mutation.name),
                 json!(mutation.version),
+                mutation.call_id.as_ref().map_or(Value::Null, |v| json!(v)),
+                args.map_or(Value::Null, Value::String),
             ],
         )?;
         let mut position = 0;
@@ -182,7 +185,7 @@ impl<S: ClientStore> Engine<'_, S> {
     fn queued_where(&mut self, filter: &str, params: &[Value]) -> Result<Vec<Queued>> {
         let mutations = self.rows(
             &format!(
-                "SELECT ordinal, name, version, push, diverged FROM axton_mutation {filter} ORDER BY ordinal"
+                "SELECT ordinal, name, version, push, diverged, call_id, args FROM axton_mutation {filter} ORDER BY ordinal"
             ),
             params,
         )?;
@@ -207,6 +210,8 @@ impl<S: ClientStore> Engine<'_, S> {
             let ordinal = as_u64(&row[0])?;
             let mut mutation = Mutation::new(text(&row[1]), vec![]);
             mutation.version = as_u64(&row[2])?;
+            mutation.call_id = row[5].as_str().map(str::to_owned);
+            mutation.args = row[6].as_str().map(serde_json::from_str).transpose()?;
             for op in ops.get(&ordinal).into_iter().flatten() {
                 match op.kind {
                     OpKind::Wire => mutation.operations.push(op.op.clone()),

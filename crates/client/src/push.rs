@@ -5,7 +5,8 @@ use crate::queue::Queued;
 use crate::store::ClientStore;
 use crate::{ApplyReport, Mutation, Operation, OperationKind, mutate::apply_to_row};
 use axton_core::{
-    PushReceipt, PushRequest, RecordKey, Rejection, Result, canonical_json, invalid, limits,
+    ActionOutcome, CallCompletion, ExecutionState, PushReceipt, PushRequest, RecordKey, Rejection,
+    Result, canonical_json, invalid, limits,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,7 +32,10 @@ impl<S: ClientStore> Engine<'_, S> {
     fn request_json(&mut self, push: u64, models: &Value, mutations: &[Queued]) -> Result<Value> {
         let acts: Vec<Value> = mutations
             .iter()
-            .map(|q| json!({"ordinal":q.ordinal,"name":q.mutation.name,"version":q.mutation.version,"operations":q.mutation.operations}))
+            .map(|q| match (&q.mutation.call_id, &q.mutation.args) {
+                (Some(call_id), Some(args)) => json!({"ordinal":q.ordinal,"callId":call_id,"name":q.mutation.name,"version":q.mutation.version,"args":args}),
+                _ => json!({"ordinal":q.ordinal,"name":q.mutation.name,"version":q.mutation.version,"operations":q.mutation.operations}),
+            })
             .collect();
         Ok(
             json!({"clientId":self.client_id()?,"batchSequence":push,"models":models,"mutations":acts}),
@@ -49,7 +53,15 @@ impl<S: ClientStore> Engine<'_, S> {
             .push_models()?
             .ok_or_else(|| invalid("push in flight has no frozen declaration"))?;
         let request = self.request_json(push, &models, &mutations)?;
-        PushRequest::decode(canonical_json(&request)?.as_bytes())?.encode()
+        let bytes = canonical_json(&request)?.into_bytes();
+        if mutations
+            .first()
+            .is_some_and(|q| q.mutation.call_id.is_some())
+        {
+            PushRequest::decode_actions(&bytes, self.schema)?.encode()
+        } else {
+            PushRequest::decode(&bytes)?.encode()
+        }
     }
     pub fn freeze(&mut self, max_bytes: usize) -> Result<Option<Vec<u8>>> {
         if max_bytes == 0 {
@@ -78,6 +90,11 @@ impl<S: ClientStore> Engine<'_, S> {
             .unwrap_or(1);
         let models = serde_json::to_value(crate::declared_models(self.schema))?;
         for q in queue.iter().filter(|q| q.push.is_none()) {
+            if selected.first().is_some_and(|first| {
+                first.mutation.call_id.is_some() != q.mutation.call_id.is_some()
+            }) {
+                continue;
+            }
             if q.mutation
                 .prerequisites
                 .iter()
@@ -150,6 +167,12 @@ impl<S: ClientStore> Engine<'_, S> {
             .into_iter()
             .filter(|q| q.push == Some(push))
             .collect();
+        let receipt = if mutations.iter().any(|q| q.mutation.call_id.is_some()) {
+            let request = PushRequest::decode_actions(&self.encode_push(push)?, self.schema)?;
+            PushReceipt::decode_actions(&receipt.encode()?, &request, self.schema)?
+        } else {
+            PushReceipt::decode(&receipt.encode()?)?
+        };
         let ordinals: BTreeSet<u64> = mutations.iter().map(|q| q.ordinal).collect();
         if receipt
             .rejections
@@ -238,11 +261,15 @@ impl<S: ClientStore> Engine<'_, S> {
                 entry
             }));
         }
-        affected.extend(self.mark_rejected(&receipt.rejections)?);
+        let (rejected_affected, removed_completions) =
+            self.mark_rejected_with_completions(&receipt.rejections)?;
+        affected.extend(rejected_affected);
         let completed: Vec<u64> = accepted.iter().map(|q| q.ordinal).collect();
         self.delete_mutations(&completed)?;
         report.reports.extend(self.rebuild_held(&affected)?);
         self.set_last_completed_push(push)?;
+        report.completions = receipt.completions.clone();
+        report.completions.extend(removed_completions);
         Ok(report)
     }
     /// Drop rejected mutations and everything whose lifecycle depended on them,
@@ -255,6 +282,12 @@ impl<S: ClientStore> Engine<'_, S> {
     /// Record the rejections, drop their mutations and lifecycle dependents,
     /// and return the records they touched for the caller to rebuild.
     pub fn mark_rejected(&mut self, rejections: &[Rejection]) -> Result<Held> {
+        Ok(self.mark_rejected_with_completions(rejections)?.0)
+    }
+    pub fn mark_rejected_with_completions(
+        &mut self,
+        rejections: &[Rejection],
+    ) -> Result<(Held, Vec<CallCompletion>)> {
         let schema = self.schema;
         let queue = self.queued()?;
         let mut rejected: BTreeMap<u64, String> = rejections
@@ -281,8 +314,20 @@ impl<S: ClientStore> Engine<'_, S> {
             }
         }
         let mut affected: BTreeMap<String, RecordKey> = BTreeMap::new();
+        let mut completions = Vec::new();
         for q in queue.iter().filter(|q| rejected.contains_key(&q.ordinal)) {
             let code = &rejected[&q.ordinal];
+            if q.push.is_none()
+                && let Some(call_id) = &q.mutation.call_id
+            {
+                completions.push(CallCompletion {
+                    call_id: call_id.clone(),
+                    outcome: ActionOutcome::Failed {
+                        code: code.clone(),
+                        execution: ExecutionState::Rejected,
+                    },
+                });
+            }
             for op in all_ops(&q.mutation) {
                 let key = schema.record_key(&op.model, &op.identity)?;
                 affected.insert(key.encoded()?, key);
@@ -296,6 +341,6 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         let ordinals: Vec<u64> = rejected.keys().copied().collect();
         self.delete_mutations(&ordinals)?;
-        Ok(affected)
+        Ok((affected, completions))
     }
 }

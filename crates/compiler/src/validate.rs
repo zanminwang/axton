@@ -451,7 +451,6 @@ const GENERATED_NAMES: &[&str] = &[
     "Channels",
     "Client",
     "ClientSyncState",
-    "ActionPort",
     "Connection",
     "DirectCalls",
     "GeneratedClient",

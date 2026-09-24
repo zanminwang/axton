@@ -35,6 +35,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("axton_mutation", "diverged", "INTEGER NOT NULL DEFAULT 0"),
     ("axton_mutation", "call_id", "TEXT"),
     ("axton_mutation", "args", "TEXT"),
+    ("axton_client", "push_results", "TEXT"),
 ];
 
 /// Add every framework column in [`ADDED_COLUMNS`] a table still lacks.
@@ -63,7 +64,8 @@ CREATE TABLE IF NOT EXISTS axton_client (
   next_push    INTEGER NOT NULL,
   generation   INTEGER NOT NULL,
   last_completed_push INTEGER NOT NULL DEFAULT 0,
-  push_models  TEXT
+  push_models  TEXT,
+  push_results TEXT
 );
 CREATE TABLE IF NOT EXISTS axton_record (
   model TEXT NOT NULL, identity TEXT NOT NULL, stamp INTEGER NOT NULL,

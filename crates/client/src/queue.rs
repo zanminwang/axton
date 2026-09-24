@@ -2,7 +2,7 @@
 use crate::engine::{Engine, as_u64};
 use crate::store::ClientStore;
 use crate::{Mutation, Operation, OperationKind};
-use axton_core::{RecordKey, Rejection, Result, canonical_json, invalid};
+use axton_core::{ModelReadDescriptor, RecordKey, Rejection, Result, canonical_json, invalid};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -341,7 +341,7 @@ impl<S: ClientStore> Engine<'_, S> {
     pub fn set_last_completed_push(&mut self, push: u64) -> Result<()> {
         self.exec(
             "axton_client",
-            "UPDATE axton_client SET last_completed_push=?, push_models=NULL",
+            "UPDATE axton_client SET last_completed_push=?, push_models=NULL, push_results=NULL",
             &[json!(push)],
         )?;
         Ok(())
@@ -359,6 +359,20 @@ impl<S: ClientStore> Engine<'_, S> {
             "axton_client",
             "UPDATE axton_client SET push_models=?",
             &[json!(serde_json::to_string(models)?)],
+        )?;
+        Ok(())
+    }
+    pub fn push_result_reads(&mut self) -> Result<Option<Vec<ModelReadDescriptor>>> {
+        self.scalar("SELECT push_results FROM axton_client", &[])?
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .map(|text| serde_json::from_str(&text).map_err(Into::into))
+            .transpose()
+    }
+    pub fn set_push_result_reads(&mut self, reads: &[ModelReadDescriptor]) -> Result<()> {
+        self.exec(
+            "axton_client",
+            "UPDATE axton_client SET push_results=?",
+            &[json!(canonical_json(&serde_json::to_value(reads)?)?)],
         )?;
         Ok(())
     }

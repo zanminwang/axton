@@ -333,6 +333,12 @@ fn additive_model_field_keeps_frozen_bytes_and_accepts_old_result_snapshot() {
         )
         .unwrap();
     let frozen = client.freeze().unwrap().unwrap();
+    let frozen_reads = client
+        .read_sql("SELECT push_results FROM axton_client", &[])
+        .unwrap()[0]["push_results"]
+        .clone();
+    let frozen_reads_value: Value = serde_json::from_str(frozen_reads.as_str().unwrap()).unwrap();
+    assert_eq!(frozen_reads_value[0]["fields"].as_array().unwrap().len(), 2);
     drop(client);
     let note = json!({"name":"note","type":{"kind":"scalar","name":"string"},"nullable":true});
     raw["models"][0]["fields"]
@@ -356,6 +362,12 @@ fn additive_model_field_keeps_frozen_bytes_and_accepts_old_result_snapshot() {
     let mut client = Client::open_at(&path, newer, factory(), false).unwrap();
     assert!(client.schema_state().pending.is_none());
     assert_eq!(client.freeze().unwrap().unwrap(), frozen);
+    assert_eq!(
+        client
+            .read_sql("SELECT push_results FROM axton_client", &[])
+            .unwrap()[0]["push_results"],
+        frozen_reads
+    );
     let receipt = PushReceipt {
         client_id: client.client_id().into(),
         batch_sequence: 1,
@@ -382,6 +394,145 @@ fn additive_model_field_keeps_frozen_bytes_and_accepts_old_result_snapshot() {
         }
     );
     assert_eq!(client.pending_count().unwrap(), 0);
+    assert!(
+        client
+            .read_sql("SELECT push_results FROM axton_client", &[])
+            .unwrap()[0]["push_results"]
+            .is_null()
+    );
+}
+
+#[test]
+fn same_schema_receipt_cannot_omit_a_declared_nullable_result_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut raw = serde_json::to_value(model_schema()).unwrap();
+    let note = json!({"name":"note","type":{"kind":"scalar","name":"string"},"nullable":true});
+    raw["models"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(note);
+    raw["actions"][1]["outputs"] = json!([{"name":"todo","kind":"model","model":"Todo","modelReadVersion":1,"cardinality":"single","source":{"inputIdentity":"todo"}}]);
+    raw["resultModels"] = json!([{"name":"Todo","version":1,"identity":["id"],"fields":raw["models"][0]["fields"],"enums":[]}]);
+    let schema = Schema::from_value(raw).unwrap();
+    let mut client = open(&dir.path().join("db"), schema);
+    client
+        .transaction(|tx| {
+            tx.direct(Operation {
+                model: "Todo".into(),
+                op: OperationKind::Create,
+                identity: json!({"id":"t"}),
+                values: Some(json!({"title":"A","note":null})),
+            })
+        })
+        .unwrap();
+    let call = client
+        .submit_action(
+            "Rename",
+            1,
+            json!({"todo":{"identity":{"id":"t"},"patch":{"title":"B"}}}),
+        )
+        .unwrap();
+    client.freeze().unwrap();
+    let mut receipt = PushReceipt {
+        client_id: client.client_id().into(),
+        batch_sequence: 1,
+        rejections: vec![],
+        completions: vec![CallCompletion {
+            call_id: call.call_id,
+            outcome: ActionOutcome::Succeeded {
+                result: json!({"todo":{"id":"t","title":"B"}}),
+            },
+        }],
+        records: vec![AuthorityRecord {
+            model: "Todo".into(),
+            identity: json!({"id":"t"}),
+            stamp: 1,
+            state: json!({"title":"B","note":null}),
+            error: None,
+        }],
+    };
+    assert!(client.acknowledge(1, receipt.clone()).is_err());
+    assert_eq!(client.pending_count().unwrap(), 1);
+    if let ActionOutcome::Succeeded { result } = &mut receipt.completions[0].outcome {
+        result["todo"]["note"] = Value::Null;
+    }
+    assert_eq!(client.acknowledge(1, receipt).unwrap().completions.len(), 1);
+}
+
+#[test]
+fn upgraded_server_may_return_new_fields_for_an_old_frozen_result_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut raw = serde_json::to_value(model_schema()).unwrap();
+    raw["actions"][1]["outputs"] = json!([{"name":"todo","kind":"model","model":"Todo","modelReadVersion":1,"cardinality":"single","source":{"inputIdentity":"todo"}}]);
+    raw["resultModels"] = json!([{"name":"Todo","version":1,"identity":["id"],"fields":raw["models"][0]["fields"],"enums":[]}]);
+    let old = Schema::from_value(raw.clone()).unwrap();
+    let factory =
+        || Box::new(|path: &std::path::Path| SqliteStore::open(path)) as StoreFactory<SqliteStore>;
+    let mut client = Client::open_at(&path, old, factory(), false).unwrap();
+    client
+        .transaction(|tx| {
+            tx.direct(Operation {
+                model: "Todo".into(),
+                op: OperationKind::Create,
+                identity: json!({"id":"t"}),
+                values: Some(json!({"title":"A"})),
+            })
+        })
+        .unwrap();
+    let call = client
+        .submit_action(
+            "Rename",
+            1,
+            json!({"todo":{"identity":{"id":"t"},"patch":{"title":"B"}}}),
+        )
+        .unwrap();
+    let frozen = client.freeze().unwrap().unwrap();
+    drop(client);
+    let note = json!({"name":"note","type":{"kind":"scalar","name":"string"},"nullable":true});
+    raw["models"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(note.clone());
+    raw["resultModels"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(note);
+    let mut client =
+        Client::open_at(&path, Schema::from_value(raw).unwrap(), factory(), false).unwrap();
+    assert_eq!(client.freeze().unwrap().unwrap(), frozen);
+    let mut receipt = PushReceipt {
+        client_id: client.client_id().into(),
+        batch_sequence: 1,
+        rejections: vec![],
+        completions: vec![CallCompletion {
+            call_id: call.call_id,
+            outcome: ActionOutcome::Succeeded {
+                result: json!({"todo":{"id":"t","title":"B","note":"server"}}),
+            },
+        }],
+        records: vec![AuthorityRecord {
+            model: "Todo".into(),
+            identity: json!({"id":"t"}),
+            stamp: 1,
+            state: json!({"title":"B","note":"server"}),
+            error: None,
+        }],
+    };
+    if let ActionOutcome::Succeeded { result } = &mut receipt.completions[0].outcome {
+        result["todo"]["unknown"] = json!(1);
+    }
+    assert!(client.acknowledge(1, receipt.clone()).is_err());
+    if let ActionOutcome::Succeeded { result } = &mut receipt.completions[0].outcome {
+        result["todo"].as_object_mut().unwrap().remove("unknown");
+    }
+    let report = client.acknowledge(1, receipt).unwrap();
+    assert_eq!(
+        report.completions[0].outcome,
+        ActionOutcome::Succeeded {
+            result: json!({"todo":{"id":"t","title":"B","note":"server"}})
+        }
+    );
 }
 
 #[test]
@@ -446,6 +597,53 @@ fn explicit_unsent_discard_emits_terminal_action_completion() {
     );
     assert_eq!(client.pending_count().unwrap(), 0);
     assert_eq!(client.rejections().unwrap()[0].code, "dropped");
+}
+
+#[test]
+fn legacy_discard_refuses_action_so_it_cannot_lose_terminal_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"), scalar_schema());
+    let call = client
+        .submit_action("Ping", 1, json!({"label":"x"}))
+        .unwrap();
+    assert!(client.drop_mutation(call.ordinal).is_err());
+    assert_eq!(client.pending_count().unwrap(), 1);
+    assert!(client.rejections().unwrap().is_empty());
+    assert_eq!(
+        client.drop_action(call.ordinal).unwrap()[0].call_id,
+        call.call_id
+    );
+}
+
+#[test]
+fn legacy_discard_refuses_a_legacy_parent_with_action_descendant() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"), model_schema());
+    let parent = client
+        .transaction(|tx| {
+            tx.enqueue(Mutation::new(
+                "LegacyAdd",
+                vec![Operation {
+                    model: "Todo".into(),
+                    op: OperationKind::Create,
+                    identity: json!({"id":"t"}),
+                    values: Some(json!({"title":"A"})),
+                }],
+            ))
+        })
+        .unwrap();
+    let child = client
+        .submit_action(
+            "Rename",
+            1,
+            json!({"todo":{"identity":{"id":"t"},"patch":{"title":"B"}}}),
+        )
+        .unwrap();
+    assert!(client.drop_mutation(parent).is_err());
+    assert_eq!(client.pending_count().unwrap(), 2);
+    assert!(client.rejections().unwrap().is_empty());
+    let events = client.drop_action(parent).unwrap();
+    assert_eq!(events[0].call_id, child.call_id);
 }
 
 #[test]

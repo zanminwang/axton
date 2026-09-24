@@ -271,6 +271,24 @@ impl PushReceipt {
     /// Decode an Action receipt against the frozen ordered calls. A legacy
     /// receipt has no completion contract; only the legacy path may omit it.
     pub fn decode_actions(bytes: &[u8], request: &PushRequest, schema: &Schema) -> Result<Self> {
+        Self::decode_actions_inner(bytes, request, schema, None)
+    }
+    /// Decode a queued Action receipt using the Model read contracts captured
+    /// when its batch was frozen. Fresh responses should use `decode_actions`.
+    pub fn decode_actions_with_frozen_results(
+        bytes: &[u8],
+        request: &PushRequest,
+        schema: &Schema,
+        frozen_reads: &[crate::ModelReadDescriptor],
+    ) -> Result<Self> {
+        Self::decode_actions_inner(bytes, request, schema, Some(frozen_reads))
+    }
+    fn decode_actions_inner(
+        bytes: &[u8],
+        request: &PushRequest,
+        schema: &Schema,
+        frozen_reads: Option<&[crate::ModelReadDescriptor]>,
+    ) -> Result<Self> {
         let value: Value = serde_json::from_slice(bytes)?;
         if value.get("completions").is_none() {
             return Err(invalid("Action completions missing"));
@@ -301,11 +319,13 @@ impl PushReceipt {
                     if rejections.contains_key(&mutation.ordinal) {
                         return Err(invalid("succeeded Action is rejected"));
                     }
-                    *result = crate::validate_action_result(
-                        schema,
-                        schema.action(&call.name, call.version)?,
-                        result,
-                    )?;
+                    let action = schema.action(&call.name, call.version)?;
+                    *result = match frozen_reads {
+                        Some(reads) => crate::validate_action_result_after_read_upgrade(
+                            schema, action, reads, result,
+                        )?,
+                        None => crate::validate_action_result(schema, action, result)?,
+                    };
                 }
                 ActionOutcome::Failed { code, execution } => {
                     if !valid_code(code)

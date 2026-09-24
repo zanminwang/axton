@@ -667,6 +667,132 @@ pub fn validate_action_result(
     }
     Ok(Value::Object(normalized))
 }
+/// Validate a saved result against the read contracts frozen for its call,
+/// then add only fields introduced by a compatible local read-contract
+/// evolution. This is separate from strict validation of a fresh result.
+/// Server replay of an older saved response may use the same seam.
+pub fn validate_action_result_after_read_upgrade(
+    schema: &Schema,
+    action: &ActionDescriptor,
+    frozen_reads: &[ModelReadDescriptor],
+    result: &Value,
+) -> Result<Value> {
+    let mut frozen_schema = schema.clone();
+    frozen_schema.result_models = frozen_reads.to_vec();
+    let mut projected = result.clone();
+    if let Some(outputs) = projected.as_object_mut() {
+        for output in &action.outputs {
+            if output.kind != "model" {
+                continue;
+            }
+            let model = output
+                .model
+                .as_deref()
+                .ok_or_else(|| invalid("missing output model"))?;
+            let version = output
+                .model_read_version
+                .ok_or_else(|| invalid("missing output read version"))?;
+            let frozen = frozen_schema.result_model(model, version)?;
+            let current = schema.result_model(model, version)?;
+            let value = outputs
+                .get_mut(&output.name)
+                .ok_or_else(|| invalid("missing Action output"))?;
+            match output.cardinality.as_str() {
+                "list" => {
+                    for item in value
+                        .as_array_mut()
+                        .ok_or_else(|| invalid("invalid Action result list"))?
+                    {
+                        project_to_frozen_read_fields(item, frozen, current)?;
+                    }
+                }
+                "optional" if value.is_null() => {}
+                "single" | "optional" => project_to_frozen_read_fields(value, frozen, current)?,
+                _ => return Err(invalid("invalid Action result cardinality")),
+            }
+        }
+    }
+    validate_action_result(&frozen_schema, action, &projected)?;
+    let mut expanded = result.clone();
+    if let Some(outputs) = expanded.as_object_mut() {
+        for output in &action.outputs {
+            if output.kind != "model" {
+                continue;
+            }
+            let model = output
+                .model
+                .as_deref()
+                .ok_or_else(|| invalid("missing output model"))?;
+            let version = output
+                .model_read_version
+                .ok_or_else(|| invalid("missing output read version"))?;
+            let frozen = frozen_schema.result_model(model, version)?;
+            let current = schema.result_model(model, version)?;
+            let value = outputs
+                .get_mut(&output.name)
+                .ok_or_else(|| invalid("missing Action output"))?;
+            match output.cardinality.as_str() {
+                "list" => {
+                    for item in value
+                        .as_array_mut()
+                        .ok_or_else(|| invalid("invalid Action result list"))?
+                    {
+                        add_new_read_fields(item, frozen, current)?;
+                    }
+                }
+                "optional" if value.is_null() => {}
+                "single" | "optional" => add_new_read_fields(value, frozen, current)?,
+                _ => return Err(invalid("invalid Action result cardinality")),
+            }
+        }
+    }
+    validate_action_result(schema, action, &expanded)
+}
+
+fn project_to_frozen_read_fields(
+    value: &mut Value,
+    frozen: &ModelReadDescriptor,
+    current: &ModelReadDescriptor,
+) -> Result<()> {
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| invalid("Model result must be object"))?;
+    if object
+        .keys()
+        .any(|name| !current.fields.iter().any(|field| &field.name == name))
+    {
+        return Err(invalid("Model result contains undeclared current field"));
+    }
+    object.retain(|name, _| frozen.fields.iter().any(|field| &field.name == name));
+    Ok(())
+}
+
+fn add_new_read_fields(
+    value: &mut Value,
+    frozen: &ModelReadDescriptor,
+    current: &ModelReadDescriptor,
+) -> Result<()> {
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| invalid("Model result must be object"))?;
+    for field in &current.fields {
+        if frozen.fields.iter().any(|prior| prior.name == field.name)
+            || object.contains_key(&field.name)
+        {
+            continue;
+        }
+        let added = if field.nullable {
+            Value::Null
+        } else {
+            field
+                .default
+                .clone()
+                .ok_or_else(|| invalid("new Model result field has no default"))?
+        };
+        object.insert(field.name.clone(), added);
+    }
+    Ok(())
+}
 fn normalize_result_model(
     schema: &Schema,
     model: &str,
@@ -693,28 +819,18 @@ fn normalize_result_model(
         .filter_map(|k| object.get(k).map(|v| (k.clone(), v.clone())))
         .collect();
     let key = local.record_key(model, &Value::Object(identity))?;
-    if object
-        .keys()
-        .any(|key| !descriptor.fields.iter().any(|f| &f.name == key))
+    if object.len() != descriptor.fields.len()
+        || object
+            .keys()
+            .any(|key| !descriptor.fields.iter().any(|f| &f.name == key))
     {
-        return Err(invalid("Model result contains undeclared read field"));
+        return Err(invalid("Model result must contain exactly read fields"));
     }
-    let mut state_fields: Map<String, Value> = object
+    let state_fields: Map<String, Value> = object
         .iter()
         .filter(|(key, _)| !descriptor.identity.contains(key))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
-    // A compatible read-contract addition may have happened while this call
-    // was frozen. Its earlier snapshot could not contain the new field.
-    for field in &descriptor.fields {
-        if !descriptor.identity.contains(&field.name)
-            && !field.nullable
-            && !state_fields.contains_key(&field.name)
-            && let Some(default) = &field.default
-        {
-            state_fields.insert(field.name.clone(), default.clone());
-        }
-    }
     let state = local.validate_state(model, &Value::Object(state_fields))?;
     let mut result = key.identity.as_object().unwrap().clone();
     result.extend(state.as_object().unwrap().clone());

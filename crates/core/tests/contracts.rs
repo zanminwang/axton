@@ -16,6 +16,23 @@ fn schema() -> Schema {
 }
 const ID: &str = "01890F47-1234-7123-8123-123456789ABC";
 
+#[test]
+fn fresh_model_result_cannot_omit_declared_nullable_field() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/action-results.json"
+    ))
+    .unwrap();
+    let mut raw = fixture["schema"].clone();
+    raw["resultModels"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"note","type":{"kind":"scalar","name":"string"},"nullable":true}));
+    let schema = Schema::from_value(raw).unwrap();
+    let action = schema.action("Find", 1).unwrap();
+    let incomplete = json!({"todo":{"id":ID.to_lowercase(),"title":"A"}});
+    assert!(validate_action_result(&schema, action, &incomplete).is_err());
+}
+
 fn action_schema() -> Schema {
     Schema::from_value(json!({
         "enums":[], "models":[],

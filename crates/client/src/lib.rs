@@ -492,26 +492,30 @@ impl<S: ClientStore> Client<S> {
             }
         }
         let new_file = schema_store::next_free_file(path);
-        let (channels, abandoned_calls) = match factory(old_file) {
-            Ok(mut old) => {
-                let channels = old
-                    .query_committed(
-                        "SELECT channel FROM axton_subscription ORDER BY channel",
-                        &[],
-                    )
-                    .map(|rows| {
-                        rows.rows
-                            .iter()
-                            .filter_map(|r| r[0].as_str().map(str::to_owned))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let abandoned_calls = old.query_committed("SELECT call_id, push FROM axton_mutation WHERE call_id IS NOT NULL ORDER BY ordinal", &[])
-                    .map(|rows| rows.rows.iter().filter_map(|r| r[0].as_str().map(|call_id| AbandonedCall { call_id: call_id.to_owned(), frozen: !r[1].is_null() })).collect())
-                    .unwrap_or_default();
-                (channels, abandoned_calls)
-            }
-            Err(_) => (vec![], vec![]),
+        let mut old = factory(old_file)?;
+        let channels: Vec<String> = old
+            .query_committed(
+                "SELECT channel FROM axton_subscription ORDER BY channel",
+                &[],
+            )
+            .map(|rows| {
+                rows.rows
+                    .iter()
+                    .filter_map(|r| r[0].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let columns = old.query_committed("PRAGMA table_info(axton_mutation)", &[])?;
+        let has = |name: &str| columns.rows.iter().any(|r| r[1].as_str() == Some(name));
+        let abandoned_calls = if has("call_id") && has("push") {
+            old.query_committed("SELECT call_id, push FROM axton_mutation WHERE call_id IS NOT NULL ORDER BY ordinal", &[])?
+                .rows.iter().map(|r| Ok(AbandonedCall {
+                    call_id: r[0].as_str().ok_or_else(|| invalid("stored Action call ID is not text"))?.to_owned(),
+                    frozen: !r[1].is_null(),
+                })).collect::<Result<Vec<_>>>()?
+        } else {
+            // An older framework table predates Action identity columns.
+            vec![]
         };
         let mut client = Self::open(factory(&new_file)?, schema.clone())?;
         if !channels.is_empty() {
@@ -854,7 +858,28 @@ impl<S: ClientStore> Client<S> {
         self.pulls.generation
     }
     pub fn drop_mutation(&mut self, ordinal: u64) -> Result<()> {
-        self.drop_action(ordinal).map(|_| ())
+        self.write(|e| {
+            match e.queued_one(ordinal)? {
+                None => return Ok(()),
+                Some(q) if q.push.is_some() => {
+                    return Err(invalid(
+                        "cannot drop a sent mutation with unknown/accepted outcome",
+                    ));
+                }
+                Some(_) => {}
+            }
+            let (affected, completions) = e.mark_rejected_with_completions(&[Rejection {
+                ordinal,
+                code: "dropped".into(),
+            }])?;
+            if !completions.is_empty() {
+                return Err(invalid(
+                    "Action discard requires completion-returning drop_action",
+                ));
+            }
+            e.rebuild_held(&affected)?;
+            Ok(())
+        })
     }
     /// Explicitly discard unsent work and return terminal events for any
     /// Action calls removed through its lifecycle dependency chain.

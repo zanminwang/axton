@@ -136,6 +136,35 @@ impl<S: ClientStore> Engine<'_, S> {
         let ordinals: Vec<u64> = selected.iter().map(|q| q.ordinal).collect();
         self.assign_push(&ordinals, push)?;
         self.set_push_models(&models)?;
+        if selected
+            .first()
+            .is_some_and(|q| q.mutation.call_id.is_some())
+        {
+            let mut needed = BTreeSet::new();
+            for queued in &selected {
+                let action = self
+                    .schema
+                    .action(&queued.mutation.name, queued.mutation.version)?;
+                for output in &action.outputs {
+                    if output.kind == "model" {
+                        needed.insert((
+                            output
+                                .model
+                                .clone()
+                                .ok_or_else(|| invalid("Action output Model missing"))?,
+                            output
+                                .model_read_version
+                                .ok_or_else(|| invalid("Action output read version missing"))?,
+                        ));
+                    }
+                }
+            }
+            let reads = needed
+                .into_iter()
+                .map(|(name, version)| self.schema.result_model(&name, version).cloned())
+                .collect::<Result<Vec<_>>>()?;
+            self.set_push_result_reads(&reads)?;
+        }
         Ok(Some(self.encode_push(push)?))
     }
     /// Complete the push in flight from its receipt, all in the caller's
@@ -169,7 +198,15 @@ impl<S: ClientStore> Engine<'_, S> {
             .collect();
         let receipt = if mutations.iter().any(|q| q.mutation.call_id.is_some()) {
             let request = PushRequest::decode_actions(&self.encode_push(push)?, self.schema)?;
-            PushReceipt::decode_actions(&receipt.encode()?, &request, self.schema)?
+            let reads = self
+                .push_result_reads()?
+                .ok_or_else(|| invalid("frozen Action result contracts missing"))?;
+            PushReceipt::decode_actions_with_frozen_results(
+                &receipt.encode()?,
+                &request,
+                self.schema,
+                &reads,
+            )?
         } else {
             PushReceipt::decode(&receipt.encode()?)?
         };
@@ -274,16 +311,13 @@ impl<S: ClientStore> Engine<'_, S> {
     }
     /// Drop rejected mutations and everything whose lifecycle depended on them,
     /// keep a durable record of why, and rebuild the rows they touched.
-    pub fn remove_rejected(&mut self, rejections: &[Rejection]) -> Result<()> {
-        let affected = self.mark_rejected(rejections)?;
+    pub fn remove_rejected(&mut self, rejections: &[Rejection]) -> Result<Vec<CallCompletion>> {
+        let (affected, completions) = self.mark_rejected_with_completions(rejections)?;
         self.rebuild_held(&affected)?;
-        Ok(())
+        Ok(completions)
     }
     /// Record the rejections, drop their mutations and lifecycle dependents,
-    /// and return the records they touched for the caller to rebuild.
-    pub fn mark_rejected(&mut self, rejections: &[Rejection]) -> Result<Held> {
-        Ok(self.mark_rejected_with_completions(rejections)?.0)
-    }
+    /// and return the records and Action completions for the caller.
     pub fn mark_rejected_with_completions(
         &mut self,
         rejections: &[Rejection],

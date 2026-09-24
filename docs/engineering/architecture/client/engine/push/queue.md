@@ -14,7 +14,7 @@
 
 - Each queued call has a durable ordinal, an optional push number and ordered optimistic operations. An Action row also stores a unique call ID and canonical arguments; a valid Action can have no Model operations.
 - Action pushes send the stored call ID, name, version and arguments. Their inferred Model operations replay locally. Legacy internal mutations still send wire operations; companion operations and derived cascade effects stay local.
-- `axton_client` holds the counters (`next_ordinal`, `next_push`), `last_completed_push` (the sequence of the last batch a receipt completed; a batch is in flight while its push number is above it) and `push_models` (the read contracts frozen with the batch in flight, released on completion). There is no per-batch table: the batch is the set of mutations sharing a push number.
+- `axton_client` holds the counters (`next_ordinal`, `next_push`), `last_completed_push` (the sequence of the last batch a receipt completed; a batch is in flight while its push number is above it), `push_models` (the authority read contracts declared on the wire), and `push_results` (the Model result read contracts used by frozen Action calls). The frozen metadata is released on completion. There is no per-batch table: the batch is the set of mutations sharing a push number.
 - Code: [queue.rs](../../../../../../crates/client/src/queue.rs); table definitions in [ddl.rs](../../../../../../crates/client/src/ddl.rs).
 
 ## 10. Quality Requirements

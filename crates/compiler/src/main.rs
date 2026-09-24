@@ -218,7 +218,7 @@ fn run() -> Result<(), String> {
         ),
         (
             out.join("client.ts"),
-            axton_compiler::client_typescript(&client_runtime),
+            axton_compiler::client_typescript(&config, &client_runtime),
         ),
         (out.join("generated.dart"), axton_compiler::dart(&config)),
         (

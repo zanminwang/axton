@@ -14,10 +14,10 @@ export class GeneratedClient {
  connection: Connection | undefined;
  readonly models: LiveModels;
  readonly actions: ReturnType<typeof makeActions>;
- /** Each mutation runs in its own local transaction and returns its ordinal. */
- readonly mutate: Mutate;
  readonly channels: Channels;
  private constructor(client: Client, connection: Connection | undefined) { this.client = client; this.connection = connection; this.models = liveModels(client); this.actions = makeActions(client); this.mutate = new Mutate(client); this.channels = new Channels(client); }
+ /** Each legacy mutation runs in its own local transaction and returns its ordinal. */
+ readonly mutate: Mutate;
  /** Opens the local database at `path`. With a server, the connection starts immediately and retries on its own. */
  static async open(options: { path: string; server?: ServerOptions; connection?: ConnectionOptions; migration?: { defaults?: RecordValue; replayPull?: boolean }; discardPending?: boolean }): Promise<GeneratedClient> {
   if ("transport" in options || "live" in options) throw Error("transport/live connection options were removed; use server: {url, token}");

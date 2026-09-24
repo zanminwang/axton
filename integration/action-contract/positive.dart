@@ -37,7 +37,7 @@ Future<AddTodoHandlerOutput> handle(
   return handlerOutput;
 }
 
-Future<void> useClient(ActionClientContract client) async {
+Future<void> useClient(GeneratedClient client) async {
   await client.models.todo.create(todo);
   await client.models.todo.update(identity, const TodoPatch(title: Present('New')));
   await client.models.todo.update(identity, clearNote);

@@ -8,7 +8,7 @@ use axton_compiler::{parse, validate};
 fn generated_actions_bind_to_shared_runtime_and_backend() {
     let descriptor = compile("model Todo { id String at DateTime @@id(id) } action Touch(todo Todo.update<at>, when DateTime) { echoed DateTime }").unwrap();
     let model = axton_compiler::typescript(&descriptor);
-    let client = axton_compiler::client_typescript("@axton/client");
+    let client = axton_compiler::client_typescript(&descriptor, "@axton/client");
     let backend = axton_compiler::backend_typescript(&descriptor, "@axton/server");
     assert!(model.contains("import type { ActionCall } from './client.ts'"));
     assert!(client.contains("type ActionOutcome"));
@@ -405,7 +405,8 @@ fn backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation() {
 
 #[test]
 fn generated_clients_expose_one_server_connection() {
-    let ts = axton_compiler::client_typescript("@example/custom-runtime");
+    let schema = compile("model Entry { id String title String @@id(id) } mutation Edit { entry Entry.update<title> }").unwrap();
+    let ts = axton_compiler::client_typescript(&schema, "@example/custom-runtime");
     assert!(ts.contains("type ServerOptions"));
     assert!(ts.contains("server?: ServerOptions"));
     assert!(ts.contains("client.connect(options.server"));
@@ -427,7 +428,8 @@ fn generated_clients_expose_one_server_connection() {
 /// sync state), top-level mutations and the runtime members, in both languages.
 #[test]
 fn generated_clients_are_the_whole_client() {
-    let ts = axton_compiler::client_typescript("@example/custom-runtime");
+    let schema = compile("model Entry { id String title String @@id(id) } mutation Edit { entry Entry.update<title> }").unwrap();
+    let ts = axton_compiler::client_typescript(&schema, "@example/custom-runtime");
     for member in [
         "readonly mutate: Mutate;",
         "this.mutate = new Mutate(client)",
@@ -503,7 +505,7 @@ fn generated_transaction_facades_are_local_only() {
         ts.contains("export class Mutate { readonly port:MutatePort;"),
         "{ts}"
     );
-    let ts_client = axton_compiler::client_typescript("@example/custom-runtime");
+    let ts_client = axton_compiler::client_typescript(&schema, "@example/custom-runtime");
     assert!(
         ts_client.contains("this.mutate = new Mutate(client)"),
         "{ts_client}"
@@ -979,7 +981,7 @@ fn retained_generated_action_binding_validates_without_relation_snapshots() {
 }
 
 #[test]
-fn action_typescript_emits_flattened_operands_and_separate_client_contract() {
+fn action_typescript_emits_flattened_operands_for_generated_client() {
     let v = compile("model Todo { id String title String @@id(id) } action AddTodo(todo Todo.create, patch Todo.update<title>?, gone Todo.delete[], label String?) { related Todo? matches Todo[] count Int }").unwrap();
     let ts = axton_compiler::typescript(&v);
     assert!(ts.contains("export type TodoCreate = Todo;"), "{ts}");
@@ -994,13 +996,13 @@ fn action_typescript_emits_flattened_operands_and_separate_client_contract() {
         ts.contains("import type { ActionCall } from './client.ts'"),
         "{ts}"
     );
-    assert!(ts.contains("export interface ActionClientContract"), "{ts}");
+    assert!(!ts.contains("ActionClientContract"), "{ts}");
     assert!(
-        ts.contains("addTodo(args: AddTodoInput): Promise<ActionCall<AddTodoOutput>>"),
+        ts.contains("addTodo: (args:AddTodoInput):Promise<ActionCall<AddTodoOutput>>"),
         "{ts}"
     );
     assert!(
-        ts.contains("addTodo(args: AddTodoInput): Promise<AddTodoOutput>"),
+        ts.contains("addTodo: (args:AddTodoInput):Promise<AddTodoOutput>"),
         "{ts}"
     );
     assert!(!ts.contains("class GeneratedClient {"), "{ts}");
@@ -1065,17 +1067,15 @@ fn action_dart_emits_concrete_client_and_versioned_handler_contracts() {
         "required this.relatedTodo",
         "TodoIdentity? relatedTodo",
         "Todo? relatedTodo",
-        "typedef ActionClientContract = GeneratedClient;",
         "late final Actions actions = Actions(client);",
         "late final DirectCalls call = DirectCalls(client);",
         "Future<ActionCall<SearchOutput>> search(",
         "Future<SearchOutput> search(",
-        "typedef ActionTransactionContract = GeneratedTransaction;",
         "typedef PingOutput = void;",
     ] {
         assert!(dart.contains(expected), "missing {expected}: {dart}");
     }
-    assert!(!dart.contains("class GeneratedClient extends ActionClientContract"));
+    assert!(!dart.contains("ActionClientContract"));
 }
 
 #[test]
@@ -1249,4 +1249,25 @@ fn backend_enum_list_handler_outputs_preserve_latest_and_retained_union_cardinal
             .contains("states: (\"open\" | \"closed\" | \"archived\")[];"),
         "{emitted}"
     );
+}
+
+#[test]
+fn action_only_and_model_only_clients_have_no_legacy_mutate_facade() {
+    for schema in [
+        "model Todo { id String @@id(id) } action AddTodo(todo Todo.create)",
+        "model Todo { id String @@id(id) }",
+    ] {
+        let v = compile(schema).unwrap();
+        let ts = axton_compiler::typescript(&v);
+        let dart = axton_compiler::dart(&v);
+        assert!(!ts.contains("export class Mutate"), "{ts}");
+        assert!(!ts.contains("export interface MutatePort"), "{ts}");
+        assert!(!dart.contains("class Mutate"), "{dart}");
+        assert!(!dart.contains("late final Mutate mutate"), "{dart}");
+        let client = axton_compiler::client_typescript(&v, "@axton/client");
+        assert!(!client.contains("readonly mutate"), "{client}");
+        assert!(!client.contains("new Mutate(client)"), "{client}");
+        let backend = axton_compiler::backend_typescript(&v, "@axton/server");
+        assert!(!backend.contains("MutationRejected"), "{backend}");
+    }
 }

@@ -168,14 +168,6 @@ class TouchHandlerOutput implements _DartActionRecord {
  'stamp': _dartActionEncode(stamp),
  };
 }
-typedef ActionTxModels = TxModels;
-typedef ActionModels = LiveModels;
-typedef ActionNoteModel = NoteTxModel;
-typedef ActionNoteLiveModel = NoteLiveModel;
-typedef ActionTransactionContract = GeneratedTransaction;
-typedef ActionClientContract = GeneratedClient;
-typedef ActionActionsContract = Actions;
-typedef ActionDirectCallsContract = DirectCalls;
 abstract interface class ActionHandlerCall<Ctx, Args> { Ctx get ctx; Args get args; }
 abstract interface class ActionHandlers<Ctx> {
  ActionEchoHandlers<Ctx> get echo;
@@ -213,9 +205,6 @@ class DirectCalls {
  Future<PingOutput> ping() => client.invokeDirectAction<PingOutput>('Ping', 1, {}, (_) {});
  Future<TouchOutput> touch({required NoteCreate note, TouchChangedUpdate? changed}) => client.invokeDirectAction<TouchOutput>('Touch', 1, {'note': _dartActionEncode(note), if (changed != null) 'changed': _dartActionEncode(changed)}, (value) { final row = (value as Map).cast<String,dynamic>(); return TouchOutput(note: Note.fromRecord((row['note'] as Map).cast<String,dynamic>()), changed: row['changed'] == null ? null : Note.fromRecord((row['changed'] as Map).cast<String,dynamic>()), stamp: DateTime.parse(row['stamp'] as String)); });
 }
-class Mutate { final MutatePort port; Mutate(this.port);
-
-}
 class LiveModels { final Client port; LiveModels(this.port);
  late final NoteLiveModel note = NoteLiveModel(port);
 }
@@ -230,8 +219,6 @@ class GeneratedTransaction { final Transaction transaction; late final TxModels 
 class GeneratedClient {
  /// The runtime handle (internal); application code uses the members below.
  final Client client; RuntimeConnection? connection; late final LiveModels models = LiveModels(client);
- /// Each mutation runs in its own local transaction and returns its ordinal.
- late final Mutate mutate = Mutate(client);
  late final Channels channels = Channels(client);
  late final Actions actions = Actions(client);
  GeneratedClient._(this.client, this.connection);

@@ -34,12 +34,6 @@ class PingInput implements _DartActionRecord {
 }
 typedef PingOutput = void;
 typedef PingHandlerOutput = void;
-typedef ActionTxModels = TxModels;
-typedef ActionModels = LiveModels;
-typedef ActionTransactionContract = GeneratedTransaction;
-typedef ActionClientContract = GeneratedClient;
-typedef ActionActionsContract = Actions;
-typedef ActionDirectCallsContract = DirectCalls;
 abstract interface class ActionHandlerCall<Ctx, Args> { Ctx get ctx; Args get args; }
 abstract interface class ActionHandlers<Ctx> {
  ActionClockHandlers<Ctx> get clock;
@@ -69,9 +63,6 @@ class DirectCalls {
  Future<ClockOutput> clock({required DateTime at}) => client.invokeDirectAction<ClockOutput>('Clock', 1, {'at': _dartActionEncode(at)}, (value) { final row = (value as Map).cast<String,dynamic>(); return ClockOutput(at: DateTime.parse(row['at'] as String)); });
  Future<PingOutput> ping() => client.invokeDirectAction<PingOutput>('Ping', 1, {}, (_) {});
 }
-class Mutate { final MutatePort port; Mutate(this.port);
-
-}
 class LiveModels { final Client port; LiveModels(this.port);
 
 }
@@ -86,8 +77,6 @@ class GeneratedTransaction { final Transaction transaction; late final TxModels 
 class GeneratedClient {
  /// The runtime handle (internal); application code uses the members below.
  final Client client; RuntimeConnection? connection; late final LiveModels models = LiveModels(client);
- /// Each mutation runs in its own local transaction and returns its ordinal.
- late final Mutate mutate = Mutate(client);
  late final Channels channels = Channels(client);
  late final Actions actions = Actions(client);
  GeneratedClient._(this.client, this.connection);

@@ -1,5 +1,5 @@
 {
-  "clientPolicies": [
+  "actions": [
     {
       "input": {
         "enums": [],
@@ -46,26 +46,32 @@
           }
         ]
       },
-      "knownFields": {
-        "Todo": [
-          "id",
-          "title",
-          "done",
-          "createdById"
-        ]
-      },
-      "name": "AddTodo",
-      "prerequisites": [],
-      "requirements": [],
-      "sequence": null,
-      "slots": [
+      "inputs": [
         {
           "cardinality": "single",
+          "kind": "model",
           "model": "Todo",
           "name": "todo",
           "operation": "create"
         }
       ],
+      "name": "AddTodo",
+      "outputEnums": [],
+      "outputs": [
+        {
+          "cardinality": "single",
+          "kind": "model",
+          "model": "Todo",
+          "modelReadVersion": 1,
+          "name": "todo",
+          "source": {
+            "inputIdentity": "todo"
+          }
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
       "version": 1
     },
     {
@@ -98,32 +104,39 @@
           }
         ]
       },
-      "knownFields": {
-        "Todo": [
-          "id",
-          "title",
-          "done",
-          "createdById"
-        ]
-      },
-      "name": "SetTodoDone",
-      "prerequisites": [],
-      "requirements": [],
-      "sequence": null,
-      "slots": [
+      "inputs": [
         {
           "allowedPatchFields": [
             "done"
           ],
           "cardinality": "single",
+          "kind": "model",
           "model": "Todo",
           "name": "todo",
           "operation": "update"
         }
       ],
+      "name": "SetTodoDone",
+      "outputEnums": [],
+      "outputs": [
+        {
+          "cardinality": "single",
+          "kind": "model",
+          "model": "Todo",
+          "modelReadVersion": 1,
+          "name": "todo",
+          "source": {
+            "inputIdentity": "todo"
+          }
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
       "version": 1
     }
   ],
+  "clientPolicies": [],
   "enums": [],
   "models": [
     {
@@ -210,5 +223,75 @@
     }
   ],
   "prerequisites": [],
-  "requirements": []
+  "requirements": [],
+  "resultModels": [
+    {
+      "enums": [],
+      "fields": [
+        {
+          "name": "id",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "done",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "boolean"
+          }
+        },
+        {
+          "name": "createdById",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "identity": [
+        "id"
+      ],
+      "name": "Todo",
+      "version": 1
+    },
+    {
+      "enums": [],
+      "fields": [
+        {
+          "name": "id",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "name",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "identity": [
+        "id"
+      ],
+      "name": "User",
+      "version": 1
+    }
+  ]
 }

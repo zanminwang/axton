@@ -344,9 +344,9 @@ class GeneratedTransaction { final Transaction transaction; late final TxModels 
 class GeneratedClient {
  /// The runtime handle (internal); application code uses the members below.
  final Client client; RuntimeConnection? connection; late final LiveModels models = LiveModels(client);
- /// Each mutation runs in its own local transaction and returns its ordinal.
- late final Mutate mutate = Mutate(client);
  late final Channels channels = Channels(client);
+ /// Each legacy mutation runs in its own local transaction and returns its ordinal.
+ late final Mutate mutate = Mutate(client);
  GeneratedClient._(this.client, this.connection);
  /// Opens the local database at [path]. With a [server], the connection starts immediately and retries on its own.
  static Future<GeneratedClient> open({required String path, SyncServer? server, String? libraryPath, Map<String,dynamic>? migration, bool discardPending = false, void Function(Object)? onError, Future<void> Function()? refreshAuth, Duration directTimeout = const Duration(seconds: 30)}) async {

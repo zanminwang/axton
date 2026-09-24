@@ -67,8 +67,8 @@ Each installation keeps its own database file and client identity under Applicat
 ## Walkthrough
 
 1. **Two tables.** `models/todo.model` declares `User(id, name)` and `Todo(id, title, done, createdById)` with `createdBy` as a reference. The backend adds no other application tables; AXTON's own sync tables come from `packages/postgres/migration.sql`.
-2. **Two operations.** `AddTodo` creates a task; `SetTodoDone` updates only `done`. The compiler emits typed builders for the app and typed `Handlers`/`Loaders` for the backend from the same file, so the wire shapes cannot drift.
-3. **Backend rules.** `server.mts` trims the title and refuses empty ones, requires the creator to be the authenticated user and `done` to start false, and turns only a proven primary-key collision into `todo.id_conflict`. Each handler publishes the changed record on channel `todo:demo` inside the same database transaction, so a notification never precedes its data.
+2. **Two Actions.** `AddTodo` creates a task; `SetTodoDone` updates only `done`. The generated client exposes `client.actions.addTodo` and `client.actions.setTodoDone` for durable local commits. Each returns an `ActionCall` whose `wait()` yields the backend result or a rejection. `client.actions.call.setTodoDone` executes directly and returns its committed result. The generated backend requires one typed handler per retained Action version.
+3. **Backend rules.** `server.mts` trims the title and refuses empty ones, requires the creator to be the authenticated user and `done` to start false, and turns only a proven primary-key collision into `todo.id_conflict`. Handlers throw `ActionRejected` for these business refusals, add a `Todo` identity to changed records, and publish on channel `todo:demo` in the same database transaction. AXTON reads the record through the Loader and returns a snapshot in the Action result.
 4. **Local watch.** `mobile/src/todo.ts` opens the generated client on a per-user database, subscribes to `todo:demo`, and exposes `watch`, `add` and `setDone`. `add` and `setDone` return after the local commit; the screen renders from watch callbacks only, never from a second in-memory store.
 5. **Offline and back.** Without a network, adds and completions commit locally and queue in SQLite. Killing and relaunching the app keeps the rows, the queue and the client identity. On reconnect the engine pushes the queued create before its dependent update, catches up missed changes over HTTP, then follows the live stream. `integration/platform/run_todo_ios_smoke.sh` proves this on two simulators with a real per-phone network fault.
 
@@ -81,9 +81,11 @@ bash integration/e2e/todo-run.sh
 bash integration/platform/run_todo_ios_smoke.sh
 ```
 
-The e2e runner covers the happy path, every rejection code, an unknown identity, a lost push response, a backend restart on the same database, offline add-then-done across a reopen, and opposing completions in both commit orders. The simulator runner needs the Release app above; it creates two disposable simulators (newest installed iOS runtime and first iPhone device type by default, or `AXTON_TODO_SIM_RUNTIME`/`AXTON_TODO_SIM_DEVICE`) and deletes only those.
+The e2e runner covers the happy path, every rejection code, an unknown identity, a lost push response, a backend restart on the same database, offline add-then-done across a reopen, and opposing completions in both commit orders. It also checks that a direct result retains its Loader snapshot while a separate durable edit stays queued and optimistic, and that retrying a direct request returns its stored result after a later backend update. The simulator runner needs the Release app above; it creates two disposable simulators (newest installed iOS runtime and first iPhone device type by default, or `AXTON_TODO_SIM_RUNTIME`/`AXTON_TODO_SIM_DEVICE`) and deletes only those.
 
 ## Evidence
+
+The original two-device smoke evidence below was recorded before the Action migration. It establishes the mobile host and screen behavior at that commit; the current Action schema and generated bindings are covered by the host E2E suite above.
 
 Verified 2026-09-15 on branch `codex/todo-mobile` on the working tree later committed as `bd1678c` and rebased onto `c54ff70` (React Native support, #100); the SDK follow-up between those commits changed only build tooling and test timeouts with Xcode 26.5 (17F42), the iOS 26.5 simulator runtime (23F77), two disposable iPhone 17 simulators, Node 26.4.0, cargo 1.98.1, CocoaPods 1.16.2, Expo 57.0.22, React Native 0.86.3 and React 19.2.3.
 

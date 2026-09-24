@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { prisma } from "../../packages/postgres/index.mts";
 import {
   createBackend,
-  MutationRejected,
+  ActionRejected,
   type Handlers,
   type Loaders,
 } from "./generated/node/backend.ts";
@@ -27,13 +27,13 @@ export function demoAuth(request: IncomingMessage): string | null {
 
 function titleForInsert(title: string): string {
   const value = title.trim();
-  if (!value) throw new MutationRejected("todo.title_empty");
+  if (!value) throw new ActionRejected("todo.title_empty");
   return value;
 }
 
 function validateCreate(userId: string, values: { createdById: string; done: boolean }): void {
-  if (values.createdById !== userId) throw new MutationRejected("todo.creator_invalid");
-  if (values.done !== false) throw new MutationRejected("todo.initial_state_invalid");
+  if (values.createdById !== userId) throw new ActionRejected("todo.creator_invalid");
+  if (values.done !== false) throw new ActionRejected("todo.initial_state_invalid");
 }
 
 function prismaCode(error: unknown): string | undefined {
@@ -56,9 +56,10 @@ export async function createExample() {
   const db = new PrismaClient();
   let calls = 0;
   const handlers: Handlers<Tx> = {
-    async addTodo({ input, tx, userId, publish }) {
+    async addTodo({ args, ctx }) {
+      const { tx, userId, publish, changes } = ctx;
       calls++;
-      const { todo } = input;
+      const { todo } = args;
       const title = titleForInsert(todo.title);
       validateCreate(userId, todo);
       const savepoint = `todo_create_${++savepoints}`;
@@ -68,24 +69,27 @@ export async function createExample() {
       } catch (error) {
         if (!isTodoIdConflict(error)) throw error;
         await tx.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${savepoint}`);
-        throw new MutationRejected("todo.id_conflict");
+        throw new ActionRejected("todo.id_conflict");
       }
       await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
+      changes.add({ model: "Todo", identity: { id: todo.id } });
       publish({ channel: CHANNEL });
     },
-    async setTodoDone({ input, tx, publish }) {
+    async setTodoDone({ args, ctx }) {
+      const { tx, publish, changes } = ctx;
       calls++;
-      const { identity, patch } = input.todo;
+      const { id, done } = args.todo;
       // An empty patch is a no-op (#49): the record is still read back and
       // published at a new stamp, but nothing is written.
-      if (typeof patch.done === "boolean") {
+      if (typeof done === "boolean") {
         try {
-          await tx.todo.update({ where: identity, data: { done: patch.done } });
+          await tx.todo.update({ where: { id }, data: { done } });
         } catch (error) {
           if (prismaCode(error) !== "P2025") throw error;
-          throw new MutationRejected("todo.missing");
+          throw new ActionRejected("todo.missing");
         }
       }
+      changes.add({ model: "Todo", identity: { id } });
       publish({ channel: CHANNEL });
     },
   };

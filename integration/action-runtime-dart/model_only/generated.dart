@@ -60,9 +60,6 @@ class ItemTxModel extends ItemModel { final WritePort writer; ItemTxModel(this.w
  Future<void> update(ItemIdentity identity, ItemPatch patch) => writer.direct({'model':'Item','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
  Future<void> delete(ItemIdentity identity) => writer.direct({'model':'Item','op':'delete','identity':identity.toRecord()});
 }
-class Mutate { final MutatePort port; Mutate(this.port);
-
-}
 class LiveModels { final Client port; LiveModels(this.port);
  late final ItemLiveModel item = ItemLiveModel(port);
 }
@@ -77,8 +74,6 @@ class GeneratedTransaction { final Transaction transaction; late final TxModels 
 class GeneratedClient {
  /// The runtime handle (internal); application code uses the members below.
  final Client client; RuntimeConnection? connection; late final LiveModels models = LiveModels(client);
- /// Each mutation runs in its own local transaction and returns its ordinal.
- late final Mutate mutate = Mutate(client);
  late final Channels channels = Channels(client);
  GeneratedClient._(this.client, this.connection);
  /// Opens the local database at [path]. With a [server], the connection starts immediately and retries on its own.

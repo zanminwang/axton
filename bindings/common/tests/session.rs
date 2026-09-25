@@ -849,6 +849,23 @@ fn bootstrap_commands_register_read_and_schedule_one_page() {
         json!({"mode":"bootstrap","channel":"book","models":{"Entry":1},"after":0,"until":7}),
         "the interval is bounded by the committed origin"
     );
+    // The answer commits its authority and its progress together, and the
+    // committed run travels to the host as one `bootstrap` action.
+    let applied = downlink(
+        &mut host,
+        &id,
+        json!({"event":"response","request":page["request"],"body":json!({"mode":"bootstrap","channel":"book","from":0,"to":7,"until":7,"head":9,"records":[]}).to_string()}),
+    );
+    assert_eq!(
+        applied[0],
+        json!({"type":"bootstrap","scope":"book","subscriptionId":subscription,"state":"catching_up","run":1,"cursor":7,"barrier":9,"error":null}),
+        "the terminal page fixed the barrier; delivery at 7 has not reached 9"
+    );
+    assert_eq!(
+        host.call(json!({"op":"scopeBootstrapState","handle":id,"scope":"book","subscriptionId":subscription}))
+            .unwrap()["value"]["state"],
+        "catching_up"
+    );
     // A malformed identity names no registration, and neither does another one.
     for malformed in [json!(null), json!("1"), json!(0), json!(-1), json!(1.5)] {
         assert!(

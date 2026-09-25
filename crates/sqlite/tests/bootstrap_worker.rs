@@ -666,3 +666,31 @@ fn a_deferred_load_does_not_hold_back_queued_delivery() {
     let (_, request) = only(&lane.drain());
     assert_eq!((request.after, request.until), (0, 100));
 }
+
+/// A reopen resumes a run mid-interval from the progress it committed, with no
+/// further call from the frontend and no status of its own to announce.
+#[test]
+fn a_reopen_resumes_a_loading_run_from_its_committed_progress() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.streaming("a", 100);
+    let (id, _) = only(&lane.register("a"));
+    lane.answer(id, historical("a", 0, 40, 100, 130, vec![]));
+    assert_eq!(
+        (lane.load("a").state, lane.load("a").cursor),
+        (BootstrapPhase::Loading, 40)
+    );
+    lane.send(DownlinkEvent::Stop);
+    let started = lane.send(DownlinkEvent::Start);
+    assert_eq!(
+        statuses(&started),
+        Vec::<&BootstrapState>::new(),
+        "resuming commits nothing of its own: {started:?}"
+    );
+    let (_, request) = only(&started);
+    assert_eq!(
+        (request.after, request.until),
+        (40, 100),
+        "from the persisted progress, bounded by the same origin"
+    );
+}

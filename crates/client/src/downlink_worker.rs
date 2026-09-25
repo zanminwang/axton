@@ -584,12 +584,11 @@ impl DownlinkWorker {
     ) -> Result<bool> {
         let waiting = client.bootstrap_barriers()?;
         let settled = client.settle_bootstrap_barriers(&waiting)?;
+        let committed = !settled.is_empty();
         for state in settled {
             actions.push(DownlinkAction::Bootstrap(state));
         }
-        Ok(actions
-            .iter()
-            .any(|a| matches!(a, DownlinkAction::Bootstrap(_))))
+        Ok(committed)
     }
 
     /// Committed delivery progress may have reached a fixed barrier: complete

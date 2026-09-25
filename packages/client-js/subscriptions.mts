@@ -197,6 +197,8 @@ class Handle implements Subscription {
 export class Subscriptions {
   #commands: SubscriptionCommands;
   #handles = new Map<number, Handle>();
+  /** The client closed: a read still in flight answers to nobody. */
+  #closed = false;
   #lane: Lane = {
     attached: false,
     paused: false,
@@ -320,11 +322,14 @@ export class Subscriptions {
       (state) => {
         for (const handle of handles) handle.apply(state);
       },
-      (error) => this.#commands.report(error),
+      (error) => {
+        if (!this.#closed) this.#commands.report(error);
+      },
     );
   }
   /** The client closed: every handle stops and its observers are cancelled; no subscription is removed. */
   close(): void {
+    this.#closed = true;
     const handles = [...this.#handles.values()];
     this.#handles.clear();
     this.#lane.attached = false;

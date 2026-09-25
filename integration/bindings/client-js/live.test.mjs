@@ -295,7 +295,7 @@ test('HTTP catch-up failures surface and retry without treating the failure as a
   await connection.pause();await until(()=>network.sockets.every(s=>s.readyState===s.CLOSED));
   network.heads.scope=1;await connection.resume();
   await until(async()=>(await fixture.client.read('Entry',{id:'live'}))?.text==='retried');
-  assert.equal(errors.filter(e=>e.status===503).length,1);assert.deepEqual(network.requests[1].body.cursors,{scope:0},'the retry asks from the cursor, not from an assumed empty page');
+  assert.equal(errors.length,1,`the failure is the only error: ${errors.map(e=>e.message)}`);assert.equal(errors[0].status,503);assert.deepEqual(network.requests[1].body.cursors,{scope:0},'the retry asks from the cursor, not from an assumed empty page');
  }finally{await fixture.close();await network.close();}
 });
 

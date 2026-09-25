@@ -252,6 +252,9 @@ class Subscription {
 class Subscriptions {
   final SubscriptionCommands _commands;
   final _handles = <int, Subscription>{};
+
+  /// The client closed: a read still in flight answers to nobody.
+  bool _closed = false;
   final _lane = _Lane();
   Subscriptions(this._commands);
 
@@ -364,18 +367,27 @@ class Subscriptions {
         .where((handle) => handle.scope == scope && !handle._closed)
         .toList();
     if (handles.isEmpty) return;
+    final zone = Zone.current;
     unawaited(
-      _commands.state(scope).then((state) {
-        for (final handle in handles) {
-          handle._apply(state);
-        }
-      }, onError: Zone.current.handleUncaughtError),
+      _commands
+          .state(scope)
+          .then(
+            (state) {
+              for (final handle in handles) {
+                handle._apply(state);
+              }
+            },
+            onError: (Object error, StackTrace stack) {
+              if (!_closed) zone.handleUncaughtError(error, stack);
+            },
+          ),
     );
   }
 
   /// The client closed: every handle stops and its observers are cancelled; no
   /// subscription is removed.
   void close() {
+    _closed = true;
     final handles = _handles.values.toList();
     _handles.clear();
     _lane.attached = false;

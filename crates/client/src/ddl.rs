@@ -28,15 +28,36 @@ pub const LEGACY_TABLES: &[&str] = &["axton_claim", "axton_push_checkpoint"];
 /// contract; it is rebuilt beside, never converted or wiped.
 const CLIENT_COLUMNS: &[&str] = &["last_completed_push", "push_models", "next_subscription"];
 /// Framework columns added after a layout shipped, with their definitions.
-/// A database without one gets it in place: its queue stays sendable.
+/// A database without one gets it in place: its queue stays sendable, and its
+/// subscriptions keep their identities and delivery boundaries.
 /// `diverged` marks a queued mutation whose replay failed over new authority
-/// ([#122](https://github.com/zanminwang/axton/issues/122)).
+/// ([#122](https://github.com/zanminwang/axton/issues/122)); the `bootstrap_`
+/// columns carry a Scope's historical load beside its subscription
+/// ([#151](https://github.com/zanminwang/axton/issues/151)), whose defaults are
+/// a load that was never requested.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("axton_mutation", "diverged", "INTEGER NOT NULL DEFAULT 0"),
     ("axton_mutation", "call_id", "TEXT"),
     ("axton_mutation", "args", "TEXT"),
     ("axton_mutation", "store", "TEXT"),
     ("axton_client", "push_results", "TEXT"),
+    (
+        "axton_subscription",
+        "bootstrap_state",
+        "TEXT NOT NULL DEFAULT 'not_requested'",
+    ),
+    (
+        "axton_subscription",
+        "bootstrap_run",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        "axton_subscription",
+        "bootstrap_cursor",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+    ("axton_subscription", "bootstrap_barrier", "INTEGER"),
+    ("axton_subscription", "bootstrap_error", "TEXT"),
 ];
 
 /// Add every framework column in [`ADDED_COLUMNS`] a table still lacks.
@@ -78,6 +99,11 @@ CREATE TABLE IF NOT EXISTS axton_subscription (
   subscription_id  INTEGER NOT NULL UNIQUE,
   starting_cursor  INTEGER,
   cursor           INTEGER,
+  bootstrap_state   TEXT NOT NULL DEFAULT 'not_requested',
+  bootstrap_run     INTEGER NOT NULL DEFAULT 0,
+  bootstrap_cursor  INTEGER NOT NULL DEFAULT 0,
+  bootstrap_barrier INTEGER,
+  bootstrap_error   TEXT,
   CHECK ((starting_cursor IS NULL AND cursor IS NULL) OR
          (starting_cursor IS NOT NULL AND cursor IS NOT NULL AND
           starting_cursor >= 0 AND cursor >= starting_cursor))

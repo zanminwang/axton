@@ -19,7 +19,7 @@ Engine behavior: [Client / Connection / Controller](../client/connection/control
 
 ## 5. Building Block View
 
-- Channels must be non-empty strings and at least one is required. `SubscribeRequest` normalizes them (deduplicated, UTF-16 order); `SubscriptionAck::confirms` checks that the acknowledgement names exactly that set. `LiveMessage` tells an acknowledgement (it has a `type`) from a page (it has none).
+- Channel names must be non-blank strings (`check_channel`: neither empty nor only whitespace) and at least one is required; the same rule refuses a durable registration and a publication intent. `SubscribeRequest` normalizes them (deduplicated, UTF-16 order); `SubscriptionAck::confirms` checks that the acknowledgement names exactly that set. `LiveMessage` tells an acknowledgement (it has a `type`) from a page (it has none).
 - The declaration is checked at the handshake and kept for the session; every frame it streams is loaded at those versions. The acknowledgement is produced inside the negotiating transaction, which also reads each channel's head; streaming starts there.
 
 Code: [core/protocol.rs](../../../../crates/core/src/protocol.rs) (`SubscribeRequest`, `SubscriptionAck`, `LiveMessage`); the server side in [server/live.rs](../../../../crates/server/src/live.rs); the client side in [client/live.rs](../../../../crates/client/src/live.rs).

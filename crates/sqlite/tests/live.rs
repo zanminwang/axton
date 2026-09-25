@@ -611,3 +611,78 @@ fn a_page_from_a_previous_subscription_is_stale_not_a_gap_through_the_session() 
     assert_eq!(lane.text(), "fresh");
     let _ = BTreeMap::<String, u64>::new();
 }
+
+#[test]
+fn a_replaced_socket_is_fenced_by_its_epoch_and_the_new_session_streams_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.set("a", true);
+    let (first, _) = open(&lane.send(LiveEvent::Start)[0]);
+    lane.message(first, ack(&[("a", 0)]));
+    assert_eq!(
+        lane.frame(first, &page("a", 0, 1, Some("first socket"))),
+        vec![PUSH_WAKE]
+    );
+    // The socket drops and the lane reconnects: only the new epoch is current.
+    let actions = lane.send(LiveEvent::Closed { epoch: first });
+    lane.now += wait(&actions[1]);
+    let (second, _) = open(&lane.send(LiveEvent::Next)[0]);
+    assert!(second > first);
+    assert_eq!(lane.message(second, ack(&[("a", 1)])), vec![]);
+    // Whatever the abandoned socket still delivers belongs to no session.
+    assert_eq!(lane.frame(first, &page("a", 1, 2, Some("late"))), vec![]);
+    assert_eq!(lane.message(first, ack(&[("a", 1)])), vec![]);
+    assert_eq!(lane.send(LiveEvent::Overflow { epoch: first }), vec![]);
+    assert_eq!(
+        lane.catch_up(first, &page("a", 1, 2, Some("late pull"))),
+        vec![]
+    );
+    assert_eq!(lane.send(LiveEvent::Closed { epoch: first }), vec![]);
+    assert_eq!(
+        lane.text(),
+        "first socket",
+        "nothing of the old socket applied"
+    );
+    // The session that replaced it keeps streaming.
+    assert_eq!(
+        lane.frame(second, &page("a", 1, 2, Some("second socket"))),
+        vec![PUSH_WAKE]
+    );
+    assert_eq!((lane.cursor("a"), lane.text()), (2, json!("second socket")));
+}
+
+#[test]
+fn an_applied_page_leaves_the_push_lane_and_its_frozen_request_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.set("a", true);
+    lane.client
+        .transaction(|tx| tx.enqueue(mutation("queued")))
+        .unwrap();
+    // The push lane freezes a batch and keeps it in flight.
+    let mut cycle = SyncCycle::default();
+    cycle.restart_push_only();
+    let push = cycle
+        .next(&mut lane.client)
+        .unwrap()
+        .expect("a frozen batch");
+    assert_eq!(push.kind, "push");
+    let (epoch, _) = open(&lane.send(LiveEvent::Start)[0]);
+    lane.message(epoch, ack(&[("a", 1)]));
+    let actions = lane.catch_up(epoch, &page("a", 0, 1, Some("caught up")));
+    assert_eq!(
+        actions[0], PUSH_WAKE,
+        "the downlink only wakes the push lane"
+    );
+    assert_eq!(
+        lane.frame(epoch, &page("a", 1, 2, Some("streamed"))),
+        vec![PUSH_WAKE]
+    );
+    assert_eq!(lane.cursor("a"), 2);
+    // The push lane made its own progress: the same frozen bytes are resent.
+    assert_eq!(
+        cycle.next(&mut lane.client).unwrap().map(|a| a.body),
+        Some(push.body),
+        "the downlink never borrows the push cycle"
+    );
+}

@@ -98,10 +98,10 @@ class Client implements WritePort, MutatePort {
     }
   }
 
-  ActionError _publicActionError(Object error) {
-    if (error is ActionError) return error;
+  CallError _publicActionError(Object error) {
+    if (error is CallError) return error;
     if (error is ActionTransportException) {
-      return ActionError(
+      return CallError(
         error.code,
         execution: error.execution,
         cause: error.cause,
@@ -109,7 +109,7 @@ class Client implements WritePort, MutatePort {
     }
     final transactionActive =
         error is StateError && error.message == 'transaction_active';
-    return ActionError(
+    return CallError(
       transactionActive ? 'transaction_active' : 'action.transport_failed',
       execution: transactionActive ? 'rejected' : 'unknown',
       cause: error,
@@ -344,14 +344,14 @@ class Client implements WritePort, MutatePort {
     return transaction((tx) => tx.direct(operation));
   }
 
-  Future<ActionCall<T>> invokeAction<T>(
+  Future<Call<T>> invokeAction<T>(
     String name,
     int version,
     Map<String, dynamic> args,
     T Function(dynamic) decode, {
-    ActionStore? store,
+    CallStore? store,
   }) async {
-    ActionCall<T>? call;
+    Call<T>? call;
     try {
       await submitAction(
         name,
@@ -373,7 +373,7 @@ class Client implements WritePort, MutatePort {
     int version,
     Map<String, dynamic> args,
     T Function(dynamic) decode, {
-    ActionStore? store,
+    CallStore? store,
   }) async {
     late final Map<String, dynamic> applied;
     try {
@@ -383,12 +383,12 @@ class Client implements WritePort, MutatePort {
     }
     final completions = applied['completions'] as List?;
     if (completions == null || completions.isEmpty) {
-      throw const ActionError('action.observation_failed');
+      throw const CallError('action.observation_failed');
     }
     final completion = completions.first as Map;
     final outcome = completion['outcome'] as Map;
     if (outcome['status'] != 'succeeded') {
-      throw ActionError(
+      throw CallError(
         outcome['code'] as String? ?? 'action.failed',
         execution: outcome['execution'] as String? ?? 'rejected',
       );
@@ -396,7 +396,7 @@ class Client implements WritePort, MutatePort {
     try {
       return decode(outcome['result']);
     } catch (error) {
-      throw ActionError('action.observation_failed', cause: error);
+      throw CallError('action.observation_failed', cause: error);
     }
   }
 
@@ -425,7 +425,7 @@ class Client implements WritePort, MutatePort {
     int version,
     Map<String, dynamic> args, {
     void Function(String callId, int ordinal)? onCommitted,
-    ActionStore? store,
+    CallStore? store,
   }) {
     final wire = store?.toWire();
     if (_activeTxToken != null &&
@@ -454,7 +454,7 @@ class Client implements WritePort, MutatePort {
     String name,
     int version,
     Map<String, dynamic> args, {
-    ActionStore? store,
+    CallStore? store,
   }) async {
     final wire = store?.toWire();
     if (_activeTxToken != null &&

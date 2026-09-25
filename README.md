@@ -65,10 +65,11 @@ model Todo {
   @@id(id)
 }
 
-mutation AddTodo { todo Todo.create }
+mutation AddTodo(todo Todo.create)
+query SearchTodos(text String) { todos Todo[] }
 ```
 
-The compiler generates the client used below and the backend's `Handlers` and `Loaders` interfaces. See the [schema compiler guide](website/docs/schema/reference.md) for generation commands.
+A `mutation` may change business state; a `query` only reads. The compiler generates the client used below and the backend's `Mutations`, `Queries` and `Loaders` interfaces. See the [schema compiler guide](website/docs/schema/reference.md) for generation commands.
 
 ### 2. Read and write locally
 
@@ -98,18 +99,21 @@ const open = await client.models.todo.query({ where: { done: false } });
 // Watch this query and render again when local data changes.
 client.models.todo.watch({ where: { done: false } }, (todos) => render(todos));
 
-// Write, inside a transaction.
-await client.transaction(async (tx) => {
-  await tx.mutate.addTodo({
-    todo: { id: "t1", title: "Buy milk", done: false },
-  });
+// Run a Mutation. It commits locally and returns once it is queued;
+// wait() yields the backend result or rejection.
+const call = await client.mutations.addTodo({
+  todo: { id: "t1", title: "Buy milk", done: false },
 });
+const { error } = await call.wait();
+
+// Run a Query. It asks the backend directly and returns its result.
+const { todos } = await client.queries.searchTodos({ text: "milk" });
 
 // Receive record changes published to the "todos" channel.
 await client.channels.subscribe("todos");
 ```
 
-AXTON sends queued writes when the network allows, retries failed sync requests, and fetches changed records from your subscribed channels.
+AXTON sends queued Mutations when the network allows, retries failed sync requests, and fetches changed records from your subscribed channels. `client.mutations.call` waits for the backend instead, and `client.queries.enqueue` queues a Query.
 
 ### 3. Implement handlers and loaders for your backend
 
@@ -117,13 +121,24 @@ This example uses Prisma with PostgreSQL through the [included `prisma` shim](we
 
 ```ts
 // Handle a write using your database transaction.
-const handlers: Handlers<Tx> = {
-  async addTodo({ input, tx, publish }) {
-    await tx.todo.create({ data: input.todo });
+const mutations: Mutations<Tx> = {
+  async addTodo({ ctx, args }) {
+    await ctx.tx.todo.create({ data: args.todo });
 
-    // The new todo is read back for the caller's receipt regardless;
+    // The new todo is read back for the caller's result regardless;
     // publishing distributes it to subscribers of the "todos" channel.
-    publish({ channel: "todos" });
+    ctx.publish({ channel: "todos" });
+  },
+};
+
+// Answer a read. A Query's context has no changes or publish.
+const queries: Queries<Tx> = {
+  async searchTodos({ ctx, args }) {
+    const rows = await ctx.tx.todo.findMany({
+      where: { title: { contains: args.text } },
+      select: { id: true },
+    });
+    return { todos: rows };
   },
 };
 
@@ -145,7 +160,8 @@ import { prisma } from "./packages/postgres/index.mts";
 import {
   createBackend,
   devAuth,
-  type Handlers,
+  type Mutations,
+  type Queries,
   type Loaders,
 } from "./generated/backend.ts";
 
@@ -159,7 +175,8 @@ Start the server after defining the handlers and loaders:
 const backend = createBackend({
   database: prisma(new PrismaClient()),
   authenticate: devAuth(),
-  handlers,
+  mutations,
+  queries,
   loaders,
 });
 await backend.listen({ port: 4242 });

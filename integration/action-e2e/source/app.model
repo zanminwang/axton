@@ -4,8 +4,11 @@ model Todo {
  @@id(id)
 }
 
-action AddTodo(todo Todo.create)
-action UpdateTodo(todo Todo.update<title>)
-action DeleteTodo(todo Todo.delete)
-action SendEmail(to String, subject String, body String) { messageId String }
-action SearchTodos(query String?) { todos Todo[] first Todo? count Int labels String[] hint String? }
+mutation AddTodo(todo Todo.create)
+mutation UpdateTodo(todo Todo.update<title>)
+mutation DeleteTodo(todo Todo.delete)
+mutation SendEmail(to String, subject String, body String) { messageId String }
+// SearchTodos v1 is retained as a Mutation; v2 is the same read as a Query.
+@version(2) query SearchTodos(query String?) { todos Todo[] first Todo? count Int labels String[] hint String? }
+// Retitles the matching Todos and returns them: explicit outputs that overlap its own changes.
+mutation RetitleTodos(query String, title String) { todos Todo[] first Todo? }

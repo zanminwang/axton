@@ -1,6 +1,7 @@
 use axton_compiler::parse::ActionInputDecl;
 use axton_compiler::validate::{Cardinality, FieldType, OnDelete, Operation, Scalar};
 use axton_compiler::{Pos, compile, generate, parse, validate};
+use axton_core::CallKind;
 
 const SOURCE: &str = "prerequisite Uploaded(key String)\nenum Status { active archived }\nmodel Parent {\n id UUID\n children Child[]\n @@id(id)\n @@unique(id)\n @@version(2)\n}\nmodel Child {\n id UUID\n parentId UUID\n label String @requires(Uploaded(key: self))\n parent Parent @reference(via: [parentId], onTargetDelete: delete)\n @@id(id)\n}\nmutation Add {\n parent Parent.create\n children Child.create(parent: parent)[]\n @@version(2)\n @@sequence(after: [Rename(parent: parent)])\n}\nmutation Rename { parent Parent.update<> }\n";
 
@@ -281,7 +282,7 @@ model Parent {
 
 #[test]
 fn actions_parse_values_models_and_named_outputs_with_positions() {
-    let d = parse("action AddTodo(todo Todo.create)\naction Search(query String?)\naction SendEmail(to String, body String) { messageId String }\naction GetTodos(projectId String) { todos Todo[] }").unwrap();
+    let d = parse("mutation AddTodo(todo Todo.create)\nmutation Search(query String?)\nmutation SendEmail(to String, body String) { messageId String }\nmutation GetTodos(projectId String) { todos Todo[] }").unwrap();
     assert_eq!(d.actions.len(), 4);
     assert_eq!(
         (
@@ -299,7 +300,7 @@ fn actions_parse_values_models_and_named_outputs_with_positions() {
                 slot.operation.as_str(),
                 slot.pos
             ),
-            ("todo", "Todo", "create", pos(1, 16))
+            ("todo", "Todo", "create", pos(1, 18))
         ),
         other => panic!("expected model input: {other:?}"),
     }
@@ -311,20 +312,20 @@ fn actions_parse_values_models_and_named_outputs_with_positions() {
                 field.nullable,
                 field.pos
             ),
-            ("query", "String", true, pos(2, 15))
+            ("query", "String", true, pos(2, 17))
         ),
         other => panic!("expected value input: {other:?}"),
     }
     assert_eq!(d.actions[2].outputs[0].field.name, "messageId");
-    assert_eq!(d.actions[2].outputs[0].field.pos, pos(3, 44));
+    assert_eq!(d.actions[2].outputs[0].field.pos, pos(3, 46));
     assert_eq!(d.actions[3].outputs[0].field.type_name, "Todo");
     assert!(d.actions[3].outputs[0].field.list);
-    assert_eq!(d.actions[3].outputs[0].field.pos, pos(4, 37));
+    assert_eq!(d.actions[3].outputs[0].field.pos, pos(4, 39));
 }
 
 #[test]
 fn actions_parse_declaration_annotations_and_model_operand_details() {
-    let d = parse("@version(2)\n@sequence(after: [Rename(todo: todo)])\naction AddTodo(todo Todo.create, maybe Todo.update<title>(parent: todo)?, children Todo.delete[]) { related Todo? }").unwrap();
+    let d = parse("@version(2)\n@sequence(after: [Rename(todo: todo)])\nmutation AddTodo(todo Todo.create, maybe Todo.update<title>(parent: todo)?, children Todo.delete[]) { related Todo? }").unwrap();
     let a = &d.actions[0];
     assert_eq!((a.version, a.pos), (2, pos(3, 1)));
     assert_eq!(a.sequence.as_ref().unwrap().pos, pos(2, 1));
@@ -337,7 +338,7 @@ fn actions_parse_declaration_annotations_and_model_operand_details() {
             assert_eq!(slot.cardinality, "optional");
             assert_eq!(slot.allowed_patch_fields, Some(vec!["title".into()]));
             assert_eq!(slot.relation_bindings["parent"], "todo");
-            assert_eq!(slot.pos, pos(3, 34));
+            assert_eq!(slot.pos, pos(3, 36));
         }
         other => panic!("expected model input: {other:?}"),
     }
@@ -351,19 +352,19 @@ fn actions_parse_declaration_annotations_and_model_operand_details() {
 #[test]
 fn actions_report_precise_delimiter_and_list_syntax_errors() {
     for (source, expected) in [
-        ("action A(x String", "1:18: expected )"),
-        ("action A(x String) { result String", "1:35: expected }"),
+        ("mutation A(x String", "1:20: expected )"),
+        ("mutation A(x String) { result String", "1:37: expected }"),
         (
-            "action A(x String) { result String[][] }",
-            "1:37: nested lists are unsupported",
+            "mutation A(x String) { result String[][] }",
+            "1:39: nested lists are unsupported",
         ),
         (
-            "action A(x String?[]) {}",
-            "1:19: nullable list elements are unsupported",
+            "mutation A(x String?[]) {}",
+            "1:21: nullable list elements are unsupported",
         ),
         (
-            "action A(x String[]?) {}",
-            "1:21: nullable lists are unsupported",
+            "mutation A(x String[]?) {}",
+            "1:23: nullable lists are unsupported",
         ),
     ] {
         let error = parse(source).unwrap_err();
@@ -384,16 +385,16 @@ fn model_accepts_leading_version_and_rejects_conflicting_or_misplaced_directives
         ),
         (
             "@sequence(after: []) model Todo { id UUID @@id(id) }",
-            "sequence requires action",
+            "sequence requires mutation",
         ),
         (
             "@version(2) mutation Old { todo Todo.create }",
             "declaration directives are unsupported on mutation",
         ),
-        ("@version(2) @version(3) action A()", "duplicate version"),
-        ("@sequence() @sequence() action A()", "duplicate sequence"),
+        ("@version(2) @version(3) mutation A()", "duplicate version"),
+        ("@sequence() @sequence() mutation A()", "duplicate sequence"),
         (
-            "action A() @version(2)",
+            "mutation A() @version(2)",
             "expected declaration after directive",
         ),
     ] {
@@ -405,7 +406,7 @@ fn model_accepts_leading_version_and_rejects_conflicting_or_misplaced_directives
 #[test]
 fn action_value_members_reuse_field_deprecation_annotations() {
     let action = &parse(
-        "action SendEmail(to String @deprecated(reason: \"use recipient\")) { messageId String @deprecated }",
+        "mutation SendEmail(to String @deprecated(reason: \"use recipient\")) { messageId String @deprecated }",
     )
     .unwrap()
     .actions[0];
@@ -416,4 +417,46 @@ fn action_value_members_reuse_field_deprecation_annotations() {
         other => panic!("expected value input: {other:?}"),
     }
     assert_eq!(action.outputs[0].field.deprecated, Some(None));
+}
+
+#[test]
+fn operation_keywords_select_kind_and_keep_the_legacy_block_separate() {
+    let d = parse(
+        "mutation Add(title String)\n@version(2) query Find(text String?) { count Int }\nmutation Old { todo Todo.create }\nmutation Plain() {}",
+    )
+    .unwrap();
+    let kinds: Vec<_> = d
+        .actions
+        .iter()
+        .map(|a| (a.name.as_str(), a.kind, a.version, a.pos))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("Add", CallKind::Mutation, 1, pos(1, 1)),
+            ("Find", CallKind::Query, 2, pos(2, 13)),
+            ("Plain", CallKind::Mutation, 1, pos(4, 1)),
+        ]
+    );
+    // The older slot block is not an operation and keeps its own grammar.
+    assert_eq!(d.mutations.len(), 1);
+    assert_eq!(d.mutations[0].name, "Old");
+}
+
+#[test]
+fn retired_action_keyword_and_blockless_queries_are_syntax_errors() {
+    for (source, message) in [
+        (
+            "action Send(to String)",
+            "1:1: action declarations were replaced",
+        ),
+        (
+            "@version(2) action Send(to String)",
+            "1:13: action declarations were replaced",
+        ),
+        ("query Find { todo Todo.create }", "1:12: expected ("),
+    ] {
+        let error = parse(source).unwrap_err();
+        assert!(error.starts_with(message), "{source}: {error}");
+    }
 }

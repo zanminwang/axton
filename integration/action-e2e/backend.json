@@ -39,6 +39,7 @@
           "operation": "create"
         }
       ],
+      "kind": "mutation",
       "name": "AddTodo",
       "outputEnums": [],
       "outputs": [
@@ -89,6 +90,7 @@
           "operation": "delete"
         }
       ],
+      "kind": "mutation",
       "name": "DeleteTodo",
       "outputEnums": [],
       "outputs": [
@@ -100,6 +102,89 @@
           "source": {
             "inputIdentity": "todo"
           }
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 1
+    },
+    {
+      "input": {
+        "enums": [],
+        "models": []
+      },
+      "inputs": [
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "list": false,
+          "name": "query",
+          "nullable": false,
+          "required": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "list": false,
+          "name": "title",
+          "nullable": false,
+          "required": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "kind": "mutation",
+      "name": "RetitleTodos",
+      "outputEnums": [],
+      "outputs": [
+        {
+          "cardinality": "list",
+          "handlerType": {
+            "fields": [
+              {
+                "name": "id",
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "kind": "identity",
+            "model": "Todo"
+          },
+          "kind": "model",
+          "model": "Todo",
+          "modelReadVersion": 1,
+          "name": "todos",
+          "source": "handlerIdentity"
+        },
+        {
+          "cardinality": "optional",
+          "handlerType": {
+            "fields": [
+              {
+                "name": "id",
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "kind": "identity",
+            "model": "Todo"
+          },
+          "kind": "model",
+          "model": "Todo",
+          "modelReadVersion": 1,
+          "name": "first",
+          "source": "handlerIdentity"
         }
       ],
       "prerequisites": [],
@@ -217,6 +302,107 @@
           "cardinality": "single",
           "kind": "value",
           "list": false,
+          "name": "query",
+          "nullable": true,
+          "required": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "kind": "query",
+      "name": "SearchTodos",
+      "outputEnums": [],
+      "outputs": [
+        {
+          "cardinality": "list",
+          "handlerType": {
+            "fields": [
+              {
+                "name": "id",
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "kind": "identity",
+            "model": "Todo"
+          },
+          "kind": "model",
+          "model": "Todo",
+          "modelReadVersion": 1,
+          "name": "todos",
+          "source": "handlerIdentity"
+        },
+        {
+          "cardinality": "optional",
+          "handlerType": {
+            "fields": [
+              {
+                "name": "id",
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "kind": "identity",
+            "model": "Todo"
+          },
+          "kind": "model",
+          "model": "Todo",
+          "modelReadVersion": 1,
+          "name": "first",
+          "source": "handlerIdentity"
+        },
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "name": "count",
+          "source": "handlerValue",
+          "type": {
+            "kind": "scalar",
+            "name": "int"
+          }
+        },
+        {
+          "cardinality": "list",
+          "kind": "value",
+          "name": "labels",
+          "source": "handlerValue",
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "cardinality": "optional",
+          "kind": "value",
+          "name": "hint",
+          "source": "handlerValue",
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 2
+    },
+    {
+      "input": {
+        "enums": [],
+        "models": []
+      },
+      "inputs": [
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "list": false,
           "name": "to",
           "nullable": false,
           "required": true,
@@ -250,6 +436,7 @@
           }
         }
       ],
+      "kind": "mutation",
       "name": "SendEmail",
       "outputEnums": [],
       "outputs": [
@@ -311,6 +498,7 @@
           "operation": "update"
         }
       ],
+      "kind": "mutation",
       "name": "UpdateTodo",
       "outputEnums": [],
       "outputs": [
@@ -408,6 +596,7 @@
             "operation": "create"
           }
         ],
+        "kind": "mutation",
         "name": "AddTodo",
         "outputEnums": [],
         "outputs": [
@@ -458,6 +647,7 @@
             "operation": "delete"
           }
         ],
+        "kind": "mutation",
         "name": "DeleteTodo",
         "outputEnums": [],
         "outputs": [
@@ -469,6 +659,89 @@
             "source": {
               "inputIdentity": "todo"
             }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      },
+      {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "query",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "title",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "kind": "mutation",
+        "name": "RetitleTodos",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "list",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "todos",
+            "source": "handlerIdentity"
+          },
+          {
+            "cardinality": "optional",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "first",
+            "source": "handlerIdentity"
           }
         ],
         "prerequisites": [],
@@ -586,6 +859,107 @@
             "cardinality": "single",
             "kind": "value",
             "list": false,
+            "name": "query",
+            "nullable": true,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "kind": "query",
+        "name": "SearchTodos",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "list",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "todos",
+            "source": "handlerIdentity"
+          },
+          {
+            "cardinality": "optional",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "first",
+            "source": "handlerIdentity"
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "count",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "int"
+            }
+          },
+          {
+            "cardinality": "list",
+            "kind": "value",
+            "name": "labels",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "cardinality": "optional",
+            "kind": "value",
+            "name": "hint",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 2
+      },
+      {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
             "name": "to",
             "nullable": false,
             "required": true,
@@ -619,6 +993,7 @@
             }
           }
         ],
+        "kind": "mutation",
         "name": "SendEmail",
         "outputEnums": [],
         "outputs": [
@@ -680,6 +1055,7 @@
             "operation": "update"
           }
         ],
+        "kind": "mutation",
         "name": "UpdateTodo",
         "outputEnums": [],
         "outputs": [

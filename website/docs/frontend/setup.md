@@ -1,8 +1,8 @@
 # Set up the client
 
-Read, watch and update local data through the generated client. TypeScript and Flutter share the same Model and Action contract, backed by the Rust engine and SQLite. Select a language above each example; Flutter examples use Dart.
+Read, watch and update local data through the generated client. TypeScript and Flutter share the same Model, Mutation and Query contract, backed by the Rust engine and SQLite. Select a language above each example; Flutter examples use Dart.
 
-The local Model examples use `Entry` from the [round-trip fixture](https://github.com/zanminwang/axton/blob/main/integration/e2e/fixtures/round-trip/models/entry.model); the [To-do example](../getting-started.md) uses `Todo` with `AddTodo` and `SetTodoDone` Actions. [Generate your interfaces](../schema/define.md) before importing them.
+The local Model examples use `Entry` from the [round-trip fixture](https://github.com/zanminwang/axton/blob/main/integration/e2e/fixtures/round-trip/models/entry.model); the [To-do example](../getting-started.md) uses `Todo` with `AddTodo` and `SetTodoDone` Mutations. [Generate your interfaces](../schema/define.md) before importing them.
 
 ## Set up the runtime
 
@@ -96,9 +96,9 @@ Start the fixture backend with `bash integration/e2e/fixtures/round-trip/run.sh`
     await client.scopes.subscribe('book:demo');
     ```
 
-Configure the server once. AXTON submits durable Actions over HTTP, catches up from saved channel cursors over HTTP, and receives ongoing record changes over WebSocket. Direct Actions use the separate request/response route. Every received page passes through the Rust engine into local SQLite and updates `watch` subscriptions.
+Configure the server once. AXTON submits durable calls over HTTP, catches up from saved channel cursors over HTTP, and receives ongoing record changes over WebSocket. Direct calls use the separate request/response route. Every received page passes through the Rust engine into local SQLite and updates `watch` subscriptions.
 
-Subscribing wakes the connection; it does not wait for initial records, and it does not download the records the channel already holds: a subscription starts at the position the server acknowledges for it and delivers what is published from then on ([subscribe and observe](sync.md#subscribe-and-observe)). The registration is durable, so it works offline and survives a restart. A client with no subscribed channels can still send durable Actions and receive its own result and authority. Subscribe when your UI needs later changes made elsewhere. [Action results](sync.md#receive-action-results) and live synchronization are described in the sync guide. Replace the demo URL and token with your application's endpoint and credentials. On a physical device, localhost refers to that device; use a reachable development-server address.
+Subscribing wakes the connection; it does not wait for initial records, and it does not download the records the channel already holds: a subscription starts at the position the server acknowledges for it and delivers what is published from then on ([subscribe and observe](sync.md#subscribe-and-observe)). The registration is durable, so it works offline and survives a restart. A client with no subscribed channels can still send durable calls and receive its own result and authority. Subscribe when your UI needs later changes made elsewhere. [Call results](sync.md#receive-your-own-results) and live synchronization are described in the sync guide. Replace the demo URL and token with your application's endpoint and credentials. On a physical device, localhost refers to that device; use a reachable development-server address.
 
 Omit `server` to open local storage without starting a connection.
 
@@ -111,7 +111,7 @@ For expiring credentials, supply a token function and `refreshAuth`. See [server
     ```ts
     const stop = client.models.entry.watch({}, entries => console.log(entries), console.error);
 
-    // This write stays local. Use client.actions for backend work.
+    // This write stays local. Use client.mutations for backend work.
     await client.transaction(async tx => {
       await tx.models.entry.update({ id: 'entry-1' }, { text: 'Draft', note: null });
     });
@@ -125,7 +125,7 @@ For expiring credentials, supply a token function and `refreshAuth`. See [server
       onError: (Object error) => print(error),
     );
 
-    // This write stays local. Use client.actions for backend work.
+    // This write stays local. Use client.mutations for backend work.
     await client.transaction((tx) async {
       await tx.models.entry.update(
         const EntryIdentity(id: 'entry-1'),
@@ -134,7 +134,7 @@ For expiring credentials, supply a token function and `refreshAuth`. See [server
     });
     ```
 
-Watch emits an initial local result and distinct committed results. Standalone `client.models` CRUD and `tx.models` CRUD change only local storage; they do not upload. A later backend authority update for the same identity can replace cached local content. Use a generated Action for backend work; [Action methods](client-api.md#actions) explain durable acceptance and direct results.
+Watch emits an initial local result and distinct committed results. Standalone `client.models` CRUD and `tx.models` CRUD change only local storage; they do not upload. A later backend authority update for the same identity can replace cached local content. Use a generated Mutation or Query for backend work; [Mutations and Queries](client-api.md#mutations-and-queries) explains durable acceptance and direct results.
 
 In Flutter, use the watch stream with `StreamBuilder<List<Entry>>`; retain it for the view's lifetime rather than reopening a client on every build. Dart's `Present(null)` clears a nullable field; omitting the field leaves it unchanged.
 

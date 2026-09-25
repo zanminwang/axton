@@ -43,7 +43,7 @@ void main() {
     });
     final result =
         await waiting.timeout(const Duration(milliseconds: 100))
-            as ActionSuccess<String>;
+            as CallSuccess<String>;
     expect(result.result, 'ready');
   });
 
@@ -70,7 +70,7 @@ void main() {
 
   test('real native acknowledgement settles a cached typed handle', () async {
     final call = await client.invokeAction<void>('Ping', 1, {}, (_) {});
-    expect(call.status, ActionStatus.pending);
+    expect(call.status, CallStatus.pending);
     final frozen = await client.freeze();
     expect(frozen, isNotNull);
     final request = jsonDecode(frozen!) as Map<String, dynamic>;
@@ -89,9 +89,9 @@ void main() {
     };
     final waiting = call.wait();
     await client.acknowledge(request['batchSequence'] as int, receipt);
-    expect(await waiting, isA<ActionSuccess<void>>());
+    expect(await waiting, isA<CallSuccess<void>>());
     expect(identical(await waiting, await call.wait()), isTrue);
-    expect(call.status, ActionStatus.succeeded);
+    expect(call.status, CallStatus.succeeded);
   });
 
   test('store selector travels beside args on both routes', () async {
@@ -103,7 +103,7 @@ void main() {
         (_) {},
         store: const _Store({'missing': false}),
       ),
-      throwsA(isA<ActionError>()),
+      throwsA(isA<CallError>()),
     );
     expect(await client.freeze(), isNull, reason: 'nothing was enqueued');
     await client.invokeAction<void>(
@@ -174,9 +174,9 @@ void main() {
     final call = await client.invokeAction<void>('Ping', 1, {}, (_) {});
     await client.close();
     final outcome = await call.wait();
-    expect(outcome, isA<ActionFailure<void>>());
-    expect((outcome as ActionFailure<void>).error.code, 'client.closed');
-    expect(call.status, ActionStatus.failed);
+    expect(outcome, isA<CallFailure<void>>());
+    expect((outcome as CallFailure<void>).error.code, 'client.closed');
+    expect(call.status, CallStatus.failed);
   });
 
   test('close racing a queued submit returns a failed handle', () async {
@@ -192,7 +192,7 @@ void main() {
     release.complete();
     await blocker;
     final call = await submitting.timeout(const Duration(seconds: 1));
-    final failure = await call.wait() as ActionFailure<void>;
+    final failure = await call.wait() as CallFailure<void>;
     expect(failure.error.code, 'client.closed');
     await closing;
   });
@@ -200,7 +200,7 @@ void main() {
   test('drop settles a pending handle through native completion', () async {
     final call = await client.invokeAction<void>('Ping', 1, {}, (_) {});
     await client.drop(1);
-    final outcome = await call.wait() as ActionFailure<void>;
+    final outcome = await call.wait() as CallFailure<void>;
     expect(outcome.error.code, 'dropped');
   });
 
@@ -244,10 +244,10 @@ void main() {
           ),
           isTrue,
         );
-        final outcome = await waiting as ActionFailure<void>;
+        final outcome = await waiting as CallFailure<void>;
         expect(outcome.error.code, 'abandoned');
         expect(outcome.error.execution, frozen ? 'unknown' : 'rejected');
-        expect(call.status, ActionStatus.failed);
+        expect(call.status, CallStatus.failed);
       } finally {
         await reopened.close();
       }
@@ -308,14 +308,14 @@ void main() {
         final state = await local.recordSyncState('Entry', {'id': 'e'});
         await local.drop((state['pending'] as List).first['ordinal'] as int);
         expect(
-          (await created.wait() as ActionFailure<void>).error.code,
+          (await created.wait() as CallFailure<void>).error.code,
           'dropped',
         );
         expect(
-          (await waiting as ActionFailure<void>).error.code,
+          (await waiting as CallFailure<void>).error.code,
           'dependency.rejected',
         );
-        expect(dependent.status, ActionStatus.failed);
+        expect(dependent.status, CallStatus.failed);
         expect((await local.syncState())['pending'], 0);
       } finally {
         await local.close();
@@ -334,7 +334,7 @@ void main() {
           await expectLater(
             pending.timeout(const Duration(milliseconds: 300)),
             throwsA(
-              isA<ActionError>()
+              isA<CallError>()
                   .having((e) => e.code, 'code', 'transaction_active')
                   .having((e) => e.execution, 'execution', 'rejected'),
             ),
@@ -380,10 +380,10 @@ void main() {
         ],
         'records': [],
       });
-      final outcome = await call.wait() as ActionFailure<String>;
+      final outcome = await call.wait() as CallFailure<String>;
       expect(outcome.error.code, 'action.observation_failed');
       expect(outcome.error.cause, isA<FormatException>());
-      expect(call.status, ActionStatus.failed);
+      expect(call.status, CallStatus.failed);
     },
   );
 
@@ -393,11 +393,7 @@ void main() {
       await expectLater(
         client.invokeDirectAction<void>('Ping', 1, {}, (_) {}),
         throwsA(
-          isA<ActionError>().having(
-            (e) => e.code,
-            'code',
-            'action.unavailable',
-          ),
+          isA<CallError>().having((e) => e.code, 'code', 'action.unavailable'),
         ),
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -447,7 +443,7 @@ void main() {
             throw const FormatException('bad direct result');
           }),
           throwsA(
-            isA<ActionError>()
+            isA<CallError>()
                 .having((e) => e.code, 'code', 'action.observation_failed')
                 .having((e) => e.cause, 'cause', isA<FormatException>()),
           ),
@@ -456,7 +452,7 @@ void main() {
         await expectLater(
           client.invokeDirectAction<void>('Ping', 1, {}, (_) {}),
           throwsA(
-            isA<ActionError>()
+            isA<CallError>()
                 .having((e) => e.code, 'code', 'handler.failed')
                 .having((e) => e.execution, 'execution', 'rejected'),
           ),
@@ -503,18 +499,18 @@ void main() {
     try {
       final call = await client.invokeAction<void>('Ping', 1, {}, (_) {});
       final deadline = DateTime.now().add(const Duration(seconds: 2));
-      while (call.status == ActionStatus.pending &&
+      while (call.status == CallStatus.pending &&
           DateTime.now().isBefore(deadline)) {
         await Future<void>.delayed(const Duration(milliseconds: 5));
       }
       expect(
         call.status,
-        ActionStatus.succeeded,
+        CallStatus.succeeded,
         reason: 'the pump runs without an active wait',
       );
       expect(
         await call.wait().timeout(const Duration(seconds: 2)),
-        isA<ActionSuccess<void>>(),
+        isA<CallSuccess<void>>(),
       );
       expect(executions, 1);
       expect((await client.syncState())['pending'], 0);
@@ -608,7 +604,7 @@ void main() {
                 );
                 expect(
                   await call.wait().timeout(const Duration(seconds: 2)),
-                  isA<ActionSuccess<void>>(),
+                  isA<CallSuccess<void>>(),
                 );
               }
             } finally {
@@ -767,7 +763,7 @@ final class _TestWeak implements ActionWeakState {
   Object? get target => value;
 }
 
-final class _Store extends ActionStore {
+final class _Store extends CallStore {
   const _Store(this.wire);
   final Object? wire;
   @override

@@ -12,9 +12,9 @@
 
 ## 5. Building Block View
 
-- Each queued call has a durable ordinal, an optional push number and ordered optimistic operations. An Action row also stores a unique call ID and canonical arguments; a valid Action can have no Model operations.
-- Action pushes send the stored call ID, name, version and arguments. Their inferred Model operations replay locally. Legacy internal mutations still send wire operations; companion operations and derived cascade effects stay local.
-- `axton_client` holds the counters (`next_ordinal`, `next_push`), `last_completed_push` (the sequence of the last batch a receipt completed; a batch is in flight while its push number is above it), `push_models` (the authority read contracts declared on the wire), and `push_results` (the Model result read contracts used by frozen Action calls). The frozen metadata is released on completion. There is no per-batch table: the batch is the set of mutations sharing a push number.
+- Each queued call has a durable ordinal, an optional push number and ordered optimistic operations. A call row - a durable Mutation or a queued Query - also stores a unique call ID and canonical arguments; a valid call can have no Model operations, and a queued Query never has any. The row stores no kind: name and version select the retained descriptor.
+- Call pushes send the stored call ID, name, version and arguments. Their inferred Model operations replay locally. Legacy internal mutations still send wire operations; companion operations and derived cascade effects stay local.
+- `axton_client` holds the counters (`next_ordinal`, `next_push`), `last_completed_push` (the sequence of the last batch a receipt completed; a batch is in flight while its push number is above it), `push_models` (the authority read contracts declared on the wire), and `push_results` (the Model result read contracts used by frozen calls). The frozen metadata is released on completion. There is no per-batch table: the batch is the set of mutations sharing a push number.
 - Code: [queue.rs](../../../../../../crates/client/src/queue.rs); table definitions in [ddl.rs](../../../../../../crates/client/src/ddl.rs).
 
 ## 10. Quality Requirements
@@ -24,4 +24,4 @@
 
 ## 11. Risks and Technical Debt
 
-- New Action calls require an Action descriptor in the local schema. Retained old contracts keep queued calls sendable during compatible schema evolution; an incompatible upgrade keeps the old file pending through [Storage](../../storage/reconciliation.md).
+- New calls require an operation descriptor in the local schema. Retained old contracts keep queued calls sendable during compatible schema evolution; an incompatible upgrade keeps the old file pending through [Storage](../../storage/reconciliation.md).

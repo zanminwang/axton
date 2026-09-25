@@ -116,10 +116,10 @@ fn run() -> Result<(), String> {
     let track_actions = has_actions || action_history_path.exists();
     if has_actions {
         if initialize_actions && action_history_path.exists() {
-            return Err("Action history already exists; initialization refused".into());
+            return Err("operation history already exists; initialization refused".into());
         }
         if explicit_action_history && !action_history_path.exists() && !initialize_actions {
-            return Err("missing Action history; restore it or initialize explicitly".into());
+            return Err("missing operation history; restore it or initialize explicitly".into());
         }
     }
     if initialize
@@ -193,6 +193,10 @@ fn run() -> Result<(), String> {
         config["schema"]["actions"] = config["actions"].clone();
     }
     config["schema"]["resultModels"] = config["backendModels"].clone();
+    // The merged schema, retained versions included, is what clients and the
+    // backend load; refuse it here rather than at their startup.
+    axton_core::Schema::from_value(config["schema"].clone())
+        .map_err(|e| format!("retained schema: {e}"))?;
     axton_compiler::check_action_names(&config)?;
     let mut backend = config.clone();
     backend["mutations"] = serde_json::json!(historical);

@@ -1,12 +1,12 @@
 # Local storage
 
-AXTON stores cached records, queued Action intent, channel progress and rejection details in a local SQLite file. It does not persist completed business result objects on the client. This page explains how to manage the file and recover from storage or synchronization failures.
+AXTON stores cached records, queued Mutation and Query intent, channel progress and rejection details in a local SQLite file. It does not persist completed business result objects on the client. This page explains how to manage the file and recover from storage or synchronization failures.
 
 ## Choose a database path
 
 Choose a writable directory owned by your application. Use one active client per file and a separate file per signed-in user. Closing the client releases its connection and native resources; reopening the same file preserves local records and pending work.
 
-The database contains a persistent client identity used for request deduplication. Do not let independently writable copies of the same file send Actions to the same backend. Switch accounts by closing the current client and opening the appropriate user's file, rather than changing only its authentication token.
+The database contains a persistent client identity used for request deduplication. Do not let independently writable copies of the same file send calls to the same backend. Switch accounts by closing the current client and opening the appropriate user's file, rather than changing only its authentication token.
 
 ## Change the schema
 
@@ -15,10 +15,10 @@ Each database records the schema it was built for. Opening it with a newer gener
 | Change | What happens |
 | --- | --- |
 | None | The database opens. |
-| A new Model, or a new nullable field | Applied in place; cached records, queued Actions and frozen request bytes are preserved. |
+| A new Model, or a new nullable field | Applied in place; cached records, queued calls and frozen request bytes are preserved. |
 | Anything else: a required field, a removed or retyped field, a changed identity, unique constraint, relation, enum or model version, a removed model, or a file from an earlier AXTON runtime | The file is left untouched and a fresh database is opened beside it (`<path>.1`, `<path>.2`, …). A small `<path>.current` file names the one in use. The new database keeps the old subscriptions and synchronises from the beginning. |
 
-Before switching, the runtime looks at the old database's unsent Actions. If there are any, it keeps that database open so they can still be sent; `syncState().schema.pending` reports how many remain and why the schema is incompatible. When they are sent, call `rebuild()`. If they cannot be sent, call `rebuild({ discardPending: true })`: the report tells you how many queued Actions and local-only records stay in the old file. Nothing is copied between schemas, and the runtime never deletes an old file; delete numbered files you no longer need. See [opening and schema changes](runtime.md#opening-and-schema-changes). Update backend tables separately through your database's migration process.
+Before switching, the runtime looks at the old database's unsent calls. If there are any, it keeps that database open so they can still be sent; `syncState().schema.pending` reports how many remain and why the schema is incompatible. When they are sent, call `rebuild()`. If they cannot be sent, call `rebuild({ discardPending: true })`: the report tells you how many queued calls and local-only records stay in the old file. Nothing is copied between schemas, and the runtime never deletes an old file; delete numbered files you no longer need. See [opening and schema changes](runtime.md#opening-and-schema-changes). Update backend tables separately through your database's migration process.
 
 ## Recover pending work
 
@@ -26,7 +26,7 @@ Before switching, the runtime looks at the old database's unsent Actions. If the
 | --- | --- |
 | A request times out | Let sync retry the persisted frozen request. The backend may already have committed it. |
 | Frozen work remains pending | Check connectivity and authentication; a receipt AXTON cannot apply is refused and the batch resent, so check `onError` on both sides. |
-| An Action is rejected | Inspect its `wait()` outcome and record `syncState`, then dismiss the handled rejection. |
+| A Mutation or Query is rejected | Inspect its `wait()` outcome and record `syncState`, then dismiss the handled rejection. |
 | A prerequisite fails | Resolve its cause, reset its readiness to `pending`, then run its callback again. |
 | Another client wrote to the same file | Close the stale instance and reopen it; keep one active client per file. |
 
@@ -44,6 +44,6 @@ Receipts and pull changes carry a per-record stamp. A newer stamp replaces the r
 
 ## Storage size
 
-Cached records, queued Actions, rejection details and backend receipts persist. Client business results held by live `ActionCall` handles are memory-only. The runtime does not impose a cache-size limit or automatically expire these entries. Backend Action outcomes are retained without TTL or automatic pruning; backend invalidations compact by channel/Model/identity, but distinct identities still consume space.
+Cached records, queued calls, rejection details and backend receipts persist. Client business results held by live `Call` handles are memory-only. The runtime does not impose a cache-size limit or automatically expire these entries. Backend call outcomes are retained without TTL or automatic pruning; backend invalidations compact by channel/Model/identity, but distinct identities still consume space.
 
 Measure database size, pending work and synchronization lag with your application's working set. Local reads, including read-only SQL, use on-disk SQLite tables. They do not copy the full record set into a separate query projection.

@@ -48,7 +48,7 @@ await client.close();
         ])
         self.assertEqual(dart, [('guide.md:14', 'final entry = await client.models.entry.get(id);\n')])
 
-    def test_routes_typescript_alias_and_action_contract_marker(self):
+    def test_routes_typescript_alias_and_operation_fixture_marker(self):
         markdown = '''```ts
 await client.close();
 ```
@@ -56,10 +56,10 @@ await client.close();
 await client.transaction(async tx => {});
 ```
 ```typescript title="action-contract"
-await client.actions.call.getTodos({});
+await client.queries.getTodos({});
 ```
 ```ts title="action-contract"
-await client.actions.call.sendEmail({ to: 'a', subject: 'b', body: 'c' });
+await client.mutations.call.sendEmail({ to: 'a', subject: 'b', body: 'c' });
 ```
 '''
         with tempfile.TemporaryDirectory() as temp:
@@ -67,22 +67,22 @@ await client.actions.call.sendEmail({ to: 'a', subject: 'b', body: 'c' });
             (root / 'guide.md').write_text(markdown)
             with patch('check_examples.ROOT', root):
                 ordinary = snippets('ts', ['guide.md'])
-                action = snippets('ts', ['guide.md'], context='action')
+                operation = snippets('ts', ['guide.md'], context='operation')
         self.assertEqual([code for _, code in ordinary], [
             'await client.close();\n',
             'await client.transaction(async tx => {});\n',
         ])
-        self.assertEqual([code for _, code in action], [
-            'await client.actions.call.getTodos({});\n',
-            "await client.actions.call.sendEmail({ to: 'a', subject: 'b', body: 'c' });\n",
+        self.assertEqual([code for _, code in operation], [
+            'await client.queries.getTodos({});\n',
+            "await client.mutations.call.sendEmail({ to: 'a', subject: 'b', body: 'c' });\n",
         ])
 
-    def test_routes_dart_action_snippets_to_generated_action_fixture(self):
+    def test_routes_dart_operation_snippets_to_generated_operation_fixture(self):
         markdown = '''```dart
 await client.close();
 ```
 ```dart title="action-contract"
-final result = await client.actions.call.getTodos();
+final result = await client.queries.getTodos();
 ```
 '''
         with tempfile.TemporaryDirectory() as temp:
@@ -90,10 +90,10 @@ final result = await client.actions.call.getTodos();
             (root / 'guide.md').write_text(markdown)
             with patch('check_examples.ROOT', root):
                 ordinary = snippets('dart', ['guide.md'])
-                action = snippets('dart', ['guide.md'], context='action')
+                operation = snippets('dart', ['guide.md'], context='operation')
         self.assertEqual([code for _, code in ordinary], ['await client.close();\n'])
-        self.assertEqual([code for _, code in action],
-                         ['final result = await client.actions.call.getTodos();\n'])
+        self.assertEqual([code for _, code in operation],
+                         ['final result = await client.queries.getTodos();\n'])
 
 
 if __name__ == '__main__':

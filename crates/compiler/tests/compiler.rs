@@ -6,16 +6,19 @@ use axton_compiler::{parse, validate};
 
 #[test]
 fn generated_actions_bind_to_shared_runtime_and_backend() {
-    let descriptor = compile("model Todo { id String at DateTime @@id(id) } action Touch(todo Todo.update<at>, when DateTime) { echoed DateTime }").unwrap();
+    let descriptor = compile("model Todo { id String at DateTime @@id(id) } mutation Touch(todo Todo.update<at>, when DateTime) { echoed DateTime }").unwrap();
     let model = axton_compiler::typescript(&descriptor);
     let client = axton_compiler::client_typescript(&descriptor, "@axton/client");
     let backend = axton_compiler::backend_typescript(&descriptor, "@axton/server");
-    assert!(model.contains("import type { ActionCall, ActionOptions } from './client.ts'"));
-    assert!(client.contains("type ActionOutcome"));
-    assert!(client.contains("readonly actions:"));
+    assert!(model.contains("import type { Call, CallOptions } from './client.ts'"));
+    assert!(client.contains("type CallOutcome"));
+    assert!(client.contains("readonly mutations:"));
+    assert!(client.contains("readonly queries:"));
+    assert!(!client.contains("readonly actions:"), "{client}");
     assert!(model.contains("invokeAction"));
     assert!(backend.contains("export function createBackend"));
-    assert!(backend.contains("ActionContext<Tx>"));
+    assert!(backend.contains("MutationContext<Tx>"));
+    assert!(backend.contains("QueryContext<Tx>"));
 }
 
 #[test]
@@ -31,7 +34,7 @@ fn retained_loader_identity_uses_its_own_datetime_contract() {
 
 #[test]
 fn action_values_and_explicit_outputs_are_typed() {
-    let schema = parse("enum Status { active closed } model Todo { id String @@id(id) } action Search(query String?, labels String[]) { count Int status Status? statuses Status[] }").unwrap();
+    let schema = parse("enum Status { active closed } model Todo { id String @@id(id) } mutation Search(query String?, labels String[]) { count Int status Status? statuses Status[] }").unwrap();
     let action = &validate(&schema).unwrap().actions[0];
     assert_eq!(
         action.inputs[0],
@@ -77,7 +80,7 @@ fn action_values_and_explicit_outputs_are_typed() {
 
 #[test]
 fn action_model_operands_imply_bound_outputs() {
-    let schema = parse("model Todo { id String title String @@id(id) } action Edit(one Todo.create, maybe Todo.update<title>?, many Todo.delete[]) { related Todo? }").unwrap();
+    let schema = parse("model Todo { id String title String @@id(id) } mutation Edit(one Todo.create, maybe Todo.update<title>?, many Todo.delete[]) { related Todo? }").unwrap();
     let action = &validate(&schema).unwrap().actions[0];
     assert_eq!(
         action
@@ -112,7 +115,7 @@ fn action_model_operands_imply_bound_outputs() {
 
 #[test]
 fn action_model_operand_deprecation_is_rejected_at_the_operand() {
-    let source = "model Todo { id String @@id(id) }\naction Edit(todo Todo.update @deprecated(reason: \"use other\"))";
+    let source = "model Todo { id String @@id(id) }\nmutation Edit(todo Todo.update @deprecated(reason: \"use other\"))";
     let err = validate(&parse(source).unwrap()).unwrap_err();
     assert!(err.starts_with("2:"), "{err}");
     assert!(err.contains("todo") && err.contains("deprecated"), "{err}");
@@ -120,7 +123,7 @@ fn action_model_operand_deprecation_is_rejected_at_the_operand() {
 
 #[test]
 fn action_void_and_explicit_model_outputs_keep_their_shapes() {
-    let schema = parse("model Todo { id String @@id(id) @@version(3) } action Void() action Load() { one Todo maybe Todo? many Todo[] }").unwrap();
+    let schema = parse("model Todo { id String @@id(id) @@version(3) } mutation Void() mutation Load() { one Todo maybe Todo? many Todo[] }").unwrap();
     let valid = validate(&schema).unwrap();
     assert!(valid.actions[0].outputs.is_empty());
     let outputs = &valid.actions[1].outputs;
@@ -150,7 +153,7 @@ fn action_model_operations_keep_each_operand_cardinality() {
             ("[]", Cardinality::List),
         ] {
             let source = format!(
-                "model Todo {{ id String title String @@id(id) }} action Do(todo Todo.{operation}{suffix})"
+                "model Todo {{ id String title String @@id(id) }} mutation Do(todo Todo.{operation}{suffix})"
             );
             let valid = validate(&parse(&source).unwrap()).unwrap();
             let action = &valid.actions[0];
@@ -181,7 +184,7 @@ fn action_model_operations_keep_each_operand_cardinality() {
 
 #[test]
 fn action_sequence_can_match_all_prior_instances_or_a_list_target() {
-    let source = "model Todo { id String @@id(id) } @sequence(after: [Prior()]) action Any(todo Todo.update) @sequence(after: [Prior(todos: todo)]) action One(todo Todo.update) action Prior(todos Todo.create[])";
+    let source = "model Todo { id String @@id(id) } @sequence(after: [Prior()]) mutation Any(todo Todo.update) @sequence(after: [Prior(todos: todo)]) mutation One(todo Todo.update) mutation Prior(todos Todo.create[])";
     let valid = validate(&parse(source).unwrap()).unwrap();
     assert!(
         valid.actions[0].sequence.as_ref().unwrap().after[0]
@@ -196,7 +199,7 @@ fn action_sequence_can_match_all_prior_instances_or_a_list_target() {
 
 #[test]
 fn action_sequence_unknown_target_names_the_target() {
-    let source = "model Todo { id String @@id(id) }\n@sequence(after: [Missing()]) action Later(todo Todo.create)";
+    let source = "model Todo { id String @@id(id) }\n@sequence(after: [Missing()]) mutation Later(todo Todo.create)";
     let err = validate(&parse(source).unwrap()).unwrap_err();
     assert!(err.starts_with("2:"), "{err}");
     assert!(err.contains("Missing"), "{err}");
@@ -205,23 +208,23 @@ fn action_sequence_unknown_target_names_the_target() {
 #[test]
 fn action_semantic_errors_name_the_member_and_location() {
     for (source, name) in [
-        ("action Search(query Object)", "Object"),
+        ("mutation Search(query Object)", "Object"),
         (
-            "model Todo { id String @@id(id) } action A(todo Todo.create) { todo Todo }",
+            "model Todo { id String @@id(id) } mutation A(todo Todo.create) { todo Todo }",
             "todo",
         ),
-        ("action A(x String, x Int)", "x"),
-        ("action Call(x String)", "Call"),
+        ("mutation A(x String, x Int)", "x"),
+        ("mutation Call(x String)", "Call"),
         (
-            "model Todo { id String @@id(id) } action Todo(x String)",
+            "model Todo { id String @@id(id) } mutation Todo(x String)",
             "Todo",
         ),
         (
-            "model Todo { id String @@id(id) } action Save(x String) action save(y String)",
+            "model Todo { id String @@id(id) } mutation Save(x String) query save(y String)",
             "save",
         ),
         (
-            "model Todo { id String @@id(id) } action A(todo Todo.update<missing>)",
+            "model Todo { id String @@id(id) } mutation A(todo Todo.update<missing>)",
             "missing",
         ),
     ] {
@@ -237,8 +240,8 @@ prerequisite Uploaded(key String)
 model Parent { id String children Child[] @@id(id) }
 model Child { id String parentId String title String @requires(Uploaded(key: self)) parent Parent @reference(via: [parentId]) @@id(id) }
 @sequence(after: [Rename(child: child)])
-action Add(parent Parent.create, child Child.create(parent: parent))
-action Rename(child Child.update<title>)
+mutation Add(parent Parent.create, child Child.create(parent: parent))
+mutation Rename(child Child.update<title>)
 "#).unwrap();
     let valid = validate(&schema).unwrap();
     let ActionInput::Model { slot: child } = &valid.actions[0].inputs[1] else {
@@ -259,7 +262,7 @@ action Rename(child Child.update<title>)
 #[test]
 fn action_value_input_can_share_a_name_with_an_explicit_output() {
     let schema =
-        parse("model Todo { id String @@id(id) } action Echo(value String) { value String }")
+        parse("model Todo { id String @@id(id) } mutation Echo(value String) { value String }")
             .unwrap();
     let action = &validate(&schema).unwrap().actions[0];
     assert_eq!(action.inputs.len(), 1);
@@ -624,11 +627,23 @@ fn rejects_model_and_enum_names_the_generated_client_uses() {
         "Rejection",
         "Mutate",
         "GeneratedClient",
-        "Actions",
-        "DirectCalls",
-        "ActionPort",
-        "ActionContext",
-        "ActionRejected",
+        "Mutations",
+        "Queries",
+        "DirectMutations",
+        "QueuedQueries",
+        "CallPort",
+        "MutationContext",
+        "QueryContext",
+        "CallRejected",
+        // The shared call handle vocabulary every generated client re-exports.
+        "Call",
+        "CallStatus",
+        "CallOutcome",
+        "CallError",
+        "CallOptions",
+        "CallStore",
+        "CallSuccess",
+        "CallFailure",
         "Transaction",
         // The Scope facade and the handle types it re-exports
         // ([#150](https://github.com/zanminwang/axton/issues/150)).
@@ -651,6 +666,10 @@ fn rejects_model_and_enum_names_the_generated_client_uses() {
         "Status",
         "SyncStates",
         "Rejections",
+        // Retired Action vocabulary is no longer generated.
+        "Actions",
+        "ActionCall",
+        "Calls",
         "Order",
         "Scope",
         "Subscriptions",
@@ -879,7 +898,7 @@ fn deprecations_reach_every_generated_surface_and_leave_the_descriptors_alone() 
 }
 #[test]
 fn action_descriptors_separate_values_operands_and_output_sources() {
-    let source = "model Todo { id String title String @@id(id) } action Save(label String?, todo Todo.create, maybe Todo.update<title>?, gone Todo.delete[]) { related Todo? count Int }";
+    let source = "model Todo { id String title String @@id(id) } mutation Save(label String?, todo Todo.create, maybe Todo.update<title>?, gone Todo.delete[]) { related Todo? count Int }";
     let descriptor = axton_compiler::compile(source).unwrap();
     let action = &descriptor["actions"][0];
     assert_eq!(action["name"], "Save");
@@ -922,8 +941,8 @@ prerequisite Uploaded(key String)
 model Parent { id String children Child[] @@id(id) }
 model Child { tenant String id String parentId String title String @requires(Uploaded(key: self)) parent Parent @reference(via: [parentId]) @@id(tenant, id) }
 @sequence(after: [Rename(child: child)])
-action Add(parent Parent.create, child Child.create(parent: parent)) { found Child[] }
-action Rename(child Child.update<title>)
+mutation Add(parent Parent.create, child Child.create(parent: parent)) { found Child[] }
+mutation Rename(child Child.update<title>)
 "#;
     let descriptors = axton_compiler::compile(source).unwrap();
     let action = &descriptors["actions"][0];
@@ -953,7 +972,7 @@ action Rename(child Child.update<title>)
 
 #[test]
 fn retained_generated_action_binding_validates_without_relation_snapshots() {
-    let source = "model Parent { id String children Child[] @@id(id) } model Child { id String parentId String parent Parent @reference(via: [parentId]) @@id(id) } action Add(parent Parent.create, child Child.create(parent: parent))";
+    let source = "model Parent { id String children Child[] @@id(id) } model Child { id String parentId String parent Parent @reference(via: [parentId]) @@id(id) } mutation Add(parent Parent.create, child Child.create(parent: parent))";
     let mut config = axton_compiler::compile(source).unwrap();
     let models = axton_compiler::reconcile_model_history(&config, None).unwrap();
     let retained_models: Vec<_> = models["models"]
@@ -997,7 +1016,7 @@ fn retained_generated_action_binding_validates_without_relation_snapshots() {
 
 #[test]
 fn action_typescript_emits_flattened_operands_for_generated_client() {
-    let v = compile("model Todo { id String title String @@id(id) } action AddTodo(todo Todo.create, patch Todo.update<title>?, gone Todo.delete[], label String?) { related Todo? matches Todo[] count Int }").unwrap();
+    let v = compile("model Todo { id String title String @@id(id) } mutation AddTodo(todo Todo.create, patch Todo.update<title>?, gone Todo.delete[], label String?) { related Todo? matches Todo[] count Int }").unwrap();
     let ts = axton_compiler::typescript(&v);
     assert!(ts.contains("export type TodoCreate = Todo;"), "{ts}");
     assert!(ts.contains("export type TodoUpdate<K extends keyof TodoPatch = keyof TodoPatch> = TodoIdentity & Partial<Pick<TodoPatch, K>>;"), "{ts}");
@@ -1008,16 +1027,17 @@ fn action_typescript_emits_flattened_operands_for_generated_client() {
     assert!(ts.contains("export interface AddTodoInput"), "{ts}");
     assert!(ts.contains("label: string | null;"), "{ts}");
     assert!(
-        ts.contains("import type { ActionCall, ActionOptions } from './client.ts'"),
+        ts.contains("import type { Call, CallOptions } from './client.ts'"),
         "{ts}"
     );
-    assert!(!ts.contains("ActionClientContract"), "{ts}");
+    assert!(!ts.contains("makeActions"), "{ts}");
+    // Mutations default to the durable route; `call` is direct.
     assert!(
-        ts.contains("addTodo: (args:AddTodoInput, options?:AddTodoOptions):Promise<ActionCall<AddTodoOutput>> => port.invokeAction('AddTodo',1,encodeAddTodoInput(args),decodeAddTodoOutput,options)"),
+        ts.contains("export function makeMutations(port:CallPort) { return {\n addTodo: (args:AddTodoInput, options?:AddTodoOptions):Promise<Call<AddTodoOutput>> => port.invokeAction('AddTodo',1,encodeAddTodoInput(args),decodeAddTodoOutput,options),\n call: {\n  addTodo: (args:AddTodoInput, options?:AddTodoOptions):Promise<AddTodoOutput> => port.invokeDirectAction('AddTodo',1,encodeAddTodoInput(args),decodeAddTodoOutput,options),\n }\n}; }"),
         "{ts}"
     );
     assert!(
-        ts.contains("addTodo: (args:AddTodoInput, options?:AddTodoOptions):Promise<AddTodoOutput> => port.invokeDirectAction('AddTodo',1,encodeAddTodoInput(args),decodeAddTodoOutput,options)"),
+        ts.contains("export function makeQueries(port:CallPort) { return {\n enqueue: {\n }\n}; }"),
         "{ts}"
     );
     assert!(!ts.contains("class GeneratedClient {"), "{ts}");
@@ -1025,7 +1045,7 @@ fn action_typescript_emits_flattened_operands_for_generated_client() {
 
 #[test]
 fn action_backend_emits_versioned_handler_identity_contracts_with_factory() {
-    let v = compile("model Todo { id String title String @@id(id) } action AddTodo(todo Todo.create) { relatedTodo Todo? }").unwrap();
+    let v = compile("model Todo { id String title String @@id(id) } mutation AddTodo(todo Todo.create) { relatedTodo Todo? }").unwrap();
     let mut retained = v.clone();
     let mut old = retained["actions"][0].clone();
     old["outputs"].as_array_mut().unwrap().pop();
@@ -1043,12 +1063,18 @@ fn action_backend_emits_versioned_handler_identity_contracts_with_factory() {
     assert!(ts.contains("relatedTodo: TodoIdentity | null;"), "{ts}");
     assert!(
         ts.contains(
-            "v1(call: ActionHandlerCall<Tx, AddTodoV1Input>): Promise<AddTodoV1HandlerOutput>"
+            "v1(call: MutationHandlerCall<Tx, AddTodoV1Input>): Promise<AddTodoV1HandlerOutput>"
         ),
         "{ts}"
     );
     assert!(
-        ts.contains("v2(call: ActionHandlerCall<Tx, AddTodoInput>): Promise<AddTodoHandlerOutput>"),
+        ts.contains(
+            "v2(call: MutationHandlerCall<Tx, AddTodoInput>): Promise<AddTodoHandlerOutput>"
+        ),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("mutations: Mutations<Tx>; queries?: Queries<Tx>"),
         "{ts}"
     );
     assert!(ts.contains("export function createBackend<Tx>"), "{ts}");
@@ -1058,14 +1084,18 @@ fn action_backend_emits_versioned_handler_identity_contracts_with_factory() {
 
 #[test]
 fn mixed_action_and_legacy_backend_keeps_handler_context_in_scope() {
-    let v = compile("model Todo { id String @@id(id) } mutation Legacy { todo Todo.delete } action New(todo Todo.delete)").unwrap();
+    let v = compile("model Todo { id String @@id(id) } mutation Legacy { todo Todo.delete } mutation New(todo Todo.delete)").unwrap();
     let ts = axton_compiler::backend_typescript(&v, "@axton/server");
     assert!(
         ts.contains("legacy: { v1(call: HandlerCall<Tx, LegacyInput>)"),
         "{ts}"
     );
     assert!(
-        ts.contains("new: { v1(call: ActionHandlerCall<Tx, NewInput>)"),
+        ts.contains("new: { v1(call: MutationHandlerCall<Tx, NewInput>)"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("handlers: Handlers<Tx>; mutations: Mutations<Tx>; queries?: Queries<Tx>"),
         "{ts}"
     );
     assert!(ts.contains("export function createBackend<Tx>"), "{ts}");
@@ -1073,24 +1103,39 @@ fn mixed_action_and_legacy_backend_keeps_handler_context_in_scope() {
 
 #[test]
 fn action_dart_emits_concrete_client_and_versioned_handler_contracts() {
-    let v = compile("model Todo { id String title String @@id(id) } action Search(query String?) { relatedTodo Todo? } action Ping()").unwrap();
+    let v = compile("model Todo { id String title String @@id(id) } query Search(query String?) { relatedTodo Todo? } mutation Ping()").unwrap();
     let dart = axton_compiler::dart(&v);
     for expected in [
-        "show RuntimeConnection, SyncServer, ActionCall, ActionOutcome, ActionSuccess, ActionFailure, ActionStatus, ActionError",
+        "show RuntimeConnection, SyncServer, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, CallStore",
         "required String? query",
         "class TodoIdentity",
         "required this.relatedTodo",
         "TodoIdentity? relatedTodo",
         "Todo? relatedTodo",
-        "late final Actions actions = Actions(client);",
-        "late final DirectCalls call = DirectCalls(client);",
-        "Future<ActionCall<SearchOutput>> search(",
-        "Future<SearchOutput> search(",
+        "late final Mutations mutations = Mutations(client);",
+        "late final Queries queries = Queries(client);",
+        "late final DirectMutations call = DirectMutations(client);",
+        "late final QueuedQueries enqueue = QueuedQueries(client);",
         "typedef PingOutput = void;",
+        "abstract interface class QuerySearchHandlers<Ctx> {\n Future<SearchHandlerOutput> v1(QueryHandlerCall<Ctx, SearchInput> call);",
+        "abstract interface class MutationPingHandlers<Ctx> {\n Future<PingHandlerOutput> v1(MutationHandlerCall<Ctx, PingInput> call);",
     ] {
         assert!(dart.contains(expected), "missing {expected}: {dart}");
     }
-    assert!(!dart.contains("ActionClientContract"));
+    // Each route fixes its return type: the Query is direct by default and
+    // durable under `enqueue`; the Mutation the other way round.
+    let class = |name: &str| {
+        let start = dart.find(&format!("\nclass {name} {{")).unwrap();
+        let end = dart[start + 1..].find("\n}\n").unwrap();
+        dart[start..start + 1 + end].to_string()
+    };
+    assert!(class("Queries").contains("Future<SearchOutput> search("));
+    assert!(class("QueuedQueries").contains("Future<Call<SearchOutput>> search("));
+    assert!(class("Mutations").contains("Future<Call<PingOutput>> ping("));
+    assert!(class("DirectMutations").contains("Future<PingOutput> ping("));
+    assert!(!class("Mutations").contains("search("));
+    assert!(!class("Queries").contains("ping("));
+    assert!(!dart.contains("class Actions"));
 }
 
 #[test]
@@ -1101,16 +1146,17 @@ fn model_only_dart_keeps_local_crud_without_action_symbols() {
         dart.contains("class NoteLiveModel extends NoteTxModel"),
         "{dart}"
     );
-    assert!(!dart.contains("late final Actions actions"), "{dart}");
+    assert!(!dart.contains("late final Mutations mutations"), "{dart}");
+    assert!(!dart.contains("late final Queries queries"), "{dart}");
 }
 
 #[test]
 fn action_dart_binds_shared_runtime_and_retained_codecs() {
-    let v = compile("enum Mood { calm loud } model Note { id String at DateTime mood Mood @@id(id) } action Save(note Note.create, changed Note.update<at>?, stamps DateTime[], when DateTime?) { saved Note? at DateTime moods Mood[] }").unwrap();
+    let v = compile("enum Mood { calm loud } model Note { id String at DateTime mood Mood @@id(id) } mutation Save(note Note.create, changed Note.update<at>?, stamps DateTime[], when DateTime?) { saved Note? at DateTime moods Mood[] }").unwrap();
     let dart = axton_compiler::dart(&v);
     for expected in [
-        "show RuntimeConnection, SyncServer, ActionCall, ActionOutcome, ActionSuccess, ActionFailure, ActionStatus, ActionError",
-        "late final Actions actions = Actions(client)",
+        "show RuntimeConnection, SyncServer, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, CallStore",
+        "late final Mutations mutations = Mutations(client)",
         "client.invokeAction<SaveOutput>('Save', 1",
         "client.invokeDirectAction<SaveOutput>('Save', 1",
         "Duration directTimeout = const Duration(seconds: 30)",
@@ -1122,15 +1168,12 @@ fn action_dart_binds_shared_runtime_and_retained_codecs() {
     ] {
         assert!(dart.contains(expected), "missing {expected}: {dart}");
     }
-    assert!(
-        !dart.contains("abstract interface class ActionCall<T>"),
-        "{dart}"
-    );
+    assert!(!dart.contains("abstract interface class Call<T>"), "{dart}");
 }
 
 #[test]
 fn action_dart_retains_output_read_version_and_enum_snapshot() {
-    let mut v = compile("enum Status { open closed } model Todo { id String title String @@id(id) @@version(2) } action Add() { related Todo? state Status }").unwrap();
+    let mut v = compile("enum Status { open closed } model Todo { id String title String @@id(id) @@version(2) } mutation Add() { related Todo? state Status }").unwrap();
     let mut old = v["actions"][0].clone();
     old["version"] = serde_json::json!(1);
     old["outputs"][0]["modelReadVersion"] = serde_json::json!(1);
@@ -1151,63 +1194,67 @@ fn action_dart_retains_output_read_version_and_enum_snapshot() {
 fn action_generated_identifiers_reject_current_collisions_with_positions() {
     let cases = [
         (
-            "model FetchInput { id String @@id(id) } action Fetch()",
+            "model FetchInput { id String @@id(id) } mutation Fetch()",
             "FetchInput",
         ),
         (
-            "model FetchOutput { id String @@id(id) } action Fetch()",
+            "model FetchOutput { id String @@id(id) } mutation Fetch()",
             "FetchOutput",
         ),
         (
-            "model FetchHandlerOutput { id String @@id(id) } action Fetch()",
+            "model FetchHandlerOutput { id String @@id(id) } mutation Fetch()",
             "FetchHandlerOutput",
         ),
         (
-            "model Todo { id String @@id(id) } mutation Fetch { todo Todo.create } action Fetch()",
+            "model Todo { id String @@id(id) } mutation Fetch { todo Todo.create } mutation Fetch()",
             "FetchInput",
         ),
         (
-            "enum ActionOutcome { open } model Todo { id String @@id(id) } action Fetch()",
-            "ActionOutcome",
+            "enum CallOutcome { open } model Todo { id String @@id(id) } mutation Fetch()",
+            "CallOutcome",
         ),
         (
-            "model ActionSuccess { id String @@id(id) } action Fetch()",
-            "ActionSuccess",
+            "model CallSuccess { id String @@id(id) } mutation Fetch()",
+            "CallSuccess",
         ),
         (
-            "model ActionFailure { id String @@id(id) } action Fetch()",
-            "ActionFailure",
+            "model CallFailure { id String @@id(id) } query Fetch()",
+            "CallFailure",
         ),
         (
-            "model ActionBackendContract { id String @@id(id) } action Fetch()",
-            "ActionBackendContract",
+            "model Mutations { id String @@id(id) } mutation Fetch()",
+            "Mutations",
         ),
         (
-            "model Actions { id String @@id(id) } action Fetch()",
-            "Actions",
+            "enum QueuedQueries { open } model Todo { id String @@id(id) } query Fetch()",
+            "QueuedQueries",
         ),
         (
-            "enum DirectCalls { open } model Todo { id String @@id(id) } action Fetch()",
-            "DirectCalls",
+            "model CallPort { id String @@id(id) } mutation Fetch()",
+            "CallPort",
         ),
         (
-            "model ActionPort { id String @@id(id) } action Fetch()",
-            "ActionPort",
+            "enum QueryContext { open } model Todo { id String @@id(id) } query Fetch()",
+            "QueryContext",
         ),
         (
-            "enum ActionContext { open } model Todo { id String @@id(id) } action Fetch()",
-            "ActionContext",
+            "model CallRejected { id String @@id(id) } mutation Fetch()",
+            "CallRejected",
         ),
         (
-            "model ActionRejected { id String @@id(id) } action Fetch()",
-            "ActionRejected",
+            "model MutationFetchHandlers { id String @@id(id) } mutation Fetch()",
+            "MutationFetchHandlers",
         ),
         (
-            "model Todo { id String @@id(id) } model ActionTodoModel { id String @@id(id) } action Fetch()",
-            "ActionTodoModel",
+            "model QueryFetchHandlers { id String @@id(id) } query Fetch()",
+            "QueryFetchHandlers",
         ),
         (
-            "model Todo { id String title String @@id(id) } model FetchTodoUpdate { id String @@id(id) } action Fetch(todo Todo.update<title>)",
+            "model FetchOptions { id String @@id(id) } query Fetch()",
+            "FetchOptions",
+        ),
+        (
+            "model Todo { id String title String @@id(id) } model FetchTodoUpdate { id String @@id(id) } mutation Fetch(todo Todo.update<title>)",
             "FetchTodoUpdate",
         ),
     ];
@@ -1215,7 +1262,9 @@ fn action_generated_identifiers_reject_current_collisions_with_positions() {
         let error = compile(source).unwrap_err();
         assert!(
             error.contains(name)
-                && (error.contains("Action") || error.contains("generated client"))
+                && (error.contains("Mutation")
+                    || error.contains("Query")
+                    || error.contains("generated client"))
                 && error.starts_with("1:"),
             "{source}: {error}"
         );
@@ -1225,16 +1274,16 @@ fn action_generated_identifiers_reject_current_collisions_with_positions() {
 #[test]
 fn action_generated_identifiers_reject_other_actions_without_overbanning() {
     assert!(
-        compile("model Todo { id String @@id(id) } action Fetch() action FetchInput()").is_ok()
+        compile("model Todo { id String @@id(id) } mutation Fetch() mutation FetchInput()").is_ok()
     );
-    assert!(compile("model FetchV1Input { id String @@id(id) } action Fetch()").is_ok());
+    assert!(compile("model FetchV1Input { id String @@id(id) } mutation Fetch()").is_ok());
 }
 
 #[test]
 fn backend_enum_list_handler_outputs_preserve_latest_and_retained_union_cardinality() {
-    let old = compile("enum Status { open closed } model Todo { id String @@id(id) } action Fetch() { states Status[] }").unwrap();
+    let old = compile("enum Status { open closed } model Todo { id String @@id(id) } mutation Fetch() { states Status[] }").unwrap();
     let history = axton_compiler::reconcile_action_history(&old, None).unwrap();
-    let mut latest = compile("enum Status { open closed archived } model Todo { id String @@id(id) } @version(2) action Fetch() { states Status[] }").unwrap();
+    let mut latest = compile("enum Status { open closed archived } model Todo { id String @@id(id) } @version(2) mutation Fetch() { states Status[] }").unwrap();
     let history = axton_compiler::reconcile_action_history(&latest, Some(&history)).unwrap();
     latest["actions"] = serde_json::Value::Array(
         history["actions"]["Fetch"]
@@ -1269,7 +1318,7 @@ fn backend_enum_list_handler_outputs_preserve_latest_and_retained_union_cardinal
 #[test]
 fn action_only_and_model_only_clients_have_no_legacy_mutate_facade() {
     for schema in [
-        "model Todo { id String @@id(id) } action AddTodo(todo Todo.create)",
+        "model Todo { id String @@id(id) } mutation AddTodo(todo Todo.create)",
         "model Todo { id String @@id(id) }",
     ] {
         let v = compile(schema).unwrap();
@@ -1326,11 +1375,11 @@ fn generated_clients_expose_the_scope_facade() {
 
 #[test]
 fn action_store_options_name_only_explicit_model_outputs_in_both_languages() {
-    let v = compile("model Todo { id String title String @@id(id) } action AddTodo(todo Todo.create, gone Todo.delete[]) { related Todo? matches Todo[] count Int } action Ping() action Open(store String) { main Todo }").unwrap();
+    let v = compile("model Todo { id String title String @@id(id) } mutation AddTodo(todo Todo.create, gone Todo.delete[]) { related Todo? matches Todo[] count Int } mutation Ping() query Open(store String) { main Todo }").unwrap();
     let ts = axton_compiler::typescript(&v);
     // Input-bound, Delete-confirmation and scalar outputs are not keys.
     assert!(
-        ts.contains("export type AddTodoOptions = ActionOptions<'related'|'matches'>;"),
+        ts.contains("export type AddTodoOptions = CallOptions<'related'|'matches'>;"),
         "{ts}"
     );
     assert!(
@@ -1338,11 +1387,20 @@ fn action_store_options_name_only_explicit_model_outputs_in_both_languages() {
         "{ts}"
     );
     assert!(
-        ts.contains("export type OpenOptions = ActionOptions<'main'>;"),
+        ts.contains("export type OpenOptions = CallOptions<'main'>;"),
         "{ts}"
     );
     let client = axton_compiler::client_typescript(&v, "@axton/client");
-    assert!(client.contains("type ActionOptions"), "{client}");
+    assert!(client.contains("type CallOptions"), "{client}");
+    // Both routes of each kind take the same typed options.
+    assert!(
+        ts.contains("  open: (args:OpenInput, options?:OpenOptions):Promise<Call<OpenOutput>> => port.invokeAction('Open',1,"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains(" open: (args:OpenInput, options?:OpenOptions):Promise<OpenOutput> => port.invokeDirectAction('Open',1,"),
+        "{ts}"
+    );
     let dart = axton_compiler::dart(&v);
     assert!(
         dart.contains("const AddTodoStore.outputs({this.related, this.matches}) : _mode = 2;"),
@@ -1354,12 +1412,18 @@ fn action_store_options_name_only_explicit_model_outputs_in_both_languages() {
     );
     assert!(!dart.contains("PingStore.outputs"), "{dart}");
     assert!(
-        dart.contains("Future<ActionCall<PingOutput>> ping({PingStore? store})"),
+        dart.contains("Future<Call<PingOutput>> ping({PingStore? store})"),
         "{dart}"
     );
     // A business input named store keeps its name; the selector moves aside.
     assert!(
-        dart.contains("open({required String store, OpenStore? outputStore})"),
+        dart.contains("Future<OpenOutput> open({required String store, OpenStore? outputStore})"),
+        "{dart}"
+    );
+    assert!(
+        dart.contains(
+            "Future<Call<OpenOutput>> open({required String store, OpenStore? outputStore})"
+        ),
         "{dart}"
     );
     assert!(dart.contains("store: outputStore);"), "{dart}");
@@ -1373,9 +1437,9 @@ fn action_store_options_name_only_explicit_model_outputs_in_both_languages() {
 
 #[test]
 fn action_store_selector_names_join_generated_identifier_checks() {
-    let error = compile("model PingStore { id String @@id(id) } action Ping()").unwrap_err();
+    let error = compile("model PingStore { id String @@id(id) } mutation Ping()").unwrap_err();
     assert!(error.contains("PingStore"), "{error}");
-    let error = compile("model PingOptions { id String @@id(id) } action Ping()").unwrap_err();
+    let error = compile("model PingOptions { id String @@id(id) } mutation Ping()").unwrap_err();
     assert!(error.contains("PingOptions"), "{error}");
 }
 
@@ -1389,7 +1453,7 @@ fn store_eligible_outputs_cannot_reuse_dart_selector_member_names() {
         "noSuchMethod",
     ] {
         let error = compile(&format!(
-            "model Todo {{ id String @@id(id) }} action Find() {{ {member} Todo? }}"
+            "model Todo {{ id String @@id(id) }} mutation Find() {{ {member} Todo? }}"
         ))
         .unwrap_err();
         assert!(
@@ -1399,14 +1463,176 @@ fn store_eligible_outputs_cannot_reuse_dart_selector_member_names() {
         assert!(error.contains("FindStore"), "{error}");
     }
     // A scalar output is not a selector field and keeps the name.
-    compile("action Count() { toWire Int }").unwrap();
+    compile("mutation Count() { toWire Int }").unwrap();
     // Other store-eligible names still compile.
-    compile("model Todo { id String @@id(id) } action Find() { all Todo? none Todo[] }").unwrap();
+    compile("model Todo { id String @@id(id) } mutation Find() { all Todo? none Todo[] }").unwrap();
 }
 
 #[test]
 fn generated_dart_reexports_action_store() {
-    let v = compile("action Ping()").unwrap();
+    let v = compile("mutation Ping()").unwrap();
     let dart = axton_compiler::dart(&v);
-    assert!(dart.contains("ActionError, ActionStore,"), "{dart}");
+    assert!(dart.contains("CallError, CallStore,"), "{dart}");
+    assert!(
+        dart.contains("final class PingStore extends CallStore"),
+        "{dart}"
+    );
+}
+
+#[test]
+fn mutation_and_query_descriptors_carry_their_kind() {
+    let v = compile(
+        "model Todo { id String title String @@id(id) @@version(2) }\nmutation AddTodo(todo Todo.create) {}\nquery FindTodos(text String, cursor String?) { todos Todo[] nextCursor String? }",
+    )
+    .unwrap();
+    let actions = v["schema"]["actions"].as_array().unwrap();
+    assert_eq!(actions[0]["kind"], "mutation");
+    assert_eq!(
+        actions[0]["outputs"][0]["source"],
+        serde_json::json!({"inputIdentity":"todo"})
+    );
+    assert_eq!(actions[0]["outputs"][0]["modelReadVersion"], 2);
+    assert_eq!(actions[1]["kind"], "query");
+    assert_eq!(actions[1]["outputs"][0]["source"], "handlerIdentity");
+    assert_eq!(actions[1]["outputs"][0]["cardinality"], "list");
+    assert_eq!(actions[1]["outputs"][0]["modelReadVersion"], 2);
+    assert_eq!(actions[1]["outputs"][1]["cardinality"], "optional");
+    assert_eq!(v["actions"], v["schema"]["actions"]);
+    // A Query-only schema with no Models is a complete contract.
+    let only = compile("query Ping(text String) { echo String }").unwrap();
+    assert_eq!(only["schema"]["actions"][0]["kind"], "query");
+}
+
+#[test]
+fn queries_reject_mutation_operands_and_sequence_at_the_member() {
+    for (source, at, needle) in [
+        (
+            "model Todo { id String @@id(id) }\nquery Edit(text String, todo Todo.create)",
+            "2:25:",
+            "Model operand todo",
+        ),
+        (
+            "model Todo { id String @@id(id) }\nquery Edit(todo Todo.update)",
+            "2:12:",
+            "Model operand todo",
+        ),
+        (
+            "model Todo { id String @@id(id) }\nquery Edit(todos Todo.delete[])",
+            "2:12:",
+            "Model operand todos",
+        ),
+        (
+            "model Todo { id String @@id(id) }\nmutation Add(todo Todo.create)\n@sequence(after: [Add()]) query Find()",
+            "3:1:",
+            "cannot declare @sequence",
+        ),
+        (
+            "model Todo { id String @@id(id) }\nquery Find()\n@sequence(after: [Find()]) mutation Add(todo Todo.create)",
+            "3:1:",
+            "unknown sequence Mutation Find",
+        ),
+    ] {
+        let error = compile(source).unwrap_err();
+        assert!(
+            error.starts_with(at) && error.contains(needle),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[test]
+fn operation_names_share_one_namespace_and_reserve_route_members() {
+    for (source, needle) in [
+        (
+            "mutation Find()\nquery Find()",
+            "2:1: duplicate operation Find",
+        ),
+        (
+            "query Find()\nmutation find()",
+            "2:1: duplicate operation find",
+        ),
+        ("mutation Call()", "1:1: Mutation name Call is reserved"),
+        ("mutation call()", "1:1: Mutation name call is reserved"),
+        ("query Enqueue()", "1:1: Query name Enqueue is reserved"),
+        ("query enqueue()", "1:1: Query name enqueue is reserved"),
+        ("mutation Client()", "1:1: Mutation name Client is reserved"),
+        ("query ToString()", "1:1: Query name ToString is reserved"),
+        (
+            "mutation HashCode()",
+            "1:1: Mutation name HashCode is reserved",
+        ),
+        (
+            "model Todo { id String @@id(id) }\nquery Todo()",
+            "2:1: Query Todo collides with a model or enum",
+        ),
+    ] {
+        let error = compile(source).unwrap_err();
+        assert!(error.starts_with(needle), "{source}: {error}");
+    }
+    // Each route member is reserved only in the namespace that has it; a
+    // Query named Call still collides with the generated CallOptions helper.
+    compile("mutation Enqueue()").unwrap();
+    let error = compile("query Call()").unwrap_err();
+    assert!(error.contains("CallOptions"), "{error}");
+}
+
+#[test]
+fn a_kind_change_at_a_new_version_registers_each_version_under_its_own_kind() {
+    let v1 = compile("model Todo { id String @@id(id) } mutation Find(text String) { count Int }")
+        .unwrap();
+    let mut retained = compile(
+        "model Todo { id String @@id(id) } @version(2) query Find(text String) { count Int }",
+    )
+    .unwrap();
+    // Retain both versions the way the CLI does, from the operation history.
+    let history = axton_compiler::reconcile_action_history(&v1, None).unwrap();
+    let history = axton_compiler::reconcile_action_history(&retained, Some(&history)).unwrap();
+    let versions: Vec<serde_json::Value> = history["actions"]["Find"]
+        .as_object()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect();
+    retained["actions"] = serde_json::json!(versions);
+    retained["schema"]["actions"] = retained["actions"].clone();
+    let backend = axton_compiler::backend_typescript(&retained, "@axton/server");
+    let section = |name: &str| {
+        let start = backend
+            .find(&format!("export interface {name}<Tx> {{"))
+            .unwrap();
+        let end = backend[start..].find("\n}\n").unwrap();
+        backend[start..start + end].to_string()
+    };
+    assert_eq!(
+        section("Mutations"),
+        "export interface Mutations<Tx> {\n find: { v1(call: MutationHandlerCall<Tx, FindV1Input>): Promise<FindV1HandlerOutput> } | ((call: MutationHandlerCall<Tx, FindV1Input>) => Promise<FindV1HandlerOutput>);"
+    );
+    assert_eq!(
+        section("Queries"),
+        "export interface Queries<Tx> {\n find: { v2(call: QueryHandlerCall<Tx, FindInput>): Promise<FindHandlerOutput> };"
+    );
+    assert!(
+        backend.contains("mutations: Mutations<Tx>; queries: Queries<Tx>"),
+        "{backend}"
+    );
+    // Current clients expose the name only under its current kind.
+    let ts = axton_compiler::typescript(&retained);
+    assert!(
+        ts.contains("export function makeMutations(port:CallPort) { return {\n call: {\n }\n}; }"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains(" find: (args:FindInput, options?:FindOptions):Promise<FindOutput> => port.invokeDirectAction('Find',2,"),
+        "{ts}"
+    );
+    let dart = axton_compiler::dart(&retained);
+    assert!(
+        dart.contains("abstract interface class MutationFindHandlers<Ctx> {\n Future<FindV1HandlerOutput> v1(MutationHandlerCall<Ctx, FindV1Input> call);\n}"),
+        "{dart}"
+    );
+    assert!(
+        dart.contains("abstract interface class QueryFindHandlers<Ctx> {\n Future<FindHandlerOutput> v2(QueryHandlerCall<Ctx, FindInput> call);\n}"),
+        "{dart}"
+    );
+    axton_compiler::check_action_names(&retained).unwrap();
 }

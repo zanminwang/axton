@@ -4,7 +4,7 @@ fn cli_action_history_versions_outputs_and_refuses_edits_atomically() {
     let (root, input) = workspace("action-history");
     let out = root.join("out");
     let model = input.join("test.model");
-    let v1 = "model Todo { id String @@id(id) } action SendEmail(to String) { messageId String relatedTodo Todo? }";
+    let v1 = "model Todo { id String @@id(id) } mutation SendEmail(to String) { messageId String relatedTodo Todo? }";
     fs::write(&model, v1).unwrap();
     assert!(
         axton(&[input.as_os_str(), out.as_os_str()])
@@ -45,7 +45,7 @@ fn cli_action_history_versions_outputs_and_refuses_edits_atomically() {
             "model Todo { id String @@id(id) }",
             "@version(2) model Todo { id String title String @@id(id) }",
         )
-        .replace("action SendEmail", "@version(2) action SendEmail")
+        .replace("mutation SendEmail", "@version(2) mutation SendEmail")
         .replace("messageId String", "messageId Int"),
     )
     .unwrap();
@@ -89,7 +89,7 @@ fn cli_compiles_ordinary_only_action_without_dummy_model() {
     let out = root.join("out");
     fs::write(
         input.join("test.model"),
-        "action Send(to String) { messageId String }",
+        "mutation Send(to String) { messageId String }",
     )
     .unwrap();
     let run = axton(&[input.as_os_str(), out.as_os_str()]);
@@ -114,7 +114,7 @@ fn cli_rejects_new_action_names_above_v1_without_init_flags() {
     let base = "model Todo { id String @@id(id) }";
     fs::write(
         &model,
-        format!("{base} @version(2) action Send(to String) {{ id String }}"),
+        format!("{base} @version(2) mutation Send(to String) {{ id String }}"),
     )
     .unwrap();
     let rejected = axton(&[input.as_os_str(), out.as_os_str()]);
@@ -125,7 +125,7 @@ fn cli_rejects_new_action_names_above_v1_without_init_flags() {
 
     fs::write(
         &model,
-        format!("{base} action Save(to String) {{ id String }}"),
+        format!("{base} mutation Save(to String) {{ id String }}"),
     )
     .unwrap();
     let first = axton(&[input.as_os_str(), out.as_os_str()]);
@@ -145,7 +145,7 @@ fn cli_rejects_new_action_names_above_v1_without_init_flags() {
     let before: Vec<_> = paths.iter().map(|path| fs::read(path).unwrap()).collect();
     fs::write(
         &model,
-        format!("{base} action Save(to String) {{ id String }} @version(2) action Send(to String) {{ id String }}"),
+        format!("{base} mutation Save(to String) {{ id String }} @version(2) mutation Send(to String) {{ id String }}"),
     )
     .unwrap();
     let rejected = axton(&[input.as_os_str(), out.as_os_str()]);
@@ -168,7 +168,7 @@ fn cli_action_history_options_require_explicit_initialization() {
     let model = input.join("test.model");
     fs::write(
         &model,
-        "model Todo { id String @@id(id) } @version(2) action Send(to String) { id String }",
+        "model Todo { id String @@id(id) } @version(2) mutation Send(to String) { id String }",
     )
     .unwrap();
     let args = [
@@ -179,7 +179,7 @@ fn cli_action_history_options_require_explicit_initialization() {
     ];
     let missing = axton(&args);
     assert!(!missing.status.success());
-    assert!(String::from_utf8_lossy(&missing.stderr).contains("missing Action history"));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("missing operation history"));
     let uninitialized = axton(&[
         input.as_os_str(),
         out.as_os_str(),
@@ -192,7 +192,7 @@ fn cli_action_history_options_require_explicit_initialization() {
     assert!(!out.exists());
     fs::write(
         &model,
-        "model Todo { id String @@id(id) } action Send(to String) { id String }",
+        "model Todo { id String @@id(id) } mutation Send(to String) { id String }",
     )
     .unwrap();
     assert!(
@@ -229,7 +229,7 @@ fn cli_refuses_removing_the_last_retained_action() {
     let model = input.join("test.model");
     fs::write(
         &model,
-        "model Todo { id String @@id(id) } action Send(to String) { id String }",
+        "model Todo { id String @@id(id) } mutation Send(to String) { id String }",
     )
     .unwrap();
     assert!(
@@ -782,7 +782,7 @@ fn cli_rejects_retained_action_identifier_collisions_before_writes() {
     let (root, input) = workspace("retained-action-name-collision");
     let out = root.join("out");
     let model = input.join("test.model");
-    fs::write(&model, "model Todo { id String @@id(id) } action Fetch()").unwrap();
+    fs::write(&model, "model Todo { id String @@id(id) } mutation Fetch()").unwrap();
     let first = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
         first.status.success(),
@@ -798,13 +798,13 @@ fn cli_rejects_retained_action_identifier_collisions_before_writes() {
         out.join("backend.ts"),
     ];
     let before: Vec<_> = files.iter().map(|path| fs::read(path).unwrap()).collect();
-    fs::write(&model, "model Todo { id String @@id(id) } model FetchV1Input { id String @@id(id) } @version(2) action Fetch()").unwrap();
+    fs::write(&model, "model Todo { id String @@id(id) } model FetchV1Input { id String @@id(id) } @version(2) mutation Fetch()").unwrap();
     let second = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!second.status.success());
     let error = String::from_utf8_lossy(&second.stderr);
     assert!(
         error.contains("FetchV1Input")
-            && error.contains("Action Fetch v1")
+            && error.contains("Mutation Fetch v1")
             && error.contains("model FetchV1Input"),
         "{error}"
     );
@@ -818,7 +818,8 @@ fn cli_disambiguates_retained_operand_helper() {
     let (root, input) = workspace("retained-action-operand-name-collision");
     let out = root.join("out");
     let model = input.join("test.model");
-    let v1 = "model Todo { id String title String @@id(id) } action Edit(todo Todo.update<title>)";
+    let v1 =
+        "model Todo { id String title String @@id(id) } mutation Edit(todo Todo.update<title>)";
     fs::write(&model, v1).unwrap();
     let first = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
@@ -826,7 +827,11 @@ fn cli_disambiguates_retained_operand_helper() {
         "{}",
         String::from_utf8_lossy(&first.stderr)
     );
-    fs::write(&model, v1.replace("action Edit", "@version(2) action Edit")).unwrap();
+    fs::write(
+        &model,
+        v1.replace("mutation Edit", "@version(2) mutation Edit"),
+    )
+    .unwrap();
     let second = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
         second.status.success(),
@@ -845,7 +850,7 @@ fn cli_rejects_collision_between_retained_and_new_action_symbols() {
     let (root, input) = workspace("retained-action-action-collision");
     let out = root.join("out");
     let model = input.join("test.model");
-    fs::write(&model, "model Todo { id String @@id(id) } action Fetch()").unwrap();
+    fs::write(&model, "model Todo { id String @@id(id) } mutation Fetch()").unwrap();
     assert!(
         axton(&[input.as_os_str(), out.as_os_str()])
             .status
@@ -854,7 +859,7 @@ fn cli_rejects_collision_between_retained_and_new_action_symbols() {
     let history = fs::read(input.join("history/actions.json")).unwrap();
     fs::write(
         &model,
-        "model Todo { id String @@id(id) } @version(2) action Fetch() action FetchV1()",
+        "model Todo { id String @@id(id) } @version(2) mutation Fetch() mutation FetchV1()",
     )
     .unwrap();
     let refused = axton(&[input.as_os_str(), out.as_os_str()]);
@@ -862,8 +867,8 @@ fn cli_rejects_collision_between_retained_and_new_action_symbols() {
     let error = String::from_utf8_lossy(&refused.stderr);
     assert!(
         error.contains("FetchV1Input")
-            && error.contains("Action Fetch v1")
-            && error.contains("Action FetchV1 v1"),
+            && error.contains("Mutation Fetch v1")
+            && error.contains("Mutation FetchV1 v1"),
         "{error}"
     );
     assert_eq!(
@@ -878,13 +883,13 @@ fn cli_rejects_retained_model_record_name_used_by_action_schema() {
     let (root, input) = workspace("retained-model-record-name-collision");
     let out = root.join("out");
     let model = input.join("test.model");
-    fs::write(&model, "model Todo { id String @@id(id) } action Fetch()").unwrap();
+    fs::write(&model, "model Todo { id String @@id(id) } mutation Fetch()").unwrap();
     assert!(
         axton(&[input.as_os_str(), out.as_os_str()])
             .status
             .success()
     );
-    fs::write(&model, "@version(2) model Todo { id String title String @@id(id) } model TodoV1 { id String @@id(id) } @version(2) action Fetch()").unwrap();
+    fs::write(&model, "@version(2) model Todo { id String title String @@id(id) } model TodoV1 { id String @@id(id) } @version(2) mutation Fetch()").unwrap();
     let refused = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(!refused.status.success());
     let error = String::from_utf8_lossy(&refused.stderr);
@@ -900,7 +905,7 @@ fn cli_rejects_retained_enum_name_matching_action_input_before_writes() {
     let (root, input) = workspace("retained-enum-action-input-collision");
     let out = root.join("out");
     let model = input.join("test.model");
-    let v1 = "enum Input { a b } model Todo { id String @@id(id) } action Fetch(value Input)";
+    let v1 = "enum Input { a b } model Todo { id String @@id(id) } mutation Fetch(value Input)";
     fs::write(&model, v1).unwrap();
     let first = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
@@ -917,7 +922,7 @@ fn cli_rejects_retained_enum_name_matching_action_input_before_writes() {
     let before: Vec<_> = files.iter().map(|path| fs::read(path).unwrap()).collect();
     fs::write(
         &model,
-        v1.replace("action Fetch", "@version(2) action Fetch"),
+        v1.replace("mutation Fetch", "@version(2) mutation Fetch"),
     )
     .unwrap();
     let refused = axton(&[input.as_os_str(), out.as_os_str()]);
@@ -925,7 +930,7 @@ fn cli_rejects_retained_enum_name_matching_action_input_before_writes() {
     let error = String::from_utf8_lossy(&refused.stderr);
     assert!(
         error.contains("FetchV1Input")
-            && error.contains("Action Fetch v1")
+            && error.contains("Mutation Fetch v1")
             && error.contains("enum Input"),
         "{error}"
     );
@@ -939,7 +944,7 @@ fn cli_reuses_retained_enum_across_action_members() {
     let (root, input) = workspace("retained-shared-enum");
     let out = root.join("out");
     let model = input.join("test.model");
-    let v1 = "enum Status { open closed } model Todo { id String @@id(id) } action Fetch(first Status, second Status) { firstStatus Status secondStatus Status }";
+    let v1 = "enum Status { open closed } model Todo { id String @@id(id) } mutation Fetch(first Status, second Status) { firstStatus Status secondStatus Status }";
     fs::write(&model, v1).unwrap();
     let first = axton(&[input.as_os_str(), out.as_os_str()]);
     assert!(
@@ -949,7 +954,7 @@ fn cli_reuses_retained_enum_across_action_members() {
     );
     fs::write(
         &model,
-        v1.replace("action Fetch", "@version(2) action Fetch"),
+        v1.replace("mutation Fetch", "@version(2) mutation Fetch"),
     )
     .unwrap();
     let second = axton(&[input.as_os_str(), out.as_os_str()]);
@@ -969,7 +974,7 @@ fn cli_rejects_retained_enum_name_matching_handler_output() {
     let (root, input) = workspace("retained-enum-handler-output-collision");
     let out = root.join("out");
     let model = input.join("test.model");
-    let v1 = "enum HandlerOutput { a b } model Todo { id String @@id(id) } action Fetch(value HandlerOutput)";
+    let v1 = "enum HandlerOutput { a b } model Todo { id String @@id(id) } mutation Fetch(value HandlerOutput)";
     fs::write(&model, v1).unwrap();
     assert!(
         axton(&[input.as_os_str(), out.as_os_str()])
@@ -978,7 +983,7 @@ fn cli_rejects_retained_enum_name_matching_handler_output() {
     );
     fs::write(
         &model,
-        v1.replace("action Fetch", "@version(2) action Fetch"),
+        v1.replace("mutation Fetch", "@version(2) mutation Fetch"),
     )
     .unwrap();
     let refused = axton(&[input.as_os_str(), out.as_os_str()]);
@@ -986,9 +991,54 @@ fn cli_rejects_retained_enum_name_matching_handler_output() {
     let error = String::from_utf8_lossy(&refused.stderr);
     assert!(
         error.contains("FetchV1HandlerOutput")
-            && error.contains("Action Fetch v1 HandlerOutput")
+            && error.contains("Mutation Fetch v1 HandlerOutput")
             && error.contains("input enum HandlerOutput"),
         "{error}"
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_refuses_invalid_retained_operation_kinds_before_writes() {
+    let (root, input) = workspace("retained-operation-kind");
+    let out = root.join("out");
+    let model = input.join("test.model");
+    fs::write(
+        &model,
+        "model Todo { id String @@id(id) } mutation Find(todo Todo.delete)",
+    )
+    .unwrap();
+    let first = axton(&[input.as_os_str(), out.as_os_str()]);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let history_path = input.join("history/actions.json");
+    let history: serde_json::Value =
+        serde_json::from_slice(&fs::read(&history_path).unwrap()).unwrap();
+    fs::write(
+        &model,
+        "model Todo { id String @@id(id) } @version(2) query Find(text String)",
+    )
+    .unwrap();
+    // A hand-edited older snapshot: an unknown kind, then a Query that still
+    // declares its Model operand. Neither is retained or generated.
+    for (kind, needle) in [
+        ("bogus", "unsupported retained operation kind"),
+        ("query", "cannot take a Model operand"),
+    ] {
+        let mut edited = history.clone();
+        edited["actions"]["Find"]["1"]["kind"] = serde_json::json!(kind);
+        fs::write(&history_path, serde_json::to_vec_pretty(&edited).unwrap()).unwrap();
+        let before = fs::read(out.join("backend.json")).unwrap();
+        let refused = axton(&[input.as_os_str(), out.as_os_str()]);
+        let error = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            !refused.status.success() && error.contains(needle),
+            "{kind}: {error}"
+        );
+        assert_eq!(fs::read(out.join("backend.json")).unwrap(), before);
+    }
     fs::remove_dir_all(root).unwrap();
 }

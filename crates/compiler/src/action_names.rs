@@ -33,7 +33,11 @@ fn position(declarations: Option<&Declarations>, owner: &str) -> Option<Pos> {
             .find(|m| m.name == n)
             .map(|m| m.pos);
     }
-    let action = owner.strip_prefix("Action ")?.split(' ').next()?;
+    let action = owner
+        .strip_prefix("Mutation ")
+        .or_else(|| owner.strip_prefix("Query "))?
+        .split(' ')
+        .next()?;
     declarations
         .actions
         .iter()
@@ -49,6 +53,18 @@ const STORE_SELECTOR_MEMBERS: &[&str] = &[
     "runtimeType",
     "noSuchMethod",
 ];
+
+/// The retained kind of an emitted operation descriptor; omitted is a Mutation.
+pub(crate) fn kind(action: &Value) -> axton_core::CallKind {
+    serde_json::from_value(action["kind"].clone()).unwrap_or_default()
+}
+/// `Mutation` or `Query`, as diagnostics and generated owners name it.
+fn label(action: &Value) -> &'static str {
+    match kind(action) {
+        axton_core::CallKind::Mutation => "Mutation",
+        axton_core::CallKind::Query => "Query",
+    }
+}
 
 /// Whether an emitted output descriptor may be named by a call's `store`
 /// map: the single rule is [`axton_core::store_eligible`].
@@ -75,7 +91,7 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
                 );
                 return Err(match pos {
                     Some(pos) => format!("{}:{}: {message}", pos.line, pos.col),
-                    None => format!("Action history: {message}"),
+                    None => format!("operation history: {message}"),
                 });
             }
         } else {
@@ -106,12 +122,6 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
         ] {
             add(format!("{n}{suffix}"), owner.clone())?;
         }
-        for suffix in ["Model", "LiveModel"] {
-            add(
-                format!("Action{n}{suffix}"),
-                format!("Action helper for model {n}"),
-            )?;
-        }
     }
     for model in values(config, "backendModels") {
         let n = name(model);
@@ -126,30 +136,28 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
         }
     }
     for helper in [
-        "ActionContext",
-        "ActionOptions",
-        "ActionStore",
-        "ActionPort",
-        "ActionRejected",
-        "Actions",
-        "DirectCalls",
-        "ActionError",
-        "ActionStatus",
-        "ActionOutcome",
-        "ActionCall",
-        "ActionTxModels",
-        "ActionModels",
-        "ActionTransactionContract",
-        "ActionClientContract",
-        "ActionActionsContract",
-        "ActionDirectCallsContract",
-        "ActionHandlerCall",
-        "ActionHandlers",
-        "ActionSuccess",
-        "ActionFailure",
-        "ActionBackendContract",
+        "Call",
+        "CallError",
+        "CallFailure",
+        "CallOptions",
+        "CallOutcome",
+        "CallPort",
+        "CallRejected",
+        "CallStatus",
+        "CallStore",
+        "CallSuccess",
+        "DirectMutations",
+        "MutationContext",
+        "MutationHandlerCall",
+        "MutationHandlers",
+        "Mutations",
+        "Queries",
+        "QueryContext",
+        "QueryHandlerCall",
+        "QueryHandlers",
+        "QueuedQueries",
     ] {
-        add(helper.into(), "Action helper".into())?;
+        add(helper.into(), "operation helper".into())?;
     }
     let mutations = if config["backendMutations"].is_array() {
         values(config, "backendMutations")
@@ -184,10 +192,21 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
             .and_modify(|v| *v = (*v).max(version))
             .or_insert(version);
     }
-    for &n in latest.keys() {
-        add(format!("Action{n}Handlers"), format!("Action {n} handlers"))?;
-        add(format!("{n}Options"), format!("Action {n} options"))?;
-        add(format!("{n}Store"), format!("Action {n} store selector"))?;
+    let mut handler_groups = std::collections::BTreeSet::new();
+    for action in actions {
+        handler_groups.insert((label(action), name(action)));
+    }
+    for (kind, n) in handler_groups {
+        add(format!("{kind}{n}Handlers"), format!("{kind} {n} handlers"))?;
+    }
+    for action in actions {
+        let n = name(action);
+        if action["version"].as_u64() != Some(latest[n]) {
+            continue;
+        }
+        let kind = label(action);
+        add(format!("{n}Options"), format!("{kind} {n} options"))?;
+        add(format!("{n}Store"), format!("{kind} {n} store selector"))?;
     }
     // Store-eligible outputs become fields of the generated Dart selector,
     // so they cannot reuse the names of its inherited or declared members.
@@ -199,13 +218,14 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
         for output in values(action, "outputs") {
             let output_name = name(output);
             if store_eligible(output) && STORE_SELECTOR_MEMBERS.contains(&output_name) {
-                let owner = format!("Action {n}");
+                let kind = label(action);
+                let owner = format!("{kind} {n}");
                 let message = format!(
-                    "Action {n} output {output_name} is reserved: it would collide with a member of the generated {n}Store selector"
+                    "{kind} {n} output {output_name} is reserved: it would collide with a member of the generated {n}Store selector"
                 );
                 return Err(match position(declarations, &owner) {
                     Some(pos) => format!("{}:{}: {message}", pos.line, pos.col),
-                    None => format!("Action history: {message}"),
+                    None => format!("operation history: {message}"),
                 });
             }
         }
@@ -219,7 +239,7 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
         } else {
             n.to_owned()
         };
-        let owner = format!("Action {n} v{version}");
+        let owner = format!("{} {n} v{version}", label(action));
         for suffix in ["Input", "HandlerOutput"] {
             add(format!("{prefix}{suffix}"), format!("{owner} {suffix}"))?;
         }

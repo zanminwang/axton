@@ -1,2 +1,3 @@
-action Ping()
-action Clock(at DateTime) { at DateTime }
+mutation Ping()
+// Clock v1 is retained as a Mutation; v2 is a Query in a schema with no Models.
+@version(2) query Clock(at DateTime) { at DateTime }

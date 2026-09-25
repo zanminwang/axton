@@ -604,3 +604,148 @@ fn invalid_and_refused_calls_do_not_replace_a_successful_call_or_original_claim(
             .contains("\"A\"")
     );
 }
+
+/// A host whose Query handlers forge business effects the Query context
+/// cannot express, as a non-TypeScript host or a defect could.
+struct ForgedQueryHost(Mutex<Vec<Value>>);
+impl Host for ForgedQueryHost {
+    fn call(&self, request: Value) -> Pin<Box<dyn Future<Output = HostResult<Value>> + Send + '_>> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push(request.clone());
+            let todo = json!({"model":"Todo","identity":{"id":"t1"}});
+            Ok(match request["op"].as_str().unwrap() {
+                "claim" => json!({"clientId":"device","owner":"alice","sequence":0,"receipt":null}),
+                "claimCall" => json!({"fresh":true,"request":request["request"],"response":null}),
+                "handleAction" => match request["name"].as_str().unwrap() {
+                    "Changes" => {
+                        json!({"outputs":{"message":"x"},"changes":[todo],"publications":[]})
+                    }
+                    "Publishes" => {
+                        json!({"outputs":{"message":"x"},"changes":[],"publications":[{"channel":"c"}]})
+                    }
+                    "Both" => {
+                        json!({"outputs":{"message":"x"},"changes":[todo],"publications":[{"channel":"c","records":[todo]}]})
+                    }
+                    _ => json!({"outputs":{"message":"ok"},"changes":[],"publications":[]}),
+                },
+                "ensureStamp" | "advanceStamp" => json!(1),
+                "load" => json!([{"id":"t1"}]),
+                _ => Value::Null,
+            })
+        })
+    }
+}
+
+fn forged_config() -> Config {
+    let message = json!([{"name":"message","kind":"value","type":{"kind":"scalar","name":"string"},"cardinality":"single","source":"handlerValue"}]);
+    let actions: Vec<Value> = [
+        ("Changes", "query"),
+        ("Publishes", "query"),
+        ("Both", "query"),
+        ("Read", "query"),
+        ("Save", "mutation"),
+    ]
+    .into_iter()
+    .map(|(name, kind)| json!({"name":name,"version":1,"kind":kind,"inputs":[],"outputs":message}))
+    .collect();
+    Config::decode(json!({"schema":{"enums":[],"models":[{"name":"Todo","identity":["id"],"fields":[{"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false}]}],"actions":actions},"mutations":[],"loaders":["Todo"]})).unwrap()
+}
+
+#[test]
+fn forged_query_effects_reject_only_that_call_before_framework_handling() {
+    let config = forged_config();
+    let host = ForgedQueryHost(Mutex::new(vec![]));
+    let calls = ["Changes", "Save", "Publishes", "Both", "Read"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| {
+            json!({"ordinal":index+1,"callId":format!("01890f47-1234-7123-8123-123456789ab{}",index+1),"name":name,"version":1,"args":{}})
+        })
+        .collect::<Vec<_>>();
+    let request =
+        json!({"clientId":"device","batchSequence":1,"models":{"Todo":1},"mutations":calls});
+    let receipt: Value = serde_json::from_str(
+        &run(process_action_push(
+            &config,
+            "alice",
+            request.to_string().as_bytes(),
+            &host,
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        receipt["rejections"],
+        json!([
+            {"ordinal":1,"code":"query.effects_forbidden"},
+            {"ordinal":3,"code":"query.effects_forbidden"},
+            {"ordinal":4,"code":"query.effects_forbidden"}
+        ])
+    );
+    for index in [0, 2, 3] {
+        assert_eq!(
+            receipt["completions"][index]["outcome"],
+            json!({"status":"failed","code":"query.effects_forbidden","execution":"rejected"})
+        );
+    }
+    assert_eq!(
+        receipt["completions"][1]["outcome"]["result"],
+        json!({"message":"ok"})
+    );
+    assert_eq!(
+        receipt["completions"][4]["outcome"]["result"],
+        json!({"message":"ok"})
+    );
+    assert_eq!(receipt["records"], json!([]));
+    let ops = host.0.lock().unwrap();
+    // No stamping, readback or publication happened for any call.
+    for op in ["ensureStamp", "advanceStamp", "load", "publish"] {
+        assert!(!ops.iter().any(|request| request["op"] == op), "{op}");
+    }
+    let rolled: Vec<_> = ops
+        .iter()
+        .filter(|request| request["op"] == "rollback")
+        .map(|request| request["ordinal"].clone())
+        .collect();
+    assert_eq!(rolled, [json!(1), json!(3), json!(4)]);
+    // Each forbidden outcome is saved, so a retry replays the rejection.
+    assert_eq!(ops.iter().filter(|op| op["op"] == "saveCall").count(), 5);
+}
+
+#[test]
+fn forged_query_effects_are_rejected_on_the_direct_path_too() {
+    let config = forged_config();
+    let host = ForgedQueryHost(Mutex::new(vec![]));
+    let request = json!({"call":{"callId":"01890f47-1234-7123-8123-123456789abc","name":"Both","version":1,"args":{}},"models":{"Todo":1}});
+    let response: Value = serde_json::from_str(
+        &run(axton_server::process_action(
+            &config,
+            "alice",
+            request.to_string().as_bytes(),
+            &host,
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        response["completion"]["outcome"],
+        json!({"status":"failed","code":"query.effects_forbidden","execution":"rejected"})
+    );
+    assert_eq!(response["records"], json!([]));
+    let ops = host.0.lock().unwrap();
+    assert!(ops.iter().any(|op| op["op"] == "rollback"));
+    assert!(
+        !ops.iter()
+            .any(|op| op["op"] == "ensureStamp" || op["op"] == "load" || op["op"] == "publish")
+    );
+}
+
+#[test]
+fn backend_config_refuses_query_descriptors_with_model_operands() {
+    let error = Config::decode(json!({"schema":{"enums":[],"models":[{"name":"Todo","identity":["id"],"fields":[{"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false}]}],"actions":[
+        {"name":"Edit","version":1,"kind":"query","inputs":[{"kind":"model","name":"todo","model":"Todo","operation":"delete","cardinality":"single"}],"outputs":[{"name":"todo","kind":"deleteIdentity","model":"Todo","cardinality":"single","source":{"inputIdentity":"todo"}}]}
+    ]},"mutations":[],"loaders":["Todo"]}))
+    .err()
+    .expect("a Query with a Model operand is not a valid backend config");
+    assert!(error.to_string().contains("Model operand"), "{error}");
+}

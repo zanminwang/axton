@@ -5,7 +5,7 @@ dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 output="$(cd "$dir" && dart analyze negative.dart 2>&1)"
 status=$?
 if [[ $status -eq 0 ]]; then
-  echo 'Action Dart API misuse unexpectedly analyzed cleanly.' >&2
+  echo 'Mutation/Query Dart API misuse unexpectedly analyzed cleanly.' >&2
   exit 1
 fi
 expected=(
@@ -35,6 +35,13 @@ expected=(
   'argument_type_not_assignable:51'
   'undefined_named_parameter:52'
   'argument_type_not_assignable:53'
+  'undefined_getter:57'
+  'undefined_method:58'
+  'undefined_method:59'
+  'invalid_assignment:60'
+  'invalid_assignment:61'
+  'missing_required_argument:62'
+  'undefined_getter:64'
 )
 failed=0
 for pair in "${expected[@]}"; do
@@ -54,4 +61,4 @@ if [[ $failed -ne 0 ]]; then
   echo "$output" >&2
   exit 1
 fi
-echo "Action Dart API refuses misuse: $actual expected analyzer errors."
+echo "Mutation/Query Dart API refuses misuse: $actual expected analyzer errors."

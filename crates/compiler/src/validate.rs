@@ -185,6 +185,8 @@ pub struct Mutation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Action {
     pub name: String,
+    /// `mutation` or `query`: the backend business contract, retained per version.
+    pub kind: axton_core::CallKind,
     pub version: u64,
     pub inputs: Vec<ActionInput>,
     pub outputs: Vec<ActionOutput>,
@@ -302,11 +304,18 @@ fn strings(values: &[Value]) -> Vec<String> {
         .map(|v| v.as_str().unwrap_or_default().to_string())
         .collect()
 }
-fn action_value_type(f: &FieldDecl, enums: &[Enum]) -> Result<FieldType, String> {
+/// The declaration keyword's name in diagnostics.
+fn kind_label(kind: axton_core::CallKind) -> &'static str {
+    match kind {
+        axton_core::CallKind::Mutation => "Mutation",
+        axton_core::CallKind::Query => "Query",
+    }
+}
+fn action_value_type(f: &FieldDecl, enums: &[Enum], label: &str) -> Result<FieldType, String> {
     if !f.attributes.is_empty() || f.deprecated.is_some() {
         return Err(at(
             f.pos,
-            format!("unsupported Action value directive on {}", f.name),
+            format!("unsupported {label} value directive on {}", f.name),
         ));
     }
     if let Some(scalar) = Scalar::from_source(&f.type_name) {
@@ -317,7 +326,7 @@ fn action_value_type(f: &FieldDecl, enums: &[Enum]) -> Result<FieldType, String>
         Err(at(
             f.pos,
             format!(
-                "unknown or unsupported Action type {} on {}",
+                "unknown or unsupported {label} type {} on {}",
                 f.type_name, f.name
             ),
         ))
@@ -338,13 +347,16 @@ fn validate_action_slot(
     if s.deprecated.is_some() {
         return Err(at(
             s.pos,
-            format!("unsupported @deprecated on Action Model operand {}", s.name),
+            format!(
+                "unsupported @deprecated on Mutation Model operand {}",
+                s.name
+            ),
         ));
     }
     let model = models.iter().find(|m| m.name == s.model).ok_or_else(|| {
         at(
             s.pos,
-            format!("unknown Action model {} on {}", s.model, s.name),
+            format!("unknown Mutation model {} on {}", s.model, s.name),
         )
     })?;
     let operation = match s.operation.as_str() {
@@ -444,24 +456,39 @@ fn validate_action_slot(
 /// runtime packages they import, declare. A model or enum with one of these
 /// names would collide with them in the generated file.
 const GENERATED_NAMES: &[&str] = &[
-    "ActionContext",
-    "ActionPort",
-    "ActionRejected",
-    "Actions",
+    "Call",
+    "CallError",
+    "CallFailure",
+    "CallOptions",
+    "CallOutcome",
+    "CallPort",
+    "CallRejected",
+    "CallStatus",
+    "CallStore",
+    "CallSuccess",
     "Channels",
     "Client",
     "ClientSyncState",
     "Connection",
-    "DirectCalls",
+    "DirectMutations",
     "GeneratedClient",
     "GeneratedTransaction",
     "LiveModels",
     "LivePort",
     "Mutate",
     "MutatePort",
+    "MutationContext",
+    "MutationHandlerCall",
+    "MutationHandlers",
     "MutationName",
+    "Mutations",
     "PendingMutation",
     "Present",
+    "Queries",
+    "QueryContext",
+    "QueryHandlerCall",
+    "QueryHandlers",
+    "QueuedQueries",
     "ReadPort",
     "RebuildReport",
     "Rejection",
@@ -927,21 +954,76 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
     let mut actions = Vec::new();
     let mut action_names = BTreeSet::new();
     for decl in &d.actions {
-        if decl.name.eq_ignore_ascii_case("call") {
+        let label = kind_label(decl.kind);
+        // `mutations.call` and `queries.enqueue` select the other delivery
+        // route, so an operation of that kind cannot take the member name.
+        let reserved = match decl.kind {
+            axton_core::CallKind::Mutation => "call",
+            axton_core::CallKind::Query => "enqueue",
+        };
+        if decl.name.eq_ignore_ascii_case(reserved) {
             return Err(at(
                 decl.pos,
-                format!("Action name {} is reserved", decl.name),
+                format!("{label} name {} is reserved", decl.name),
+            ));
+        }
+        // Generated Dart route classes hold `client` and inherit `Object`
+        // members; an operation method cannot reuse those names.
+        let method = format!("{}{}", decl.name[..1].to_ascii_lowercase(), &decl.name[1..]);
+        if [
+            "client",
+            "toString",
+            "hashCode",
+            "runtimeType",
+            "noSuchMethod",
+        ]
+        .contains(&method.as_str())
+        {
+            return Err(at(
+                decl.pos,
+                format!(
+                    "{label} name {} is reserved: its method {method} would collide with a member of the generated client",
+                    decl.name
+                ),
             ));
         }
         if declared_names.iter().any(|(name, _)| *name == decl.name) {
             return Err(at(
                 decl.pos,
-                format!("Action {} collides with a model or enum", decl.name),
+                format!("{label} {} collides with a model or enum", decl.name),
             ));
         }
+        // Mutations and Queries share one operation namespace.
         let generated_name = format!("{}{}", decl.name[..1].to_ascii_lowercase(), &decl.name[1..]);
         if !action_names.insert(generated_name) {
-            return Err(at(decl.pos, format!("duplicate Action {}", decl.name)));
+            return Err(at(
+                decl.pos,
+                format!(
+                    "duplicate operation {}: a name is declared once across mutation and query",
+                    decl.name
+                ),
+            ));
+        }
+        if decl.kind == axton_core::CallKind::Query {
+            if let Some(s) = &decl.sequence {
+                return Err(at(
+                    s.pos,
+                    format!("Query {} cannot declare @sequence", decl.name),
+                ));
+            }
+            if let Some(ActionInputDecl::Model(s)) = decl
+                .inputs
+                .iter()
+                .find(|input| matches!(input, ActionInputDecl::Model(_)))
+            {
+                return Err(at(
+                    s.pos,
+                    format!(
+                        "Query {} cannot take Model operand {}; Model operands belong to mutations",
+                        decl.name, s.name
+                    ),
+                ));
+            }
         }
         let mut inputs = Vec::new();
         let mut outputs = Vec::new();
@@ -953,11 +1035,11 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
                 ActionInputDecl::Model(s) => (&s.name, s.pos),
             };
             if !input_names.insert(name.as_str()) {
-                return Err(at(pos, format!("duplicate Action input {name}")));
+                return Err(at(pos, format!("duplicate {label} input {name}")));
             }
             match input {
                 ActionInputDecl::Value(f) => {
-                    let ty = action_value_type(f, &enums)?;
+                    let ty = action_value_type(f, &enums, label)?;
                     inputs.push(ActionInput::Value {
                         name: f.name.clone(),
                         ty,
@@ -990,13 +1072,13 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
         for output in &decl.outputs {
             let f = &output.field;
             if !output_names.insert(f.name.as_str()) {
-                return Err(at(f.pos, format!("duplicate Action output {}", f.name)));
+                return Err(at(f.pos, format!("duplicate {label} output {}", f.name)));
             }
             let (ty, source, read_version) = if let Some(model) = model(&f.type_name) {
                 if !f.attributes.is_empty() || f.deprecated.is_some() {
                     return Err(at(
                         f.pos,
-                        format!("unsupported Action output directive on {}", f.name),
+                        format!("unsupported {label} output directive on {}", f.name),
                     ));
                 }
                 (
@@ -1006,7 +1088,7 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
                 )
             } else {
                 (
-                    ActionOutputType::Value(action_value_type(f, &enums)?),
+                    ActionOutputType::Value(action_value_type(f, &enums, label)?),
                     ActionOutputSource::HandlerValue,
                     None,
                 )
@@ -1027,6 +1109,7 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
         }
         actions.push(Action {
             name: decl.name.clone(),
+            kind: decl.kind,
             version: decl.version,
             inputs,
             outputs,
@@ -1054,11 +1137,11 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
             let target_name = call["name"].as_str().unwrap_or_default();
             let target = actions
                 .iter()
-                .find(|a| a.name == target_name)
+                .find(|a| a.name == target_name && a.kind == axton_core::CallKind::Mutation)
                 .ok_or_else(|| {
                     at(
                         qpos,
-                        format!("unknown sequence Action {target_name} on {}", decl.name),
+                        format!("unknown sequence Mutation {target_name} on {}", decl.name),
                     )
                 })?;
             let args = call["arguments"]

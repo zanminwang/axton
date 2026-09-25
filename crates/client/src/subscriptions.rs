@@ -266,6 +266,13 @@ impl<S: ClientStore> Client<S> {
     /// new registration starts uninitialized, with no delivery position until
     /// its first boundary is committed.
     pub fn ensure_subscription(&mut self, scope: &str) -> Result<SubscriptionState> {
+        // A registration that already exists is answered from the committed
+        // reader: repeating it writes nothing, so it neither bumps the client
+        // generation nor notifies a watcher. The write below re-reads the row
+        // inside its transaction, so a concurrent registration still wins.
+        if let Some(state) = self.subscription_state(scope)? {
+            return Ok(state);
+        }
         self.write(|e| {
             let (state, created) = e.ensure_subscription(scope)?;
             if created {
@@ -294,15 +301,16 @@ impl<S: ClientStore> Client<S> {
     ) -> Result<Initialization> {
         self.write(|e| e.initialize_subscriptions(expected, heads))
     }
-    /// Unsubscribe the registration `subscription_id` names. A Scope whose
-    /// current subscription is another one is left alone: an old handle cannot
-    /// remove the subscription that replaced it.
-    pub fn remove_subscription(&mut self, scope: &str, subscription_id: u64) -> Result<()> {
+    /// Unsubscribe the registration `subscription_id` names, and whether a row
+    /// went. A Scope whose current subscription is another one is left alone:
+    /// an old handle cannot remove the subscription that replaced it.
+    pub fn remove_subscription(&mut self, scope: &str, subscription_id: u64) -> Result<bool> {
         self.write(|e| {
-            if e.remove_subscription(scope, Some(subscription_id))? {
+            let removed = e.remove_subscription(scope, Some(subscription_id))?;
+            if removed {
                 e.mark_subscription(scope);
             }
-            Ok(())
+            Ok(removed)
         })
     }
     /// How far `channel` committed delivery; see [`Engine::cursor`].

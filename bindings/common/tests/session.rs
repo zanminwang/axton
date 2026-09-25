@@ -340,8 +340,9 @@ fn streaming(host: &mut RuntimeHost, id: &Value) -> Value {
             id,
             json!({"event":"message","epoch":epoch,"body":ack})
         ),
-        json!([{"type":"changed","scopes":["book"]}]),
-        "the acknowledged head is the first boundary; no history is pulled"
+        json!([{"type":"changed","scopes":["book"]},{"type":"acknowledged","scopes":["book"]}]),
+        "the acknowledged head is the first boundary; no history is pulled, and \
+         the handshake announces that delivery is established"
     );
     epoch
 }
@@ -650,4 +651,178 @@ fn incompatible_schema_reports_pending_work_and_rebuild_switches_files() {
         "the fresh file is empty"
     );
     assert!(path.exists(), "the old file is kept");
+}
+
+/// The Scope commands the SDK handles are built on: register durable intent,
+/// read the committed state, and remove exactly the registration an identity
+/// names ([#150](https://github.com/zanminwang/axton/issues/150)). An
+/// uninitialized boundary travels as JSON `null`; zero is a delivery position
+/// and never stands for "no boundary".
+#[test]
+fn scope_commands_register_read_and_remove_one_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let schema: Value =
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
+    let id = host
+        .call(json!({"op":"open","path":dir.path().join("db"),"schema":schema}))
+        .unwrap()["value"]["handle"]
+        .clone();
+    assert!(
+        host.call(json!({"op":"scopeState","handle":id,"scope":"book"}))
+            .unwrap()["value"]
+            .is_null(),
+        "no row means unsubscribed"
+    );
+    let registered = host
+        .call(json!({"op":"scopeSubscribe","handle":id,"scope":"book"}))
+        .unwrap();
+    assert_eq!(
+        registered["value"],
+        json!({"scope":"book","subscriptionId":1,"startingCursor":null,"cursor":null}),
+        "a fresh registration carries no boundary at all, not zero"
+    );
+    assert_eq!(registered["changed"], true, "the registration committed");
+    let again = host
+        .call(json!({"op":"scopeSubscribe","handle":id,"scope":"book"}))
+        .unwrap();
+    assert_eq!(
+        again["value"], registered["value"],
+        "repeating it reads the stored identity and cursors untouched"
+    );
+    assert_eq!(again["changed"], false, "nothing was written");
+    assert_eq!(
+        host.call(json!({"op":"scopeState","handle":id,"scope":"book"}))
+            .unwrap()["value"],
+        registered["value"]
+    );
+    // The transaction command shares the ledger: the same row, the same identity.
+    host.call(json!({"op":"channel","handle":id,"channel":"book","subscribed":true}))
+        .unwrap();
+    assert_eq!(
+        host.call(json!({"op":"scopeState","handle":id,"scope":"book"}))
+            .unwrap()["value"]["subscriptionId"],
+        1
+    );
+    for malformed in [
+        json!(null),
+        json!("1"),
+        json!(0),
+        json!(-1),
+        json!(1.5),
+        json!(9007199254740992u64),
+    ] {
+        assert!(
+            host.call(
+                json!({"op":"scopeUnsubscribe","handle":id,"scope":"book","subscriptionId":malformed})
+            )
+            .is_err(),
+            "a malformed subscription id is refused: {malformed}"
+        );
+    }
+    assert_eq!(
+        host.call(json!({"op":"scopeUnsubscribe","handle":id,"scope":"book","subscriptionId":2}))
+            .unwrap()["value"],
+        json!({"removed":false}),
+        "another identity's unsubscribe removes nothing"
+    );
+    assert_eq!(
+        host.call(json!({"op":"status","handle":id})).unwrap()["value"]["channels"],
+        json!(["book"]),
+        "the registration is untouched"
+    );
+    let removed = host
+        .call(json!({"op":"scopeUnsubscribe","handle":id,"scope":"book","subscriptionId":1}))
+        .unwrap();
+    assert_eq!(removed["value"], json!({"removed":true}));
+    assert_eq!(removed["changed"], true);
+    assert!(
+        host.call(json!({"op":"scopeState","handle":id,"scope":"book"}))
+            .unwrap()["value"]
+            .is_null()
+    );
+    // Identities are never recycled: the next registration is a new one.
+    assert_eq!(
+        host.call(json!({"op":"scopeSubscribe","handle":id,"scope":"book"}))
+            .unwrap()["value"]["subscriptionId"],
+        2
+    );
+    // Scope work is not transaction work: it owns its own local transaction.
+    host.call(json!({"op":"begin","handle":id})).unwrap();
+    for op in ["scopeSubscribe", "scopeState"] {
+        assert!(
+            host.call(json!({"op":op,"handle":id,"scope":"other"}))
+                .is_err(),
+            "{op} is refused while a client transaction is open"
+        );
+    }
+    assert!(
+        host.call(json!({"op":"scopeUnsubscribe","handle":id,"scope":"book","subscriptionId":2}))
+            .is_err()
+    );
+    host.call(json!({"op":"rollback","handle":id})).unwrap();
+}
+
+/// Closing the client is not unsubscribing: the rows and their boundaries
+/// survive it, and only `scopeUnsubscribe` removes one.
+#[test]
+fn closing_a_client_keeps_the_subscriptions_unsubscribe_removes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut host = RuntimeHost::default();
+    let schema: Value =
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
+    let id = host
+        .call(json!({"op":"open","path":&path,"schema":schema}))
+        .unwrap()["value"]["handle"]
+        .clone();
+    let registered = host
+        .call(json!({"op":"scopeSubscribe","handle":id,"scope":"book"}))
+        .unwrap()["value"]
+        .clone();
+    let epoch = {
+        let opened = downlink(&mut host, &id, json!({"event":"start"}));
+        opened[0]["epoch"].clone()
+    };
+    downlink(
+        &mut host,
+        &id,
+        json!({"event":"message","epoch":epoch,"body":json!({"type":"subscribed","cursors":{"book":7}}).to_string()}),
+    );
+    let initialized = host
+        .call(json!({"op":"scopeState","handle":id,"scope":"book"}))
+        .unwrap()["value"]
+        .clone();
+    assert_eq!(
+        initialized,
+        json!({"scope":"book","subscriptionId":registered["subscriptionId"],"startingCursor":7,"cursor":7}),
+        "the acknowledged head is the committed boundary"
+    );
+    host.call(json!({"op":"close","handle":id})).unwrap();
+    let reopened = host
+        .call(json!({"op":"open","path":&path,"schema":schema}))
+        .unwrap()["value"]["handle"]
+        .clone();
+    assert_eq!(
+        host.call(json!({"op":"scopeState","handle":reopened,"scope":"book"}))
+            .unwrap()["value"],
+        initialized,
+        "closing the client deleted nothing"
+    );
+    assert_eq!(
+        host.call(json!({"op":"scopeUnsubscribe","handle":reopened,"scope":"book","subscriptionId":registered["subscriptionId"]}))
+            .unwrap()["value"],
+        json!({"removed":true})
+    );
+    host.call(json!({"op":"close","handle":reopened})).unwrap();
+    let last = host
+        .call(json!({"op":"open","path":&path,"schema":schema}))
+        .unwrap()["value"]["handle"]
+        .clone();
+    assert!(
+        host.call(json!({"op":"scopeState","handle":last,"scope":"book"}))
+            .unwrap()["value"]
+            .is_null(),
+        "an unsubscribe is durable"
+    );
 }

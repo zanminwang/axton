@@ -73,6 +73,11 @@ pub enum DownlinkAction {
     Report { reports: Vec<Report> },
     /// A commit landed for these Scopes: their cursors moved.
     Changed { scopes: Vec<String> },
+    /// The handshake of the open session covered these Scopes: delivery for
+    /// them is established, whether or not anything was committed for them.
+    /// The SDKs turn it into the `live` connection status; no sync decision
+    /// depends on it.
+    Acknowledged { scopes: Vec<String> },
     /// Nothing to do for `millis`; then pump again.
     Wait { millis: u64 },
 }
@@ -474,6 +479,11 @@ impl DownlinkWorker {
         if !initialization.catch_up.is_empty() {
             self.pull(client, actions)?;
         }
+        // Delivery is established for the acknowledged set, whether or not a
+        // boundary was committed for any of it: the SDKs read it as `live`.
+        actions.push(DownlinkAction::Acknowledged {
+            scopes: ack.cursors.keys().cloned().collect(),
+        });
         Ok(committed)
     }
 

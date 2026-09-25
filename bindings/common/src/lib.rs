@@ -197,6 +197,23 @@ impl RuntimeHost {
                     return Err(invalid("client transaction active"));
                 }
                 match op {
+                    // The Scope commands behind the SDK subscription handles:
+                    // each owns its own local transaction, so none of them is
+                    // part of an application transaction. An uninitialized
+                    // boundary answers as `null`, never as zero
+                    // ([#150](https://github.com/zanminwang/axton/issues/150)).
+                    "scopeSubscribe" => serde_json::to_value(
+                        e.client.ensure_subscription(text(&request, "scope")?)?,
+                    )?,
+                    "scopeState" => match e.client.subscription_state(text(&request, "scope")?)? {
+                        Some(state) => serde_json::to_value(state)?,
+                        None => Value::Null,
+                    },
+                    "scopeUnsubscribe" => {
+                        let scope = text(&request, "scope")?.to_string();
+                        let subscription_id = read_counter(&request["subscriptionId"], true)?;
+                        json!({"removed":e.client.remove_subscription(&scope, subscription_id)?})
+                    }
                     "connection" => {
                         let connection = &mut e.connection;
                         let now = read_now(&request)?;

@@ -27,6 +27,13 @@ fn applied(scopes: &[&str]) -> Vec<DownlinkAction> {
         },
     ]
 }
+/// The handshake's own action: delivery is established for these Scopes,
+/// whether or not the acknowledgement committed a boundary for any of them.
+fn established(scopes: &[&str]) -> DownlinkAction {
+    DownlinkAction::Acknowledged {
+        scopes: scopes.iter().map(|s| s.to_string()).collect(),
+    }
+}
 fn request(action: &DownlinkAction) -> (u64, PullRequest) {
     match action {
         DownlinkAction::Request { request, body } => {
@@ -236,9 +243,12 @@ fn a_fresh_subscription_initializes_at_the_acknowledged_head_and_loads_no_histor
     assert_eq!(actions.len(), 1);
     assert_eq!(
         lane.message(epoch, ack(&[("a", 100)])),
-        vec![DownlinkAction::Changed {
-            scopes: vec!["a".into()]
-        }],
+        vec![
+            DownlinkAction::Changed {
+                scopes: vec!["a".into()]
+            },
+            established(&["a"])
+        ],
         "the acknowledged head is committed and announced; no history is pulled"
     );
     let state = lane.client.subscription_state("a").unwrap().unwrap();
@@ -293,9 +303,12 @@ fn an_acknowledgement_at_head_zero_initializes_at_zero() {
     let (epoch, acknowledged) = lane.streaming("a", 0);
     assert_eq!(
         acknowledged,
-        vec![DownlinkAction::Changed {
-            scopes: vec!["a".into()]
-        }]
+        vec![
+            DownlinkAction::Changed {
+                scopes: vec!["a".into()]
+            },
+            established(&["a"])
+        ]
     );
     let state = lane.client.subscription_state("a").unwrap().unwrap();
     assert_eq!((state.starting_cursor, state.cursor), (Some(0), Some(0)));
@@ -317,9 +330,9 @@ fn a_reconnect_catches_up_from_the_saved_cursor_instead_of_the_new_head() {
     let (id, pull) = request(&acknowledged[0]);
     assert_eq!(cursors(&pull), vec![("a", 100)]);
     assert_eq!(
-        acknowledged.len(),
-        1,
-        "nothing was initialized, so nothing is announced"
+        acknowledged,
+        vec![acknowledged[0].clone(), established(&["a"])],
+        "the catch-up and the handshake: nothing was initialized, so nothing is announced as committed"
     );
     assert_eq!(
         lane.response(id, &page("a", 100, 120, Some("the gap"))),
@@ -364,6 +377,54 @@ fn a_head_below_the_committed_cursor_is_a_fault_that_rewinds_nothing() {
     );
 }
 
+/// The handshake announces the set it covered, which is what the SDKs read
+/// their `live` connection status from ([#150](https://github.com/zanminwang/axton/issues/150)
+/// Task 3). Every session announces it, whether or not anything was committed
+/// for those Scopes; a refused acknowledgement announces nothing, because
+/// nothing is established.
+#[test]
+fn the_handshake_announces_the_acknowledged_set_and_a_refused_one_announces_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.saved("a", 5);
+    let (epoch, acknowledged) = lane.streaming("a", 5);
+    assert_eq!(
+        acknowledged,
+        vec![established(&["a"])],
+        "nothing was committed and delivery is still established"
+    );
+    // The socket drops and the next session announces its own handshake again.
+    let actions = lane.send(DownlinkEvent::Closed { epoch });
+    lane.now += wait(&actions[1]);
+    let (next, _) = open(&lane.drain()[0]);
+    assert_eq!(
+        lane.message(next, ack(&[("a", 5)])),
+        vec![established(&["a"])]
+    );
+    // An acknowledgement that names another set is refused: the session ends
+    // and nothing of it is announced.
+    let actions = lane.send(DownlinkEvent::Closed { epoch: next });
+    lane.now += wait(&actions[1]);
+    let (refused, _) = open(&lane.drain()[0]);
+    let actions = lane.message(refused, ack(&[("a", 5), ("z", 1)]));
+    assert!(
+        matches!(
+            &actions[0],
+            DownlinkAction::Close {
+                reason: Some(_),
+                ..
+            }
+        ),
+        "{actions:?}"
+    );
+    assert!(
+        !actions
+            .iter()
+            .any(|a| matches!(a, DownlinkAction::Acknowledged { .. })),
+        "a refused handshake establishes nothing: {actions:?}"
+    );
+}
+
 /// The local cursor decides what a page is: at 120 a page spanning 120 to 125
 /// applies directly, while one from 124 waits for the pull that connects it.
 #[test]
@@ -372,7 +433,11 @@ fn a_page_spanning_the_cursor_applies_and_one_starting_beyond_it_is_repaired() {
     let mut lane = Lane::new(direct.path());
     lane.saved("a", 120);
     let (epoch, acknowledged) = lane.streaming("a", 120);
-    assert_eq!(acknowledged, vec![], "at its head: nothing to do");
+    assert_eq!(
+        acknowledged,
+        vec![established(&["a"])],
+        "at its head: nothing to do but announce the handshake"
+    );
     assert_eq!(
         lane.frame(epoch, &page("a", 120, 125, Some("direct"))),
         applied(&["a"])
@@ -439,7 +504,12 @@ fn a_mixed_set_catches_up_one_scope_initializes_another_and_never_asks_for_a_thi
         "a catches up from 80; b asks from the boundary it just committed"
     );
     assert!(!pull.cursors.contains_key("c"));
-    assert_eq!(acknowledged.len(), 2);
+    assert_eq!(acknowledged.len(), 3);
+    assert_eq!(
+        acknowledged[2],
+        established(&["a", "b"]),
+        "the handshake covered the subscribed set, c included in neither"
+    );
     let b = lane.client.subscription_state("b").unwrap().unwrap();
     assert_eq!((b.starting_cursor, b.cursor), (Some(200), Some(200)));
     let a = lane.client.subscription_state("a").unwrap().unwrap();
@@ -489,9 +559,12 @@ fn an_uninitialized_subscription_produces_no_request_in_either_lane() {
     // Once the handshake committed the boundary, both lanes ask from it.
     assert_eq!(
         lane.message(epoch, ack(&[("a", 7)])),
-        vec![DownlinkAction::Changed {
-            scopes: vec!["a".into()]
-        }]
+        vec![
+            DownlinkAction::Changed {
+                scopes: vec!["a".into()]
+            },
+            established(&["a"])
+        ]
     );
     let actions = lane.send(DownlinkEvent::Overflow { epoch });
     assert_eq!(cursors(&request(&actions[0]).1), vec![("a", 7)]);
@@ -565,9 +638,12 @@ fn scopes_carried_through_a_rebuild_initialize_at_the_next_acknowledged_head() {
     );
     assert_eq!(
         lane.message(epoch, ack(&[("a", 30), ("b", 40)])),
-        vec![DownlinkAction::Changed {
-            scopes: vec!["a".into(), "b".into()]
-        }],
+        vec![
+            DownlinkAction::Changed {
+                scopes: vec!["a".into(), "b".into()]
+            },
+            established(&["a", "b"])
+        ],
         "one transaction initializes both, at their own heads"
     );
     assert_eq!((lane.cursor("a"), lane.cursor("b")), (Some(30), Some(40)));
@@ -591,8 +667,8 @@ fn an_enqueued_page_commits_nothing_until_the_pump_applies_it() {
     });
     assert_eq!(
         lane.drain(),
-        vec![],
-        "at the head, with a boundary already committed: nothing to do"
+        vec![established(&["a"])],
+        "at the head, with a boundary already committed: nothing to do but announce the handshake"
     );
     // The frame only enters the queue: no transaction runs inside the callback.
     lane.enqueue(DownlinkEvent::Message {
@@ -787,7 +863,7 @@ fn a_session_subscribes_pulls_only_when_behind_and_then_streams() {
     let actions = lane.message(epoch, ack(&[("a", 4)]));
     let (id, pull) = request(&actions[0]);
     assert_eq!(cursors(&pull), vec![("a", 0)]);
-    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[1..], [established(&["a"])]);
     // Frames streamed while the pull is in flight wait in the queue.
     assert_eq!(
         lane.frame(epoch, &page("a", 3, 4, Some("streamed"))),
@@ -844,7 +920,7 @@ fn heads_equal_to_the_cursors_mean_no_catch_up_at_all() {
     assert_eq!(subscribe.channels, ["a", "b"]);
     assert_eq!(
         lane.message(epoch, ack(&[("a", 3), ("b", 2)])),
-        vec![],
+        vec![established(&["a", "b"])],
         "every channel is at its head: the stream is the truth"
     );
     assert_eq!(
@@ -874,7 +950,11 @@ fn one_pull_covers_every_channel_and_continues_while_any_channel_is_full() {
     let actions = lane.message(epoch, ack(&[("b", 0), ("a", 51)]));
     let (id, pull) = request(&actions[0]);
     assert_eq!(cursors(&pull), vec![("a", 0), ("b", 0)]);
-    assert_eq!(actions.len(), 1, "one request in flight at a time");
+    assert_eq!(
+        actions[1..],
+        [established(&["a", "b"])],
+        "one request in flight at a time"
+    );
     let mut first = full("a", 0);
     first.cursors.insert(
         "b".into(),
@@ -954,7 +1034,10 @@ fn the_frame_queue_is_bounded_and_overflows_into_recovery() {
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 0);
     let (epoch, _) = open(&lane.send(DownlinkEvent::Start)[0]);
-    assert_eq!(lane.message(epoch, ack(&[("a", 0)])), vec![]);
+    assert_eq!(
+        lane.message(epoch, ack(&[("a", 0)])),
+        vec![established(&["a"])]
+    );
     // A gap frame stays queued behind one pull; the frames after it queue up.
     let actions = lane.frame(epoch, &page("a", 5, 6, Some("gap")));
     let (id, _) = request(&actions[0]);
@@ -1236,9 +1319,12 @@ fn a_recreated_subscription_starts_over_at_the_next_acknowledged_head() {
     let actions = lane.message(second, ack(&[("a", 9)]));
     assert_eq!(
         actions,
-        vec![DownlinkAction::Changed {
-            scopes: vec!["a".into()]
-        }],
+        vec![
+            DownlinkAction::Changed {
+                scopes: vec!["a".into()]
+            },
+            established(&["a"])
+        ],
         "it initializes at the head instead of reloading the Scope"
     );
     assert_eq!(lane.cursor("a"), Some(9));
@@ -1268,7 +1354,10 @@ fn every_event_of_a_replaced_socket_is_fenced_by_its_epoch() {
     lane.now += wait(&actions[1]);
     let (second, _) = open(&lane.drain()[0]);
     assert!(second > first, "a new socket, a new epoch");
-    assert_eq!(lane.message(second, ack(&[("a", 0)])), vec![]);
+    assert_eq!(
+        lane.message(second, ack(&[("a", 0)])),
+        vec![established(&["a"])]
+    );
     // Whatever the abandoned socket and its request still deliver belongs to
     // no session; the one that replaced it keeps streaming.
     assert_eq!(lane.frame(first, &page("a", 0, 1, Some("late"))), vec![]);

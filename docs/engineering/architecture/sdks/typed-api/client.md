@@ -12,8 +12,8 @@ What an application sees:
 | --- | --- |
 | `GeneratedClient.open({path, server?, connection?})` | open the local database; with `server`, connect and keep syncing |
 | `client.models.<model>.get / query / watch / <relation>` | reads on the last commit; `watch` re-emits when results change |
-| `client.actions.<name>(args)` | commit a durable Action intent and inferred Model optimism locally; return `ActionCall<Output>` |
-| `client.actions.call.<name>(args)` | execute a direct Action and return its final output |
+| `client.actions.<name>(args, options?)` | commit a durable Action intent and inferred Model optimism locally; return `ActionCall<Output>` |
+| `client.actions.call.<name>(args, options?)` | execute a direct Action and return its final output |
 | `client.transaction(tx => …)` with `tx.models.<model>.create / update / delete` | local reads and direct writes in one local transaction |
 | `client.channels.subscribe / unsubscribe` | choose which server channels to follow |
 | `client.syncState()`, `client.models.<model>.syncState(identity)` | the client's and one record's local sync state |
@@ -23,7 +23,9 @@ Every call becomes one command through the [bindings](../bindings.md). Generated
 
 The concrete generated client exposes standalone `client.models` local CRUD/read/watch, transaction `tx.models` local CRUD/read without watch or Actions, queued `client.actions.name(args)` returning an `ActionCall<Output>`, and direct `client.actions.call.name(args)` returning the final output. The generated Action methods use the SDK's shared `ActionCall`, `ActionOutcome`, `ActionStatus`, and `ActionError` types. Neither Action route may run inside an application-owned local transaction. Standalone local Model writes use their own local transaction and do not enqueue backend work.
 
-A queued call returns its handle after initial local acceptance and commit; that is not final backend success. The handle exposes only `status` and `wait()`, with `wait()` yielding either a result or an `ActionError`. An initial local failure rejects before a handle exists. Direct calls skip the queue and automatic optimism, returning the result or rejecting with `ActionError`. A Model result is a per-invocation Loader snapshot: a later call in the same batch may change the batch-final settlement authority, and current local reads may include later optimism. Live handles keep business results in memory while pending/completion state remains durable. #116 owns ephemeral output policy.
+A queued call returns its handle after initial local acceptance and commit; that is not final backend success. The handle exposes only `status` and `wait()`, with `wait()` yielding either a result or an `ActionError`. An initial local failure rejects before a handle exists. Direct calls skip the queue and automatic optimism, returning the result or rejecting with `ActionError`. A Model result is a per-invocation Loader snapshot: a later call in the same batch may change the batch-final settlement authority, and current local reads may include later optimism. Live handles keep business results in memory while pending/completion state remains durable.
+
+Both routes take an optional `store` option beside the args ([protocol](../../protocol/actions.md#store-policy)). TypeScript generates `{Name}Options`, whose `store` is a boolean or a partial map restricted to the Action's explicit Model output names (boolean-only when there are none). Dart generates a `{Name}Store` selector with `all()`, `none()` and, when eligible outputs exist, `outputs(...)` with nullable booleans; the named parameter is `store`, or `outputStore` when a business input is already named `store`. The durable route validates and persists the policy with the call ID, args and optimism in one local transaction; the direct route validates it before dispatch.
 
 ## 5. Building Block View
 

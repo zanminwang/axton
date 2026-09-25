@@ -42,8 +42,9 @@ P6 and P7 are implemented: handler rejections, loader refusals, an unsupported m
 | Q4 | Direct Actions use a finite request/response timeout, skip durable queueing and automatic optimism, and do not drain unrelated queued work. The direct response applies committed authority using the same stamp and pending-replay rules as a receipt. A timeout may leave execution unknown. |
 | Q5 | A Model output is the versioned Loader snapshot for its invocation, not the batch-final record authority or the current optimistic local view. Explicit Model outputs use handler-returned identity objects. Nullable outputs, lists and void preserve their declared shapes. |
 | Q6 | Diagnostic callback exceptions after commit cannot replace the Action outcome, re-execute the handler or become transport errors; SDK runtimes report them through their uncaught-error channel. |
+| Q7 | A call's `store` option controls only the additional authority its explicit Model outputs contribute. Authority required by mutation inputs and handler-reported changes is always kept, results are unchanged, and the policy is persisted with the durable call and part of its call identity. |
 
-See [Action protocol](architecture/protocol/actions.md), [server execution](architecture/server/engine/README.md) and [typed client](architecture/sdks/typed-api/client.md). Per-output ephemeral behavior remains [#116](https://github.com/zanminwang/axton/issues/116); tool behavior remains [#143](https://github.com/zanminwang/axton/issues/143).
+See [Action protocol](architecture/protocol/actions.md), [server execution](architecture/server/engine/README.md) and [typed client](architecture/sdks/typed-api/client.md). Tool behavior remains [#143](https://github.com/zanminwang/axton/issues/143).
 
 ## A. Authority and settlement
 

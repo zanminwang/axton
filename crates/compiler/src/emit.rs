@@ -741,12 +741,11 @@ fn ts_actions(v: &Value, o: &mut String) {
     }
     o.push_str(" }\n}; }\n");
 }
-/// Output names a call's `store` map may name: explicit, handler-selected
-/// Model outputs (see `axton_core::store_eligible`).
+/// Output names a call's `store` map may name, by the core eligibility rule.
 fn store_keys(action: &Value) -> Vec<&str> {
     arr(action, "outputs")
         .iter()
-        .filter(|output| output["kind"] == "model" && output["source"] == "handlerIdentity")
+        .filter(|output| crate::action_names::store_eligible(output))
         .map(|output| s(output, "name"))
         .collect()
 }

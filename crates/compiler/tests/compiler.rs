@@ -1326,3 +1326,35 @@ fn action_store_selector_names_join_generated_identifier_checks() {
     let error = compile("model PingOptions { id String @@id(id) } action Ping()").unwrap_err();
     assert!(error.contains("PingOptions"), "{error}");
 }
+
+#[test]
+fn store_eligible_outputs_cannot_reuse_dart_selector_member_names() {
+    for member in [
+        "toWire",
+        "toString",
+        "hashCode",
+        "runtimeType",
+        "noSuchMethod",
+    ] {
+        let error = compile(&format!(
+            "model Todo {{ id String @@id(id) }} action Find() {{ {member} Todo? }}"
+        ))
+        .unwrap_err();
+        assert!(
+            error.contains(&format!("output {member} is reserved")),
+            "{error}"
+        );
+        assert!(error.contains("FindStore"), "{error}");
+    }
+    // A scalar output is not a selector field and keeps the name.
+    compile("action Count() { toWire Int }").unwrap();
+    // Other store-eligible names still compile.
+    compile("model Todo { id String @@id(id) } action Find() { all Todo? none Todo[] }").unwrap();
+}
+
+#[test]
+fn generated_dart_reexports_action_store() {
+    let v = compile("action Ping()").unwrap();
+    let dart = axton_compiler::dart(&v);
+    assert!(dart.contains("ActionError, ActionStore;"), "{dart}");
+}

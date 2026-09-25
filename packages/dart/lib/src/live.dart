@@ -3,6 +3,17 @@ import 'dart:convert';
 import 'dart:io';
 import 'connection.dart';
 
+/// A pull the server refused, with the status it refused it with. It is an
+/// `HttpException` like the failure it replaces, so existing handling is
+/// unchanged; the downlink lane reads the status, because a bootstrap run is
+/// failed by a refusal the server decided and retried after anything else
+/// ([#151](https://github.com/zanminwang/axton/issues/151)).
+class PullFailure extends HttpException {
+  final int statusCode;
+  PullFailure(this.statusCode, String body)
+    : super('pull failed: $statusCode $body');
+}
+
 /// Immutable configuration reusable across independent client connections.
 class SyncServer {
   final String url;
@@ -121,7 +132,7 @@ class ServerSession {
         final result = await utf8.decoder.bind(response).join();
         if (response.statusCode == 401) throw const AuthenticationExpired();
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          throw HttpException('pull failed: ${response.statusCode} $result');
+          throw PullFailure(response.statusCode, result);
         }
         return result;
       } finally {

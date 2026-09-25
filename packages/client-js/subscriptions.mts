@@ -46,7 +46,40 @@ export type DownlinkSignal =
   | { lane: "opened" | "ended"; epoch: number }
   | { lane: "paused" | "resumed" | "stopped" }
   | { lane: "requests"; outstanding: number }
-  | { lane: "acknowledged" | "changed"; scopes: string[] };
+  | { lane: "acknowledged" | "changed"; scopes: string[] }
+  /** A bootstrap run of this registration changed, and the change is committed. */
+  | { lane: "bootstrap"; run: BootstrapRun };
+
+/**
+ * One registration's durable load, as the worker announces it after every
+ * committed transition ([#151](https://github.com/zanminwang/axton/issues/151)).
+ * `cursor` is how far the historical interval has been loaded and `barrier` the
+ * delivery position completion waits for, fixed by the final historical page.
+ */
+export type BootstrapRun = {
+  scope: string;
+  subscriptionId: number;
+  state:
+    | "not_requested"
+    | "requested"
+    | "loading"
+    | "catching_up"
+    | "complete"
+    | "failed";
+  run: number;
+  cursor: number;
+  barrier: number | null;
+  error: null | {
+    code: string;
+    message: string;
+    records: {
+      model: string;
+      identity: Record<string, unknown>;
+      stamp: number;
+      code: string;
+    }[];
+  };
+};
 
 /** The native commands and host services the registry needs; the runtime owns the serialized command path. */
 export type SubscriptionCommands = {

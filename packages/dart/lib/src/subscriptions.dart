@@ -83,11 +83,18 @@ class DownlinkSignal {
   final int? epoch;
   final int? outstanding;
   final List<String> scopes;
+
+  /// One registration's durable load, as the worker announces it after every
+  /// committed transition: `scope`, `subscriptionId`, `state`, `run`, `cursor`,
+  /// `barrier` and `error`
+  /// ([#151](https://github.com/zanminwang/axton/issues/151)).
+  final Map<String, dynamic>? run;
   const DownlinkSignal._(
     this.lane, {
     this.epoch,
     this.outstanding,
     this.scopes = const [],
+    this.run,
   });
   const DownlinkSignal.opened(int epoch) : this._('opened', epoch: epoch);
   const DownlinkSignal.ended(int epoch) : this._('ended', epoch: epoch);
@@ -100,6 +107,8 @@ class DownlinkSignal {
     : this._('acknowledged', scopes: scopes);
   const DownlinkSignal.changed(List<String> scopes)
     : this._('changed', scopes: scopes);
+  const DownlinkSignal.bootstrap(Map<String, dynamic> run)
+    : this._('bootstrap', run: run);
 }
 
 /// The native commands and host services the registry needs; the client owns

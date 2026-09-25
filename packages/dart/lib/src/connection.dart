@@ -296,6 +296,12 @@ class DownlinkLane implements LaneControls {
   /// Catch-up requests of the open session that have not answered yet.
   int _outstanding = 0;
 
+  /// What abandons the historical pages in flight. They belong to the lane, not
+  /// to a socket, so only `pause` and `close` abandon them and a replaced
+  /// socket leaves them alone
+  /// ([#151](https://github.com/zanminwang/axton/issues/151)).
+  Completer<void> _loading = Completer<void>();
+
   /// Every enqueue bumps this and the loop re-checks it before sleeping, so a
   /// wake between the idle decision and the sleep is never lost.
   int _generation = 0;
@@ -372,6 +378,49 @@ class DownlinkLane implements LaneControls {
     _notify();
   }
 
+  /// The HTTP status a transport error carried, for Rust to tell a refusal the
+  /// server decided from a transport failure it must retry.
+  int? _statusOf(Object error) => switch (error) {
+    PullFailure failure => failure.statusCode,
+    AuthenticationExpired _ => 401,
+    _ => null,
+  };
+
+  /// A 401 the application can clear: refresh once, reporting a failed refresh.
+  Future<void> _refresh(Object error) async {
+    if (error is! AuthenticationExpired || refreshAuth == null) return;
+    try {
+      await refreshAuth!();
+    } catch (refreshError) {
+      onError?.call(refreshError);
+    }
+  }
+
+  /// One historical page. It rides on no session: its failure ends none, and
+  /// the worker decides from the status what the failure means.
+  void _load(int id, String body) {
+    final cancellation = _loading;
+    unawaited(
+      _network
+          .pull(body, cancellation.future)
+          .then(
+            (text) =>
+                _enqueue({'event': 'response', 'request': id, 'body': text}),
+            onError: (Object error) async {
+              if (_stopped) return;
+              onError?.call(error);
+              await _refresh(error);
+              await _enqueue({
+                'event': 'failed',
+                'request': id,
+                'reason': error.toString(),
+                'status': cancellation.isCompleted ? null : _statusOf(error),
+              });
+            },
+          ),
+    );
+  }
+
   /// A socket or request that failed: report it, refresh once, tell Rust.
   Future<void> _fail(
     _Session current,
@@ -382,13 +431,7 @@ class DownlinkLane implements LaneControls {
     _abandon(current);
     if (identical(_session, current)) _session = null;
     onError?.call(error);
-    if (error is AuthenticationExpired && refreshAuth != null) {
-      try {
-        await refreshAuth!();
-      } catch (refreshError) {
-        onError?.call(refreshError);
-      }
-    }
+    await _refresh(error);
     await _enqueue(event);
   }
 
@@ -419,9 +462,13 @@ class DownlinkLane implements LaneControls {
           ),
         );
       case 'request':
+        final id = action['request'] as int;
+        if (action['bootstrap'] == true) {
+          _load(id, action['body'] as String);
+          return;
+        }
         final current = _session;
         if (current == null || current.ended) return;
-        final id = action['request'] as int;
         _report(DownlinkSignal.requests(++_outstanding));
         void settled() {
           if (identical(_session, current)) {
@@ -447,6 +494,7 @@ class DownlinkLane implements LaneControls {
                     'event': 'failed',
                     'request': id,
                     'reason': error.toString(),
+                    'status': _statusOf(error),
                   });
                 },
               ),
@@ -476,6 +524,15 @@ class DownlinkLane implements LaneControls {
           DownlinkSignal.acknowledged(
             (action['scopes'] as List).cast<String>(),
           ),
+        );
+      // A committed bootstrap transition: transport state to project, never a
+      // decision to make here.
+      case 'bootstrap':
+        _report(
+          DownlinkSignal.bootstrap({
+            for (final field in action.entries)
+              if (field.key != 'type') field.key: field.value,
+          }),
         );
     }
   }
@@ -531,10 +588,17 @@ class DownlinkLane implements LaneControls {
     if (current != null) _abandon(current);
   }
 
+  /// Abandon the historical pages in flight; a new page belongs to a new
+  /// cancellation, so an answer to an abandoned one reaches no worker.
+  void _abandonLoads() {
+    if (!_loading.isCompleted) _loading.complete();
+  }
+
   @override
   Future<void> pause() async {
     if (_stopped) return;
     cancel();
+    _abandonLoads();
     _report(const DownlinkSignal.paused());
     await _enqueue({'event': 'pause'});
   }
@@ -542,6 +606,7 @@ class DownlinkLane implements LaneControls {
   @override
   Future<void> resume() async {
     if (_stopped) return;
+    _loading = Completer<void>();
     _report(const DownlinkSignal.resumed());
     await _enqueue({'event': 'resume'});
   }
@@ -557,6 +622,7 @@ class DownlinkLane implements LaneControls {
     if (_stopped) return;
     _stopped = true;
     cancel();
+    _abandonLoads();
     _session = null;
     _report(const DownlinkSignal.stopped());
     await _enqueue({'event': 'stop'});

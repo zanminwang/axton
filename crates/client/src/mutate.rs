@@ -251,6 +251,7 @@ impl<S: ClientStore> Engine<'_, S> {
                 name: mutation.name.clone(),
                 version: mutation.version,
                 args: args.clone(),
+                store: Default::default(),
             }
             .normalize(self.schema)?;
             let descriptor = self.schema.action(&intent.name, intent.version)?;

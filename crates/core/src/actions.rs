@@ -16,14 +16,118 @@ pub struct ActionIntent {
     pub name: String,
     pub version: u64,
     pub args: Value,
+    /// Per-invocation output storage policy, outside business args. The
+    /// default (all) is omitted, so default requests keep their bytes.
+    #[serde(default, skip_serializing_if = "ActionStore::is_all")]
+    pub store: ActionStore,
 }
 impl ActionIntent {
     pub fn normalize(mut self, schema: &Schema) -> Result<Self> {
         self.call_id = normalize_call_id(&self.call_id)?;
         let action = schema.action(&self.name, self.version)?;
         self.args = normalize_action_args(schema, action, &self.args)?;
+        self.store.validate(action)?;
         Ok(self)
     }
+}
+
+/// Which explicit Model outputs of one invocation contribute additional
+/// local authority. It never disables authority required by mutation inputs
+/// or handler-reported changes, and never changes the returned result.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum ActionStore {
+    /// Omitted or `true`: every eligible output is stored.
+    #[default]
+    All,
+    /// `false`: no eligible output is stored.
+    None,
+    /// Output name to storage; unnamed eligible outputs default to true.
+    Outputs(BTreeMap<String, bool>),
+}
+impl ActionStore {
+    pub fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+    /// Whether the named output contributes additional authority.
+    pub fn selects(&self, output: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::None => false,
+            Self::Outputs(map) => map.get(output).copied().unwrap_or(true),
+        }
+    }
+    /// Semantic validation against the retained Action: map keys must name
+    /// eligible outputs. Boolean policies are valid for every Action.
+    pub fn validate(&self, action: &ActionDescriptor) -> Result<()> {
+        if let Self::Outputs(map) = self {
+            for name in map.keys() {
+                if !action
+                    .outputs
+                    .iter()
+                    .any(|output| &output.name == name && store_eligible(output))
+                {
+                    return Err(invalid(format!(
+                        "store names no explicit Model output {name}"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+    /// The canonical wire value, or `None` for the omitted default.
+    pub fn wire(&self) -> Option<Value> {
+        match self {
+            Self::All => None,
+            Self::None => Some(Value::Bool(false)),
+            Self::Outputs(map) => Some(serde_json::json!(map)),
+        }
+    }
+    /// Decode the wire value: a boolean or an object of booleans.
+    pub fn from_wire(value: &Value) -> Result<Self> {
+        match value {
+            Value::Bool(true) => Ok(Self::All),
+            Value::Bool(false) => Ok(Self::None),
+            Value::Object(map) if map.is_empty() => Ok(Self::All),
+            Value::Object(map) => map
+                .iter()
+                .map(|(name, value)| {
+                    value
+                        .as_bool()
+                        .map(|stored| (name.clone(), stored))
+                        .ok_or_else(|| invalid("store output value must be boolean"))
+                })
+                .collect::<Result<_>>()
+                .map(Self::Outputs),
+            _ => Err(invalid("store must be a boolean or an object of booleans")),
+        }
+    }
+}
+impl Serialize for ActionStore {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        self.wire()
+            .unwrap_or(Value::Bool(true))
+            .serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for ActionStore {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        Self::from_wire(&Value::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+/// An output a store map may name: an explicit, handler-selected Model
+/// output. Scalar values, input-bound outputs and Delete confirmations
+/// carry no additional output-driven authority to select.
+pub fn store_eligible(output: &ActionOutputDescriptor) -> bool {
+    output.kind == "model"
+        && matches!(
+            output.source,
+            ActionOutputSource::Named(ActionNamedSource::HandlerIdentity)
+        )
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -85,7 +189,9 @@ impl DirectActionResponse {
             vec![]
         };
         let wrapper = serde_json::json!({"clientId":"direct","batchSequence":1,"rejections":rejection,"completions":[raw["completion"]],"records":raw["records"]});
-        let frozen = crate::PushRequest::decode_actions(serde_json::json!({"clientId":"direct","batchSequence":1,"models":request.models,"mutations":[{"ordinal":1,"callId":request.call.call_id,"name":request.call.name,"version":request.call.version,"args":request.call.args}]}).to_string().as_bytes(), schema)?;
+        let mut mutation = serde_json::to_value(&request.call)?;
+        mutation["ordinal"] = serde_json::json!(1);
+        let frozen = crate::PushRequest::decode_actions(serde_json::json!({"clientId":"direct","batchSequence":1,"models":request.models,"mutations":[mutation]}).to_string().as_bytes(), schema)?;
         let receipt =
             crate::PushReceipt::decode_actions(wrapper.to_string().as_bytes(), &frozen, schema)?;
         Ok(Self {

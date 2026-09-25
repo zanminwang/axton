@@ -30,6 +30,7 @@ impl<S: ClientStore> Client<S> {
                 name: name.into(),
                 version,
                 args,
+                store: Default::default(),
             },
             models: self.declared_models(),
         })

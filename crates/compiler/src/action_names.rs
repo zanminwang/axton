@@ -111,6 +111,8 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
     }
     for helper in [
         "ActionContext",
+        "ActionOptions",
+        "ActionStore",
         "ActionPort",
         "ActionRejected",
         "Actions",
@@ -168,6 +170,8 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
     }
     for &n in latest.keys() {
         add(format!("Action{n}Handlers"), format!("Action {n} handlers"))?;
+        add(format!("{n}Options"), format!("Action {n} options"))?;
+        add(format!("{n}Store"), format!("Action {n} store selector"))?;
     }
     for action in actions {
         let n = name(action);

@@ -79,6 +79,23 @@ Future<void> useClient(GeneratedClient client) async {
   await client.actions.call.deleteTodo(todo: deleted);
   await client.actions.sendEmail(to: 'team@example.test', subject: 'Todo', body: 'Created');
   final GetTodosOutput todos = await client.actions.call.getTodos();
+  // store selectors ride beside args; results keep their types.
+  final GetTodosOutput unstored =
+      await client.actions.call.getTodos(store: const GetTodosStore.none());
+  await client.actions.getTodos(store: const GetTodosStore.outputs(todos: false));
+  await client.actions.call.ping(store: const PingStore.none());
+  // A business input named store keeps its name; the selector is outputStore.
+  final OpenTodoOutput opened = await client.actions.call.openTodo(
+    store: 'business',
+    outputStore: const OpenTodoStore.outputs(suggestions: false),
+  );
+  final ActionCall<OpenTodoOutput> openCall = await client.actions.openTodo(
+    store: null,
+    outputStore: const OpenTodoStore.all(),
+  );
+  unstored.todos.length;
+  opened.suggestions.length;
+  openCall.status;
   final List<Todo> selected = todos.todos;
   found?.id;
   rows.length;

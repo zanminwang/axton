@@ -19,6 +19,15 @@ export class ActionError extends Error {
 export type ActionStatus = "pending" | "succeeded" | "failed";
 export type ActionOutcome<T> =
   { result: T; error: null } | { result: undefined; error: ActionError };
+/**
+ * Invocation options, kept apart from business args. `store` selects which
+ * explicit Model outputs also update local Models: omitted or `true` stores
+ * all, `false` none, and a map overrides named outputs (unnamed ones stay
+ * true). Results are the same either way.
+ */
+export type ActionOptions<K extends string = string> = {
+  store?: boolean | Partial<Record<K, boolean>>;
+};
 export interface ActionCall<T> {
   readonly status: ActionStatus;
   wait(): Promise<ActionOutcome<T>>;

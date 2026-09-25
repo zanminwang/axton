@@ -75,3 +75,16 @@ const oldStateListArchived: StateListV1HandlerOutput = { states: ['archived'] };
 // @ts-expect-error retained v1 enum-list rejects a scalar
 const oldStateListScalar: StateListV1HandlerOutput = { states: 'open' };
 void [oldStateListArchived, oldStateListScalar];
+
+// @ts-expect-error store maps name explicit Model outputs, not scalar outputs.
+client.actions.call.openTodo({ store: null }, { store: { count: false } });
+// @ts-expect-error store maps reject unknown output names.
+client.actions.openTodo({ store: null }, { store: { missing: false } });
+// @ts-expect-error store map values are booleans.
+client.actions.call.openTodo({ store: null }, { store: { suggestions: 'no' } });
+// @ts-expect-error input-bound outputs are not store keys.
+client.actions.call.addTodo(input, { store: { todo: false } });
+// @ts-expect-error Delete confirmations are not store keys.
+client.actions.call.deleteTodo({ todo: { id: 't' } }, { store: { todo: false } });
+// @ts-expect-error Actions without eligible outputs accept only a boolean store.
+client.actions.call.ping({}, { store: {} });

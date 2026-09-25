@@ -10,7 +10,7 @@ fn generated_actions_bind_to_shared_runtime_and_backend() {
     let model = axton_compiler::typescript(&descriptor);
     let client = axton_compiler::client_typescript(&descriptor, "@axton/client");
     let backend = axton_compiler::backend_typescript(&descriptor, "@axton/server");
-    assert!(model.contains("import type { ActionCall } from './client.ts'"));
+    assert!(model.contains("import type { ActionCall, ActionOptions } from './client.ts'"));
     assert!(client.contains("type ActionOutcome"));
     assert!(client.contains("readonly actions:"));
     assert!(model.contains("invokeAction"));
@@ -993,16 +993,16 @@ fn action_typescript_emits_flattened_operands_for_generated_client() {
     assert!(ts.contains("export interface AddTodoInput"), "{ts}");
     assert!(ts.contains("label: string | null;"), "{ts}");
     assert!(
-        ts.contains("import type { ActionCall } from './client.ts'"),
+        ts.contains("import type { ActionCall, ActionOptions } from './client.ts'"),
         "{ts}"
     );
     assert!(!ts.contains("ActionClientContract"), "{ts}");
     assert!(
-        ts.contains("addTodo: (args:AddTodoInput):Promise<ActionCall<AddTodoOutput>>"),
+        ts.contains("addTodo: (args:AddTodoInput, options?:AddTodoOptions):Promise<ActionCall<AddTodoOutput>> => port.invokeAction('AddTodo',1,encodeAddTodoInput(args),decodeAddTodoOutput,options)"),
         "{ts}"
     );
     assert!(
-        ts.contains("addTodo: (args:AddTodoInput):Promise<AddTodoOutput>"),
+        ts.contains("addTodo: (args:AddTodoInput, options?:AddTodoOptions):Promise<AddTodoOutput> => port.invokeDirectAction('AddTodo',1,encodeAddTodoInput(args),decodeAddTodoOutput,options)"),
         "{ts}"
     );
     assert!(!ts.contains("class GeneratedClient {"), "{ts}");
@@ -1270,4 +1270,59 @@ fn action_only_and_model_only_clients_have_no_legacy_mutate_facade() {
         let backend = axton_compiler::backend_typescript(&v, "@axton/server");
         assert!(!backend.contains("MutationRejected"), "{backend}");
     }
+}
+
+#[test]
+fn action_store_options_name_only_explicit_model_outputs_in_both_languages() {
+    let v = compile("model Todo { id String title String @@id(id) } action AddTodo(todo Todo.create, gone Todo.delete[]) { related Todo? matches Todo[] count Int } action Ping() action Open(store String) { main Todo }").unwrap();
+    let ts = axton_compiler::typescript(&v);
+    // Input-bound, Delete-confirmation and scalar outputs are not keys.
+    assert!(
+        ts.contains("export type AddTodoOptions = ActionOptions<'related'|'matches'>;"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("export type PingOptions = { store?: boolean };"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("export type OpenOptions = ActionOptions<'main'>;"),
+        "{ts}"
+    );
+    let client = axton_compiler::client_typescript(&v, "@axton/client");
+    assert!(client.contains("type ActionOptions"), "{client}");
+    let dart = axton_compiler::dart(&v);
+    assert!(
+        dart.contains("const AddTodoStore.outputs({this.related, this.matches}) : _mode = 2;"),
+        "{dart}"
+    );
+    assert!(
+        dart.contains("const PingStore.none() : _mode = 1;"),
+        "{dart}"
+    );
+    assert!(!dart.contains("PingStore.outputs"), "{dart}");
+    assert!(
+        dart.contains("Future<ActionCall<PingOutput>> ping({PingStore? store})"),
+        "{dart}"
+    );
+    // A business input named store keeps its name; the selector moves aside.
+    assert!(
+        dart.contains("open({required String store, OpenStore? outputStore})"),
+        "{dart}"
+    );
+    assert!(dart.contains("store: outputStore);"), "{dart}");
+    // The option is a call-time choice: no descriptor or history policy.
+    let descriptor = serde_json::to_string(&v).unwrap();
+    assert!(!descriptor.contains("ephemeral"), "{descriptor}");
+    for output in v["actions"][0]["outputs"].as_array().unwrap() {
+        assert!(output.get("store").is_none(), "{output}");
+    }
+}
+
+#[test]
+fn action_store_selector_names_join_generated_identifier_checks() {
+    let error = compile("model PingStore { id String @@id(id) } action Ping()").unwrap_err();
+    assert!(error.contains("PingStore"), "{error}");
+    let error = compile("model PingOptions { id String @@id(id) } action Ping()").unwrap_err();
+    assert!(error.contains("PingOptions"), "{error}");
 }

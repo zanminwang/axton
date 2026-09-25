@@ -45,3 +45,10 @@ final stateListInvalid = StateListHandlerOutput(states: [Status.invalid]);
 
 final oldStateListScalar = StateListV1HandlerOutput(states: StateListV1OutputStatus.open);
 final oldStateListArchived = StateListV1HandlerOutput(states: [StateListV1OutputStatus.archived]);
+
+Future<void> storeMisuse(GeneratedClient client) async {
+  await client.actions.call.ping(store: const PingStore.outputs());
+  await client.actions.call.getTodos(store: const OpenTodoStore.none());
+  await client.actions.call.openTodo(store: null, outputStore: const OpenTodoStore.outputs(count: false));
+  await client.actions.call.getTodos(store: false);
+}

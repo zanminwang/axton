@@ -53,15 +53,35 @@ dynamic _dartActionEncode(dynamic value) {
  if (value is _DartActionRecord) return value.toRecord();
  return value;
 }
+/// Which explicit Model outputs of Clock also update local Models.
+final class ClockStore extends ActionStore {
+ /// Store every eligible output (the default).
+ const ClockStore.all() : _mode = 0;
+ /// Store no output; results are returned unchanged.
+ const ClockStore.none() : _mode = 1;
+ final int _mode;
+ @override
+ Object? toWire() => _mode == 0 ? null : false;
+}
+/// Which explicit Model outputs of Ping also update local Models.
+final class PingStore extends ActionStore {
+ /// Store every eligible output (the default).
+ const PingStore.all() : _mode = 0;
+ /// Store no output; results are returned unchanged.
+ const PingStore.none() : _mode = 1;
+ final int _mode;
+ @override
+ Object? toWire() => _mode == 0 ? null : false;
+}
 class Actions {
  final Client client; Actions(this.client); late final DirectCalls call = DirectCalls(client);
- Future<ActionCall<ClockOutput>> clock({required DateTime at}) => client.invokeAction<ClockOutput>('Clock', 1, {'at': _dartActionEncode(at)}, (value) { final row = (value as Map).cast<String,dynamic>(); return ClockOutput(at: DateTime.parse(row['at'] as String)); });
- Future<ActionCall<PingOutput>> ping() => client.invokeAction<PingOutput>('Ping', 1, {}, (_) {});
+ Future<ActionCall<ClockOutput>> clock({required DateTime at, ClockStore? store}) => client.invokeAction<ClockOutput>('Clock', 1, {'at': _dartActionEncode(at)}, (value) { final row = (value as Map).cast<String,dynamic>(); return ClockOutput(at: DateTime.parse(row['at'] as String)); }, store: store);
+ Future<ActionCall<PingOutput>> ping({PingStore? store}) => client.invokeAction<PingOutput>('Ping', 1, {}, (_) {}, store: store);
 }
 class DirectCalls {
  final Client client; DirectCalls(this.client);
- Future<ClockOutput> clock({required DateTime at}) => client.invokeDirectAction<ClockOutput>('Clock', 1, {'at': _dartActionEncode(at)}, (value) { final row = (value as Map).cast<String,dynamic>(); return ClockOutput(at: DateTime.parse(row['at'] as String)); });
- Future<PingOutput> ping() => client.invokeDirectAction<PingOutput>('Ping', 1, {}, (_) {});
+ Future<ClockOutput> clock({required DateTime at, ClockStore? store}) => client.invokeDirectAction<ClockOutput>('Clock', 1, {'at': _dartActionEncode(at)}, (value) { final row = (value as Map).cast<String,dynamic>(); return ClockOutput(at: DateTime.parse(row['at'] as String)); }, store: store);
+ Future<PingOutput> ping({PingStore? store}) => client.invokeDirectAction<PingOutput>('Ping', 1, {}, (_) {}, store: store);
 }
 class LiveModels { final Client port; LiveModels(this.port);
 

@@ -193,17 +193,47 @@ dynamic _dartActionEncode(dynamic value) {
  if (value is NoteIdentity) return value.toRecord();
  return value;
 }
+/// Which explicit Model outputs of Echo also update local Models.
+final class EchoStore extends ActionStore {
+ /// Store every eligible output (the default).
+ const EchoStore.all() : _mode = 0;
+ /// Store no output; results are returned unchanged.
+ const EchoStore.none() : _mode = 1;
+ final int _mode;
+ @override
+ Object? toWire() => _mode == 0 ? null : false;
+}
+/// Which explicit Model outputs of Ping also update local Models.
+final class PingStore extends ActionStore {
+ /// Store every eligible output (the default).
+ const PingStore.all() : _mode = 0;
+ /// Store no output; results are returned unchanged.
+ const PingStore.none() : _mode = 1;
+ final int _mode;
+ @override
+ Object? toWire() => _mode == 0 ? null : false;
+}
+/// Which explicit Model outputs of Touch also update local Models.
+final class TouchStore extends ActionStore {
+ /// Store every eligible output (the default).
+ const TouchStore.all() : _mode = 0;
+ /// Store no output; results are returned unchanged.
+ const TouchStore.none() : _mode = 1;
+ final int _mode;
+ @override
+ Object? toWire() => _mode == 0 ? null : false;
+}
 class Actions {
  final Client client; Actions(this.client); late final DirectCalls call = DirectCalls(client);
- Future<ActionCall<EchoOutput>> echo({required DateTime at, required List<Mood> moods, required DateTime? maybe}) => client.invokeAction<EchoOutput>('Echo', 1, {'at': _dartActionEncode(at), 'moods': _dartActionEncode(moods), 'maybe': _dartActionEncode(maybe)}, (value) { final row = (value as Map).cast<String,dynamic>(); return EchoOutput(result: DateTime.parse(row['result'] as String), moods: (row['moods'] as List).map((e) => Mood.values.byName(e as String)).toList(), maybe: row['maybe'] == null ? null : DateTime.parse(row['maybe'] as String)); });
- Future<ActionCall<PingOutput>> ping() => client.invokeAction<PingOutput>('Ping', 1, {}, (_) {});
- Future<ActionCall<TouchOutput>> touch({required NoteCreate note, TouchChangedUpdate? changed}) => client.invokeAction<TouchOutput>('Touch', 1, {'note': _dartActionEncode(note), if (changed != null) 'changed': _dartActionEncode(changed)}, (value) { final row = (value as Map).cast<String,dynamic>(); return TouchOutput(note: Note.fromRecord((row['note'] as Map).cast<String,dynamic>()), changed: row['changed'] == null ? null : Note.fromRecord((row['changed'] as Map).cast<String,dynamic>()), stamp: DateTime.parse(row['stamp'] as String)); });
+ Future<ActionCall<EchoOutput>> echo({required DateTime at, required List<Mood> moods, required DateTime? maybe, EchoStore? store}) => client.invokeAction<EchoOutput>('Echo', 1, {'at': _dartActionEncode(at), 'moods': _dartActionEncode(moods), 'maybe': _dartActionEncode(maybe)}, (value) { final row = (value as Map).cast<String,dynamic>(); return EchoOutput(result: DateTime.parse(row['result'] as String), moods: (row['moods'] as List).map((e) => Mood.values.byName(e as String)).toList(), maybe: row['maybe'] == null ? null : DateTime.parse(row['maybe'] as String)); }, store: store);
+ Future<ActionCall<PingOutput>> ping({PingStore? store}) => client.invokeAction<PingOutput>('Ping', 1, {}, (_) {}, store: store);
+ Future<ActionCall<TouchOutput>> touch({required NoteCreate note, TouchChangedUpdate? changed, TouchStore? store}) => client.invokeAction<TouchOutput>('Touch', 1, {'note': _dartActionEncode(note), if (changed != null) 'changed': _dartActionEncode(changed)}, (value) { final row = (value as Map).cast<String,dynamic>(); return TouchOutput(note: Note.fromRecord((row['note'] as Map).cast<String,dynamic>()), changed: row['changed'] == null ? null : Note.fromRecord((row['changed'] as Map).cast<String,dynamic>()), stamp: DateTime.parse(row['stamp'] as String)); }, store: store);
 }
 class DirectCalls {
  final Client client; DirectCalls(this.client);
- Future<EchoOutput> echo({required DateTime at, required List<Mood> moods, required DateTime? maybe}) => client.invokeDirectAction<EchoOutput>('Echo', 1, {'at': _dartActionEncode(at), 'moods': _dartActionEncode(moods), 'maybe': _dartActionEncode(maybe)}, (value) { final row = (value as Map).cast<String,dynamic>(); return EchoOutput(result: DateTime.parse(row['result'] as String), moods: (row['moods'] as List).map((e) => Mood.values.byName(e as String)).toList(), maybe: row['maybe'] == null ? null : DateTime.parse(row['maybe'] as String)); });
- Future<PingOutput> ping() => client.invokeDirectAction<PingOutput>('Ping', 1, {}, (_) {});
- Future<TouchOutput> touch({required NoteCreate note, TouchChangedUpdate? changed}) => client.invokeDirectAction<TouchOutput>('Touch', 1, {'note': _dartActionEncode(note), if (changed != null) 'changed': _dartActionEncode(changed)}, (value) { final row = (value as Map).cast<String,dynamic>(); return TouchOutput(note: Note.fromRecord((row['note'] as Map).cast<String,dynamic>()), changed: row['changed'] == null ? null : Note.fromRecord((row['changed'] as Map).cast<String,dynamic>()), stamp: DateTime.parse(row['stamp'] as String)); });
+ Future<EchoOutput> echo({required DateTime at, required List<Mood> moods, required DateTime? maybe, EchoStore? store}) => client.invokeDirectAction<EchoOutput>('Echo', 1, {'at': _dartActionEncode(at), 'moods': _dartActionEncode(moods), 'maybe': _dartActionEncode(maybe)}, (value) { final row = (value as Map).cast<String,dynamic>(); return EchoOutput(result: DateTime.parse(row['result'] as String), moods: (row['moods'] as List).map((e) => Mood.values.byName(e as String)).toList(), maybe: row['maybe'] == null ? null : DateTime.parse(row['maybe'] as String)); }, store: store);
+ Future<PingOutput> ping({PingStore? store}) => client.invokeDirectAction<PingOutput>('Ping', 1, {}, (_) {}, store: store);
+ Future<TouchOutput> touch({required NoteCreate note, TouchChangedUpdate? changed, TouchStore? store}) => client.invokeDirectAction<TouchOutput>('Touch', 1, {'note': _dartActionEncode(note), if (changed != null) 'changed': _dartActionEncode(changed)}, (value) { final row = (value as Map).cast<String,dynamic>(); return TouchOutput(note: Note.fromRecord((row['note'] as Map).cast<String,dynamic>()), changed: row['changed'] == null ? null : Note.fromRecord((row['changed'] as Map).cast<String,dynamic>()), stamp: DateTime.parse(row['stamp'] as String)); }, store: store);
 }
 class LiveModels { final Client port; LiveModels(this.port);
  late final NoteLiveModel note = NoteLiveModel(port);

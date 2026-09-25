@@ -6,7 +6,6 @@ import {
   type Connection,
   type DirectConnection,
   type ConnectionOptions,
-  type DownlinkLane,
   type ReportDetails,
   type Transport,
 } from "./connection.mts";
@@ -106,7 +105,6 @@ export function createClient<
   createServerConnection: (options: ServerOptions) => ServerConnection,
 ) {
   return class Client {
-    #downlink: DownlinkLane | undefined;
     #syncing: Promise<void> | undefined;
     #tasks: Promise<void> | undefined;
     #connection: Connection | undefined;
@@ -511,7 +509,6 @@ export function createClient<
           () => void connection.wake().catch(options.onError ?? (() => {})),
           (signal) => this.#subscriptions.signal(signal),
         );
-        this.#downlink = streaming;
         this.#subscriptions.attach();
         const channels = () => {
           void streaming.wake().catch(options.onError ?? (() => {}));
@@ -539,10 +536,7 @@ export function createClient<
             this.#events.off("work", wake);
             this.#events.off("channels", channels);
             await Promise.all([streaming.close(), connection.close()]);
-            if (this.#connection === result) {
-              this.#connection = undefined;
-              this.#downlink = undefined;
-            }
+            if (this.#connection === result) this.#connection = undefined;
           },
         };
         this.#connection = result;

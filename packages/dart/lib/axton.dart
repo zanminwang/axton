@@ -11,6 +11,14 @@ export 'src/actions.dart'
         ActionError;
 export 'src/port.dart';
 export 'src/sync_state.dart';
+export 'src/subscriptions.dart'
+    show
+        Subscription,
+        SubscriptionStatus,
+        SubscriptionState,
+        SubscriptionInitialization,
+        SubscriptionConnection,
+        SubscriptionClosedException;
 export 'src/connection.dart'
     show
         RuntimeConnection,

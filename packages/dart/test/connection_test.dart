@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:axton/axton.dart';
+import 'package:axton/src/connection.dart' show DownlinkLane;
 import 'package:axton/src/live.dart' show ServerSession;
 import 'package:test/test.dart';
 
@@ -163,6 +164,36 @@ void main() {
     expect(calls, greaterThanOrEqualTo(2));
     await connection.close();
   });
+  // The downlink lane's own run loop, mirroring the push lane above and the
+  // TypeScript host's `downlink wake arriving during the idle decision cannot
+  // be lost` ([#150](https://github.com/zanminwang/axton/issues/150)).
+  test(
+    'downlink wake arriving during the idle decision cannot be lost',
+    () async {
+      final gate = Completer<void>();
+      var pumps = 0;
+      final events = <String>[];
+      final lane = await DownlinkLane.start(
+        command: (event) async {
+          events.add(event['event'] as String);
+          if (event['event'] != 'next') return const [];
+          if (++pumps == 1) await gate.future;
+          return const [];
+        },
+        network: ServerSession(
+          SyncServer(url: 'http://127.0.0.1:1', token: () => 'secret'),
+        ),
+        wakePush: () {},
+      );
+      await lane.wake();
+      gate.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(pumps, greaterThanOrEqualTo(2), reason: 'the wake was lost');
+      expect(events.take(2), ['start', 'next']);
+      await lane.close();
+      expect(events, contains('stop'));
+    },
+  );
   test('close abandons a transport which never resolves', () async {
     final entered = Completer<void>();
     final never = Completer<String>();

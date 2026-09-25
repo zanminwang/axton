@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'live.dart';
+import 'subscriptions.dart';
 
 typedef Transport = Future<String> Function(String kind, String body);
 typedef DirectCarrier =
@@ -285,8 +286,15 @@ class DownlinkLane implements LaneControls {
   final void Function(Object)? onError;
   final Future<void> Function()? refreshAuth;
   final void Function() _wakePush;
+
+  /// Transport state for the subscription status projection
+  /// ([subscriptions.dart](subscriptions.dart)); the lane decides nothing here.
+  final void Function(DownlinkSignal) _report;
   bool _stopped = false;
   _Session? _session;
+
+  /// Catch-up requests of the open session that have not answered yet.
+  int _outstanding = 0;
 
   /// Every enqueue bumps this and the loop re-checks it before sleeping, so a
   /// wake between the idle decision and the sleep is never lost.
@@ -299,6 +307,7 @@ class DownlinkLane implements LaneControls {
     this.onError,
     this.refreshAuth,
     this._wakePush,
+    this._report,
   );
   static Future<DownlinkLane> start({
     required DownlinkCommand command,
@@ -306,6 +315,7 @@ class DownlinkLane implements LaneControls {
     required void Function() wakePush,
     void Function(Object)? onError,
     Future<void> Function()? refreshAuth,
+    void Function(DownlinkSignal)? report,
   }) async {
     final lane = DownlinkLane._(
       command,
@@ -313,6 +323,7 @@ class DownlinkLane implements LaneControls {
       onError,
       refreshAuth,
       wakePush,
+      report ?? (_) {},
     );
     await lane._enqueue({'event': 'start'});
     unawaited(
@@ -345,6 +356,9 @@ class DownlinkLane implements LaneControls {
   void _abandon(_Session current) {
     current.ended = true;
     if (!current.abort.isCompleted) current.abort.complete();
+    // Signals name their session, so reporting one that is already gone is
+    // harmless and no path that ends a socket can forget it.
+    _report(DownlinkSignal.ended(current.epoch));
   }
 
   /// Hand Rust one event and wake the loop; Rust answers with no actions.
@@ -383,6 +397,8 @@ class DownlinkLane implements LaneControls {
       case 'open':
         final current = _Session(action['epoch'] as int);
         _session = current;
+        _outstanding = 0;
+        _report(DownlinkSignal.opened(current.epoch));
         _network.open(
           action['subscribe'] as String,
           current.abort.future,
@@ -406,20 +422,33 @@ class DownlinkLane implements LaneControls {
         final current = _session;
         if (current == null || current.ended) return;
         final id = action['request'] as int;
+        _report(DownlinkSignal.requests(++_outstanding));
+        void settled() {
+          if (identical(_session, current)) {
+            _report(DownlinkSignal.requests(--_outstanding));
+          }
+        }
+
         unawaited(
           _network
               .pull(action['body'] as String, current.abort.future)
               .then(
-                (text) => _enqueue({
-                  'event': 'response',
-                  'request': id,
-                  'body': text,
-                }),
-                onError: (Object error) => _fail(current, error, {
-                  'event': 'failed',
-                  'request': id,
-                  'reason': error.toString(),
-                }),
+                (text) {
+                  settled();
+                  return _enqueue({
+                    'event': 'response',
+                    'request': id,
+                    'body': text,
+                  });
+                },
+                onError: (Object error) {
+                  settled();
+                  return _fail(current, error, {
+                    'event': 'failed',
+                    'request': id,
+                    'reason': error.toString(),
+                  });
+                },
               ),
         );
       case 'close':
@@ -435,8 +464,19 @@ class DownlinkLane implements LaneControls {
         for (final report in action['reports'] as List<dynamic>) {
           onError?.call(AxtonReport.fromJson(report as Map<String, dynamic>));
         }
-      // `changed` carries the Scopes a commit moved; #150 Task 3 turns it into
-      // a status update. `wait` is the loop's own sleep.
+      // The Scopes a commit moved and the set the handshake covered: the
+      // subscription status projection reads both. `wait` is the loop's own
+      // sleep.
+      case 'changed':
+        _report(
+          DownlinkSignal.changed((action['scopes'] as List).cast<String>()),
+        );
+      case 'acknowledged':
+        _report(
+          DownlinkSignal.acknowledged(
+            (action['scopes'] as List).cast<String>(),
+          ),
+        );
     }
   }
 
@@ -495,12 +535,14 @@ class DownlinkLane implements LaneControls {
   Future<void> pause() async {
     if (_stopped) return;
     cancel();
+    _report(const DownlinkSignal.paused());
     await _enqueue({'event': 'pause'});
   }
 
   @override
   Future<void> resume() async {
     if (_stopped) return;
+    _report(const DownlinkSignal.resumed());
     await _enqueue({'event': 'resume'});
   }
 
@@ -516,6 +558,7 @@ class DownlinkLane implements LaneControls {
     _stopped = true;
     cancel();
     _session = null;
+    _report(const DownlinkSignal.stopped());
     await _enqueue({'event': 'stop'});
     _notify();
   }

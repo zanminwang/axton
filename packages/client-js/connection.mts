@@ -256,10 +256,8 @@ export type SocketEvents = {
   /** The socket ended on its own; not called for a socket the signal aborted. */
   closed(error: unknown): void;
 };
-export type DownlinkLane = Connection & {
-  /** Abandon the current session's socket and request now; Rust learns of it on the next pump. */
-  cancel(): void;
-};
+/** The lane offers the ordinary controls only: no caller abandons its socket, the worker decides that. */
+export type DownlinkLane = Connection;
 type Session = { epoch: number; abort: AbortController; ended: boolean };
 /**
  * Host loop of the downlink lane. Rust owns delivery: which channels, when to
@@ -461,9 +459,6 @@ export async function startDownlinkLane(
     if (!stopped) options.onError?.(error);
   });
   return {
-    cancel() {
-      if (session) abandon(session);
-    },
     async pause() {
       if (stopped) return;
       if (session) abandon(session);

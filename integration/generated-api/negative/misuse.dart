@@ -1,6 +1,7 @@
 // Generated Dart API misuse that must NOT analyze. verify.sh runs `dart analyze`
 // on this directory alone and requires every error below to be reported; the
-// TypeScript twin is the `@ts-expect-error` block in ../test.ts.
+// TypeScript twin is the `@ts-expect-error` file beside it, misuse.ts, with the
+// older negatives still in ../test.ts.
 // ignore_for_file: unused_local_variable
 import '../generated.dart';
 

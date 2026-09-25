@@ -630,6 +630,14 @@ fn rejects_model_and_enum_names_the_generated_client_uses() {
         "ActionContext",
         "ActionRejected",
         "Transaction",
+        // The Scope facade and the handle types it re-exports
+        // ([#150](https://github.com/zanminwang/axton/issues/150)).
+        "Scopes",
+        "Subscription",
+        "SubscriptionStatus",
+        "SubscriptionInitialization",
+        "SubscriptionConnection",
+        "SubscriptionClosedException",
     ] {
         let e = compile(&format!("model {name} {{ id UUID @@id(id) }}")).unwrap_err();
         assert!(e.contains("generated client"), "{name}: {e}");
@@ -639,7 +647,14 @@ fn rejects_model_and_enum_names_the_generated_client_uses() {
         .unwrap_err();
         assert!(e.contains("generated client"), "enum {name}: {e}");
     }
-    for name in ["Status", "SyncStates", "Rejections", "Order"] {
+    for name in [
+        "Status",
+        "SyncStates",
+        "Rejections",
+        "Order",
+        "Scope",
+        "Subscriptions",
+    ] {
         assert!(
             compile(&format!("model {name} {{ id UUID @@id(id) }}")).is_ok(),
             "{name} should stay valid"

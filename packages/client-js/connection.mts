@@ -1,3 +1,4 @@
+import type { DownlinkSignal } from "./subscriptions.mts";
 export type Transport = (
   kind: string,
   body: string,
@@ -195,6 +196,7 @@ export type DownlinkAction =
   | { type: "wake"; lane: "push" }
   | { type: "report"; reports: ReportDetails[] }
   | { type: "changed"; scopes: string[] }
+  | { type: "acknowledged"; scopes: string[] }
   | { type: "wait"; millis: number };
 /** Why one record or one queued mutation could not be applied as delivered. */
 export type ReportKind = "readFailed" | "skipped" | "conflict" | "diverged";
@@ -272,9 +274,13 @@ export async function startDownlinkLane(
   network: DownlinkNetwork,
   options: ConnectionOptions,
   wakePush: () => void,
+  /** Transport state for the subscription status projection ([subscriptions.mts](subscriptions.mts)); it makes no decision here. */
+  report: (signal: DownlinkSignal) => void = () => {},
 ): Promise<DownlinkLane> {
   let stopped = false;
   let session: Session | undefined;
+  /** Catch-up requests of the open session that have not answered yet. */
+  let outstanding = 0;
   // Every enqueue bumps this and the loop re-checks it before sleeping, so a
   // wake between the idle decision and the sleep is never lost.
   let generation = 0;
@@ -300,6 +306,9 @@ export async function startDownlinkLane(
   const abandon = (current: Session) => {
     current.ended = true;
     current.abort.abort();
+    // Signals name their session, so reporting one that is already gone is
+    // harmless and no path that ends a socket can forget it.
+    report({ lane: "ended", epoch: current.epoch });
   };
   /** Hand Rust one event and wake the loop; Rust answers with no actions. */
   const enqueue = async (event: Record<string, unknown>): Promise<void> => {
@@ -339,6 +348,8 @@ export async function startDownlinkLane(
           ended: false,
         };
         session = current;
+        outstanding = 0;
+        report({ lane: "opened", epoch: current.epoch });
         network.open(action.subscribe, current.abort.signal, {
           message: (text) =>
             enqueue({ event: "message", epoch: current.epoch, body: text }),
@@ -354,19 +365,28 @@ export async function startDownlinkLane(
       case "request": {
         const current = session;
         if (!current || current.ended) return;
+        report({ lane: "requests", outstanding: ++outstanding });
+        const settled = () => {
+          if (session === current)
+            report({ lane: "requests", outstanding: --outstanding });
+        };
         network.push("pull", action.body, current.abort.signal).then(
-          (text) =>
-            enqueue({
+          (text) => {
+            settled();
+            return enqueue({
               event: "response",
               request: action.request,
               body: text,
-            }),
-          (error) =>
-            fail(current, error, {
+            });
+          },
+          (error) => {
+            settled();
+            return fail(current, error, {
               event: "failed",
               request: action.request,
               reason: String((error as { message?: string })?.message ?? error),
-            }),
+            });
+          },
         );
         return;
       }
@@ -385,8 +405,11 @@ export async function startDownlinkLane(
         for (const report of action.reports)
           options.onError?.(new AxtonReport(report));
         return;
-      // The Scopes a commit moved; #150 Task 3 turns this into a status update.
+      // The Scopes a commit moved and the set the handshake covered: the
+      // subscription status projection reads both.
       case "changed":
+      case "acknowledged":
+        report({ lane: action.type, scopes: action.scopes });
         return;
       // The loop sleeps for it; nothing to execute.
       case "wait":
@@ -444,10 +467,12 @@ export async function startDownlinkLane(
     async pause() {
       if (stopped) return;
       if (session) abandon(session);
+      report({ lane: "paused" });
       await enqueue({ event: "pause" });
     },
     async resume() {
       if (stopped) return;
+      report({ lane: "resumed" });
       await enqueue({ event: "resume" });
     },
     async wake() {
@@ -459,6 +484,7 @@ export async function startDownlinkLane(
       stopped = true;
       if (session) abandon(session);
       session = undefined;
+      report({ lane: "stopped" });
       await enqueue({ event: "stop" });
       notify();
     },

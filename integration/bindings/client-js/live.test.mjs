@@ -87,10 +87,17 @@ async function until(predicate) {
  throw Error('condition timed out');
 }
 
+// A subscription initializes at the head its first handshake acknowledges, so
+// every catch-up here is established the way a client meets one: the server
+// publishes while the socket is closed, and the next handshake is above the
+// cursor the last one committed.
 test('client replaces subscriptions from saved cursors and guards queued obsolete pages', async()=>{
  const fixture=await openClient(); const {client}=fixture; const errors=[];
- const pulls=[];let recovered=false;const heads={scope:0};
- const http=createServer(async(req,res)=>{const chunks=[];for await(const c of req)chunks.push(c);const body=JSON.parse(Buffer.concat(chunks));pulls.push(body);res.end(JSON.stringify(recovered?{cursors:{scope:{from:body.cursors.scope,to:11,head:11}},changes:[page('recovered',10).changes[0]]}:emptyPage(body,heads)));});
+ const pulls=[];let answer='empty';const heads={scope:0};
+ const http=createServer(async(req,res)=>{const chunks=[];for await(const c of req)chunks.push(c);const body=JSON.parse(Buffer.concat(chunks));pulls.push(body);
+  if(answer==='published')res.end(JSON.stringify({cursors:{scope:{from:body.cursors.scope,to:3,head:3}},changes:[{model:'Entry',identity:{id:'live'},stamp:4,state:{text:'published while offline',note:null}}]}));
+  else if(answer==='recovered')res.end(JSON.stringify({cursors:{scope:{from:body.cursors.scope,to:11,head:11}},changes:[page('recovered',10).changes[0]]}));
+  else res.end(JSON.stringify(emptyPage(body,heads)));});
  await new Promise(r=>http.listen(0,'127.0.0.1',r));
  const server=new WebSocketServer({server:http});
  const sockets=[]; const handshakes=[];
@@ -98,6 +105,7 @@ test('client replaces subscriptions from saved cursors and guards queued obsolet
  try {
   const connection=await client.connect({url:`http://127.0.0.1:${http.address().port}`,token:'secret'},{onError:e=>errors.push(e)});
   await client.subscribe('scope'); await until(()=>handshakes.length===1);
+  await until(async()=>(await client.syncState()).cursors.scope===0,'the acknowledged head is the first boundary');
   heads.scope=1;sockets[0].send(JSON.stringify(page('first')));
   await until(async()=>(await client.read('Entry',{id:'live'}))?.text==='first');
   assert.equal(pulls.length,0,'at the head: the acknowledgement starts no catch-up');
@@ -108,16 +116,27 @@ test('client replaces subscriptions from saved cursors and guards queued obsolet
   gate.resolve();await tx;await removed;await restored;
   await until(()=>handshakes.length>=2);
   assert.equal((await client.read('Entry',{id:'live'})).text,'first','unsubscribing retains the downloaded record; the queued obsolete page is dropped, not applied');
-  // The resubscribed channel is behind the head it is told: one pull from 0.
-  await until(()=>pulls.length>=1);assert.deepEqual(pulls.at(-1).cursors,{scope:0});await until(async()=>(await client.syncState()).cursors.scope===1);
+  // The recreated subscription starts at the head its own handshake acknowledged.
+  await until(async()=>(await client.syncState()).cursors.scope===1);
+  await new Promise(r=>setTimeout(r,50));assert.equal(pulls.length,0,'a recreated subscription loads no history');
   // The record is retained at stamp 1: the fresh page needs a newer stamp to replace it.
   heads.scope=2;sockets.at(-1).send(JSON.stringify(page('fresh',1,3)));
   await until(async()=>(await client.read('Entry',{id:'live'}))?.text==='fresh');
   await connection.pause();await until(()=>server.clients.size===0);
   await connection.resume();await until(()=>handshakes.length>=3);
-  await new Promise(r=>setTimeout(r,50));assert.equal(pulls.length,1,'heads equal to the cursors: no catch-up on reconnect');
+  await new Promise(r=>setTimeout(r,50));assert.equal(pulls.length,0,'heads equal to the cursors: no catch-up on reconnect');
+  // The server publishes while the socket is closed: the next handshake
+  // acknowledges 3 over the saved cursor 2, and the gap is fetched from the
+  // cursor, not replaced by the head.
+  await connection.pause();await until(()=>server.clients.size===0);
+  heads.scope=3;answer='published';
+  await connection.resume();await until(()=>pulls.length===1);
+  assert.deepEqual(pulls[0].cursors,{scope:2},'the catch-up starts at the saved cursor');
+  await until(async()=>(await client.read('Entry',{id:'live'}))?.text==='published while offline');
+  await until(async()=>(await client.syncState()).cursors.scope===3);
   assert.equal(errors.length,0);
-  recovered=true;sockets.at(-1).send(JSON.stringify(page('gap',10)));await until(async()=>(await client.read('Entry',{id:'live'}))?.text==='recovered');assert.equal(errors.length,0);
+  answer='recovered';sockets.at(-1).send(JSON.stringify(page('gap',10)));await until(async()=>(await client.read('Entry',{id:'live'}))?.text==='recovered');
+  assert.deepEqual(pulls.at(-1).cursors,{scope:3},'a stream gap is repaired from the durable cursor');assert.equal(errors.length,0);
   await connection.close();await until(()=>server.clients.size===0);
  } finally { await fixture.close(); for(const s of server.clients)s.terminate();await new Promise(r=>server.close(r));await new Promise(r=>http.close(r)); }
 });
@@ -168,14 +187,22 @@ test('unified connection acknowledges listeners then catches up through HTTP bef
   pulls++;events.push(`pull:${body.cursors.scope}`);
   res.setHeader('content-type','application/json');res.end(JSON.stringify(page('caught up')));
  });
- const ws=new WebSocketServer({server});let socket;
- ws.on('connection',s=>{socket=s;s.on('message',m=>{events.push('ack');s.send(ack(JSON.parse(m),{scope:1}));});});
+ const ws=new WebSocketServer({server});let socket;const heads={scope:0};
+ ws.on('connection',s=>{socket=s;s.on('message',m=>{events.push('ack');s.send(ack(JSON.parse(m),heads));});});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
  try {
   await fixture.client.subscribe('scope');
   const options={url:`http://127.0.0.1:${server.address().port}`,token:'secret'};
   const connection=await fixture.client.connect(options);
   await until(()=>events.includes('ack'));
+  await until(async()=>(await fixture.client.syncState()).cursors.scope===0,'the first boundary');
+  assert.equal(pulls,0,'the acknowledged head is the origin: no history is fetched');
+  // The server publishes while the socket is closed; the next handshake
+  // acknowledges a head above the committed cursor.
+  await connection.pause();await until(()=>ws.clients.size===0);
+  heads.scope=1;
+  await connection.resume();
+  await until(()=>events.filter(e=>e==='ack').length===2);
   await new Promise(r=>setTimeout(r,100));
   assert.equal(pulls,1,'a head beyond the cursor in the acknowledgement starts one HTTP catch-up');
   await until(async()=>(await fixture.client.read('Entry',{id:'live'}))?.text==='caught up');
@@ -198,37 +225,61 @@ async function syncFixture(onPull, heads={}) {
  return {requests,sockets,heads,config:{url:`http://127.0.0.1:${server.address().port}`,token:'secret'},async close(){for(const s of ws.clients)s.terminate();await new Promise(r=>ws.close(r));await new Promise(r=>server.close(r));}};
 }
 test('late HTTP catch-up after unsubscribe and resubscribe cannot resurrect the obsolete generation',async()=>{
- const fixture=await openClient();const network=await syncFixture((b,res,n)=>res.end(JSON.stringify(page(n===1?'obsolete':'fresh'))),{scope:1});
+ const fixture=await openClient();const network=await syncFixture((b,res)=>res.end(JSON.stringify(page('obsolete'))),{scope:0});
  const original=globalThis.fetch;const entered=Promise.withResolvers(),gate=Promise.withResolvers();let first=true;
  globalThis.fetch=async(...args)=>{const response=await original(...args);if(first){first=false;entered.resolve();await gate.promise;}return response;};
  try {
-  await fixture.client.subscribe('scope');await fixture.client.connect(network.config);
+  await fixture.client.subscribe('scope');const connection=await fixture.client.connect(network.config);
+  // The first session initializes at head 0; the server then publishes while
+  // the socket is closed, so the next one starts the catch-up this test holds.
+  await until(async()=>(await fixture.client.syncState()).cursors.scope===0,'the first boundary');
+  await connection.pause();await until(()=>network.sockets.every(s=>s.readyState===s.CLOSED));
+  network.heads.scope=1;await connection.resume();
   await timeout(entered.promise);await fixture.client.unsubscribe('scope');await fixture.client.subscribe('scope');
+  // The recreated subscription initializes at the head of its own handshake
+  // and the stream is the truth from there.
+  await until(()=>network.sockets.length>=3);
+  network.sockets.at(-1).send(JSON.stringify(page('fresh',1,3)));
   await until(async()=>(await fixture.client.read('Entry',{id:'live'}))?.text==='fresh');
   gate.resolve();await new Promise(r=>setTimeout(r,30));assert.equal((await fixture.client.read('Entry',{id:'live'})).text,'fresh');
+  assert.equal((await fixture.client.syncState()).cursors.scope,2,'the obsolete answer moved no cursor');
  }finally{gate.resolve();globalThis.fetch=original;await fixture.close();await network.close();}
 });
 
 test('pause cancels held catch-up and a late HTTP token cannot start a request',async()=>{
- const fixture=await openClient();const network=await syncFixture((b,res)=>res.end(JSON.stringify(emptyPage(b,{scope:1}))),{scope:1});
+ const fixture=await openClient();const network=await syncFixture((b,res)=>res.end(JSON.stringify(emptyPage(b,{scope:1}))),{scope:0});
  const called=Promise.withResolvers(),token=Promise.withResolvers();let calls=0;
+ // The third token is the one the held catch-up needs: the first two open the
+ // socket of the session that initializes at head 0 and of the one that finds
+ // the head above it.
  try{
-  await fixture.client.subscribe('scope');const connection=await fixture.client.connect({...network.config,token:()=>++calls===1?'secret':(called.resolve(),token.promise)});
+  await fixture.client.subscribe('scope');const connection=await fixture.client.connect({...network.config,token:()=>++calls===3?(called.resolve(),token.promise):'secret'});
+  await until(async()=>(await fixture.client.syncState()).cursors.scope===0,'the first boundary');
+  await timeout(connection.pause());await until(()=>network.sockets.every(s=>s.readyState===s.CLOSED));
+  network.heads.scope=1;await timeout(connection.resume());
   await timeout(called.promise);await timeout(connection.pause());token.resolve('late');await new Promise(r=>setTimeout(r,30));
-  assert.equal(network.requests.length,0);assert.equal((await fixture.client.syncState()).cursors.scope??0,0);
+  assert.equal(network.requests.length,0,'a token that arrives after the pause cannot start the request');
+  assert.equal((await fixture.client.syncState()).cursors.scope,0,'the held catch-up moved nothing');
   await connection.resume();await until(()=>network.requests.length===1);
+  assert.deepEqual(network.requests[0].body.cursors,{scope:0},'the catch-up still starts at the committed cursor');
  }finally{token.resolve('late');await fixture.close();await network.close();}
 });
 
 test('one incoming page path covers duplicates, applies overlap directly and recovers genuine gaps',async()=>{
  const fixture=await openClient();let head=1;
- const network=await syncFixture((b,res)=>res.end(JSON.stringify({cursors:{scope:{from:b.cursors.scope,to:head,head}},changes:[page(`HTTP ${head}`,head-1).changes[0]]})),{scope:1});
+ // This scenario is about the stream: the handshake acknowledges head 0, and
+ // every page below arrives on the socket.
+ const network=await syncFixture((b,res)=>res.end(JSON.stringify({cursors:{scope:{from:b.cursors.scope,to:head,head}},changes:[page(`HTTP ${head}`,head-1).changes[0]]})),{scope:0});
  try{
   await fixture.client.subscribe('scope');await fixture.client.connect(network.config);
+  await until(async()=>(await fixture.client.syncState()).cursors.scope===0);
+  network.sockets[0].send(JSON.stringify(page('first')));
   await until(async()=>(await fixture.client.syncState()).cursors.scope===1);
-  network.sockets[0].send(JSON.stringify(page('duplicate')));await new Promise(r=>setTimeout(r,20));assert.equal(network.requests.length,1);
+  network.sockets[0].send(JSON.stringify(page('duplicate')));await new Promise(r=>setTimeout(r,20));
+  assert.equal(network.requests.length,0,'a page the cursor already covers needs no HTTP pull');
+  assert.equal((await fixture.client.read('Entry',{id:'live'})).text,'first','the duplicate did not apply');
   head=2;network.sockets[0].send(JSON.stringify({cursors:{scope:{from:0,to:2,head:2}},changes:[page('overlap',1).changes[0]]}));
-  await until(async()=>(await fixture.client.syncState()).cursors.scope===2);assert.equal(network.requests.length,1,'overlap must not issue another HTTP pull');assert.equal((await fixture.client.read('Entry',{id:'live'})).text,'overlap');
+  await until(async()=>(await fixture.client.syncState()).cursors.scope===2);assert.equal(network.requests.length,0,'overlap must not issue an HTTP pull');assert.equal((await fixture.client.read('Entry',{id:'live'})).text,'overlap');
   head=4;network.sockets[0].send(JSON.stringify(page('gap',3)));
   await until(async()=>(await fixture.client.syncState()).cursors.scope===4);assert.deepEqual(network.requests.at(-1).body.cursors,{scope:2});assert.equal((await fixture.client.read('Entry',{id:'live'})).text,'HTTP 4');
  }finally{await fixture.close();await network.close();}
@@ -236,18 +287,24 @@ test('one incoming page path covers duplicates, applies overlap directly and rec
 
 test('HTTP catch-up failures surface and retry without treating the failure as an empty page',async()=>{
  const fixture=await openClient();const errors=[];
- const network=await syncFixture((b,res,n)=>{if(n===1){res.statusCode=503;res.end('unavailable');}else res.end(JSON.stringify(page('retried')));},{scope:1});
+ const network=await syncFixture((b,res,n)=>{if(n===1){res.statusCode=503;res.end('unavailable');}else res.end(JSON.stringify(page('retried')));},{scope:0});
  try{
-  await fixture.client.subscribe('scope');await fixture.client.connect(network.config,{onError:e=>errors.push(e)});
+  await fixture.client.subscribe('scope');const connection=await fixture.client.connect(network.config,{onError:e=>errors.push(e)});
+  await until(async()=>(await fixture.client.syncState()).cursors.scope===0,'the first boundary');
+  // Published while the socket was closed: the next handshake starts a catch-up.
+  await connection.pause();await until(()=>network.sockets.every(s=>s.readyState===s.CLOSED));
+  network.heads.scope=1;await connection.resume();
   await until(async()=>(await fixture.client.read('Entry',{id:'live'}))?.text==='retried');
-  assert.equal(errors.length,1);assert.equal(errors[0].status,503);assert.deepEqual(network.requests[1].body.cursors,{scope:0});
+  assert.equal(errors.filter(e=>e.status===503).length,1);assert.deepEqual(network.requests[1].body.cursors,{scope:0},'the retry asks from the cursor, not from an assumed empty page');
  }finally{await fixture.close();await network.close();}
 });
 
 test('a reusable server config isolates cancellation and no-channel clients only push',async()=>{
- const a=await openClient(),b=await openClient();const network=await syncFixture((body,res)=>res.end(JSON.stringify(page('shared'))),{scope:1});
+ const a=await openClient(),b=await openClient();const network=await syncFixture((body,res)=>res.end(JSON.stringify(emptyPage(body))),{scope:0});
  try{
   const ca=await a.client.connect(network.config);await b.client.subscribe('scope');const cb=await b.client.connect(network.config);
+  await until(()=>network.sockets.length===1,'only the client with a Scope opens a socket');
+  network.sockets[0].send(JSON.stringify(page('shared')));
   await until(async()=>(await b.client.read('Entry',{id:'live'}))?.text==='shared');assert.equal(network.sockets.length,1);
   await a.client.mutate({name:'Create',operations:[{model:'Entry',op:'create',identity:{id:'local'},values:{text:'  push without channels  ',note:null}}]});
   await until(async()=>(await a.client.syncState()).pending===0);assert.equal(network.requests.filter(r=>r.url==='/sync/mutations').length,1);assert.equal(network.sockets.length,1);
@@ -263,28 +320,42 @@ test('removed public modes fail clearly instead of silently opening local-only',
  const fixture=await openClient();try{await assert.rejects(fixture.client.connect(async()=>''),/requires server/);}finally{await fixture.close();}
 });
 
-test('subscription invalidation cancels pending authentication before the exclusive queue drains',async()=>{
+// The SDK no longer cancels the socket before it writes: an unsubscribe is a
+// local commit, and the Downlink worker decides what the committed membership
+// means for the session it holds ([#150](https://github.com/zanminwang/axton/issues/150)).
+test('an unsubscribe waiting on SQLite leaves the socket alone; the committed change ends it',async()=>{
  const fixture=await openClient();const network=await syncFixture((b,res)=>res.end(JSON.stringify(emptyPage(b))));
  const token=Promise.withResolvers(),called=Promise.withResolvers(),gate=Promise.withResolvers(),entered=Promise.withResolvers();
  try{
   await fixture.client.subscribe('scope');await fixture.client.connect({...network.config,token:()=>{called.resolve();return token.promise;}});
   await timeout(called.promise);
   const transaction=fixture.client.transaction(async()=>{entered.resolve();await gate.promise;});await entered.promise;
-  const unsubscribe=fixture.client.unsubscribe('scope');token.resolve('late');await new Promise(r=>setTimeout(r,30));
-  assert.equal(network.sockets.length,0,'invalidated authentication must not open a socket while unsubscribe awaits SQLite');
+  const unsubscribe=fixture.client.unsubscribe('scope');token.resolve('secret');
+  await until(()=>network.sockets.length===1,'the pending authentication still opens its socket');
   gate.resolve();await transaction;await unsubscribe;
- }finally{gate.resolve();token.resolve('late');await fixture.close();await network.close();}
+  await until(()=>network.sockets.every(s=>s.readyState===s.CLOSED),'the committed change ends the session');
+  await new Promise(r=>setTimeout(r,50));
+  assert.equal(network.sockets.length,1,'with no Scope left the lane opens nothing');
+  assert.deepEqual((await fixture.client.syncState()).channels,[]);
+ }finally{gate.resolve();token.resolve('secret');await fixture.close();await network.close();}
 });
 
 test('bounded receive overflow preserves in-flight HTTP progress and recovers the latest head',async()=>{
  const fixture=await openClient();let head=1;const entered=Promise.withResolvers(),gate=Promise.withResolvers();
- const network=await syncFixture(async(b,res,n)=>{const response={cursors:{scope:{from:b.cursors.scope,to:head,head}},changes:[page(`head ${head}`,head-1).changes[0]]};if(n===1){entered.resolve();await gate.promise;}res.end(JSON.stringify(response));},{scope:1});
+ const network=await syncFixture(async(b,res,n)=>{const response={cursors:{scope:{from:b.cursors.scope,to:head,head}},changes:[page(`head ${head}`,head-1).changes[0]]};if(n===1){entered.resolve();await gate.promise;}res.end(JSON.stringify(response));},{scope:0});
  try{
-  await fixture.client.subscribe('scope');await fixture.client.connect(network.config);await timeout(entered.promise);
-  const socket=network.sockets[0];socket._socket.cork();for(let cursor=1;cursor<=200;cursor++)socket.send(JSON.stringify(page(`live ${cursor}`,cursor)));socket._socket.uncork();
+  await fixture.client.subscribe('scope');const connection=await fixture.client.connect(network.config);
+  await until(async()=>(await fixture.client.syncState()).cursors.scope===0,'the first boundary');
+  // The catch-up this test holds belongs to the session that finds head 1 over
+  // the cursor the first one committed.
+  await connection.pause();await until(()=>network.sockets.every(s=>s.readyState===s.CLOSED));
+  network.heads.scope=1;await connection.resume();
+  await timeout(entered.promise);
+  const opened=network.sockets.length;
+  const socket=network.sockets.at(-1);socket._socket.cork();for(let cursor=1;cursor<=200;cursor++)socket.send(JSON.stringify(page(`live ${cursor}`,cursor)));socket._socket.uncork();
   head=201;gate.resolve();await until(async()=>(await fixture.client.syncState()).cursors.scope===201);
-  assert.equal(network.sockets.length,1,'overflow must not restart and starve HTTP catch-up');
-  assert.ok(network.requests.length<=4,'bounded queue coalesces recovery work');
+  assert.equal(network.sockets.length,opened,'overflow must not restart and starve HTTP catch-up');
+  assert.ok(network.requests.length<=4,`bounded queue coalesces recovery work: ${network.requests.length}`);
  }finally{gate.resolve();await fixture.close();await network.close();}
 });
 
@@ -296,14 +367,15 @@ test('push completes from its receipt while the WebSocket upgrade is refused; HT
   // The catch-up page carries a stamp newer than the receipt's, so it is authority that updates the row.
   pulls++;const caught=page('from catch-up',body.cursors.scope);res.end(JSON.stringify({...caught,changes:[{...caught.changes[0],stamp:stamps.next+1}]}));});
  const ws=new WebSocketServer({noServer:true});
- server.on('upgrade',(req,socket,head)=>{upgradeAttempts++;if(!allowUpgrades){socket.end('HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n');return;}ws.handleUpgrade(req,socket,head,s=>{s.on('message',m=>s.send(ack(JSON.parse(m),{scope:1})));});});
+ const heads={scope:0};let acks=0;
+ server.on('upgrade',(req,socket,head)=>{upgradeAttempts++;if(!allowUpgrades){socket.end('HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n');return;}ws.handleUpgrade(req,socket,head,s=>{s.on('message',m=>{acks++;s.send(ack(JSON.parse(m),heads));});});});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
  try{
   await client.transaction(tx=>tx.direct({model:'Entry',op:'create',identity:{id:'live'},values:{text:'local'}}));
   await client.subscribe('scope');
   await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'live'},values:{text:'  edited offline  '}}]});
   assert.equal((await client.read('Entry',{id:'live'})).text,'  edited offline  ','the local prediction is visible before the push');
-  await client.connect({url:`http://127.0.0.1:${server.address().port}`,token:'secret'},{onError:e=>errors.push(e)});
+  const connection=await client.connect({url:`http://127.0.0.1:${server.address().port}`,token:'secret'},{onError:e=>errors.push(e)});
   await until(()=>pushes===1&&upgradeAttempts>=2);
   assert.equal(pulls,0,'no HTTP catch-up runs without an acknowledged WebSocket: there is no polling fallback');
   await until(async()=>(await client.syncState()).pending===0);
@@ -311,6 +383,13 @@ test('push completes from its receipt while the WebSocket upgrade is refused; HT
   assert.equal((await client.read('Entry',{id:'live'})).text,'edited offline','the row shows the server-returned state as soon as the response is applied');
   assert.ok(errors.some(e=>/live failed: 503/.test(String(e.message))),`upgrade refusals reach onError: ${errors.map(e=>e.message)}`);
   allowUpgrades=true;
+  await until(()=>acks===1,'the upgrade is acknowledged once it is allowed');
+  await until(async()=>(await client.syncState()).cursors.scope===0,'the first boundary is the acknowledged head');
+  assert.equal(pulls,0,'an acknowledged session at its head still pulls no history');
+  // The server publishes while the socket is closed: only then is there a gap
+  // for HTTP to fetch.
+  await connection.pause();await until(()=>ws.clients.size===0);
+  heads.scope=1;await connection.resume();
   await until(async()=>(await client.read('Entry',{id:'live'})).text==='from catch-up');
   assert.equal(pushes,1,'the receipt was not re-requested');
   assert.ok(pulls>=1,'catch-up ran over HTTP once the upgrade was acknowledged');

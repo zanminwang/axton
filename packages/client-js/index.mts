@@ -18,6 +18,11 @@ export {
 } from "./connection.mts";
 export type { ServerOptions } from "./live.mts";
 export type {
+  Subscription,
+  SubscriptionState,
+  SubscriptionStatus,
+} from "./runtime.mts";
+export type {
   ClientSyncState,
   ModelSyncState,
   PendingMutation,

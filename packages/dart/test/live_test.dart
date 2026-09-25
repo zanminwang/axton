@@ -848,7 +848,7 @@ void main() {
         sync: (_) async {},
         transport: (_, __) async => '',
       );
-      parent.attachLive(child, () {
+      parent.attachDownlink(child, () {
         live.cancelPush();
         if (!next.isCompleted) next.complete();
       });

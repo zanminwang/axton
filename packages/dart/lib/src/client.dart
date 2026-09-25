@@ -70,7 +70,7 @@ class Client implements WritePort, MutatePort {
   final int _handle;
   final String clientId;
   Future<void> _tail = Future<void>.value();
-  LiveLane? _live;
+  DownlinkLane? _downlink;
   final _channels = StreamController<void>.broadcast(sync: true);
   Future<void>? _syncing;
   Future<void>? _tasks;
@@ -470,7 +470,7 @@ class Client implements WritePort, MutatePort {
   /// The live session is abandoned at once; once the change commits, Rust
   /// starts one for the new channel set.
   Future<void> _setChannel(String channel, bool subscribed) {
-    _live?.cancel();
+    _downlink?.cancel();
     return _exclusive(() async {
       try {
         await _send({
@@ -523,11 +523,11 @@ class Client implements WritePort, MutatePort {
         refreshAuth: refreshAuth == null ? null : refresh,
         directTimeout: directTimeout,
       );
-      final streaming = await LiveLane.start(
+      final streaming = await DownlinkLane.start(
         command: (event) => _exclusive(
           () async =>
               (await _send({
-                    'op': 'live',
+                    'op': 'downlink',
                     ...event,
                     'now': DateTime.now().millisecondsSinceEpoch,
                     'entropy': Random().nextInt(0x100000000),
@@ -543,7 +543,7 @@ class Client implements WritePort, MutatePort {
         onError: onError,
         refreshAuth: refreshAuth == null ? null : refresh,
       );
-      _live = streaming;
+      _downlink = streaming;
       final channelSubscription = _channels.stream.listen((_) {
         unawaited(
           streaming.wake().catchError((Object error) {
@@ -551,7 +551,7 @@ class Client implements WritePort, MutatePort {
           }),
         );
       });
-      connection.attachLive(streaming, live.cancelPush);
+      connection.attachDownlink(streaming, live.cancelPush);
       final subscription = _work.stream.listen((_) {
         unawaited(
           connection.wake().catchError((Object error) {
@@ -567,7 +567,7 @@ class Client implements WritePort, MutatePort {
           await channelSubscription.cancel();
           if (identical(_connection, connection)) {
             _connection = null;
-            _live = null;
+            _downlink = null;
             _directOnError = null;
           }
         }),

@@ -187,13 +187,14 @@ export async function startConnection(
   };
 }
 
-/** What Rust asks the live lane's host to do ([`LiveAction`] in the client crate). */
-export type LiveAction =
+/** What Rust asks the downlink lane's host to do ([`DownlinkAction`] in the client crate). */
+export type DownlinkAction =
   | { type: "open"; epoch: number; subscribe: string }
-  | { type: "request"; epoch: number; body: string }
   | { type: "close"; epoch: number; reason: string | null }
+  | { type: "request"; request: number; body: string }
   | { type: "wake"; lane: "push" }
   | { type: "report"; reports: ReportDetails[] }
+  | { type: "changed"; scopes: string[] }
   | { type: "wait"; millis: number };
 /** Why one record or one queued mutation could not be applied as delivered. */
 export type ReportKind = "readFailed" | "skipped" | "conflict" | "diverged";
@@ -238,14 +239,14 @@ export class AxtonReport extends Error {
     this.detail = report.detail;
   }
 }
-export type LiveCommand = (
+export type DownlinkCommand = (
   event: Record<string, unknown>,
-) => Promise<LiveAction[]>;
-export type LiveNetwork = {
+) => Promise<DownlinkAction[]>;
+export type DownlinkNetwork = {
   push: Transport;
   open(subscribe: string, signal: AbortSignal, on: SocketEvents): void;
 };
-/** How the live lane hears from one socket. Frames arrive one at a time, in order. */
+/** How the downlink lane hears from one socket. Frames arrive one at a time, in order. */
 export type SocketEvents = {
   message(text: string): Promise<void>;
   /** The frame buffer overflowed; frames were dropped. */
@@ -253,59 +254,69 @@ export type SocketEvents = {
   /** The socket ended on its own; not called for a socket the signal aborted. */
   closed(error: unknown): void;
 };
-export type LiveLane = Connection & {
-  /** Abandon the current session's socket and request now; Rust learns of it on the next event. */
+export type DownlinkLane = Connection & {
+  /** Abandon the current session's socket and request now; Rust learns of it on the next pump. */
   cancel(): void;
 };
 type Session = { epoch: number; abort: AbortController; ended: boolean };
 /**
- * Host loop of the live lane. Rust owns the session: which channels, when to
- * catch up, what a page means, when to retry. This loop feeds it events and
- * executes its actions with sockets, HTTP, timers and the credential refresh.
+ * Host loop of the downlink lane. Rust owns delivery: which channels, when to
+ * catch up, what a page means, when to commit and when to retry. A socket or
+ * HTTP callback only enqueues what arrived and wakes this loop; the loop asks
+ * Rust to pump and executes what it answers with sockets, HTTP, timers and the
+ * credential refresh. Enqueueing answers with no actions, so no page is applied
+ * inside a callback.
  */
-export async function startLiveLane(
-  command: LiveCommand,
-  network: LiveNetwork,
+export async function startDownlinkLane(
+  command: DownlinkCommand,
+  network: DownlinkNetwork,
   options: ConnectionOptions,
   wakePush: () => void,
-): Promise<LiveLane> {
+): Promise<DownlinkLane> {
   let stopped = false;
   let session: Session | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const clearTimer = () => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = undefined;
+  // Every enqueue bumps this and the loop re-checks it before sleeping, so a
+  // wake between the idle decision and the sleep is never lost.
+  let generation = 0;
+  let awaken: (() => void) | undefined;
+  const notify = () => {
+    generation++;
+    awaken?.();
+    awaken = undefined;
   };
+  const wait = (millis?: number) =>
+    new Promise<void>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      awaken = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        resolve();
+      };
+      if (millis !== undefined)
+        timer = setTimeout(() => {
+          awaken = undefined;
+          resolve();
+        }, millis);
+    });
   const abandon = (current: Session) => {
     current.ended = true;
     current.abort.abort();
   };
-  const dispatch = async (event: Record<string, unknown>): Promise<void> => {
+  /** Hand Rust one event and wake the loop; Rust answers with no actions. */
+  const enqueue = async (event: Record<string, unknown>): Promise<void> => {
     if (stopped && event.event !== "stop") return;
-    clearTimer();
-    let actions: LiveAction[];
     try {
-      actions = await command(event);
+      await command(event);
     } catch (error) {
-      if (stopped) return;
-      options.onError?.(error);
-      // A command that failed on an event of the session ends that session.
-      const epoch = event.epoch;
-      if (
-        typeof epoch === "number" &&
-        event.event !== "closed" &&
-        session?.epoch === epoch
-      ) {
-        const current = session;
-        session = undefined;
-        abandon(current);
-        await dispatch({ event: "closed", epoch });
-      }
-      return;
+      if (!stopped) options.onError?.(error);
     }
-    for (const action of actions) execute(action);
+    notify();
   };
-  const fail = async (current: Session, error: unknown) => {
+  /** A socket or request that failed: report it, refresh once, tell Rust. */
+  const fail = async (
+    current: Session,
+    error: unknown,
+    event: Record<string, unknown>,
+  ) => {
     if (current.ended || stopped) return;
     abandon(current);
     if (session === current) session = undefined;
@@ -317,9 +328,9 @@ export async function startLiveLane(
         options.onError?.(refreshError);
       }
     }
-    await dispatch({ event: "closed", epoch: current.epoch });
+    await enqueue(event);
   };
-  const execute = (action: LiveAction) => {
+  const execute = (action: DownlinkAction) => {
     switch (action.type) {
       case "open": {
         const current: Session = {
@@ -330,19 +341,32 @@ export async function startLiveLane(
         session = current;
         network.open(action.subscribe, current.abort.signal, {
           message: (text) =>
-            dispatch({ event: "message", epoch: current.epoch, body: text }),
-          overflow: () => dispatch({ event: "overflow", epoch: current.epoch }),
-          closed: (error) => void fail(current, error),
+            enqueue({ event: "message", epoch: current.epoch, body: text }),
+          overflow: () => enqueue({ event: "overflow", epoch: current.epoch }),
+          closed: (error) =>
+            void fail(current, error, {
+              event: "closed",
+              epoch: current.epoch,
+            }),
         });
         return;
       }
       case "request": {
         const current = session;
-        if (!current || current.epoch !== action.epoch || current.ended) return;
+        if (!current || current.ended) return;
         network.push("pull", action.body, current.abort.signal).then(
           (text) =>
-            dispatch({ event: "catchUp", epoch: current.epoch, body: text }),
-          (error) => fail(current, error),
+            enqueue({
+              event: "response",
+              request: action.request,
+              body: text,
+            }),
+          (error) =>
+            fail(current, error, {
+              event: "failed",
+              request: action.request,
+              reason: String((error as { message?: string })?.message ?? error),
+            }),
         );
         return;
       }
@@ -361,16 +385,58 @@ export async function startLiveLane(
         for (const report of action.reports)
           options.onError?.(new AxtonReport(report));
         return;
+      // The Scopes a commit moved; #150 Task 3 turns this into a status update.
+      case "changed":
+        return;
+      // The loop sleeps for it; nothing to execute.
       case "wait":
-        clearTimer();
-        timer = setTimeout(() => {
-          timer = undefined;
-          void dispatch({ event: "next" });
-        }, action.millis);
         return;
     }
   };
-  await dispatch({ event: "start" });
+  const loop = async () => {
+    while (!stopped) {
+      const observed = generation;
+      let actions: DownlinkAction[];
+      try {
+        actions = await command({ event: "next" });
+      } catch (error) {
+        if (stopped) return;
+        options.onError?.(error);
+        // A pump that failed on the open session ends it; with none open there
+        // is nothing to retry until something new arrives.
+        const current = session;
+        if (current) {
+          session = undefined;
+          abandon(current);
+          await enqueue({ event: "closed", epoch: current.epoch });
+        } else if (observed === generation) await wait();
+        continue;
+      }
+      if (stopped) return;
+      let millis: number | undefined;
+      for (const action of actions) {
+        if (action.type === "wait") millis = action.millis;
+        execute(action);
+      }
+      // A socket the host abandoned that Rust still holds (the change it was
+      // abandoned for did not commit, or changed nothing) is reported closed.
+      if (session?.ended) {
+        const current = session;
+        session = undefined;
+        await enqueue({ event: "closed", epoch: current.epoch });
+        continue;
+      }
+      // Actions mean the worker made progress: pump again, yielding first, so a
+      // commit never waits on a timer.
+      if (millis === undefined && actions.length > 0) continue;
+      if (observed !== generation) continue;
+      await wait(millis);
+    }
+  };
+  await enqueue({ event: "start" });
+  void loop().catch((error) => {
+    if (!stopped) options.onError?.(error);
+  });
   return {
     cancel() {
       if (session) abandon(session);
@@ -378,30 +444,23 @@ export async function startLiveLane(
     async pause() {
       if (stopped) return;
       if (session) abandon(session);
-      await dispatch({ event: "pause" });
+      await enqueue({ event: "pause" });
     },
     async resume() {
       if (stopped) return;
-      await dispatch({ event: "resume" });
+      await enqueue({ event: "resume" });
     },
     async wake() {
       if (stopped) return;
-      await dispatch({ event: "wake" });
-      // A session the host abandoned that Rust still holds (the change it was
-      // abandoned for did not commit, or changed nothing) is reported closed.
-      if (session?.ended) {
-        const current = session;
-        session = undefined;
-        await dispatch({ event: "closed", epoch: current.epoch });
-      }
+      await enqueue({ event: "wake" });
     },
     async close() {
       if (stopped) return;
       stopped = true;
       if (session) abandon(session);
       session = undefined;
-      clearTimer();
-      await dispatch({ event: "stop" });
+      await enqueue({ event: "stop" });
+      notify();
     },
   };
 }

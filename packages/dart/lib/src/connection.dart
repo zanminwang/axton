@@ -18,7 +18,7 @@ class ActionTransportException implements Exception {
   String toString() => code;
 }
 
-/// The controls every lane offers; the push connection fans them out to the live lane.
+/// The controls every lane offers; the push connection fans them out to the downlink lane.
 abstract class LaneControls {
   Future<void> pause();
   Future<void> resume();
@@ -28,11 +28,11 @@ abstract class LaneControls {
 
 /// Rust owns scheduling; this class supplies timers and cancellable network waits.
 class RuntimeConnection implements LaneControls {
-  LaneControls? _live;
-  void Function()? _invalidateLive;
-  void attachLive(LaneControls live, void Function() invalidate) {
-    _live = live;
-    _invalidateLive = invalidate;
+  LaneControls? _downlink;
+  void Function()? _invalidateDownlink;
+  void attachDownlink(LaneControls downlink, void Function() invalidate) {
+    _downlink = downlink;
+    _invalidateDownlink = invalidate;
   }
 
   final ConnectionControl _control;
@@ -215,8 +215,8 @@ class RuntimeConnection implements LaneControls {
     if (_stopped) return;
     _paused = true;
     _cancelRequests();
-    _invalidateLive?.call();
-    await _live?.pause();
+    _invalidateDownlink?.call();
+    await _downlink?.pause();
     await _command('pause');
     try {
       await _activeSync;
@@ -226,7 +226,7 @@ class RuntimeConnection implements LaneControls {
 
   Future<void> resume() async {
     if (_stopped) return;
-    await _live?.resume();
+    await _downlink?.resume();
     _paused = false;
     await _command('resume');
     _notify();
@@ -234,7 +234,7 @@ class RuntimeConnection implements LaneControls {
 
   Future<void> wake() async {
     if (_stopped) return;
-    await _live?.wake();
+    await _downlink?.wake();
     await _command('wake');
     _notify();
   }
@@ -249,8 +249,8 @@ class RuntimeConnection implements LaneControls {
     }
     _cancelRequests();
     _notify();
-    _invalidateLive?.call();
-    await _live?.close();
+    _invalidateDownlink?.call();
+    await _downlink?.close();
     try {
       await _command('stop');
     } finally {
@@ -263,7 +263,7 @@ class AuthenticationExpired implements Exception {
   const AuthenticationExpired();
 }
 
-typedef LiveCommand =
+typedef DownlinkCommand =
     Future<List<dynamic>> Function(Map<String, dynamic> event);
 
 class _Session {
@@ -273,40 +273,73 @@ class _Session {
   _Session(this.epoch);
 }
 
-/// Host loop of the live lane. Rust owns the session: which channels, when to
-/// catch up, what a page means, when to retry. This loop feeds it events and
-/// executes its actions with sockets, HTTP, timers and the credential refresh.
-class LiveLane implements LaneControls {
-  final LiveCommand _command;
+/// Host loop of the downlink lane. Rust owns delivery: which channels, when to
+/// catch up, what a page means, when to commit and when to retry. A socket or
+/// HTTP callback only enqueues what arrived and wakes this loop; the loop asks
+/// Rust to pump and executes what it answers with sockets, HTTP, timers and the
+/// credential refresh. Enqueueing answers with no actions, so no page is
+/// applied inside a callback.
+class DownlinkLane implements LaneControls {
+  final DownlinkCommand _command;
   final ServerSession _network;
   final void Function(Object)? onError;
   final Future<void> Function()? refreshAuth;
   final void Function() _wakePush;
   bool _stopped = false;
   _Session? _session;
+
+  /// Every enqueue bumps this and the loop re-checks it before sleeping, so a
+  /// wake between the idle decision and the sleep is never lost.
+  int _generation = 0;
+  Completer<void>? _wake;
   Timer? _timer;
-  LiveLane._(
+  DownlinkLane._(
     this._command,
     this._network,
     this.onError,
     this.refreshAuth,
     this._wakePush,
   );
-  static Future<LiveLane> start({
-    required LiveCommand command,
+  static Future<DownlinkLane> start({
+    required DownlinkCommand command,
     required ServerSession network,
     required void Function() wakePush,
     void Function(Object)? onError,
     Future<void> Function()? refreshAuth,
   }) async {
-    final lane = LiveLane._(command, network, onError, refreshAuth, wakePush);
-    await lane._dispatch({'event': 'start'});
+    final lane = DownlinkLane._(
+      command,
+      network,
+      onError,
+      refreshAuth,
+      wakePush,
+    );
+    await lane._enqueue({'event': 'start'});
+    unawaited(
+      lane._loop().catchError((Object error) {
+        if (!lane._stopped) lane.onError?.call(error);
+      }),
+    );
     return lane;
   }
 
-  void _clearTimer() {
+  void _notify() {
+    _generation++;
     _timer?.cancel();
     _timer = null;
+    if (_wake?.isCompleted == false) _wake!.complete();
+    _wake = null;
+  }
+
+  Future<void> _wait(int? millis) {
+    final wake = Completer<void>();
+    _wake = wake;
+    if (millis != null)
+      _timer = Timer(Duration(milliseconds: millis), () {
+        if (!wake.isCompleted) wake.complete();
+        if (identical(_wake, wake)) _wake = null;
+      });
+    return wake.future;
   }
 
   void _abandon(_Session current) {
@@ -314,33 +347,23 @@ class LiveLane implements LaneControls {
     if (!current.abort.isCompleted) current.abort.complete();
   }
 
-  Future<void> _dispatch(Map<String, dynamic> event) async {
+  /// Hand Rust one event and wake the loop; Rust answers with no actions.
+  Future<void> _enqueue(Map<String, dynamic> event) async {
     if (_stopped && event['event'] != 'stop') return;
-    _clearTimer();
-    List<dynamic> actions;
     try {
-      actions = await _command(event);
+      await _command(event);
     } catch (error) {
-      if (_stopped) return;
-      onError?.call(error);
-      // A command that failed on an event of the session ends that session.
-      final epoch = event['epoch'];
-      if (epoch is int &&
-          event['event'] != 'closed' &&
-          _session?.epoch == epoch) {
-        final current = _session!;
-        _session = null;
-        _abandon(current);
-        await _dispatch({'event': 'closed', 'epoch': epoch});
-      }
-      return;
+      if (!_stopped) onError?.call(error);
     }
-    for (final action in actions) {
-      _execute(action as Map<String, dynamic>);
-    }
+    _notify();
   }
 
-  Future<void> _fail(_Session current, Object error) async {
+  /// A socket or request that failed: report it, refresh once, tell Rust.
+  Future<void> _fail(
+    _Session current,
+    Object error,
+    Map<String, dynamic> event,
+  ) async {
     if (current.ended || _stopped) return;
     _abandon(current);
     if (identical(_session, current)) _session = null;
@@ -352,7 +375,7 @@ class LiveLane implements LaneControls {
         onError?.call(refreshError);
       }
     }
-    await _dispatch({'event': 'closed', 'epoch': current.epoch});
+    await _enqueue(event);
   }
 
   void _execute(Map<String, dynamic> action) {
@@ -364,33 +387,39 @@ class LiveLane implements LaneControls {
           action['subscribe'] as String,
           current.abort.future,
           SocketEvents(
-            message: (text) => _dispatch({
+            message: (text) => _enqueue({
               'event': 'message',
               'epoch': current.epoch,
               'body': text,
             }),
             overflow: () =>
-                _dispatch({'event': 'overflow', 'epoch': current.epoch}),
-            closed: (error, _) => unawaited(_fail(current, error)),
+                _enqueue({'event': 'overflow', 'epoch': current.epoch}),
+            closed: (error, _) => unawaited(
+              _fail(current, error, {
+                'event': 'closed',
+                'epoch': current.epoch,
+              }),
+            ),
           ),
         );
       case 'request':
         final current = _session;
-        if (current == null ||
-            current.epoch != action['epoch'] ||
-            current.ended) {
-          return;
-        }
+        if (current == null || current.ended) return;
+        final id = action['request'] as int;
         unawaited(
           _network
               .pull(action['body'] as String, current.abort.future)
               .then(
-                (text) => _dispatch({
-                  'event': 'catchUp',
-                  'epoch': current.epoch,
+                (text) => _enqueue({
+                  'event': 'response',
+                  'request': id,
                   'body': text,
                 }),
-                onError: (Object error) => _fail(current, error),
+                onError: (Object error) => _fail(current, error, {
+                  'event': 'failed',
+                  'request': id,
+                  'reason': error.toString(),
+                }),
               ),
         );
       case 'close':
@@ -406,17 +435,57 @@ class LiveLane implements LaneControls {
         for (final report in action['reports'] as List<dynamic>) {
           onError?.call(AxtonReport.fromJson(report as Map<String, dynamic>));
         }
-      case 'wait':
-        _clearTimer();
-        _timer = Timer(Duration(milliseconds: action['millis'] as int), () {
-          _timer = null;
-          unawaited(_dispatch({'event': 'next'}));
-        });
+      // `changed` carries the Scopes a commit moved; #150 Task 3 turns it into
+      // a status update. `wait` is the loop's own sleep.
+    }
+  }
+
+  Future<void> _loop() async {
+    while (!_stopped) {
+      final observed = _generation;
+      List<dynamic> actions;
+      try {
+        actions = await _command({'event': 'next'});
+      } catch (error) {
+        if (_stopped) return;
+        onError?.call(error);
+        // A pump that failed on the open session ends it; with none open there
+        // is nothing to retry until something new arrives.
+        final current = _session;
+        if (current != null) {
+          _session = null;
+          _abandon(current);
+          await _enqueue({'event': 'closed', 'epoch': current.epoch});
+        } else if (observed == _generation) {
+          await _wait(null);
+        }
+        continue;
+      }
+      if (_stopped) return;
+      int? millis;
+      for (final action in actions) {
+        final map = action as Map<String, dynamic>;
+        if (map['type'] == 'wait') millis = map['millis'] as int;
+        _execute(map);
+      }
+      // A socket the host abandoned that Rust still holds (the change it was
+      // abandoned for did not commit, or changed nothing) is reported closed.
+      final current = _session;
+      if (current != null && current.ended) {
+        _session = null;
+        await _enqueue({'event': 'closed', 'epoch': current.epoch});
+        continue;
+      }
+      // Actions mean the worker made progress: pump again, yielding first, so a
+      // commit never waits on a timer.
+      if (millis == null && actions.isNotEmpty) continue;
+      if (observed != _generation) continue;
+      await _wait(millis);
     }
   }
 
   /// Abandon the current session's socket and request now; Rust learns of it
-  /// on the next event.
+  /// on the next pump.
   void cancel() {
     final current = _session;
     if (current != null) _abandon(current);
@@ -426,26 +495,19 @@ class LiveLane implements LaneControls {
   Future<void> pause() async {
     if (_stopped) return;
     cancel();
-    await _dispatch({'event': 'pause'});
+    await _enqueue({'event': 'pause'});
   }
 
   @override
   Future<void> resume() async {
     if (_stopped) return;
-    await _dispatch({'event': 'resume'});
+    await _enqueue({'event': 'resume'});
   }
 
   @override
   Future<void> wake() async {
     if (_stopped) return;
-    await _dispatch({'event': 'wake'});
-    // A session the host abandoned that Rust still holds (the change it was
-    // abandoned for did not commit, or changed nothing) is reported closed.
-    final current = _session;
-    if (current != null && current.ended) {
-      _session = null;
-      await _dispatch({'event': 'closed', 'epoch': current.epoch});
-    }
+    await _enqueue({'event': 'wake'});
   }
 
   @override
@@ -454,10 +516,11 @@ class LiveLane implements LaneControls {
     _stopped = true;
     cancel();
     _session = null;
-    _clearTimer();
-    await _dispatch({'event': 'stop'});
+    await _enqueue({'event': 'stop'});
+    _notify();
   }
 }
+
 
 /// A delivery the client could not apply, handed to `onError`. The client
 /// stays consistent: a `readFailed` or `skipped` record keeps its local

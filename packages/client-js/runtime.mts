@@ -2,11 +2,11 @@ import {
   AxtonReport,
   directFailure,
   startConnection,
-  startLiveLane,
+  startDownlinkLane,
   type Connection,
   type DirectConnection,
   type ConnectionOptions,
-  type LiveLane,
+  type DownlinkLane,
   type ReportDetails,
   type Transport,
 } from "./connection.mts";
@@ -96,7 +96,7 @@ export function createClient<
   createServerConnection: (options: ServerOptions) => ServerConnection,
 ) {
   return class Client {
-    #live: LiveLane | undefined;
+    #downlink: DownlinkLane | undefined;
     #syncing: Promise<void> | undefined;
     #tasks: Promise<void> | undefined;
     #connection: Connection | undefined;
@@ -390,7 +390,7 @@ export function createClient<
     }
     /** The live session is abandoned at once; once the change commits, Rust starts one for the new channel set. */
     #setChannel(channel: string, subscribed: boolean) {
-      this.#live?.cancel();
+      this.#downlink?.cancel();
       return this.#exclusive(() =>
         this.#send({ op: "channel", channel, subscribed }).then(
           (value) => {
@@ -458,11 +458,11 @@ export function createClient<
           live.push,
           driverOptions,
         );
-        const streaming = await startLiveLane(
+        const streaming = await startDownlinkLane(
           (event) =>
             this.#exclusive(() =>
               this.#send({
-                op: "live",
+                op: "downlink",
                 ...event,
                 now: Date.now(),
                 entropy: Math.floor(Math.random() * 0x100000000),
@@ -472,7 +472,7 @@ export function createClient<
           driverOptions,
           () => void connection.wake().catch(options.onError ?? (() => {})),
         );
-        this.#live = streaming;
+        this.#downlink = streaming;
         const channels = () => {
           void streaming.wake().catch(options.onError ?? (() => {}));
         };
@@ -500,7 +500,7 @@ export function createClient<
             await Promise.all([streaming.close(), connection.close()]);
             if (this.#connection === result) {
               this.#connection = undefined;
-              this.#live = undefined;
+              this.#downlink = undefined;
             }
           },
         };

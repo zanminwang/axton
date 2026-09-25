@@ -12,7 +12,7 @@ export type ServerOptions = {
   url: string;
   token: string | (() => string | Promise<string>);
 };
-/** Frames waiting to be applied while the previous one is; beyond this the buffer is dropped and the session recovers. */
+/** Frames waiting to be handed to Rust while the previous one is; beyond this the buffer is dropped and the worker recovers. */
 const BUFFERED_FRAMES = 64;
 /** Sockets and HTTP for one server; no sync decisions. */
 export function createServerConnection(
@@ -97,7 +97,7 @@ export function createServerConnection(
           current.on("message", (data) => {
             if (ended) return;
             if (frames.length === BUFFERED_FRAMES) {
-              // Keep the socket and the in-flight HTTP request alive: the session
+              // Keep the socket and the in-flight HTTP request alive: the worker
               // recovers from the durable cursor instead of starting over.
               frames.length = 0;
               overflowed = true;

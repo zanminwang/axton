@@ -255,7 +255,7 @@ class ServerSession {
   static const int bufferedBytes = 8 * 1024 * 1024;
 }
 
-/// How the live lane hears from one socket.
+/// How the downlink lane hears from one socket.
 class SocketEvents {
   final Future<void> Function(String text) message;
   final Future<void> Function() overflow;

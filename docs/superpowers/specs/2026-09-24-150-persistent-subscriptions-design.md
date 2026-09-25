@@ -1,14 +1,16 @@
 # Persistent Scope subscriptions and first initialization
 
-Status: design draft for review; no implementation is claimed. Issue: [#150](https://github.com/zanminwang/axton/issues/150). Companion: [whole-Scope bootstrap](2026-09-24-151-scope-bootstrap-design.md).
+Status: reviewed for implementation handoff; the user authorized a separate cloud agent to implement, verify and merge #150 followed by #151. No implementation is claimed. Issue: [#150](https://github.com/zanminwang/axton/issues/150). Companion: [whole-Scope bootstrap](2026-09-24-151-scope-bootstrap-design.md).
 
 ## 1. Goal and boundary
+
+Existing subscriptions and delivery cursors are already durable. This issue changes first-subscription initialization from cursor zero to the negotiated server head, adds a stable observable SDK handle, and removes unnecessary SDK-driven socket cancellation. It does not introduce persistence from scratch.
 
 A subscription is a durable local request to receive a Scope's changes. Its SDK object is a handle, not the owner of a socket or of the subscription's lifetime. Subscribe works offline, repeated calls reuse the same subscription, and restart resumes committed progress.
 
 The user approved the following boundary: a Scope retains existing publication semantics. A record must have been published to the delivery range, and the canonical Loader controls its visibility. Current membership and move-out rules remain #140. A Scope does not own local records. This work does not add query-driven sync, relation loading, per-Model loading strategies or data deletion on unsubscribe.
 
-## 2. Public API proposal
+## 2. Public API
 
 ```ts
 const subscription = await client.scopes.subscribe("project:123");
@@ -58,7 +60,7 @@ CHECK ((starting_cursor IS NULL AND cursor IS NULL) OR
         starting_cursor >= 0 AND cursor >= starting_cursor))
 ```
 
-All counters obey the existing 0..2^53-1 constraint. Add a monotonically allocated `next_subscription` counter to `axton_client`; allocation and row insertion share the local transaction. IDs are not recycled after unsubscribe. They fence stale handles, acknowledgments and requests, including re-creation at the same Scope name. They are client-local metadata and need not travel to the backend.
+All counters obey the existing 0..2^53-1 constraint. Add a monotonically allocated `next_subscription` counter to `axton_client`; allocation and row insertion share the local transaction. IDs are not recycled after unsubscribe. Carry the next-ID counter forward through a replica rebuild when available, invalidate all old handles and in-flight controllers on replica replacement, and never treat an equal numeric ID in a replaced replica as the same handle. They fence stale handles, acknowledgments and requests, including re-creation at the same Scope name. They are client-local metadata and need not travel to the backend.
 
 No row means unsubscribed. A row with both cursor fields NULL means durable intent exists but its first boundary is not yet committed. Zero is a valid initialized position and must never stand for uninitialized. Repeated subscribe uses insert-if-absent, not the existing upsert that can overwrite a cursor.
 
@@ -91,6 +93,12 @@ An unknown Scope with server head zero can initialize at zero under existing Loa
 
 Every new connection negotiates a session; this is not a new synchronization origin. For a saved cursor 100 and new head 120, fetch/apply the gap instead of replacing 100 with 120. An unexpected head below committed progress is a reported protocol/server-state fault, not permission to rewind or silently reinitialize.
 
+### Mixed subscriptions and delta recovery
+
+One socket carries only the locally desired Scope set. If A has cursor 80, B has an uninitialized row, and C has no row, send A/B only. An acknowledgment of A=100 and B=200 preserves A=80 and schedules catch-up, while atomically initializing B at 200. C participates in neither automatic pulls nor live delivery. A manual delta request with no initialized subscriptions produces no work; never coerce NULL into zero.
+
+Retain the server initial drain after listener registration: it scans from the acknowledged heads to catch publications racing head capture and listener setup. Retain client automatic delta recovery on reconnect, stream gaps and overflow. Only implicit historical loading for a new subscription is removed. Local cursor 120 accepts a page spanning 120 to 125 directly; a page spanning 124 to 125 is buffered while a pull from 120 fills the gap. Numeric record cursors need not be contiguous because invalidations compact. With no desired Scopes the live lane is idle; Action delivery remains independent.
+
 ### Local transactions and status
 
 Existing transaction-scoped subscription intent operations remain local-only; returning SDK handles is a standalone API behavior after commit. Status is derived from persisted initialization plus the Engine's current transport state. `live` means the session is delivering normally, not that all historical records are loaded. `ready` initialization means a durable starting boundary exists, not that the socket is currently connected.
@@ -122,4 +130,4 @@ Required scenarios: offline registration; idempotent/concurrent calls; committed
 
 Use SQLite tests for atomic state/reopen, Rust live-controller and server live tests for event ordering, real socket integration for handshake/gap behavior, and TypeScript/React Native host/Dart tests for handle identity and observation. Do not claim mobile-device behavior from host tests. Update the frontend, storage, live controller, protocol and guarantee documentation, explicitly identifying the first-subscription default change.
 
-Implement #150 before #151. Review the exact frontend surface before implementation. #144, #152, #153, #154, #139 and #140 retain their separate responsibilities.
+Implement #150 before #151. The frontend surface above is the reviewed implementation baseline; do not request another approval for routine implementation details. #144, #152, #153, #154, #139 and #140 retain their separate responsibilities.

@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Review draft based on the [spec](../specs/2026-09-24-151-scope-bootstrap-design.md); requires #150's accepted persistent-subscription implementation.
+- Reviewed baseline: follow the [spec](../specs/2026-09-24-151-scope-bootstrap-design.md) and [cloud handoff](2026-09-24-150-151-cloud-handoff.md). Requires #150 merged first; implementation and verified merge are authorized.
 - Do not introduce `first_cursor`, stable identity pagination, a generic task table, or a second sync engine.
 - Publication-based delivery remains the boundary; current membership is #140.
 - Bootstrap never changes the subscription origin or normal cursor. Preserve existing Loader visibility, D7/D8 errors and authority stamp rules.
@@ -20,9 +20,9 @@
 
 ## Task 1: Bounded pull protocol and server execution
 
-**Files:** Modify `crates/core/src/protocol.rs`, `crates/core/tests/contracts.rs`, `crates/server/src/lib.rs`, `crates/server/tests/runtime.rs`, `packages/server/index.mts`; create `crates/server/src/loading.rs`, `crates/server/tests/bootstrap.rs`, protocol JSON fixtures beside existing pull fixtures.
+**Files:** Modify `crates/core/src/protocol.rs`, `crates/core/tests/contracts.rs`, `crates/server/src/lib.rs`, `crates/server/tests/runtime.rs`, `packages/server/index.mts`, `bindings/node/src/server.rs`; create `crates/server/src/loading.rs`, `crates/server/tests/bootstrap.rs`, protocol JSON fixtures beside existing pull fixtures.
 
-**Interfaces:** Add serializable `BootstrapRequest` and `BootstrapPage` exactly as spec section 4. Add `process_bootstrap(config: &Config, owner: &str, bytes: &[u8], host: &impl Host) -> Result<String>`. Factor grouped record resolution into a crate-private function accepting Config, owner, declared versions and canonical `(RecordKey, stamp)` entries and returning `Vec<AuthorityRecord>`; normal pull calls the same helper.
+**Interfaces:** Add serializable `BootstrapRequest` and `BootstrapPage` exactly as spec section 4. Keep public `process_pull` as the single dispatch entry for bindings, HTTP, and direct backend calls. Add a private `process_bootstrap(config: &Config, owner: &str, bytes: &[u8], host: &impl Host) -> Result<String>` and a private ordinary-delta helper; both consume the same existing host transaction. Factor grouped record resolution into a crate-private function accepting Config, owner, declared versions and canonical `(RecordKey, stamp)` entries and returning `Vec<AuthorityRecord>`; normal pull calls the same helper.
 
 - [ ] Write decoder cases for unknown mode, missing/unsafe counters and malformed channel. Add server scenarios with S=100 and scan cursors `[40,120]` (load only 40, terminal to=100), exactly 50 rows ending below S (nonterminal), a row exactly at S, empty scan, and after=S.
 - [ ] Run `cargo test -p axton-core -p axton-server --locked`; confirm new protocol/behavior assertions fail before adding implementation.
@@ -40,7 +40,7 @@ records = resolve historical identities using shared Loader helper
 return {mode: bootstrap, channel, from: after, to, until, head, records}
 ```
 
-- [ ] Dispatch bootstrap mode at the existing authenticated `/sync/pull` route, inside its repeatable-read wrapper. Reject unknown modes before normal pull decode. Keep normal pull's JSON and behavior unchanged. Do not modify host Scan or PostgreSQL schema.
+- [ ] Dispatch inside Rust `process_pull`: absent mode selects ordinary delta, the string bootstrap selects bounded loading, and any other present value is rejected. Test both direct backend and HTTP calls. Keep the authenticated `/sync/pull` route and its repeatable-read wrapper as shared transport plumbing. Keep normal pull's JSON and behavior unchanged. Do not modify host Scan or PostgreSQL schema.
 - [ ] Add PostgreSQL-backed bounded-request cases to `integration/persistence/server/runtime.test.mjs`, including republish during successive pages and content/stamp consistency. Run `bash integration/persistence/server/run.sh` and the Rust suites. Commit protocol/server changes.
 
 ## Task 2: Durable Bootstrap registration and atomic page application
@@ -56,7 +56,7 @@ return {mode: bootstrap, channel, from: after, to, until, head, records}
 
 ```text
 if identity/run/from no longer match: ignore stale response
-if any record report failed:
+if any ReadFailed, Skipped or Conflict report exists:
     commit successful authority, persist bounded page error, mark failed
     keep B unchanged; reject this run's waiters after commit
 else:
@@ -66,7 +66,7 @@ else:
 never write starting_cursor or normal cursor
 ```
 
-- [ ] Validate `from <= to <= S <= head`, echoed request markers and progress before authority writes. Distinguish protocol-invalid responses (no partial progress) from attributable record failures. Cap error storage to the page's 50 reports and bounded messages, without storing arbitrary server payloads.
+- [ ] Validate `from <= to <= S <= head`, echoed request markers and progress before authority writes. Distinguish protocol-invalid responses (no partial progress) from attributable record failures. Store at most 50 model/identity/stamp/code summaries and a message truncated to 1,024 UTF-8 bytes; omit arbitrary detail and Model payloads. Test that Diverged reports are surfaced but do not fail successfully applied authority. A local commit error rolls back data/progress, reports the error, and leaves persisted work resumable; a malformed response fails visibly without advancing anything.
 - [ ] Exercise rollback injection immediately before commit and reopen immediately after commit; assert data/progress stay atomic. Run `cargo test -p axton-client -p axton-sqlite --locked`. Commit ledger/application changes.
 
 ## Task 3: Engine scheduling, transport and fixed completion barrier
@@ -121,4 +121,4 @@ assert.equal(subscription.status.bootstrap.phase, "complete");
 - [ ] Test D7 explicitly: a live read failure reports an error while L advances; Bootstrap completion does not rewrite it as success. Separately fail a historical Loader: preserve successful page records, reject the run, retry the unchanged B, and then complete.
 - [ ] Document Bootstrap+Subscription joint coverage, eager background invocation, completion barrier, retained-record assumptions and error limits. Do not present `await bootstrap()` as a fresh snapshot or unconditional proof every record successfully loaded.
 - [ ] Run `bash integration/e2e/run.sh`, the simulation suite, and `bash scripts/test.sh`. Run `git diff --check` and changed-document link/example checks. Performance scales belong to #12; make no new capacity claim from this suite.
-- [ ] Review against every spec section, commit, publish the implementation PR with `Closes #151`, attach it to the task, and write issue evidence including actual test limits. Do not merge unreviewed runtime changes merely because the design branch is approved.
+- [ ] Review against every spec section, commit, publish the implementation PR with `Closes #151`, attach it to the task, and write issue evidence including actual test limits. Review the final implementation diff, resolve correctness findings, wait for required CI on the final commit, and merge without another user confirmation. Respect branch protection and report an actual permission/check blocker rather than bypassing it. Confirm both issues close and report both merged PR URLs.

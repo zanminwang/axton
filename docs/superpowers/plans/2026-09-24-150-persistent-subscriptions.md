@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Review draft; implement only after the public API in the [spec](../specs/2026-09-24-150-persistent-subscriptions-design.md) is approved.
+- Reviewed implementation baseline: follow the [spec](../specs/2026-09-24-150-persistent-subscriptions-design.md) and [cloud handoff](2026-09-24-150-151-cloud-handoff.md). User approval covers implementation and merge after verification; no additional routine approval gate is needed.
 - Work in an isolated `codex/` worktree. Keep repository documentation in English.
 - Null initialization is distinct from cursor zero. Counters are safe integers, 0..2^53-1.
 - Subscribe waits for local commit, never for network. Reconnect retains committed progress.
@@ -40,7 +40,7 @@ assert!(client.subscription_state("project:123")?.is_some());
 ```
 
 - [ ] Run `cargo test -p axton-sqlite --test subscriptions --locked`; confirm the missing behavior fails before implementing.
-- [ ] Add the spec's table constraints and `axton_client.next_subscription`. Allocate and insert in one transaction; duplicate subscribe reads the existing row without incrementing generation. Replace cursor upsert with update-only operations fenced by subscription identity. Preserve desired Scope names but allocate fresh identities when the explicit incompatible-layout rebuild path resets metadata.
+- [ ] Add the spec's table constraints and `axton_client.next_subscription`. Carry the allocator forward when rebuilding a current-format replica, and invalidate old handles/controllers on replacement. Allocate and insert in one transaction; duplicate subscribe reads the existing row without incrementing generation. Replace cursor upsert with update-only operations fenced by subscription identity. Preserve desired Scope names but allocate fresh identities when the explicit incompatible-layout rebuild path resets metadata.
 - [ ] Run `cargo test -p axton-client -p axton-sqlite --locked`; fix actual regressions in cursor callers and rebuild tests. Commit the ledger change with its tests.
 
 ## Task 2: Initialize from acknowledged head, then resume
@@ -63,6 +63,7 @@ for each acknowledged scope:
 commit before publishing status or processing subsequent frames
 ```
 
+- [ ] Add mixed-set coverage: existing A at 80, new B with NULL cursors, absent C; acknowledgment A=100/B=200 catches up A, initializes B and never requests C. Keep server listener-then-drain coverage. Test 120-to-125 direct application versus a 124-to-125 gap at local 120, and no automatic request for only-uninitialized rows.
 - [ ] Keep generation-driven reconnection for genuine desired-set changes; do not introduce #144's new wire protocol. Ensure a late normal page cannot upsert an unsubscribed row.
 - [ ] Run `cargo test -p axton-client -p axton-sqlite -p axton-server --locked`. Commit controller and race tests.
 
@@ -116,6 +117,7 @@ assert.equal(c.status.active, true);
 **Files:** Extend `integration/e2e/run.sh` and its existing client/server fixtures; update `docs/engineering/architecture/{client/frontend-interface.md,client/storage/store.md,client/storage/reconciliation.md,client/connection/controller/live-session.md,protocol/subscriptions.md,sdks/typed-api/client.md}` and `docs/engineering/guarantees.md`.
 
 - [ ] Add an assembled scenario: publish old Todo; subscribe at head S; confirm old Todo is not automatically loaded; publish a newer Todo; confirm it arrives; disconnect/publish/reconnect; confirm catch-up retains S and fills the gap. Reopen the local database and repeat without resetting initialization.
+- [ ] Audit old tests/examples that assumed subscribe implied a historical download. Update their expected from-now behavior or establish subscriptions before publishing their fixtures, without suppressing reconnect/gap assertions or adding a legacy zero-cursor backdoor. Keep #150 independently green; #151 adds explicit Bootstrap to whole-history examples.
 - [ ] Document the behavioral change from default historical sync to first-handshake origin, offline registration, persistent lifetime, error/status meanings, and #151 as the explicit historical loading operation.
 - [ ] Run `bash integration/e2e/run.sh`, then `bash scripts/test.sh` for the completed runtime change. Record environment-related exclusions explicitly; do not treat host tests as device verification.
-- [ ] Run `git diff --check`, check changed relative links/examples, and review A2/D6/R1–R4 against the final code. Commit, publish the implementation PR with `Closes #150`, attach it to the task, and update issue evidence. #151 starts only from the accepted #150 contract.
+- [ ] Run `git diff --check`, check changed relative links/examples, and review A2/D6/R1–R4 against the final code. Commit, publish the implementation PR with `Closes #150`, attach it to the task, and update issue evidence. Review the final diff, resolve correctness findings, wait for required CI on the final commit, and merge without another user confirmation. #151 starts from main after this merge. Respect branch protection; do not force or administratively bypass checks.

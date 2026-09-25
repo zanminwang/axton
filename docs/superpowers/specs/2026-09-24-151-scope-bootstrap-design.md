@@ -1,6 +1,6 @@
 # Whole-Scope bootstrap with independent durable progress
 
-Status: design draft for review; no implementation is claimed. Issue: [#151](https://github.com/zanminwang/axton/issues/151). Requires [persistent subscriptions](2026-09-24-150-persistent-subscriptions-design.md).
+Status: reviewed for implementation handoff; the user authorized a separate cloud agent to implement, verify and merge this after #150. No implementation is claimed. Issue: [#151](https://github.com/zanminwang/axton/issues/151). Requires [persistent subscriptions](2026-09-24-150-persistent-subscriptions-design.md).
 
 ## 1. Goal and approved product semantics
 
@@ -10,7 +10,7 @@ The user confirmed publication-based coverage for this milestone. Bootstrap enum
 
 Coverage is not a transactionally frozen, whole-Scope point-in-time snapshot. Bootstrap and ongoing delivery jointly process the initial publication coverage, subject to the existing reported read-failure contract; newer authority may also arrive. Later synchronization continues normally. This distinction must appear in public documentation.
 
-## 2. Public API proposal
+## 2. Public API
 
 ```ts
 const subscription = await client.scopes.subscribe("project:123");
@@ -51,7 +51,7 @@ This argument assumes retained invalidation identities, monotonic publication cu
 
 ## 4. Request/response and backend contract
 
-Reuse `/sync/pull`, existing host `head` and cursor-ordered `scan`, and ordinary authority resolution. Dispatch an explicit bootstrap request before normal decoding; reject unknown modes.
+Reuse `/sync/pull`, existing host `head` and cursor-ordered `scan`, and ordinary authority resolution. The existing public Rust `process_pull` entry point dispatches bootstrap requests before normal decoding: absent `mode` means ordinary pull, `mode: "bootstrap"` selects bounded loading, and any other present mode (including null) is rejected. All bindings and direct backend callers therefore share the contract; do not implement dispatch only in the HTTP adapter.
 
 ```ts
 type BootstrapRequest = {
@@ -94,7 +94,7 @@ Do not duplicate `starting_cursor` or live `cursor`. Do not create a generic job
 
 Registration is a local transaction. A requested task with `starting_cursor=NULL` waits for #150 initialization. Otherwise the scheduler can issue its first/next page. In one local transaction, validate the expected epoch/run/progress, apply authority using `Engine::apply_records`, and update only bootstrap fields. Success commits data and progress together. Duplicate old pages cannot move progress backward.
 
-If any delivered record fails to load, validate or apply, retain successful authority writes from the page, mark the run failed, and leave its continuation marker unchanged. Record the bounded failure report. No unrelated live work or Actions stop. A later explicit bootstrap call retries that same page; stamps make successfully applied records idempotent. Transport failures roll back the uncommitted page and use the Engine's bounded backoff, preserving pending work. They do not convert all rows into business failures.
+If any delivered record fails to load, validate or apply, retain successful authority writes from the page, mark the run failed, and leave its continuation marker unchanged. Only `ReadFailed`, `Skipped` and `Conflict` reports fail Bootstrap authority coverage. A `Diverged` pending-Action replay report remains observable but does not fail an otherwise successful authority load. Persist at most 50 failure summaries containing model, identity, stamp and code, plus a message truncated to 1,024 UTF-8 bytes; omit arbitrary report detail and Model payloads. No unrelated live work or Actions stop. A later explicit bootstrap call retries that same page; stamps make successfully applied records idempotent. Transport failures preserve pending work and use the Engine's bounded backoff. Invalid protocol envelopes commit no authority or progress and fail the run visibly; an attributable record failure follows the partial-success rule above. A local storage/commit error rolls back the whole page, surfaces through the existing error channel, and leaves the task resumable after recovery; never publish completion from a failed commit. Authentication refresh/offline recovery follows existing transport behavior. Deterministic unsupported read-contract/request failures are terminal until an explicit retry. They do not convert all rows into business failures.
 
 After historical progress reaches S, store the final page head H and require ongoing `cursor >= H` before marking complete. H is fixed after the terminal page commits, not refreshed while waiting. If necessary wake the existing catch-up path; bootstrap does not synthesize cursor advancement. The transaction that observes both conditions marks complete and emits a committed status event, then SDK waiters resolve. A zero-head empty Scope can complete normally.
 
@@ -120,4 +120,4 @@ Test bounded cursor scans with sparse/compacted rows, republishing across S, rep
 
 Include a test where a live Loader fails and L advances: its error remains visible and documentation must not claim that record successfully loaded when Bootstrap completes. Include a Bootstrap-page failure separately: successful writes remain, progress does not advance, the call rejects, and explicit retry revisits the page.
 
-Provide one assembled client/server scenario exercising #150 and #151 together. Reuse #12 for separately reported 10k/100k/1m diagnostic scales; no capacity or latency claim follows from correctness tests. Runtime implementation is deferred until the written design/API is reviewed.
+Provide one assembled client/server scenario exercising #150 and #151 together. Reuse #12 for separately reported 10k/100k/1m diagnostic scales; no capacity or latency claim follows from correctness tests. The written design/API is the reviewed baseline for the separate cloud implementation agent; see the companion handoff for sequential validation and merge authorization.

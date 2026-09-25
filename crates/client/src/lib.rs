@@ -1,6 +1,7 @@
 //! Client engine over per-model SQLite tables. No state lives in memory between calls.
 pub mod actions;
 pub mod authority;
+pub mod bootstrap;
 pub mod connection;
 pub mod ddl;
 mod downlink;
@@ -21,6 +22,9 @@ pub mod transport;
 
 pub use actions::{ActionCallOptions, SubmittedCall};
 pub use axton_core::*;
+pub use bootstrap::{
+    BootstrapApply, BootstrapError, BootstrapPhase, BootstrapRecordFailure, BootstrapState,
+};
 pub use connection::*;
 pub use downlink_worker::*;
 pub use live::*;

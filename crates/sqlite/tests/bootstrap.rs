@@ -1,0 +1,860 @@
+//! Durable whole-Scope Bootstrap: the registration ledger beside the #150
+//! subscription row, and the one transaction that applies a historical page's
+//! authority together with its progress
+//! ([#151](https://github.com/zanminwang/axton/issues/151)).
+mod common;
+use axton_client::*;
+use axton_sqlite::SqliteStore;
+use common::*;
+use serde_json::json;
+use std::cell::Cell;
+use std::rc::Rc;
+
+/// Register `scope` and commit the first delivery boundary an acknowledgement
+/// at `head` establishes: S = L = `head`, the origin every historical page of
+/// this subscription is bounded by.
+fn origin(c: &mut Client<SqliteStore>, scope: &str, head: u64) -> SubscriptionState {
+    c.transaction(|tx| tx.set_channel(scope.into(), true))
+        .unwrap();
+    acknowledge(c, &[(scope, head)]);
+    c.subscription_state(scope).unwrap().expect("a row")
+}
+/// One historical page: `(from, to]` of `scope`, bounded by origin `until`,
+/// observed at channel head `head`.
+fn historical(
+    scope: &str,
+    from: u64,
+    to: u64,
+    until: u64,
+    head: u64,
+    records: Vec<AuthorityRecord>,
+) -> BootstrapPage {
+    BootstrapPage {
+        channel: scope.to_string(),
+        from,
+        to,
+        until,
+        head,
+        records,
+    }
+}
+fn bootstrap(c: &mut Client<SqliteStore>, scope: &str) -> BootstrapState {
+    let id = c
+        .subscription_state(scope)
+        .unwrap()
+        .expect("a row")
+        .subscription_id;
+    c.bootstrap_state(scope, id).unwrap()
+}
+/// Apply `page` as the answer to the request the stored state would issue.
+fn apply(c: &mut Client<SqliteStore>, scope: &str, page: &BootstrapPage) -> BootstrapApply {
+    let state = bootstrap(c, scope);
+    c.apply_bootstrap_page(scope, state.subscription_id, state.run, state.cursor, page)
+        .unwrap()
+}
+fn applied(outcome: &BootstrapApply) -> (&BootstrapState, &ApplyReport) {
+    match outcome {
+        BootstrapApply::Applied { state, report } => (state, report),
+        other => panic!("expected an applied page, got {other:?}"),
+    }
+}
+fn failed(outcome: &BootstrapApply) -> &BootstrapState {
+    match outcome {
+        BootstrapApply::Failed(state) => state,
+        other => panic!("expected a failed run, got {other:?}"),
+    }
+}
+/// A record whose state this client's schema refuses: a `Skipped` report.
+fn refused(id: &str, stamp: u64) -> AuthorityRecord {
+    let mut record = authority_of(id, Some("x"), stamp);
+    record.state = json!({"text": 22});
+    record
+}
+/// A record the server could not read: a `ReadFailed` report.
+fn unreadable(id: &str, stamp: u64) -> AuthorityRecord {
+    let mut record = authority_of(id, None, stamp);
+    record.error = Some("loader.failed".into());
+    record
+}
+fn entry(id: &str) -> RecordKey {
+    schema().record_key("Entry", &json!({ "id": id })).unwrap()
+}
+
+/// A request for a Scope that is not subscribed - or whose subscription was
+/// replaced - names no bootstrap task at all.
+#[test]
+fn a_closed_subscription_refuses_registration_and_observation() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let state = origin(&mut c, "a", 0);
+    for error in [
+        c.request_bootstrap("b", 1).expect_err("no such Scope"),
+        c.bootstrap_state("b", 1).expect_err("no such Scope"),
+        c.request_bootstrap("a", state.subscription_id + 1)
+            .expect_err("another identity"),
+        c.bootstrap_state("a", state.subscription_id + 1)
+            .expect_err("another identity"),
+    ] {
+        assert!(error.to_string().contains("is closed"), "{error}");
+    }
+}
+
+/// Registration is a local write that needs no connection and no boundary: a
+/// Scope registered offline carries a requested task at once, and it becomes
+/// schedulable work only when #150 commits its origin.
+#[test]
+fn registration_before_initialization_waits_for_its_origin() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let registered = c.ensure_subscription("a").unwrap();
+    assert_eq!(registered.starting_cursor, None);
+    let state = c
+        .request_bootstrap("a", registered.subscription_id)
+        .unwrap();
+    assert_eq!(state.state, BootstrapPhase::Requested);
+    assert_eq!((state.run, state.cursor), (1, 0));
+    assert_eq!((state.barrier, state.error.as_ref()), (None, None));
+    assert!(
+        c.bootstrap_tasks().unwrap().is_empty(),
+        "an uninitialized subscription has no interval to scan yet"
+    );
+    acknowledge(&mut c, &[("a", 7)]);
+    assert_eq!(
+        c.bootstrap_tasks().unwrap(),
+        vec![c.bootstrap_state("a", registered.subscription_id).unwrap()],
+        "the committed origin makes it schedulable"
+    );
+}
+
+/// Only the first active call registers work: duplicate calls share the run,
+/// and a completed task answers locally without starting another one.
+#[test]
+fn duplicate_calls_share_the_run_and_a_complete_task_is_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 0).subscription_id;
+    let first = c.request_bootstrap("a", id).unwrap();
+    let generation = (c.generation(), c.subscription_generation());
+    let second = c.request_bootstrap("a", id).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(first.run, 1);
+    assert_eq!(
+        (c.generation(), c.subscription_generation()),
+        generation,
+        "a call that changes nothing commits nothing"
+    );
+    // The empty interval of a Scope at origin zero completes on its one
+    // terminal page, and a later call resolves against it.
+    let page = historical("a", 0, 0, 0, 0, vec![]);
+    let outcome = apply(&mut c, "a", &page);
+    assert_eq!(applied(&outcome).0.state, BootstrapPhase::Complete);
+    let again = c.request_bootstrap("a", id).unwrap();
+    assert_eq!(again.state, BootstrapPhase::Complete);
+    assert_eq!((again.run, again.cursor, again.barrier), (1, 0, Some(0)));
+}
+
+/// An explicit retry after a terminal failure is a new run over the same saved
+/// progress: the error and the barrier go, B stays, and pages of the failed run
+/// can no longer move it.
+#[test]
+fn a_retry_after_failure_is_a_new_run_over_the_same_progress() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 10).subscription_id;
+    c.request_bootstrap("a", id).unwrap();
+    let page = historical("a", 0, 4, 10, 12, vec![authority_of("k", Some("K"), 4)]);
+    assert_eq!(applied(&apply(&mut c, "a", &page)).0.cursor, 4);
+    let bad = historical("a", 4, 6, 10, 12, vec![refused("bad", 6)]);
+    let state = failed(&apply(&mut c, "a", &bad)).clone();
+    assert_eq!(state.state, BootstrapPhase::Failed);
+    assert_eq!((state.run, state.cursor), (1, 4));
+    assert!(state.error.is_some());
+
+    let retried = c.request_bootstrap("a", id).unwrap();
+    assert_eq!(retried.state, BootstrapPhase::Requested);
+    assert_eq!(retried.run, 2, "an explicit retry is a new run");
+    assert_eq!(retried.cursor, 4, "over the progress the failed run kept");
+    assert_eq!((retried.barrier, retried.error.as_ref()), (None, None));
+    // A page of the run that failed cannot move the one that replaced it.
+    let stale = c
+        .apply_bootstrap_page("a", id, 1, 4, &historical("a", 4, 6, 10, 12, vec![]))
+        .unwrap();
+    assert!(stale.is_stale(), "{stale:?}");
+    assert_eq!(bootstrap(&mut c, "a").cursor, 4);
+}
+
+/// Unsubscribing removes that epoch's load state with the row; registering the
+/// same Scope name again is a new identity whose coverage starts over. The
+/// records the removed run applied are retained (D6).
+#[test]
+fn unsubscribe_removes_the_load_state_and_recreation_starts_over() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let first = origin(&mut c, "a", 0).subscription_id;
+    c.request_bootstrap("a", first).unwrap();
+    apply(
+        &mut c,
+        "a",
+        &historical("a", 0, 0, 0, 0, vec![authority(Some("A"), 3)]),
+    );
+    assert_eq!(bootstrap(&mut c, "a").state, BootstrapPhase::Complete);
+
+    assert!(c.remove_subscription("a", first).unwrap());
+    assert!(c.bootstrap_state("a", first).is_err(), "the state is gone");
+    let second = origin(&mut c, "a", 0).subscription_id;
+    assert_ne!(second, first);
+    let fresh = c.bootstrap_state("a", second).unwrap();
+    assert_eq!(fresh.state, BootstrapPhase::NotRequested);
+    assert_eq!((fresh.run, fresh.cursor, fresh.barrier), (0, 0, None));
+    assert_eq!(
+        c.read(&key()).unwrap().unwrap()["text"],
+        "A",
+        "unsubscribing removes no content"
+    );
+}
+
+/// Every bootstrap field is durable: a reopened replica answers with the same
+/// phase, run, progress, barrier and stored failure.
+#[test]
+fn every_bootstrap_field_survives_a_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open(&path);
+    let id = origin(&mut c, "a", 10).subscription_id;
+    c.request_bootstrap("a", id).unwrap();
+    apply(&mut c, "a", &historical("a", 0, 4, 10, 12, vec![]));
+    let error = BootstrapError::new("bootstrap.records_failed", "one record", vec![]);
+    assert!(c.fail_bootstrap("a", id, 1, error).unwrap());
+    let before = c.bootstrap_state("a", id).unwrap();
+    drop(c);
+
+    let mut c = open(&path);
+    assert_eq!(c.bootstrap_state("a", id).unwrap(), before);
+    let reopened = c.bootstrap_state("a", id).unwrap();
+    assert_eq!(reopened.state, BootstrapPhase::Failed);
+    assert_eq!((reopened.run, reopened.cursor), (1, 4));
+    assert_eq!(reopened.error.unwrap().message, "one record");
+    assert!(
+        c.bootstrap_tasks().unwrap().is_empty(),
+        "a failed run waits for an explicit retry"
+    );
+}
+
+/// The identity, the run, the echoed markers and the committed progress each
+/// fence a response: a page that fails one of them writes nothing at all - no
+/// authority, no progress, no completion.
+#[test]
+fn a_stale_page_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 10).subscription_id;
+    c.request_bootstrap("a", id).unwrap();
+    let record = vec![authority_of("k", Some("K"), 4)];
+    let page = |from, to, until, head| historical("a", from, to, until, head, record.clone());
+    // Each case is (why, identity, run, expected_after, page); the stored task
+    // is identity `id`, run 1, B = 0, S = 10.
+    let cases: Vec<(&str, u64, u64, u64, BootstrapPage)> = vec![
+        ("another identity", id + 1, 1, 0, page(0, 4, 10, 12)),
+        ("another run", id, 2, 0, page(0, 4, 10, 12)),
+        (
+            "an expectation ahead of the committed B",
+            id,
+            1,
+            2,
+            page(2, 4, 10, 12),
+        ),
+        (
+            "a from that is not the expected B",
+            id,
+            1,
+            0,
+            page(1, 4, 10, 12),
+        ),
+        (
+            "another Scope",
+            id,
+            1,
+            0,
+            historical("b", 0, 4, 10, 12, record.clone()),
+        ),
+        ("another origin", id, 1, 0, page(0, 4, 9, 12)),
+    ];
+    for (why, identity, run, expected_after, page) in cases {
+        let outcome = c
+            .apply_bootstrap_page("a", identity, run, expected_after, &page)
+            .unwrap();
+        assert!(outcome.is_stale(), "{why}: {outcome:?}");
+        assert_eq!(bootstrap(&mut c, "a").cursor, 0, "{why}");
+        assert_eq!(
+            bootstrap(&mut c, "a").state,
+            BootstrapPhase::Requested,
+            "{why}"
+        );
+        assert!(c.read(&entry("k")).unwrap().is_none(), "{why}");
+    }
+    // A duplicate of a page already applied cannot move progress backwards.
+    assert_eq!(
+        applied(&apply(&mut c, "a", &page(0, 4, 10, 12))).0.cursor,
+        4
+    );
+    let duplicate = c
+        .apply_bootstrap_page("a", id, 1, 0, &page(0, 4, 10, 12))
+        .unwrap();
+    assert!(duplicate.is_stale(), "{duplicate:?}");
+    assert_eq!(bootstrap(&mut c, "a").cursor, 4);
+    // A completed task is not a task a page can move either.
+    apply(&mut c, "a", &historical("a", 4, 10, 10, 10, vec![]));
+    assert_eq!(bootstrap(&mut c, "a").state, BootstrapPhase::Complete);
+    let after = c
+        .apply_bootstrap_page(
+            "a",
+            id,
+            1,
+            10,
+            &historical("a", 10, 10, 10, 10, record.clone()),
+        )
+        .unwrap();
+    assert!(after.is_stale(), "{after:?}");
+    assert_eq!(
+        c.read(&entry("k")).unwrap().unwrap()["text"],
+        "K",
+        "from the page that did apply"
+    );
+}
+
+/// A protocol-invalid envelope commits no authority and no progress, and fails
+/// visibly: the interval is not advanced and the phase is untouched, so the
+/// caller can mark the run failed itself.
+#[test]
+fn a_protocol_invalid_page_writes_nothing_and_fails_visibly() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 10).subscription_id;
+    c.request_bootstrap("a", id).unwrap();
+    let record = vec![authority_of("k", Some("K"), 4)];
+    for page in [
+        // An origin past the channel head.
+        historical("a", 0, 4, 10, 3, record.clone()),
+        // A page that reaches past its origin.
+        historical("a", 0, 12, 10, 12, record.clone()),
+        // A nonterminal page that made no progress.
+        historical("a", 0, 0, 10, 12, record.clone()),
+    ] {
+        let error = c
+            .apply_bootstrap_page("a", id, 1, 0, &page)
+            .expect_err("a protocol-invalid page");
+        assert!(!error.to_string().is_empty(), "{error}");
+        let state = bootstrap(&mut c, "a");
+        assert_eq!((state.state, state.cursor), (BootstrapPhase::Requested, 0));
+        assert!(c.read(&entry("k")).unwrap().is_none());
+    }
+    // The caller marks the run failed itself, run-fenced.
+    let error = BootstrapError::new("protocol.invalid", "malformed page", vec![]);
+    assert!(!c.fail_bootstrap("a", id, 2, error.clone()).unwrap());
+    assert!(c.fail_bootstrap("a", id, 1, error).unwrap());
+    let state = bootstrap(&mut c, "a");
+    assert_eq!(state.state, BootstrapPhase::Failed);
+    assert_eq!(state.error.unwrap().code, "protocol.invalid");
+}
+
+/// An attributable record failure keeps the page's successful authority, marks
+/// the run failed with a bounded summary, and leaves the continuation marker
+/// where it was, so an explicit retry revisits that page.
+#[test]
+fn a_record_failure_keeps_the_successful_authority_and_holds_the_interval() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 10).subscription_id;
+    c.request_bootstrap("a", id).unwrap();
+    let page = historical(
+        "a",
+        0,
+        6,
+        10,
+        12,
+        vec![
+            authority_of("good", Some("G"), 2),
+            refused("bad", 3),
+            unreadable("unread", 4),
+            authority_of("also", Some("B"), 5),
+        ],
+    );
+    let outcome = apply(&mut c, "a", &page);
+    let state = failed(&outcome);
+    assert_eq!(state.state, BootstrapPhase::Failed);
+    assert_eq!(state.cursor, 0, "the interval does not advance");
+    assert_eq!(state.barrier, None);
+    let error = state.error.clone().expect("a stored failure");
+    assert_eq!(error.code, "bootstrap.records_failed");
+    assert!(error.message.contains('a'), "{}", error.message);
+    let mut summaries: Vec<(String, String)> = error
+        .records
+        .iter()
+        .map(|r| {
+            (
+                r.identity["id"].as_str().unwrap().to_string(),
+                r.code.clone(),
+            )
+        })
+        .collect();
+    summaries.sort();
+    assert_eq!(
+        summaries,
+        vec![
+            ("bad".to_string(), "skipped".to_string()),
+            ("unread".to_string(), "loader.failed".to_string())
+        ]
+    );
+    // The records that did apply are committed content.
+    assert_eq!(c.read(&entry("good")).unwrap().unwrap()["text"], "G");
+    assert_eq!(c.read(&entry("also")).unwrap().unwrap()["text"], "B");
+    assert!(c.read(&entry("bad")).unwrap().is_none());
+    assert_eq!(c.record_stamp(&entry("good")).unwrap(), 2);
+    // An explicit retry revisits the same page; the applied records are
+    // idempotent by stamp.
+    let retried = c.request_bootstrap("a", id).unwrap();
+    assert_eq!((retried.run, retried.cursor), (2, 0));
+    let good = historical(
+        "a",
+        0,
+        6,
+        10,
+        12,
+        vec![
+            authority_of("good", Some("G"), 2),
+            authority_of("bad", Some("F"), 3),
+            authority_of("unread", Some("U"), 4),
+            authority_of("also", Some("B"), 5),
+        ],
+    );
+    let outcome = apply(&mut c, "a", &good);
+    let (state, report) = applied(&outcome);
+    assert_eq!(state.cursor, 6);
+    assert_eq!(state.state, BootstrapPhase::Loading);
+    assert_eq!(report.applied, 2, "the two already applied are idempotent");
+    assert_eq!(c.read(&entry("bad")).unwrap().unwrap()["text"], "F");
+}
+
+/// The stored failure is bounded: at most fifty record summaries and a message
+/// cut to 1,024 UTF-8 bytes on a character boundary.
+#[test]
+fn a_stored_failure_is_bounded() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 10).subscription_id;
+    c.request_bootstrap("a", id).unwrap();
+    // A multi-byte character straddles byte 1,024: the cut falls before it.
+    let message = format!("{}\u{e9}{}", "a".repeat(1023), "b".repeat(100));
+    let records: Vec<BootstrapRecordFailure> = (0..60)
+        .map(|i| BootstrapRecordFailure {
+            model: "Entry".into(),
+            identity: json!({ "id": format!("e{i}") }),
+            stamp: i,
+            code: "loader.failed".into(),
+        })
+        .collect();
+    let error = BootstrapError::new("bootstrap.records_failed", message, records);
+    assert_eq!(error.message.len(), 1023, "cut on a character boundary");
+    assert_eq!(error.records.len(), 50);
+    assert!(c.fail_bootstrap("a", id, 1, error.clone()).unwrap());
+    let stored = bootstrap(&mut c, "a").error.expect("a stored failure");
+    assert_eq!(stored, error);
+
+    // The fields are public, so the bound is enforced where the row is written
+    // too, not only by the constructor.
+    let retried = c.request_bootstrap("a", id).unwrap();
+    let unbounded = BootstrapError {
+        code: "protocol.invalid".into(),
+        message: "z".repeat(4096),
+        records: error
+            .records
+            .iter()
+            .cloned()
+            .chain(error.records.clone())
+            .collect(),
+    };
+    assert!(c.fail_bootstrap("a", id, retried.run, unbounded).unwrap());
+    let stored = bootstrap(&mut c, "a").error.expect("a stored failure");
+    assert_eq!(stored.message.len(), 1024);
+    assert_eq!(stored.records.len(), 50);
+}
+
+/// A pending Action whose replay no longer fits the new authority is reported
+/// for observation and does not fail the run: the authority it applied is
+/// coverage, and the queued work stays queued.
+#[test]
+fn a_diverged_replay_does_not_fail_the_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 10).subscription_id;
+    seed(&mut c, "local");
+    let ordinal = c.transaction(|tx| tx.enqueue(mutation("edited"))).unwrap();
+    c.request_bootstrap("a", id).unwrap();
+    // The historical record is a deletion: the queued update cannot replay.
+    let outcome = apply(
+        &mut c,
+        "a",
+        &historical("a", 0, 10, 10, 10, vec![authority(None, 5)]),
+    );
+    let (state, report) = applied(&outcome);
+    assert_eq!(state.state, BootstrapPhase::Complete);
+    assert_eq!(state.cursor, 10);
+    assert_eq!(report.diverged(), 1);
+    assert_eq!(report.reports[0].ordinal, Some(ordinal));
+    assert_eq!(state.error, None, "a divergence is not a coverage failure");
+    assert_eq!(c.pending_count().unwrap(), 1, "the edit is still sent");
+}
+
+/// Newer authority already applied is not replaced by the historical interval,
+/// and a deletion is not resurrected by it; a record the interval alone carries
+/// lands.
+#[test]
+fn old_historical_authority_cannot_regress_newer_live_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 10).subscription_id;
+    // Live delivery moves past the origin: an update, then a deletion.
+    c.apply_page(page("a", 10, 14, Some("live"))).unwrap();
+    c.apply_page(page("a", 14, 20, None)).unwrap();
+    assert!(c.read(&key()).unwrap().is_none());
+    c.request_bootstrap("a", id).unwrap();
+    let outcome = apply(
+        &mut c,
+        "a",
+        &historical(
+            "a",
+            0,
+            10,
+            10,
+            20,
+            vec![
+                authority(Some("historical"), 8),
+                authority_of("only", Some("O"), 3),
+            ],
+        ),
+    );
+    let (state, report) = applied(&outcome);
+    assert_eq!(report.applied, 1, "only the record the interval alone has");
+    assert!(report.reports.is_empty());
+    assert!(
+        c.read(&key()).unwrap().is_none(),
+        "an older historical state cannot resurrect a deletion"
+    );
+    assert_eq!(c.record_stamp(&key()).unwrap(), 20);
+    assert_eq!(c.read(&entry("only")).unwrap().unwrap()["text"], "O");
+    assert_eq!(state.state, BootstrapPhase::Complete);
+}
+
+/// Historical authority lands beneath pending optimism and the queue replays
+/// over it: the visible row keeps the local edit, the stamp is the server's.
+#[test]
+fn historical_authority_lands_beneath_pending_optimism() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 10).subscription_id;
+    seed(&mut c, "A");
+    c.transaction(|tx| tx.enqueue(mutation("mine"))).unwrap();
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "mine");
+    c.request_bootstrap("a", id).unwrap();
+    let outcome = apply(
+        &mut c,
+        "a",
+        &historical("a", 0, 10, 10, 10, vec![authority(Some("server"), 6)]),
+    );
+    let (_, report) = applied(&outcome);
+    assert_eq!(report.applied, 1);
+    assert_eq!(report.diverged(), 0);
+    assert_eq!(
+        c.read(&key()).unwrap().unwrap()["text"],
+        "mine",
+        "the optimistic edit still shows"
+    );
+    assert_eq!(c.record_stamp(&key()).unwrap(), 6);
+    assert_eq!(c.pending_count().unwrap(), 1);
+}
+
+/// The terminal page fixes the barrier H and the run waits in `catching_up`
+/// until ordinary delivery reaches it. H is not refreshed while waiting.
+#[test]
+fn the_terminal_page_fixes_a_barrier_that_ordinary_delivery_settles() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 5).subscription_id;
+    c.request_bootstrap("a", id).unwrap();
+    let first = apply(
+        &mut c,
+        "a",
+        &historical("a", 0, 3, 5, 9, vec![authority_of("k", Some("K"), 2)]),
+    );
+    let (state, _) = applied(&first);
+    assert_eq!(state.state, BootstrapPhase::Loading);
+    assert_eq!((state.cursor, state.barrier), (3, None));
+
+    let terminal = apply(&mut c, "a", &historical("a", 3, 5, 5, 9, vec![]));
+    let (state, _) = applied(&terminal);
+    assert_eq!(state.state, BootstrapPhase::CatchingUp);
+    assert_eq!((state.cursor, state.barrier), (5, Some(9)));
+    assert!(
+        c.settle_bootstrap_barriers(&["a".to_string()])
+            .unwrap()
+            .is_empty(),
+        "delivery is behind the barrier"
+    );
+    assert_eq!(c.cursor("a").unwrap(), Some(5));
+
+    // Ordinary delivery reaches the barrier; the transaction that observes both
+    // conditions marks the run complete.
+    c.apply_page(page("a", 5, 9, Some("live"))).unwrap();
+    let settled = c.settle_bootstrap_barriers(&["a".to_string()]).unwrap();
+    assert_eq!(settled.len(), 1);
+    assert_eq!(settled[0].state, BootstrapPhase::Complete);
+    assert_eq!(settled[0].barrier, Some(9), "the barrier is retained");
+    assert!(
+        c.settle_bootstrap_barriers(&["a".to_string()])
+            .unwrap()
+            .is_empty(),
+        "settling is idempotent"
+    );
+    assert_eq!(
+        c.bootstrap_state("a", id).unwrap().state,
+        BootstrapPhase::Complete
+    );
+    assert_eq!(
+        c.subscription_state("a").unwrap().unwrap(),
+        SubscriptionState {
+            scope: "a".into(),
+            subscription_id: id,
+            starting_cursor: Some(5),
+            cursor: Some(9),
+        },
+        "bootstrap never writes the origin or the delivery cursor"
+    );
+}
+
+/// When delivery is already at or past the head the terminal page observed, the
+/// same transaction completes the run.
+#[test]
+fn a_terminal_page_completes_at_once_when_delivery_is_past_its_barrier() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 5).subscription_id;
+    c.request_bootstrap("a", id).unwrap();
+    let outcome = apply(
+        &mut c,
+        "a",
+        &historical("a", 0, 5, 5, 5, vec![authority_of("k", Some("K"), 2)]),
+    );
+    let (state, _) = applied(&outcome);
+    assert_eq!(state.state, BootstrapPhase::Complete);
+    assert_eq!((state.cursor, state.barrier), (5, Some(5)));
+    assert_eq!(c.read(&entry("k")).unwrap().unwrap()["text"], "K");
+    assert!(c.bootstrap_tasks().unwrap().is_empty());
+    assert_eq!(c.bootstrap_state("a", id).unwrap(), *state);
+}
+
+/// A Scope with nothing published completes normally: an empty terminal page at
+/// head zero needs no delivery to catch up with.
+#[test]
+fn an_empty_zero_head_scope_completes_on_its_one_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 0).subscription_id;
+    c.request_bootstrap("a", id).unwrap();
+    let outcome = apply(&mut c, "a", &historical("a", 0, 0, 0, 0, vec![]));
+    let (state, report) = applied(&outcome);
+    assert_eq!(state.state, BootstrapPhase::Complete);
+    assert_eq!((state.cursor, state.barrier), (0, Some(0)));
+    assert_eq!(report.applied, 0);
+}
+
+/// Tasks are the initialized runs that still have work, in Scope order: the
+/// round-robin the scheduler rotates.
+#[test]
+fn tasks_are_the_initialized_runs_with_work_in_scope_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    for (scope, head) in [("a", 5), ("b", 5), ("c", 5), ("d", 5)] {
+        let id = origin(&mut c, scope, head).subscription_id;
+        if scope != "d" {
+            c.request_bootstrap(scope, id).unwrap();
+        }
+    }
+    // b reaches its barrier and waits; c fails.
+    apply(&mut c, "b", &historical("b", 0, 5, 5, 9, vec![]));
+    let id = bootstrap(&mut c, "c").subscription_id;
+    let error = BootstrapError::new("protocol.invalid", "bad", vec![]);
+    c.fail_bootstrap("c", id, 1, error).unwrap();
+    assert_eq!(
+        c.bootstrap_tasks()
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.scope, t.state))
+            .collect::<Vec<_>>(),
+        vec![
+            ("a".to_string(), BootstrapPhase::Requested),
+            ("b".to_string(), BootstrapPhase::CatchingUp),
+        ]
+    );
+}
+
+/// The state the binding carries is serializable, with the phase as the stored
+/// text and an uncommitted barrier as null.
+#[test]
+fn bootstrap_state_is_serializable() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 5).subscription_id;
+    let state = c.request_bootstrap("a", id).unwrap();
+    assert_eq!(
+        serde_json::to_value(&state).unwrap(),
+        json!({"scope":"a","subscriptionId":id,"state":"requested","run":1,"cursor":0,"barrier":null,"error":null})
+    );
+    let error = BootstrapError::new(
+        "bootstrap.records_failed",
+        "one record",
+        vec![BootstrapRecordFailure {
+            model: "Entry".into(),
+            identity: json!({"id":"e"}),
+            stamp: 3,
+            code: "loader.failed".into(),
+        }],
+    );
+    c.fail_bootstrap("a", id, 1, error).unwrap();
+    let state = c.bootstrap_state("a", id).unwrap();
+    assert_eq!(
+        serde_json::to_value(&state).unwrap(),
+        json!({"scope":"a","subscriptionId":id,"state":"failed","run":1,"cursor":0,"barrier":null,
+               "error":{"code":"bootstrap.records_failed","message":"one record",
+                        "records":[{"model":"Entry","identity":{"id":"e"},"stamp":3,"code":"loader.failed"}]}})
+    );
+    for phase in [
+        BootstrapPhase::NotRequested,
+        BootstrapPhase::Requested,
+        BootstrapPhase::Loading,
+        BootstrapPhase::CatchingUp,
+        BootstrapPhase::Complete,
+        BootstrapPhase::Failed,
+    ] {
+        assert_eq!(serde_json::to_value(phase).unwrap(), json!(phase.as_str()));
+    }
+}
+
+/// The write the page lands in is one transaction: a commit that fails leaves
+/// neither the authority nor the progress, and the same page applies afterwards.
+#[test]
+fn a_failed_commit_leaves_neither_authority_nor_progress() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let trip = Trip::default();
+    let mut c = Client::open(
+        FailingCommit {
+            inner: SqliteStore::open(&path).unwrap(),
+            trip: trip.clone(),
+        },
+        schema(),
+    )
+    .unwrap();
+    let id = origin_generic(&mut c, "a", 10);
+    c.request_bootstrap("a", id).unwrap();
+    let page = historical("a", 0, 4, 10, 12, vec![authority_of("k", Some("K"), 4)]);
+    trip.arm();
+    let error = c
+        .apply_bootstrap_page("a", id, 1, 0, &page)
+        .expect_err("the injected commit failure");
+    assert!(error.to_string().contains("injected"), "{error}");
+    drop(c);
+
+    let mut c = open(&path);
+    assert!(
+        c.read(&entry("k")).unwrap().is_none(),
+        "no authority from the rolled-back page"
+    );
+    let state = c.bootstrap_state("a", id).unwrap();
+    assert_eq!((state.state, state.cursor), (BootstrapPhase::Requested, 0));
+    // The page is still resumable: applying it again commits both halves.
+    let outcome = apply(&mut c, "a", &page);
+    assert_eq!(applied(&outcome).0.cursor, 4);
+    assert_eq!(c.read(&entry("k")).unwrap().unwrap()["text"], "K");
+}
+
+/// A reopen immediately after the commit finds the authority and the progress
+/// together: they are one unit.
+#[test]
+fn a_reopen_after_the_commit_finds_authority_and_progress_together() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open(&path);
+    let id = origin(&mut c, "a", 10).subscription_id;
+    c.request_bootstrap("a", id).unwrap();
+    apply(
+        &mut c,
+        "a",
+        &historical("a", 0, 4, 10, 12, vec![authority_of("k", Some("K"), 4)]),
+    );
+    drop(c);
+    let mut c = open(&path);
+    assert_eq!(c.read(&entry("k")).unwrap().unwrap()["text"], "K");
+    let state = c.bootstrap_state("a", id).unwrap();
+    assert_eq!((state.state, state.cursor), (BootstrapPhase::Loading, 4));
+}
+
+/// A flag the test arms to fail the next commit.
+#[derive(Clone, Default)]
+struct Trip(Rc<Cell<bool>>);
+impl Trip {
+    fn arm(&self) {
+        self.0.set(true);
+    }
+    fn take(&self) -> bool {
+        self.0.replace(false)
+    }
+}
+/// A store whose `commit` fails once when armed: the injection point
+/// immediately before a page's authority and progress would land.
+struct FailingCommit {
+    inner: SqliteStore,
+    trip: Trip,
+}
+impl ClientStore for FailingCommit {
+    fn begin(&mut self) -> Result<()> {
+        self.inner.begin()
+    }
+    fn commit(&mut self) -> Result<()> {
+        if self.trip.take() {
+            return Err(invalid("injected commit failure"));
+        }
+        self.inner.commit()
+    }
+    fn rollback(&mut self) -> Result<()> {
+        self.inner.rollback()
+    }
+    fn savepoint(&mut self, name: &str) -> Result<()> {
+        self.inner.savepoint(name)
+    }
+    fn release(&mut self, name: &str) -> Result<()> {
+        self.inner.release(name)
+    }
+    fn rollback_to(&mut self, name: &str) -> Result<()> {
+        self.inner.rollback_to(name)
+    }
+    fn execute(&mut self, sql: &str, parameters: &[serde_json::Value]) -> Result<usize> {
+        self.inner.execute(sql, parameters)
+    }
+    fn execute_batch(&mut self, sql: &str) -> Result<()> {
+        self.inner.execute_batch(sql)
+    }
+    fn query(&mut self, sql: &str, parameters: &[serde_json::Value]) -> Result<SqlRows> {
+        self.inner.query(sql, parameters)
+    }
+    fn query_committed(&mut self, sql: &str, parameters: &[serde_json::Value]) -> Result<SqlRows> {
+        self.inner.query_committed(sql, parameters)
+    }
+}
+/// `origin` for any store: the fixtures are typed to the SQLite one.
+fn origin_generic<S: ClientStore>(c: &mut Client<S>, scope: &str, head: u64) -> u64 {
+    let state = c.ensure_subscription(scope).unwrap();
+    let expected = std::collections::BTreeMap::from([(scope.to_string(), state.subscription_id)]);
+    let heads = std::collections::BTreeMap::from([(scope.to_string(), head)]);
+    c.initialize_subscriptions(&expected, &heads).unwrap();
+    state.subscription_id
+}

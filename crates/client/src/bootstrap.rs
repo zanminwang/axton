@@ -1,0 +1,596 @@
+//! Whole-Scope Bootstrap: the durable load of everything published to a Scope
+//! before its subscription's origin. The ledger lives in the same
+//! `axton_subscription` row as the #150 identity and boundary, so a load is
+//! bound to one registration and goes with it.
+//!
+//! Three positions matter. **S** is the subscription's `starting_cursor`, the
+//! origin the first acknowledgement committed. **B** is `bootstrap_cursor`, how
+//! far the historical scan of `(0, S]` has committed. **L** is the ordinary
+//! delivery `cursor`. Bootstrap walks `(B, S]` and never writes S or L;
+//! delivery moves L and never writes B. The terminal historical page fixes
+//! **H**, the channel head its transaction observed, as a completion barrier:
+//! the run completes once `B = S` and `L >= H`
+//! ([#151](https://github.com/zanminwang/axton/issues/151)).
+use crate::engine::{Engine, as_u64};
+use crate::store::ClientStore;
+use crate::{ApplyReport, Client, Report, ReportKind, SubscriptionState};
+use axton_core::{BootstrapPage, Result, invalid};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+/// The stable code a page whose records could not all be applied fails with.
+pub const RECORDS_FAILED: &str = "bootstrap.records_failed";
+/// At most this many record summaries are kept in a stored failure.
+pub const MAX_FAILURES: usize = 50;
+/// A stored failure message is cut to this many UTF-8 bytes.
+pub const MAX_MESSAGE: usize = 1024;
+
+/// How far a Scope's historical load has got. The names are the stored column
+/// values, and the phase of a Scope that never asked for one is
+/// [`BootstrapPhase::NotRequested`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BootstrapPhase {
+    /// No load was ever requested for this registration.
+    NotRequested,
+    /// Registered and waiting: for the subscription's origin, or for the
+    /// scheduler's next page.
+    Requested,
+    /// At least one page committed and the interval is not finished.
+    Loading,
+    /// The interval is finished and the barrier H is fixed; ordinary delivery
+    /// has not reached it yet.
+    CatchingUp,
+    /// `B = S` and `L >= H`: the historical interval and the fixed barrier are
+    /// both processed.
+    Complete,
+    /// The run ended on a failure that is terminal until an explicit retry.
+    Failed,
+}
+impl BootstrapPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotRequested => "not_requested",
+            Self::Requested => "requested",
+            Self::Loading => "loading",
+            Self::CatchingUp => "catching_up",
+            Self::Complete => "complete",
+            Self::Failed => "failed",
+        }
+    }
+    fn parse(text: &str) -> Result<Self> {
+        Ok(match text {
+            "not_requested" => Self::NotRequested,
+            "requested" => Self::Requested,
+            "loading" => Self::Loading,
+            "catching_up" => Self::CatchingUp,
+            "complete" => Self::Complete,
+            "failed" => Self::Failed,
+            other => return Err(invalid(format!("unknown bootstrap state {other}"))),
+        })
+    }
+    /// Whether a run in this phase still has work the scheduler can issue or
+    /// settle.
+    fn active(self) -> bool {
+        matches!(self, Self::Requested | Self::Loading | Self::CatchingUp)
+    }
+}
+
+/// One record of a failed page, in the bounded form the failure keeps: what it
+/// was, not what it contained. Model payloads never enter the ledger.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootstrapRecordFailure {
+    pub model: String,
+    pub identity: Value,
+    pub stamp: u64,
+    pub code: String,
+}
+impl BootstrapRecordFailure {
+    /// The summary of one report. A report the server attributed keeps its
+    /// code; one this client made carries the kind that made it.
+    fn of(report: &Report) -> Self {
+        Self {
+            model: report.model.clone(),
+            identity: report.identity.clone(),
+            stamp: report.stamp,
+            code: report.code.clone().unwrap_or_else(|| {
+                match report.kind {
+                    ReportKind::ReadFailed => "readFailed",
+                    ReportKind::Skipped => "skipped",
+                    ReportKind::Conflict => "conflict",
+                    ReportKind::Diverged => "diverged",
+                }
+                .to_string()
+            }),
+        }
+    }
+}
+
+/// Why a run failed, in the bounded form the row stores: a code, a message of
+/// at most [`MAX_MESSAGE`] UTF-8 bytes and at most [`MAX_FAILURES`] record
+/// summaries. [`BootstrapError::new`] is the only way to build one, so nothing
+/// unbounded can be stored.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootstrapError {
+    pub code: String,
+    pub message: String,
+    pub records: Vec<BootstrapRecordFailure>,
+}
+impl BootstrapError {
+    pub fn new(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        mut records: Vec<BootstrapRecordFailure>,
+    ) -> Self {
+        records.truncate(MAX_FAILURES);
+        Self {
+            code: code.into(),
+            message: truncate(message.into(), MAX_MESSAGE),
+            records,
+        }
+    }
+}
+/// Cut `text` to at most `bytes` UTF-8 bytes, on a character boundary: a
+/// message is diagnostic text, never a place to lose a valid string.
+fn truncate(text: String, bytes: usize) -> String {
+    if text.len() <= bytes {
+        return text;
+    }
+    let mut end = bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
+}
+
+/// One Scope's load, as the ledger holds it. `cursor` is B and `barrier` is H;
+/// S and L stay in [`SubscriptionState`], which Bootstrap never writes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootstrapState {
+    pub scope: String,
+    pub subscription_id: u64,
+    pub state: BootstrapPhase,
+    /// The retry fence: every call and every response belongs to one run.
+    pub run: u64,
+    /// B, the committed historical progress.
+    pub cursor: u64,
+    /// H, the head the terminal page observed; `None` until it commits.
+    pub barrier: Option<u64>,
+    pub error: Option<BootstrapError>,
+}
+impl BootstrapState {
+    /// Refuse a row whose fields cannot have been written together: a barrier
+    /// before the interval finished, or a failure without a failed run.
+    fn coherent(&self) -> Result<()> {
+        let barrier = matches!(
+            self.state,
+            BootstrapPhase::CatchingUp | BootstrapPhase::Complete | BootstrapPhase::Failed
+        );
+        if self.barrier.is_some() && !barrier {
+            return Err(invalid(format!(
+                "bootstrap barrier stored for {} in state {}",
+                self.scope,
+                self.state.as_str()
+            )));
+        }
+        if self.error.is_some() && self.state != BootstrapPhase::Failed {
+            return Err(invalid(format!(
+                "bootstrap failure stored for {} in state {}",
+                self.scope,
+                self.state.as_str()
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// What applying one historical page came to.
+#[derive(Debug)]
+pub enum BootstrapApply {
+    /// The response does not answer the stored task: nothing was written.
+    Stale,
+    /// A record of the page could not be applied. The page's successful
+    /// authority is committed, the interval did not advance, and the run is
+    /// failed until an explicit retry.
+    Failed(BootstrapState),
+    /// The page's authority and its progress committed together.
+    Applied {
+        state: BootstrapState,
+        report: ApplyReport,
+    },
+}
+impl BootstrapApply {
+    /// Whether the response answered no stored task, so nothing was written.
+    pub fn is_stale(&self) -> bool {
+        matches!(self, Self::Stale)
+    }
+    /// The state the page committed, for either outcome that wrote one.
+    pub fn state(&self) -> Option<&BootstrapState> {
+        match self {
+            Self::Stale => None,
+            Self::Failed(state) | Self::Applied { state, .. } => Some(state),
+        }
+    }
+}
+
+/// The whole subscription row: the #150 identity and boundary, and the load
+/// beside it. Both halves are read at once so one transaction decides on S, L
+/// and B together.
+pub(crate) struct Loaded {
+    pub subscription: SubscriptionState,
+    pub state: BootstrapState,
+}
+
+const COLUMNS: &str = "channel, subscription_id, starting_cursor, cursor, \
+     bootstrap_state, bootstrap_run, bootstrap_cursor, bootstrap_barrier, bootstrap_error";
+
+fn optional(value: &Value) -> Result<Option<u64>> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    as_u64(value).map(Some)
+}
+fn decode(row: &[Value]) -> Result<Loaded> {
+    let scope = row[0]
+        .as_str()
+        .ok_or_else(|| invalid("stored Scope name is not text"))?
+        .to_string();
+    let subscription_id = as_u64(&row[1])?;
+    let state = BootstrapState {
+        scope: scope.clone(),
+        subscription_id,
+        state: BootstrapPhase::parse(
+            row[4]
+                .as_str()
+                .ok_or_else(|| invalid("stored bootstrap state is not text"))?,
+        )?,
+        run: as_u64(&row[5])?,
+        cursor: as_u64(&row[6])?,
+        barrier: optional(&row[7])?,
+        error: match row[8].as_str() {
+            Some(text) => Some(serde_json::from_str(text)?),
+            None => None,
+        },
+    };
+    state.coherent()?;
+    Ok(Loaded {
+        subscription: SubscriptionState {
+            scope,
+            subscription_id,
+            starting_cursor: optional(&row[2])?,
+            cursor: optional(&row[3])?,
+        },
+        state,
+    })
+}
+/// The error every call that names a registration this client no longer holds
+/// is refused with. The SDK maps it to `subscription.closed`.
+fn closed(scope: &str, subscription_id: u64) -> axton_core::Error {
+    invalid(format!(
+        "subscription {subscription_id} for {scope} is closed; it has no bootstrap state"
+    ))
+}
+
+impl<S: ClientStore> Engine<'_, S> {
+    /// The whole row for `channel`, or `None` when it is not subscribed.
+    pub(crate) fn bootstrap_row(&mut self, channel: &str) -> Result<Option<Loaded>> {
+        let rows = self.rows(
+            &format!("SELECT {COLUMNS} FROM axton_subscription WHERE channel=?"),
+            &[json!(channel)],
+        )?;
+        rows.rows.first().map(|r| decode(r)).transpose()
+    }
+    /// The row `subscription_id` names, or the closed error: a registration
+    /// that is gone, or one another registration replaced, has no load state
+    /// and never adopts another one's.
+    pub(crate) fn bootstrap_of(&mut self, channel: &str, subscription_id: u64) -> Result<Loaded> {
+        match self.bootstrap_row(channel)? {
+            Some(row) if row.subscription.subscription_id == subscription_id => Ok(row),
+            _ => Err(closed(channel, subscription_id)),
+        }
+    }
+    /// Write every bootstrap field of one row, fenced by the identity and by
+    /// the run it was read at. `false` means the row moved underneath and
+    /// nothing was written.
+    pub(crate) fn set_bootstrap(&mut self, state: &BootstrapState, from_run: u64) -> Result<bool> {
+        state.coherent()?;
+        // Bounded here, at the one place a failure is stored: the fields are
+        // public, so a caller could hand over a message or a list this row must
+        // not carry.
+        let error = match &state.error {
+            Some(error) => json!(serde_json::to_string(&BootstrapError::new(
+                error.code.clone(),
+                error.message.clone(),
+                error.records.clone(),
+            ))?),
+            None => Value::Null,
+        };
+        let affected = self.exec(
+            "axton_subscription",
+            "UPDATE axton_subscription SET bootstrap_state=?, bootstrap_run=?, bootstrap_cursor=?, \
+             bootstrap_barrier=?, bootstrap_error=? \
+             WHERE channel=? AND subscription_id=? AND bootstrap_run=?",
+            &[
+                json!(state.state.as_str()),
+                json!(state.run),
+                json!(state.cursor),
+                json!(state.barrier),
+                error,
+                json!(state.scope),
+                json!(state.subscription_id),
+                json!(from_run),
+            ],
+        )?;
+        Ok(affected == 1)
+    }
+    /// The initialized runs that still have work, in Scope order. A run whose
+    /// subscription has no origin yet has no interval to scan: it is registered
+    /// work, not schedulable work.
+    pub(crate) fn bootstrap_tasks(&mut self) -> Result<Vec<BootstrapState>> {
+        let rows = self.rows(
+            &format!(
+                "SELECT {COLUMNS} FROM axton_subscription \
+                 WHERE starting_cursor IS NOT NULL AND bootstrap_state IN ('requested','loading','catching_up') \
+                 ORDER BY channel"
+            ),
+            &[],
+        )?;
+        rows.rows
+            .iter()
+            .map(|r| decode(r).map(|row| row.state))
+            .collect()
+    }
+    /// Mark a run complete when the barrier it fixed has been reached, and
+    /// answer with the state it committed. Reading L and writing the phase in
+    /// one transaction is what makes the completion evidence exact.
+    pub(crate) fn settle_barrier(&mut self, channel: &str) -> Result<Option<BootstrapState>> {
+        let Some(row) = self.bootstrap_row(channel)? else {
+            return Ok(None);
+        };
+        let (Some(barrier), BootstrapPhase::CatchingUp) = (row.state.barrier, row.state.state)
+        else {
+            return Ok(None);
+        };
+        // A subscription without a committed position has not reached anything:
+        // it is never read as position zero (D9).
+        if row
+            .subscription
+            .cursor
+            .is_none_or(|delivered| delivered < barrier)
+        {
+            return Ok(None);
+        }
+        let mut state = row.state;
+        state.state = BootstrapPhase::Complete;
+        if self.set_bootstrap(&state, state.run)? {
+            return Ok(Some(state));
+        }
+        Ok(None)
+    }
+}
+
+impl<S: ClientStore> Client<S> {
+    /// Register a durable load of everything published to `scope` before its
+    /// origin, and answer with the stored state the call attached to.
+    ///
+    /// | Stored phase | Outcome |
+    /// | --- | --- |
+    /// | `not_requested` | `requested`, run + 1 |
+    /// | `requested`, `loading`, `catching_up` | unchanged: the call shares the active run |
+    /// | `complete` | unchanged: the call resolves locally, offline included |
+    /// | `failed` | `requested`, run + 1, the failure and the barrier cleared, B retained |
+    ///
+    /// It is one local transaction and needs no connection: a Scope registered
+    /// offline carries a requested load until #150 commits its origin.
+    pub fn request_bootstrap(
+        &mut self,
+        scope: &str,
+        subscription_id: u64,
+    ) -> Result<BootstrapState> {
+        // A call that changes nothing is answered from the committed reader, so
+        // it neither bumps the client generation nor notifies a watcher. The
+        // write re-reads the row inside its transaction, so a concurrent change
+        // still wins.
+        let stored = self.bootstrap_state(scope, subscription_id)?;
+        if stored.state.active() || stored.state == BootstrapPhase::Complete {
+            return Ok(stored);
+        }
+        self.write(|e| {
+            let row = e.bootstrap_of(scope, subscription_id)?;
+            let mut state = row.state;
+            if state.state.active() || state.state == BootstrapPhase::Complete {
+                return Ok(state);
+            }
+            let from_run = state.run;
+            state.state = BootstrapPhase::Requested;
+            state.run += 1;
+            state.barrier = None;
+            state.error = None;
+            written(e.set_bootstrap(&state, from_run)?)?;
+            // The scheduler is woken by the same mark a subscribe leaves, so a
+            // registration made between pumps is not missed.
+            e.mark_subscription(scope);
+            Ok(state)
+        })
+    }
+    /// The stored load state of the registration `subscription_id` names.
+    pub fn bootstrap_state(&mut self, scope: &str, subscription_id: u64) -> Result<BootstrapState> {
+        self.view(|e| Ok(e.bootstrap_of(scope, subscription_id)?.state))
+    }
+    /// The initialized runs with work left, in Scope order: what the scheduler
+    /// rotates through, one page at a time.
+    pub fn bootstrap_tasks(&mut self) -> Result<Vec<BootstrapState>> {
+        self.view(|e| e.bootstrap_tasks())
+    }
+    /// Apply one historical page's authority and its progress in one
+    /// transaction.
+    ///
+    /// The row is read again inside that transaction and the response is
+    /// refused as [`BootstrapApply::Stale`] - writing nothing at all - unless
+    /// it still answers the stored task: the same identity, the same run, a
+    /// phase that is still loading, `bootstrap_cursor == expected_after`, and a
+    /// page that echoes this Scope, that `from` and the stored origin. A
+    /// protocol-invalid envelope is an error and commits nothing. Otherwise the
+    /// records are staged by stamp; if any of them failed to read, validate or
+    /// apply, the successful ones stay committed, the interval does not advance
+    /// and the run is failed until an explicit retry. A `Diverged` replay is
+    /// reported, not a coverage failure. On success B moves to `page.to`, and a
+    /// terminal page fixes the barrier and completes the run as soon as
+    /// delivery has reached it.
+    pub fn apply_bootstrap_page(
+        &mut self,
+        scope: &str,
+        subscription_id: u64,
+        run: u64,
+        expected_after: u64,
+        page: &BootstrapPage,
+    ) -> Result<BootstrapApply> {
+        // Read first so a response that answers nothing opens no transaction;
+        // the write repeats every test against the row it writes.
+        let answered = |row: Option<&Loaded>| {
+            row.is_some_and(|row| answers(row, subscription_id, run, expected_after, page))
+        };
+        if !self.view(|e| Ok(answered(e.bootstrap_row(scope)?.as_ref())))? {
+            return Ok(BootstrapApply::Stale);
+        }
+        self.write(|e| {
+            let Some(row) = e.bootstrap_row(scope)?.filter(|row| answered(Some(row))) else {
+                return Ok(BootstrapApply::Stale);
+            };
+            validate(page, expected_after)?;
+            let report = e.apply_records(&page.records)?;
+            let mut state = row.state;
+            let failures: Vec<BootstrapRecordFailure> = report
+                .reports
+                .iter()
+                .filter(|r| {
+                    matches!(
+                        r.kind,
+                        ReportKind::ReadFailed | ReportKind::Skipped | ReportKind::Conflict
+                    )
+                })
+                .map(BootstrapRecordFailure::of)
+                .collect();
+            if !failures.is_empty() {
+                // The authority that did apply stays: it is coverage the retry
+                // need not fetch again. The continuation marker does not move,
+                // so the retry revisits this page.
+                state.state = BootstrapPhase::Failed;
+                state.error = Some(BootstrapError::new(
+                    RECORDS_FAILED,
+                    format!(
+                        "{} of {} records on the bootstrap page ({}, {}] for {scope} could not be applied",
+                        failures.len(),
+                        page.records.len(),
+                        page.from,
+                        page.to
+                    ),
+                    failures,
+                ));
+                written(e.set_bootstrap(&state, state.run)?)?;
+                return Ok(BootstrapApply::Failed(state));
+            }
+            state.cursor = page.to;
+            state.state = BootstrapPhase::Loading;
+            if page.terminal() {
+                state.barrier = Some(page.head);
+                state.state = BootstrapPhase::CatchingUp;
+                if row.subscription.cursor.is_some_and(|delivered| delivered >= page.head) {
+                    state.state = BootstrapPhase::Complete;
+                }
+            }
+            written(e.set_bootstrap(&state, state.run)?)?;
+            Ok(BootstrapApply::Applied { state, report })
+        })
+    }
+    /// Fail the run `run` names with a bounded error, keeping its progress and
+    /// its barrier: how a caller records a failure the ledger cannot see for
+    /// itself, such as a protocol-invalid response or a terminal transport
+    /// refusal. `false` when the run is no longer the active one.
+    pub fn fail_bootstrap(
+        &mut self,
+        scope: &str,
+        subscription_id: u64,
+        run: u64,
+        error: BootstrapError,
+    ) -> Result<bool> {
+        self.write(|e| {
+            let row = e.bootstrap_of(scope, subscription_id)?;
+            let mut state = row.state;
+            if state.run != run || !state.state.active() {
+                return Ok(false);
+            }
+            state.state = BootstrapPhase::Failed;
+            state.error = Some(error);
+            e.set_bootstrap(&state, run)
+        })
+    }
+    /// Complete every named run whose fixed barrier ordinary delivery has
+    /// reached, in one transaction, and answer with the states it committed.
+    /// The caller runs it after committed delivery progress; a Scope that is
+    /// not catching up, or is still behind its barrier, contributes nothing.
+    pub fn settle_bootstrap_barriers(&mut self, scopes: &[String]) -> Result<Vec<BootstrapState>> {
+        let settleable = self.view(|e| {
+            let tasks = e.bootstrap_tasks()?;
+            Ok(tasks
+                .iter()
+                .any(|t| t.state == BootstrapPhase::CatchingUp && scopes.contains(&t.scope)))
+        })?;
+        if !settleable {
+            return Ok(vec![]);
+        }
+        self.write(|e| {
+            let mut settled = vec![];
+            for scope in scopes {
+                settled.extend(e.settle_barrier(scope)?);
+            }
+            Ok(settled)
+        })
+    }
+}
+
+/// The row was read in this transaction, and one writer holds it: a write that
+/// finds nothing means the file changed underneath, so the transaction is
+/// refused rather than half applied.
+fn written(affected: bool) -> Result<()> {
+    if affected {
+        return Ok(());
+    }
+    Err(invalid("the bootstrap row changed during the transaction"))
+}
+/// Whether a response still answers the stored task. Every test is against
+/// what is committed now, so a response that survived an unsubscribe, a retry,
+/// a reopen or a rebuild cannot recreate or complete a task that replaced it.
+fn answers(
+    row: &Loaded,
+    subscription_id: u64,
+    run: u64,
+    expected_after: u64,
+    page: &BootstrapPage,
+) -> bool {
+    row.subscription.subscription_id == subscription_id
+        && row.state.run == run
+        && matches!(
+            row.state.state,
+            BootstrapPhase::Requested | BootstrapPhase::Loading
+        )
+        && row.state.cursor == expected_after
+        && page.channel == row.state.scope
+        && page.from == expected_after
+        && row.subscription.starting_cursor == Some(page.until)
+}
+/// The envelope rules a page must satisfy before any authority is written:
+/// `from <= to <= until <= head` and safe counters ([`BootstrapPage::validate`]),
+/// plus progress on every page that does not finish the interval.
+fn validate(page: &BootstrapPage, expected_after: u64) -> Result<()> {
+    page.validate()?;
+    if !page.terminal() && page.to == expected_after {
+        return Err(invalid(
+            "a bootstrap page that does not finish the interval must advance it",
+        ));
+    }
+    Ok(())
+}

@@ -463,3 +463,52 @@ fn a_database_without_a_descriptor_is_rebuilt_only_when_its_tables_do_not_fit() 
     );
     assert_eq!(sidecar(&path).as_deref(), Some("db.1"));
 }
+
+/// A rebuild resets loading coverage with the delivery boundary: the carried
+/// Scope's fresh identity holds a load that was never requested, so no
+/// completeness is claimed across the replacement
+/// ([#151](https://github.com/zanminwang/axton/issues/151)).
+#[test]
+fn a_rebuild_resets_the_bootstrap_state_with_the_fresh_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open_at(&path, schema());
+    let old = {
+        subscribe(&mut c, "book");
+        let id = c
+            .subscription_state("book")
+            .unwrap()
+            .unwrap()
+            .subscription_id;
+        c.request_bootstrap("book", id).unwrap();
+        let page = BootstrapPage {
+            channel: "book".into(),
+            from: 0,
+            to: 0,
+            until: 0,
+            head: 0,
+            records: vec![],
+        };
+        let outcome = c.apply_bootstrap_page("book", id, 1, 0, &page).unwrap();
+        assert_eq!(
+            outcome.state().map(|s| s.state),
+            Some(BootstrapPhase::Complete)
+        );
+        id
+    };
+    drop(c);
+
+    let mut c = open_at(&path, breaking());
+    assert!(c.schema_state().rebuilt);
+    let carried = c.subscription_state("book").unwrap().expect("carried over");
+    assert_ne!(carried.subscription_id, old, "a fresh identity");
+    assert!(
+        c.bootstrap_state("book", old).is_err(),
+        "the completed run belonged to the replaced identity"
+    );
+    let state = c.bootstrap_state("book", carried.subscription_id).unwrap();
+    assert_eq!(state.state, BootstrapPhase::NotRequested);
+    assert_eq!((state.run, state.cursor, state.barrier), (0, 0, None));
+    assert_eq!(state.error, None);
+    assert!(c.bootstrap_tasks().unwrap().is_empty());
+}

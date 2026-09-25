@@ -28,6 +28,9 @@ expected=(
   "'active' can't be used as a setter because it's final"
   "'scope' can't be used as a setter because it's final"
   "The method 'get' isn't defined for the type 'Scopes'"
+  "'phase' can't be used as a setter because it's final"
+  "The method 'cancel' isn't defined for the type 'Function'"
+  "The method 'refresh' isn't defined for the type 'Subscription'"
 )
 failed=0
 for message in "${expected[@]}"; do

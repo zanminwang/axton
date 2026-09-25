@@ -1,13 +1,20 @@
 import type {Handlers,Loaders,EntryV1} from './backend.ts';
 import {strict as assert} from 'node:assert';
+import {createServer} from 'node:http';
+import {createRequire} from 'node:module';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {GeneratedClient,type Subscription,type SubscriptionStatus} from './client.ts';
+import {GeneratedClient,type BootstrapPhase,type BootstrapStatus,type Subscription,type SubscriptionStatus} from './client.ts';
 import type {Transaction as RawTransaction} from '../../packages/client-js/index.mts';
 import {CreateEntry,EditEntry,RemoveEntries,decodeEntry,encodeEntry,EntryModel,EntryLiveModel,GeneratedTransaction,Mutate,type Entry,type ReadPort,type LivePort,type WritePort,type MutationName,type SyncState} from './generated.ts';
 const row:Entry={id:'123e4567-e89b-42d3-a456-426614174000',title:'hello',note:null,at:new Date('2026-01-01T00:00:00Z'),tags:['x'],status:'active'};
 function check(v:unknown,m:string){if(!v)throw Error(m)}
+async function until(predicate:()=>boolean,what:string){
+ const deadline=Date.now()+5000;
+ while(Date.now()<deadline){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,5));}
+ throw Error(`${what} timed out`);
+}
 const create=CreateEntry({entry:row});
 check(!('id' in (create.operations[0] as {values:object}).values),'identity leaked into state');
 check(JSON.stringify(decodeEntry(encodeEntry(row)))===JSON.stringify(row),'source conversion');
@@ -141,3 +148,64 @@ try{
  assert.equal(retained.status.active,false);
  await handle.unsubscribe();
 }finally{await client.close();await rm(scopeDirectory,{recursive:true,force:true});}
+
+// Whole-Scope bootstrap through the generated facade
+// ([#151](https://github.com/zanminwang/axton/issues/151)): the handle's
+// `bootstrap()` and the `bootstrap` part of its typed status are named through
+// the generated module, and two concurrent calls register one task.
+type FakeSocket={on(event:string,listener:(data:unknown)=>void):void;send(data:string):void;terminate():void};
+type FakeServer={clients:Set<FakeSocket>;on(event:'connection',listener:(socket:FakeSocket)=>void):void;close(done:()=>void):void};
+const {WebSocketServer}=createRequire(import.meta.url)('../../packages/server/node_modules/ws') as
+ {WebSocketServer:new(options:{server:unknown})=>FakeServer};
+const bootstrapDirectory=await mkdtemp(join(tmpdir(),'generated-bootstrap-'));
+const loads:{after:number;until:number}[]=[];
+let release=()=>{};
+const held=new Promise<void>(resolve=>{release=resolve;});
+const http=createServer(async(request,response)=>{
+ const chunks:Buffer[]=[];for await(const chunk of request)chunks.push(chunk as Buffer);
+ const body=JSON.parse(Buffer.concat(chunks).toString()) as {mode?:string;channel:string;after:number;until:number};
+ // Only a bootstrap page is expected here, and the test transport holds it.
+ loads.push({after:body.after,until:body.until});
+ await held;
+ response.end(JSON.stringify({mode:'bootstrap',channel:body.channel,from:body.after,to:body.until,until:body.until,head:body.until,records:[]}));
+});
+await new Promise<void>(resolve=>http.listen(0,'127.0.0.1',()=>resolve()));
+const sockets=new WebSocketServer({server:http});
+sockets.on('connection',socket=>{
+ socket.on('message',message=>{
+  const subscribe=JSON.parse(String(message)) as {channels:string[]};
+  socket.send(JSON.stringify({type:'subscribed',cursors:Object.fromEntries(subscribe.channels.map(channel=>[channel,0]))}));
+ });
+});
+const address=http.address();
+const port=typeof address==='object'&&address!==null?address.port:0;
+const loading=await GeneratedClient.open({path:join(bootstrapDirectory,'state.sqlite')});
+try{
+ const subscription=await loading.scopes.subscribe("project:123");
+ const initial:BootstrapStatus=subscription.status.bootstrap;
+ const phase:BootstrapPhase=initial.phase;
+ assert.deepEqual({...initial},{phase:'not-requested',error:null});
+ check(phase==='not-requested','the typed load phase of a registration that asked for nothing');
+ await loading.connect({url:`http://127.0.0.1:${port}`,token:'secret'});
+ await until(()=>subscription.status.initialization==='ready','the committed boundary');
+ const first:Promise<void>=subscription.bootstrap();
+ const second:Promise<void>=subscription.bootstrap();
+ let settled=false;const both=Promise.all([first,second]).then(()=>{settled=true;});
+ await until(()=>subscription.status.bootstrap.phase==='loading','a registered load');
+ await until(()=>loads.length===1,'the one page the run asked for');
+ assert.equal(settled,false,'the held response keeps both calls pending');
+ release();
+ await both;
+ assert.equal(subscription.status.bootstrap.phase,'complete');
+ assert.equal(loads.length,1,'two concurrent calls registered one task');
+ // No task-cancel and no forced-refresh method is part of the handle's type;
+ // `negative/misuse.ts` and `negative/misuse.dart` hold those refusals.
+ await subscription.bootstrap();
+ assert.equal(loads.length,1,'a completed run resolves locally and asks for nothing more');
+}finally{
+ await loading.close();
+ for(const socket of sockets.clients)socket.terminate();
+ await new Promise<void>(resolve=>sockets.close(()=>resolve()));
+ await new Promise<void>(resolve=>http.close(()=>resolve()));
+ await rm(bootstrapDirectory,{recursive:true,force:true});
+}

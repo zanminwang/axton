@@ -44,4 +44,10 @@ void scopeMisuse(GeneratedClient client, Subscription subscription) {
   subscription.scope = 'other';
   // the first Scope API deliberately omits a get-only accessor
   client.scopes.get('project:123');
+  // The load status is part of that immutable snapshot, and this milestone
+  // introduces no task-cancel or forced-refresh API
+  // ([#151](https://github.com/zanminwang/axton/issues/151)).
+  subscription.status.bootstrap.phase = BootstrapPhase.complete;
+  subscription.bootstrap.cancel();
+  subscription.refresh();
 }

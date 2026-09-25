@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import 'package:test/test.dart';
@@ -85,4 +86,68 @@ void main(){
    await c.unsubscribe();
   }finally{await client.close();await temp.delete(recursive:true);}
  });
+
+ // Whole-Scope bootstrap through the generated facade
+ // ([#151](https://github.com/zanminwang/axton/issues/151)): the handle's
+ // `bootstrap()` and the `bootstrap` part of its typed status are named through
+ // the generated library, and two concurrent calls register one task.
+ test('generated handle bootstraps a Scope and publishes its typed load status',()async{
+  final temp=await Directory.systemTemp.createTemp('generated-api-bootstrap-');
+  final loads=<Map>[];
+  final held=Completer<void>();
+  final server=await HttpServer.bind(InternetAddress.loopbackIPv4,0);
+  server.listen((request)async{
+   if(request.uri.path=='/sync/pull'){
+    final body=jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+    // Only a bootstrap page is expected here, and the test transport holds it.
+    loads.add(body);
+    await held.future;
+    request.response.write(jsonEncode({'mode':'bootstrap','channel':body['channel'],'from':body['after'],'to':body['until'],'until':body['until'],'head':body['until'],'records':<Object>[]}));
+    await request.response.close();
+    return;
+   }
+   final socket=await WebSocketTransformer.upgrade(request);
+   socket.listen((message){
+    final subscribe=jsonDecode(message as String) as Map;
+    socket.add(jsonEncode({'type':'subscribed','cursors':{for(final channel in subscribe['channels'] as List) channel:0}}));
+   },onError:(Object _){});
+  });
+  final client=await GeneratedClient.open(path:'${temp.path}/state.sqlite',libraryPath:Platform.environment['AXTON_DART_LIBRARY'] ?? '../../target/debug/libaxton_dart.dylib');
+  try{
+   final Subscription subscription=await client.scopes.subscribe('project:123');
+   final BootstrapStatus initial=subscription.status.bootstrap;
+   final BootstrapPhase phase=initial.phase;
+   final BootstrapError? failure=initial.error;
+   expect(phase,BootstrapPhase.notRequested);
+   expect(failure,isNull);
+   await client.connect(SyncServer(url:'http://127.0.0.1:${server.port}',token:()=>'secret'));
+   await _until(()=>subscription.status.initialization==SubscriptionInitialization.ready,'the committed boundary');
+   final Future<void> first=subscription.bootstrap();
+   final Future<void> second=subscription.bootstrap();
+   var settled=false;
+   final both=Future.wait([first,second]).then((_)=>settled=true);
+   await _until(()=>subscription.status.bootstrap.phase==BootstrapPhase.loading,'a registered load');
+   await _until(()=>loads.length==1,'the one page the run asked for');
+   expect(settled,isFalse,reason:'the held response keeps both calls pending');
+   held.complete();
+   await both;
+   expect(subscription.status.bootstrap.phase,BootstrapPhase.complete);
+   expect(loads,hasLength(1),reason:'two concurrent calls registered one task');
+   await subscription.bootstrap();
+   expect(loads,hasLength(1),reason:'a completed run completes locally and asks for nothing more');
+  }finally{
+   await client.close();
+   await server.close(force:true);
+   await temp.delete(recursive:true);
+  }
+ });
+}
+
+Future<void> _until(bool Function() predicate,String what)async{
+ final deadline=DateTime.now().add(const Duration(seconds:5));
+ while(DateTime.now().isBefore(deadline)){
+  if(predicate())return;
+  await Future<void>.delayed(const Duration(milliseconds:5));
+ }
+ throw StateError('$what timed out');
 }

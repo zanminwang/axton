@@ -85,6 +85,8 @@ pub fn reconcile_action_history(current: &Value, history: Option<&Value>) -> Res
             .ok_or("invalid operation history versions")?
             .values()
         {
+            // Every retained version, not only the current one, must name a known kind.
+            retained_kind(snapshot)?;
             for prerequisite in list(snapshot, "prerequisites")? {
                 if named(list(current, "prerequisites")?, &prerequisite["name"])
                     != Some(prerequisite)

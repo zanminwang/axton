@@ -1555,6 +1555,12 @@ fn operation_names_share_one_namespace_and_reserve_route_members() {
         ("mutation call()", "1:1: Mutation name call is reserved"),
         ("query Enqueue()", "1:1: Query name Enqueue is reserved"),
         ("query enqueue()", "1:1: Query name enqueue is reserved"),
+        ("mutation Client()", "1:1: Mutation name Client is reserved"),
+        ("query ToString()", "1:1: Query name ToString is reserved"),
+        (
+            "mutation HashCode()",
+            "1:1: Mutation name HashCode is reserved",
+        ),
         (
             "model Todo { id String @@id(id) }\nquery Todo()",
             "2:1: Query Todo collides with a model or enum",

@@ -339,7 +339,7 @@ function versioned<F>(
   for (const found of Object.keys(registration))
     if (!/^v[1-9][0-9]*$/.test(found) || !table.has(Number(found.slice(1))))
       throw new Error(
-        `Unknown ${kind} ${key}.${found} for ${name}: retained versions are ${list}`,
+        `Unknown ${kind} ${key}.${found} for ${name}: retained ${kind === "mutation" || kind === "query" ? `${kind} ` : ""}versions are ${list}`,
       );
   return table;
 }
@@ -611,14 +611,24 @@ export function createBackend<T>(options: BackendOptions<T>) {
     );
   }
   const operations = descriptor.schema?.actions ?? [];
+  /** Each retained version of an operation key with its kind, e.g. "Find v1 (mutation), v2 (query)". */
+  const retainedKinds = (key: string): string | undefined => {
+    const versions = operations.filter(
+      (action) => lowerFirst(action.name) === key,
+    );
+    if (!versions.length) return undefined;
+    return `${versions[0]!.name} ${versions
+      .map((action) => [action.version, action.kind ?? "mutation"] as const)
+      .sort(([a], [b]) => a - b)
+      .map(([version, kind]) => `v${version} (${kind})`)
+      .join(", ")}`;
+  };
   for (const key of Object.keys(options.handlers ?? {}))
     if (![...retained.keys()].some((name) => lowerFirst(name) === key)) {
-      const operation = operations.find(
-        (action) => lowerFirst(action.name) === key,
-      );
+      const kinds = retainedKinds(key);
       throw new Error(
-        operation
-          ? `Handler ${key} names ${operation.name}; register it under ${(operation.kind ?? "mutation") === "query" ? "queries" : "mutations"}`
+        kinds
+          ? `Handler ${key} names ${kinds}; register each version under mutations or queries by its kind`
           : `Unknown handler ${key}: no retained mutation ${key}`,
       );
     }
@@ -662,12 +672,10 @@ export function createBackend<T>(options: BackendOptions<T>) {
     const group = kind === "mutation" ? "mutations" : "queries";
     for (const key of Object.keys(map ?? {}))
       if (![...versions.keys()].some((name) => lowerFirst(name) === key)) {
-        const other = operations.find(
-          (action) => lowerFirst(action.name) === key,
-        );
+        const kinds = retainedKinds(key);
         throw new Error(
-          other
-            ? `${group}.${key}: ${other.name} retains no ${kind} version; register it under ${group === "mutations" ? "queries" : "mutations"}`
+          kinds
+            ? `${group}.${key}: ${kinds} retains no ${kind} version; register it under ${group === "mutations" ? "queries" : "mutations"}`
             : `Unknown ${kind} ${key}: no retained ${kind} ${key}`,
         );
       }

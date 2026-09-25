@@ -997,3 +997,48 @@ fn cli_rejects_retained_enum_name_matching_handler_output() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn cli_refuses_invalid_retained_operation_kinds_before_writes() {
+    let (root, input) = workspace("retained-operation-kind");
+    let out = root.join("out");
+    let model = input.join("test.model");
+    fs::write(
+        &model,
+        "model Todo { id String @@id(id) } mutation Find(todo Todo.delete)",
+    )
+    .unwrap();
+    let first = axton(&[input.as_os_str(), out.as_os_str()]);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let history_path = input.join("history/actions.json");
+    let history: serde_json::Value =
+        serde_json::from_slice(&fs::read(&history_path).unwrap()).unwrap();
+    fs::write(
+        &model,
+        "model Todo { id String @@id(id) } @version(2) query Find(text String)",
+    )
+    .unwrap();
+    // A hand-edited older snapshot: an unknown kind, then a Query that still
+    // declares its Model operand. Neither is retained or generated.
+    for (kind, needle) in [
+        ("bogus", "unsupported retained operation kind"),
+        ("query", "cannot take a Model operand"),
+    ] {
+        let mut edited = history.clone();
+        edited["actions"]["Find"]["1"]["kind"] = serde_json::json!(kind);
+        fs::write(&history_path, serde_json::to_vec_pretty(&edited).unwrap()).unwrap();
+        let before = fs::read(out.join("backend.json")).unwrap();
+        let refused = axton(&[input.as_os_str(), out.as_os_str()]);
+        let error = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            !refused.status.success() && error.contains(needle),
+            "{kind}: {error}"
+        );
+        assert_eq!(fs::read(out.join("backend.json")).unwrap(), before);
+    }
+    fs::remove_dir_all(root).unwrap();
+}

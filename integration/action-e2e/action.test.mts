@@ -22,6 +22,18 @@ const wait = async (predicate: () => Promise<boolean>, label: string) => {
   }
   throw Error(`Timed out waiting for ${label}`);
 };
+/** Records the sync paths the client requests while `body` runs: which delivery path a call took. */
+const requestedPaths = async (body: () => Promise<void>) => {
+  const original = globalThis.fetch;
+  const paths: string[] = [];
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.startsWith("/sync/")) paths.push(path);
+    return original(input, init);
+  }) as typeof fetch;
+  try { await body(); } finally { globalThis.fetch = original; }
+  return paths;
+};
 const post = async (kind: "mutations" | "pull" | "actions", body: string, target = url) => {
   const response = await fetch(`${target}/sync/${kind}`, { method: "POST", headers: { authorization: "Bearer alice", "content-type": "application/json" }, body });
   if (response.status !== 200) throw Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -277,13 +289,18 @@ test("Queries read fresh on the direct route and at execution time when enqueued
     await fixture.pool.query("INSERT INTO action_e2e_todo(id,title) VALUES('fresh-a','freshq one')");
     client = await GeneratedClient.open({ path, server: server() });
     const calls = fixture.queryCalls;
-    const first = await client.queries.searchTodos({ query: "freshq" });
-    assert.deepEqual(first.labels, ["fresh-a"]);
+    let first: Awaited<ReturnType<typeof client.queries.searchTodos>> | undefined;
+    let second: typeof first;
+    const paths = await requestedPaths(async () => {
+      first = await client!.queries.searchTodos({ query: "freshq" });
+      await fixture.pool.query("INSERT INTO action_e2e_todo(id,title) VALUES('fresh-b','freshq two')");
+      second = await client!.queries.searchTodos({ query: "freshq" });
+    });
+    assert.deepEqual(paths, ["/sync/actions", "/sync/actions"], "a default Query takes the direct path, never the queue");
+    assert.deepEqual(first!.labels, ["fresh-a"]);
+    assert.deepEqual(second!.labels, ["fresh-a", "fresh-b"], "each direct invocation reads again");
     assert.equal(await queued(), 0, "a direct Query writes no queue metadata");
     assert.equal((await client.syncState()).pending, 0);
-    await fixture.pool.query("INSERT INTO action_e2e_todo(id,title) VALUES('fresh-b','freshq two')");
-    const second = await client.queries.searchTodos({ query: "freshq" });
-    assert.deepEqual(second.labels, ["fresh-a", "fresh-b"], "each direct invocation reads again");
     assert.equal(fixture.queryCalls, calls + 2);
 
     // Enqueued while paused: a durable intent that reads when it executes.
@@ -304,7 +321,8 @@ test("Queries read fresh on the direct route and at execution time when enqueued
     await fixture.pool.query("INSERT INTO action_e2e_todo(id,title) VALUES('fresh-d','freshq four')");
     client = await GeneratedClient.open({ path });
     assert.equal((await client.syncState()).pending, 1, "the queued Query survived SQLite reopen");
-    assert.equal(await client.models.todo.get({ id: "fresh-d" }), null, "no local optimism for a queued Query");
+    const intents = await client.readSql("SELECT m.name, m.version, count(o.ordinal) AS operations FROM axton_mutation m LEFT JOIN axton_mutation_operation o ON o.ordinal = m.ordinal GROUP BY m.ordinal");
+    assert.deepEqual(intents.map((row) => [row.name, row.version, row.operations]), [["SearchTodos", 2, 0]], "a queued Query derives no local Model operations");
     await client.connect(server());
     await wait(async () => (await client!.syncState()).pending === 0, "reopened queued Query settlement");
     assert.equal((await client.models.todo.get({ id: "fresh-d" }))?.title, "freshq four", "its default store:true outputs updated local Models");
@@ -335,7 +353,9 @@ test("a direct Mutation resolves after the backend commits and its authority app
   let client: GeneratedClient | undefined;
   try {
     client = await GeneratedClient.open({ path: join(directory, "client.sqlite"), server: server() });
-    const done = await client.mutations.call.addTodo({ todo: { id: "direct-m", title: "  direct  " } });
+    let done: Awaited<ReturnType<typeof client.mutations.call.addTodo>> | undefined;
+    const paths = await requestedPaths(async () => { done = await client!.mutations.call.addTodo({ todo: { id: "direct-m", title: "  direct  " } }); });
+    assert.deepEqual(paths, ["/sync/actions"], "a direct Mutation never enters the queue");
     assert.deepEqual(done, { todo: { id: "direct-m", title: "direct" } }, "the input-bound result is the committed Loader snapshot");
     assert.deepEqual((await fixture.pool.query("SELECT title FROM action_e2e_todo WHERE id='direct-m'")).rows, [{ title: "direct" }]);
     assert.equal((await client.models.todo.get({ id: "direct-m" }))?.title, "direct", "authority applied before resolving");

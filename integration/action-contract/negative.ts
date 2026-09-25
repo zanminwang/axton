@@ -53,8 +53,11 @@ queryContext.publish({ channel: 'todos' });
 const effectfulQuery: Queries<{}>['findTodos'] = async ({ ctx }) => { ctx.changes.add({ model: 'Todo', identity: { id: 'x' } }); return { todos: [], nextCursor: null }; };
 // @ts-expect-error Query Model outputs are identity objects.
 const bareQueryOutput: FindTodosHandlerOutput = { todos: ['x'], nextCursor: null };
-// @ts-expect-error The Query version of GetTodos is v2; v1 is a Mutation.
-const wrongKindVersion: Queries<{}>['getTodos'] = { async v1() { return { todos: [] }; } };
+const wrongKindVersion: Queries<{}>['getTodos'] = {
+  async v2() { return { todos: [] }; },
+  // @ts-expect-error The Query version of GetTodos is v2; v1 is a Mutation.
+  async v1() { return { todos: [] }; },
+};
 // @ts-expect-error A Mutation map does not register a Query-only name.
 const queryInMutations: Pick<Mutations<{}>, 'findTodos'> = {};
 void [effectfulQuery, bareQueryOutput, wrongKindVersion, queryInMutations];

@@ -84,8 +84,13 @@ const queries: Queries<Tx> = {
 };
 // @ts-expect-error Query Model outputs are typed identities, not bare keys
 const wholeModel: Queries<Tx> = { find: { v2: async () => ({ todo: "one" }) } };
-// @ts-expect-error a Query handler registers only its Query versions
-const queryV1: Queries<Tx> = { find: { v1: async () => ({ todo: null }) } };
+const queryV1: Queries<Tx> = {
+  find: {
+    v2: async () => ({ todo: null }),
+    // @ts-expect-error v1 of Find is a Mutation; the Query map holds only v2
+    v1: async () => ({ todo: null }),
+  },
+};
 void [queries, wholeModel, queryV1];
 const handlers: Mutations<Tx> = {
   put: {

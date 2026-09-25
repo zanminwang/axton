@@ -193,6 +193,10 @@ fn run() -> Result<(), String> {
         config["schema"]["actions"] = config["actions"].clone();
     }
     config["schema"]["resultModels"] = config["backendModels"].clone();
+    // The merged schema, retained versions included, is what clients and the
+    // backend load; refuse it here rather than at their startup.
+    axton_core::Schema::from_value(config["schema"].clone())
+        .map_err(|e| format!("retained schema: {e}"))?;
     axton_compiler::check_action_names(&config)?;
     let mut backend = config.clone();
     backend["mutations"] = serde_json::json!(historical);

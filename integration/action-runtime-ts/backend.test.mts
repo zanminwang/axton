@@ -323,7 +323,7 @@ test("registration is checked per kind at startup: missing, extra and wrong-kind
           ping: async () => {},
         } as unknown as Queries<Tx>,
       },
-      /queries\.ping: Ping retains no query version; register it under mutations/,
+      /queries\.ping: Ping v1 \(mutation\) retains no query version; register it under mutations/,
     ],
     [
       {
@@ -341,11 +341,23 @@ test("registration is checked per kind at startup: missing, extra and wrong-kind
           find: { v1: async () => ({ todo: null }), v2: async () => ({ todo: null }) },
         } as unknown as Mutations<Tx>,
       },
-      /Unknown mutation find\.v2 for Find: retained versions are v1/,
+      /Unknown mutation find\.v2 for Find: retained mutation versions are v1/,
+    ],
+    [
+      { handlers: { find: async () => ({ todo: null }) } } as never,
+      /Handler find names Find v1 \(mutation\), v2 \(query\)/,
+    ],
+    [
+      {
+        queries: {
+          find: { v1: async () => ({ todo: null }), v2: async () => ({ todo: null }) },
+        } as unknown as Queries<Tx>,
+      },
+      /Unknown query find\.v1 for Find: retained query versions are v2/,
     ],
     [
       { handlers: { ping: async () => {} } } as never,
-      /Handler ping names Ping; register it under mutations/,
+      /Handler ping names Ping v1 \(mutation\); register each version under mutations or queries by its kind/,
     ],
   ];
   for (const [options, message] of cases)

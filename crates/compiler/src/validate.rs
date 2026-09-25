@@ -967,6 +967,26 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
                 format!("{label} name {} is reserved", decl.name),
             ));
         }
+        // Generated Dart route classes hold `client` and inherit `Object`
+        // members; an operation method cannot reuse those names.
+        let method = format!("{}{}", decl.name[..1].to_ascii_lowercase(), &decl.name[1..]);
+        if [
+            "client",
+            "toString",
+            "hashCode",
+            "runtimeType",
+            "noSuchMethod",
+        ]
+        .contains(&method.as_str())
+        {
+            return Err(at(
+                decl.pos,
+                format!(
+                    "{label} name {} is reserved: its method {method} would collide with a member of the generated client",
+                    decl.name
+                ),
+            ));
+        }
         if declared_names.iter().any(|(name, _)| *name == decl.name) {
             return Err(at(
                 decl.pos,

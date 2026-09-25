@@ -169,7 +169,14 @@ impl DownlinkWorker {
         match event {
             // Handled by `handle`; a pump is not queued.
             DownlinkEvent::Next => {}
-            DownlinkEvent::Start => self.driver.start(now),
+            DownlinkEvent::Start => {
+                // A lane that replaced a closed one starts clean: the old
+                // host abandoned its socket already, so nothing of a leftover
+                // session is queued or announced to this one.
+                self.end(None);
+                self.closing = None;
+                self.driver.start(now);
+            }
             DownlinkEvent::Stop => {
                 self.end(None);
                 self.driver.stop();

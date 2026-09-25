@@ -903,3 +903,21 @@ fn an_applied_page_leaves_the_push_lane_and_its_frozen_request_alone() {
         "the downlink never borrows the push cycle"
     );
 }
+
+#[test]
+fn a_restarted_lane_does_not_close_the_socket_of_the_lane_it_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    let (first, _) = lane.streaming("a", 0);
+    // The lane closed without pumping its stop, as a host that closes does.
+    lane.enqueue(DownlinkEvent::Stop);
+    let actions = lane.send(DownlinkEvent::Start);
+    let (second, subscribe) = open(&actions[0]);
+    assert!(second > first, "the next lane opens its own socket");
+    assert_eq!(subscribe.channels, ["a"]);
+    assert_eq!(
+        actions.len(),
+        1,
+        "nothing of the replaced lane's session is announced to this one"
+    );
+}

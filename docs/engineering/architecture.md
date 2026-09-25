@@ -53,7 +53,7 @@ The tree stops at three levels: AXTON, a component, a part. A part that has inte
 
 ## Component graph
 
-Components and their parts; each part's own structure is drawn in its README. Both connection controllers are Rust: the client's live session (`LiveSession`) and the server's subscription controller (`Subscriptions`); the language packages execute their actions and keep no sync decision.
+Components and their parts; each part's own structure is drawn in its README. Both connection controllers are Rust: the client's Downlink worker (`DownlinkWorker`, with `LiveSession` as its socket session) and the server's subscription controller (`Subscriptions`); the language packages execute their actions and keep no sync decision.
 
 Solid lines show composition; dashed lines are labeled with contract use or data flow. Shaded nodes are the core parts.
 
@@ -115,7 +115,7 @@ Where each part lives. A part with its own tree carries the finer map in its REA
 | Client / Frontend interface | [client/lib.rs](../../crates/client/src/lib.rs); per-transaction handle in [client/engine.rs](../../crates/client/src/engine.rs) |
 | Client / Engine | [crates/client/src](../../crates/client/src): `mutate.rs`, `rows.rs`, `query.rs`, `queue.rs`, `policies.rs`, `push.rs`, `downlink.rs`, `ledger.rs`, `authority.rs` ([map](architecture/client/engine/README.md#code-map)) |
 | Client / Storage | [client/store.rs](../../crates/client/src/store.rs), [client/ddl.rs](../../crates/client/src/ddl.rs), [client/schema_store.rs](../../crates/client/src/schema_store.rs), [sqlite/lib.rs](../../crates/sqlite/src/lib.rs) ([map](architecture/client/storage/README.md#code-map)) |
-| Client / Connection | [client/connection.rs](../../crates/client/src/connection.rs), [client/transport.rs](../../crates/client/src/transport.rs), [client/live.rs](../../crates/client/src/live.rs); host loops in [client-js](../../packages/client-js) and [dart](../../packages/dart/lib/src) ([map](architecture/client/connection/README.md#code-map)) |
+| Client / Connection | [client/connection.rs](../../crates/client/src/connection.rs), [client/transport.rs](../../crates/client/src/transport.rs), [client/downlink_worker.rs](../../crates/client/src/downlink_worker.rs), [client/live.rs](../../crates/client/src/live.rs); host loops in [client-js](../../packages/client-js) and [dart](../../packages/dart/lib/src) ([map](architecture/client/connection/README.md#code-map)) |
 | Server / Backend interface | Operation contract in [server/host.rs](../../crates/server/src/host.rs) and [server/host-contract.mts](../../packages/server/host-contract.mts); `Host` in [server/lib.rs](../../crates/server/src/lib.rs); handler/loader dispatch in [server/index.mts](../../packages/server/index.mts) |
 | Server / Engine | [server/lib.rs](../../crates/server/src/lib.rs), [server/readback.rs](../../crates/server/src/readback.rs); `changes`, `publish` and `WakeHub` in [server/index.mts](../../packages/server/index.mts) ([map](architecture/server/engine/README.md#code-map)) |
 | Server / Persistence | `Database<T>` in [server/index.mts](../../packages/server/index.mts); SQL, driver interface and the `pg`/`prisma`/`drizzle` shims in [packages/postgres](../../packages/postgres); tables in [migration.sql](../../packages/postgres/migration.sql) |

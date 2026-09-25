@@ -56,4 +56,4 @@ Code: [React Native adapter](../../../../../packages/client-react-native/index.t
 
 **Accepted limitation.** `Client.open` and the generated `open` still accept a `migration` option that the runtime ignores; its future is part of [#20](https://github.com/zanminwang/axton/issues/20).
 
-**To confirm.** No test runs one script through the Rust, TypeScript and Dart clients and compares state; the two clients are separate implementations of the same session logic ([Live session](../../client/connection/controller/live-session.md)), sharing the Rust engine alone does not establish equivalent behavior across SDK boundaries. The shared scenarios in `fixtures/scenarios` are prose READMEs, not an executable cross-language runner.
+**To confirm.** No test runs one script through the Rust, TypeScript and Dart clients and compares state; the two clients are separate implementations of the same session logic ([Downlink worker](../../client/connection/controller/downlink-worker.md)), sharing the Rust engine alone does not establish equivalent behavior across SDK boundaries. The shared scenarios in `fixtures/scenarios` are prose READMEs, not an executable cross-language runner.

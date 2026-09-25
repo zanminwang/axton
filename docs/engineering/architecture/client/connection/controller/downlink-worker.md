@@ -1,0 +1,102 @@
+# Downlink worker
+
+## 1. Introduction and Goals
+
+The Downlink worker owns everything the client receives: it follows the subscribed Scopes over one [live session](live-session.md) at a time, compares the acknowledged heads with the durable cursors, catches up over HTTP only when behind, then consumes the stream through a bounded in-memory queue. It belongs to the connected client rather than to a socket, so replacing the socket keeps its queue, its schedule and its durable position. HTTP fills gaps; the WebSocket carries only what is new. Every page, streamed or fetched, goes through the same gate in [Pull](../../engine/pull.md).
+
+## 3. Context and Scope
+
+The worker is a Rust state machine, `DownlinkWorker`, driven the way [scheduling](scheduling.md) and the [push lane](push-lane.md) are: the host feeds events and executes the actions Rust answers with. One binding command, `downlink`, carries both ([Bindings](../../../sdks/bindings.md)). The host owns the socket, the HTTP requests, the timers, its frame buffer and the credential refresh; it makes no sync decision.
+
+Every event but `next` is **enqueued**: it reaches typed state and answers with no actions, so nothing is applied inside a transport callback. `next` is the **pump**: it consumes what is queued, commits at most one page, and answers with what to do next.
+
+Events (`downlink {event, now, entropy, …}`):
+
+| Event | Meaning |
+| --- | --- |
+| `start`, `stop`, `pause`, `resume`, `wake` | Lane controls, as for the push lane's `connection` command. |
+| `next` | Pump once. The host loops on it while actions come back, and sleeps when they stop. |
+| `message {epoch, body}` | A frame arrived on the socket of this epoch: the acknowledgement or a page. The host is the producer: it hands every frame over in arrival order and decides nothing. |
+| `closed {epoch}` | The socket of this epoch closed. The host has already reported the error and refreshed credentials if it chose to. |
+| `overflow {epoch}` | The host's frame buffer overflowed and frames were dropped before they reached the worker. |
+| `response {request, body}` | The answer to the `request` action this id names. |
+| `failed {request, reason?}` | That request failed; the host has already reported it. |
+
+Actions, returned by the pump in order:
+
+| Action | Host does |
+| --- | --- |
+| `open {epoch, subscribe}` | Open the socket and send the subscribe frame once it is open. Frames are `message` events of this epoch; the socket's end is `closed`. |
+| `close {epoch, reason?}` | Close the socket of this epoch and abandon its request. A `reason` is a protocol violation to report as an error. |
+| `request {request, body}` | `POST /sync/pull` with one request for every subscribed channel; the answer is `response` of this id, a failure is `failed`. |
+| `wake {lane: "push"}` | A page applied: wake the push lane so it re-evaluates what is eligible to send. |
+| `report {reports}` | What a page could not apply (read failures, skipped changes, conflicts, divergences): deliver each to the application's `onError` as an `AxtonReport`. |
+| `changed {scopes}` | A commit moved these Scopes' cursors. Nothing to execute yet; [#150](https://github.com/zanminwang/axton/issues/150) Task 3 turns it into a subscription status update. |
+| `wait {millis}` | Nothing to do until the timer fires; then pump again. |
+
+## 5. Building Block View
+
+Rust owns the snapshot of the channels and the subscription generation, the catch-up loop, the rule that an acknowledged session catches up before trusting the stream, gap and overflow recovery, and the wake after an applied page.
+
+- **Enqueue.** Lane controls reach the schedule at once; a frame is decoded and classified, an HTTP answer is matched to the request in flight. No database work happens here, and nothing the pump must see is dropped.
+- **Pump.** Control work first, then streamed pages from the front, then the lane's next decision. At most one page application - one commit - per call, so foreground work, the push lane and later pages interleave; the host pumps again while actions come back.
+- **The queues.** Streamed pages enter an in-memory queue bounded by `QUEUED_FRAMES` (64). Control work - the acknowledgement, an overflow, an HTTP answer - is queued apart from it and is never dropped for that bound; redundant overflows coalesce into the one recovery still to run. The consumer takes pages from the front through the gate: `applied` and `covered` pages leave the queue; a page with a gap on any channel **stays** at the front and one `request` runs from the durable cursors if none is in flight. Control work behind a held gap page still flows, so the answer that fills the gap is processed while the page waits. A page leaves the queue only by being applied or covered.
+- **Epoch and request id.** Every session has an epoch; socket events name theirs, so whatever an abandoned socket still delivers is ignored ([live session](live-session.md)). Catch-up answers are correlated by a worker-owned request id instead, so a held page cannot be confused with the repair it waits for and an answer to an abandoned request cannot end the session that replaced it.
+- **Subscription generation.** The engine counts committed subscribes and unsubscribes ([Frontend interface](../../frontend-interface.md), `subscription_generation`). A session records the value it started under; the first pump after a change ends it without backoff and starts one with the new channel set. The SDKs abandon the current socket as soon as `subscribe` or `unsubscribe` is called, so no request is started for a set that is about to change, and wake the lane once the change commits.
+- **Heads and catch-up.** The acknowledgement carries each channel's head. Heads equal to the durable cursors mean no catch-up at all; otherwise one `request` from the cursors, repeated while any channel continues.
+- **Recovery.** Overflow - the host's buffer or the page bound - discards the queue and recovers every channel from the durable cursor, because which frames were lost is unknown; the request in flight keeps its progress and another follows it, so sustained traffic cannot starve the catch-up that advances the durable cursor. The server's log is the durable queue and the cursor is the pointer into it.
+- **Failures.** A socket close, a request failure, an unconfirmed acknowledgement, a page before the acknowledgement or a malformed frame ends the session; the lane retries with the [scheduling](scheduling.md) backoff. A subscription change, `pause` and `stop` end it without backoff. Whatever the ended session had queued is discarded: the next session recovers from the cursors.
+
+Code: [client/downlink_worker.rs](../../../../../../crates/client/src/downlink_worker.rs); the socket session in [client/live.rs](../../../../../../crates/client/src/live.rs); dispositions in [client/transport.rs](../../../../../../crates/client/src/transport.rs) (`receive_downlink`); the host loops in [client-js/connection.mts](../../../../../../packages/client-js/connection.mts) (`startDownlinkLane`) and [dart/connection.dart](../../../../../../packages/dart/lib/src/connection.dart) (`DownlinkLane`).
+
+## 6. Runtime View
+
+1. The host loop asks for work, executes the socket, HTTP, timer and report actions without awaiting their answers inside the loop, and pumps again while actions come back. It sleeps only when the worker answered nothing (or `wait`) and no enqueue happened since the decision: every enqueue bumps a wake generation the loop re-checks before sleeping, so a wake between the two is never lost.
+2. `start` or a `wake` on an idle lane snapshots the subscribed channels and the generation. With no channels the session ends successfully and the lane stays idle until a subscribe wakes it. Otherwise `open` carries the subscribe frame ([Protocol / Subscriptions](../../../protocol/subscriptions.md)) with the read contracts from the client's schema; catch-up requests carry the same declaration.
+3. The first frame must be an acknowledgement for exactly the requested channels. If every head equals the durable cursor, the session is streaming at once; otherwise a `request` starts the catch-up and repeats while any channel continues. Frames that arrive meanwhile wait in the queue.
+4. Each pump applies one page, wakes the push lane, announces the Scopes it moved and returns; the host pumps again for the next one. Reports from every applied page and answer come back as `report`.
+5. The session ends with `close`: on a failure the answer also carries `wait`, and the next pump after it opens a new socket that subscribes again; on a subscription change the new session opens in the same answer; on `pause` or `stop` nothing follows.
+
+## 9. Architecture Decisions
+
+### The downlink is a Rust state machine; hosts execute its actions ([#58](https://github.com/zanminwang/axton/issues/58))
+
+**Decision.** The session logic that existed twice (`connect` in the TypeScript and Dart clients) is Rust, driven like `ConnectionDriver` and `SyncCycle`: the host feeds events, Rust answers with actions, and the host performs sockets, HTTP and timers. The server's per-scope drain policy is `Subscriptions` in `axton_server::live` ([Server / Connection / Controller](../../../server/connection/controller.md)). The connection model stays as chosen: HTTP writes, HTTP catch-up after the WebSocket acknowledgement, then live pages; no polling.
+
+**Implemented contract.** Sections 3 and 5 describe it. It refines the contract this decision first sketched in four places, each chosen to keep the host without decisions:
+
+- No `opened` or `subscriptionsChanged` event. `open` carries the frame, and Rust observes subscription changes itself through the engine's generation, so a host cannot forget to report one.
+- No `acknowledged` event and no `apply` action. Every frame is a `message`; Rust tells an acknowledgement from a page ([Protocol / Subscriptions](../../../protocol/subscriptions.md)), applies pages itself, and answers `wake` when the push lane should run. The push lane's own `connection` command is unchanged.
+- The lane's scheduling lives inside the worker (`start`, `pause`, `resume`, `wake`, `next`, `wait`), so a host drives one state machine per lane.
+- Streamed frames are queued by Rust, bounded, rather than by the host; the host's buffer only bounds delivery. The acknowledgement's heads let a client that is already current skip catch-up entirely ([#95](https://github.com/zanminwang/axton/issues/95)).
+
+**Consequences.** Both SDKs are transport code with no sync decisions; the transition tests run once in Rust. Dart's larger frame buffer and TypeScript's smaller one are host parameters ([Transport](../transport.md)); the worker's own bound is the same in both.
+
+### Enqueue and pump are separate, and the worker outlives the socket ([#150](https://github.com/zanminwang/axton/issues/150))
+
+**Decision.** Delivery is owned by a long-lived `DownlinkWorker`; `LiveSession` keeps only socket session state ([live session](live-session.md)). A transport callback enqueues a tagged event and wakes the host loop; only a pump reads or writes the database, and it commits at most one page per call. Control work is queued apart from the overflowable page queue, and catch-up answers are correlated by a worker-owned request id.
+
+**Why.** Subscriptions become durable state with their own initialization, Bootstrap ([#151](https://github.com/zanminwang/axton/issues/151)) adds a second work class to the same worker, and both need an owner with a lifetime longer than one socket and a commit boundary the host can interleave with foreground work. Applying pages inside the frame callback gave the queue no owner, blocked repair answers behind a held gap page, and tied the lifetime of the queue to the socket.
+
+**Consequences.** Enqueueing answers with no actions, so a host cannot act on a callback's return; `next` is the only command that commits, and the host loops on it. The lane's host loop is now a run loop with a wake generation, mirroring the uplink's. A burst that outruns the pump fills the page queue and recovers from the durable cursor - bounded extra work, one pull - instead of pacing the socket by the speed of commits.
+
+**Validation.** Transition tests in [sqlite/tests/downlink_worker.rs](../../../../../../crates/sqlite/tests/downlink_worker.rs) and the binding tests in [bindings/common/tests/session.rs](../../../../../../bindings/common/tests/session.rs); the SDK integration tests for cancellation, overlap, reconnect and after-commit delivery pass unchanged, since they assert observable behavior.
+
+## 10. Quality Requirements
+
+- **Enqueueing commits nothing and one pump commits one page: content and cursor together.** Evidence: [sqlite/tests/downlink_worker.rs](../../../../../../crates/sqlite/tests/downlink_worker.rs) `an_enqueued_page_commits_nothing_until_the_pump_applies_it`, `one_pump_applies_one_page_so_foreground_work_interleaves`.
+- **The worker subscribes, pulls only when behind, and then streams; heads equal to the cursors mean no catch-up; one pull covers every channel and continues while any is full.** Evidence: `a_session_subscribes_pulls_only_when_behind_and_then_streams` (which also holds a gap page, pulls, and applies it after), `heads_equal_to_the_cursors_mean_no_catch_up_at_all`, `one_pull_covers_every_channel_and_continues_while_any_channel_is_full`.
+- **The page queue is bounded and overflows into recovery; control work is never dropped for that bound and flows while a repair is out; the worker survives socket replacement.** Evidence: `the_frame_queue_is_bounded_and_overflows_into_recovery`, `overflow_discards_the_queue_and_recovers_every_channel_after_the_request_in_flight`, `control_work_flows_while_a_gap_page_waits_for_its_repair`, `a_socket_that_closes_while_a_repair_is_out_ends_the_session`, `the_worker_outlives_the_socket_it_was_streaming_on`.
+- **A subscription change ends the session without backoff; a dropped socket reconnects with backoff; protocol violations close with a reason; pause, resume and stop; every event of a replaced socket and every answer of an abandoned request is fenced.** Evidence: `a_subscription_change_ends_the_session_and_the_next_one_uses_the_new_set`, `a_dropped_socket_reconnects_with_backoff_and_resubscribes`, `protocol_violations_close_with_a_reason_and_retry`, `pause_ends_the_session_without_backoff_resume_reopens_and_stop_is_final`, `every_event_of_a_replaced_socket_is_fenced_by_its_epoch`, `an_http_failure_retries_the_session_and_a_stale_failure_is_ignored`, `a_page_from_a_previous_subscription_is_stale_not_a_gap`; through the binding command, [session.rs](../../../../../../bindings/common/tests/session.rs) `incoming_pages_share_cursor_policy_and_do_not_overwrite_push_cycle`, `incoming_overlap_is_identical_with_or_without_http_request_metadata`.
+- **The downlink never borrows the push lane's cycle.** Evidence: `an_applied_page_leaves_the_push_lane_and_its_frozen_request_alone`.
+- **The host loop pumps until the worker idles, never sleeps through a wake, and its callbacks only enqueue.** Evidence: [connection.test.mjs](../../../../../../integration/bindings/client-js/connection.test.mjs) `downlink wake arriving during the idle decision cannot be lost`, `downlink socket events only enqueue; the pump drives the socket`, `a downlink catch-up is answered by its own request id`, `a failed downlink catch-up reports the failure by request id`.
+- **Both SDKs: listeners before catch-up, overlaps without HTTP, gaps recovered, subscription changes discard old frames, and reports reach `onError` as `AxtonReport`.** Evidence: [live.test.mjs](../../../../../../integration/bindings/client-js/live.test.mjs) `unified connection acknowledges listeners then catches up through HTTP before live delivery`, `one incoming page path covers duplicates, applies overlap directly and recovers genuine gaps`, `client replaces subscriptions from saved cursors and guards queued obsolete pages`, `what a page cannot apply reaches onError as an AxtonReport: read failures, skipped changes and divergence`; [live_test.dart](../../../../../../packages/dart/test/live_test.dart) (the same scenarios).
+- **A commit observed during catch-up is not missed, and reconnect resumes from the persisted cursor.** Evidence: [round-trip.test.mjs](../../../../../../integration/e2e/round-trip.test.mjs).
+
+Executed 2026-09-25: `cargo test --workspace --locked`, `node --test integration/bindings/client-js/*.test.mjs`, `node --test integration/bindings/client-react-native/*.test.mjs`, `dart test` in `packages/dart`.
+
+## 11. Risks and Technical Debt
+
+**Accepted limitation.** A gap page waits at the front of the queue until the pull that fills it returns; pages behind it wait too. Beyond 64 queued pages the worker recovers every channel instead. Correctness does not depend on the bound; only the number of catch-up requests does.
+
+**Watch.** Because pages are no longer applied inside the frame callback, a burst that arrives faster than the pump commits reaches the bound sooner than it did and recovers from the cursor. The work is bounded - the queue is dropped and one pull runs - but the number of recoveries under sustained load is worth measuring before tuning the bound.

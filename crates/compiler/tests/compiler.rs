@@ -1271,3 +1271,40 @@ fn action_only_and_model_only_clients_have_no_legacy_mutate_facade() {
         assert!(!backend.contains("MutationRejected"), "{backend}");
     }
 }
+
+/// The Scope facade is the public spelling the generated client carries: a thin
+/// delegate to the runtime, with the handle types named through the generated
+/// module and no get-only accessor
+/// ([#150](https://github.com/zanminwang/axton/issues/150)).
+#[test]
+fn generated_clients_expose_the_scope_facade() {
+    let schema = compile("model Entry { id String title String @@id(id) } mutation Edit { entry Entry.update<title> }").unwrap();
+    let ts = axton_compiler::client_typescript(&schema, "@example/custom-runtime");
+    for line in [
+        "type Subscription, type SubscriptionStatus",
+        " subscribe(scope: string): Promise<Subscription> { return this.#client.subscribeScope(scope); }",
+        " readonly scopes: Scopes;",
+        "this.scopes = new Scopes(client);",
+        " subscribe(channel: string): Promise<Subscription> { return this.#client.subscribe(channel); }",
+    ] {
+        assert!(ts.contains(line), "{line} missing from {ts}");
+    }
+    assert!(
+        !ts.contains("get(scope"),
+        "a get-only accessor is deliberately omitted: {ts}"
+    );
+    let dart = axton_compiler::dart(&schema);
+    for line in [
+        "Subscription, SubscriptionStatus, SubscriptionInitialization, SubscriptionConnection",
+        "class Scopes { final Client client; Scopes(this.client);",
+        " Future<Subscription> subscribe(String scope) => client.subscribeScope(scope);",
+        " late final Scopes scopes = Scopes(client);",
+        " Future<Subscription> subscribe(String channel) => client.subscribe(channel);",
+    ] {
+        assert!(dart.contains(line), "{line} missing from {dart}");
+    }
+    assert!(
+        !dart.contains("get(String scope"),
+        "a get-only accessor is deliberately omitted: {dart}"
+    );
+}

@@ -84,8 +84,10 @@ test('a new subscription starts at the acknowledged head and keeps that origin a
   const S = origin.starting_cursor;
   assert.ok(Number.isInteger(S) && S > 0, `the origin is the acknowledged head, not zero: ${S}`);
   assert.deepEqual(origin, { subscription_id: 1, starting_cursor: S, cursor: S }, 'both boundaries commit together');
+  // Watching delivers the current snapshot first, then the changes.
+  assert.equal(observed[0]?.initialization, 'pending', `the first snapshot is the one at the time of watching: ${JSON.stringify(observed)}`);
   assert.ok(
-   observed.some(status => status.initialization === 'pending') && observed.some(status => status.initialization === 'ready'),
+   observed.some(status => status.initialization === 'ready'),
    `the watcher saw the boundary commit: ${JSON.stringify(observed)}`,
   );
 
@@ -129,9 +131,13 @@ test('a new subscription starts at the acknowledged head and keeps that origin a
    'the reopened handle reads the committed boundary at once: no second initialization is pending',
   );
 
-  await publish('after-reopen', 'published after the reopen');
   const reconnected = await client.connect({ url: server.url, token: 'demo-user' }, onError);
   try {
+   // The second session delivers for the same registration: it reports live
+   // without the handle ever returning to `pending`.
+   await wait(() => resumed.status.connection === 'live', 'the reopened subscription is live again');
+   assert.equal(resumed.status.initialization, 'ready', 'a second session initializes nothing');
+   await publish('after-reopen', 'published after the reopen');
    await wait(async () => (await client.models.entry.get({ id: 'after-reopen' }))?.text === 'published after the reopen', 'delivery after the reopen');
    const final = await ledger(client);
    assert.equal(final.starting_cursor, S, 'the second session did not re-initialize');

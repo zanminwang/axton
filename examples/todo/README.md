@@ -36,7 +36,11 @@ DATABASE_URL=postgresql://... PORT=4242 node examples/todo/server.mts
 
 Seeding is create-if-missing, so an ordinary restart keeps edits. Reset by dropping the database (or the temporary cluster) and starting again.
 
-A subscription starts at the first head the server acknowledges for it ([#150](https://github.com/zanminwang/axton/issues/150)): a phone that subscribes after the backend seeded its tasks receives what is published from then on, not the tasks the Scope already held. The backend exposes `app.publishSeeds()` for that, which publishes the same rows again without creating any, and the tests call it once a client reports its subscription initialized. Loading a Scope's existing records explicitly is [#151](https://github.com/zanminwang/axton/issues/151)'s `bootstrap()`; until it lands, `mobile/src/todo.ts` carries a `TODO(#151)` where that call belongs.
+A subscription starts at the first head the server acknowledges for it ([#150](https://github.com/zanminwang/axton/issues/150)): it delivers what is published from then on, not the tasks the Scope already held.
+
+**What that means on a first run.** `run.sh` seeds Alice, Bob and three tasks before any phone exists, and those rows were published before any phone had a subscription, so a freshly installed app receives none of them: no tasks, and no `User` row. The screen shows "Loading the shared list…" and keeps the add field disabled, because `mobile/src/useTodos.ts` treats the arrival of the user's own `User` row as the signal that the list has loaded. Nothing in the running demo publishes the seeds again - the backend has no route or command for it - so the phones will not recover on their own.
+
+Publish the seeds again once the phones are running, and the screen fills in. The simplest way is to run the backend against your own database as above and restart it while the apps are open: startup calls `seed()`, which upserts nothing new and publishes the same rows at a new position, above every phone's origin. From your own script against that database, `app.publishSeeds()` does the same thing on demand; that is what the tests call, once each client reports its subscription initialized. Loading a Scope's existing records from the app itself is [#151](https://github.com/zanminwang/axton/issues/151)'s `bootstrap()`, and `mobile/src/todo.ts` carries a `TODO(#151)` where that call belongs.
 
 ## Run two phones
 

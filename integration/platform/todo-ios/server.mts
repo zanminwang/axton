@@ -10,6 +10,21 @@ await app.initialize();
 const started = await app.listen(0);
 const target = new URL(started.url);
 
+/**
+ * TODO(#151): a subscription starts at the head its first handshake acknowledges
+ * ([#150](https://github.com/zanminwang/axton/issues/150)), so the rows seeded
+ * above are not loaded by subscribing. Until
+ * [#151](https://github.com/zanminwang/axton/issues/151) gives the app an
+ * explicit `bootstrap()`, this harness republishes them on a bounded timer (see
+ * the `TODO(#151)` at `setInterval` below). A phone's live socket is an upgrade
+ * through its proxy, counted here.
+ */
+let sessionUpgrades = 0;
+let publishedAfterSession = 0;
+/** Publications after a phone's socket opened, and for the whole run. */
+const REPUBLISH_AFTER_SESSION = 3;
+const REPUBLISH_LIMIT = 60;
+
 async function proxy(dropFirstPush: boolean) {
   let online = true;
   let droppedResponses = 0;
@@ -57,6 +72,9 @@ async function proxy(dropFirstPush: boolean) {
     // The HTTP server drops its own error listener on upgrade; a reset from the phone
     // (for example when the runner terminates it) must not crash the proxy.
     socket.on("error", () => {});
+    // A phone is opening its live socket: the republish timer above is bounded by this.
+    sessionUpgrades++;
+    publishedAfterSession = 0;
     if (!online) {
       socket.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
       return;
@@ -110,16 +128,23 @@ const control = createServer(async (req, res) => {
   }
 });
 await new Promise<void>((resolve) => control.listen(0, "127.0.0.1", resolve));
-// A subscription starts at the first head its handshake acknowledges
-// ([#150](https://github.com/zanminwang/axton/issues/150)), so the seeds
-// published at startup are not loaded by subscribing. Until
-// [#151](https://github.com/zanminwang/axton/issues/151) gives the app an
-// explicit `bootstrap()`, this harness publishes them again on a timer: whenever
-// a phone's session becomes live, the next publication delivers them to it. The
-// rows never change, so nothing else in the run depends on the interval.
+// TODO(#151): stand-in for the explicit historical load. Republish the seeded
+// rows once a second until a phone's session has been live for a few
+// publications, and never more than REPUBLISH_LIMIT times in the run; the rows
+// never change, so only the arrival of the seeded state depends on this.
+let republishes = 0;
 let publishing = false;
 const reseed = setInterval(() => {
   if (publishing) return;
+  if (
+    republishes >= REPUBLISH_LIMIT ||
+    (sessionUpgrades > 0 && publishedAfterSession >= REPUBLISH_AFTER_SESSION)
+  ) {
+    clearInterval(reseed);
+    return;
+  }
+  republishes++;
+  if (sessionUpgrades > 0) publishedAfterSession++;
   publishing = true;
   void app
     .publishSeeds()

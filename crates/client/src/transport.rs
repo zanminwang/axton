@@ -112,9 +112,10 @@ fn answers(page: &PullPage, request: &PullRequest) -> bool {
 }
 
 impl<S: ClientStore> Client<S> {
-    /// One pull for every subscribed channel from its durable cursor; `None`
-    /// when nothing is subscribed. The downlink never borrows the mutation
-    /// cycle: HTTP writes can progress independently.
+    /// One pull for every initialized subscription from its durable cursor;
+    /// `None` when none is initialized, a subscription still waiting for its
+    /// first boundary included. The downlink never borrows the mutation cycle:
+    /// HTTP writes can progress independently.
     pub fn downlink_request(&mut self) -> Result<Option<String>> {
         let cursors: BTreeMap<String, u64> = self.subscriptions()?.into_iter().collect();
         if cursors.is_empty() {
@@ -178,7 +179,11 @@ impl<S: ClientStore> Client<S> {
             if !subscribed.contains(channel) {
                 continue;
             }
-            let cursor = self.cursor(channel)?;
+            // An uninitialized subscription has no position to compare: its
+            // first boundary is not committed, so this page moves nothing.
+            let Some(cursor) = self.cursor(channel)? else {
+                continue;
+            };
             if range.to <= cursor {
                 continue;
             }

@@ -36,22 +36,30 @@ test('mobile transport authenticates real HTTP/WS and streams without polling',a
   });
   await new Promise(r=>http.listen(0,'127.0.0.1',r));
   const sockets=new WebSocketServer({server:http});
-  let peer,authorization;
+  let peer,authorization,head=0;
   sockets.on('connection',(socket,request)=>{
     peer=socket;authorization=request.headers.authorization;
     socket.on('message',message=>{
       const sub=JSON.parse(message);
-      // The head is beyond the fresh client's cursor: one HTTP catch-up follows.
-      socket.send(JSON.stringify({type:'subscribed',cursors:Object.fromEntries(sub.channels.map(c=>[c,1]))}));
+      socket.send(JSON.stringify({type:'subscribed',cursors:Object.fromEntries(sub.channels.map(c=>[c,head]))}));
     });
   });
   try{
     await client.subscribe('scope');
-    await client.connect({url:`http://127.0.0.1:${http.address().port}`,token:'alice'});
+    const connection=await client.connect({url:`http://127.0.0.1:${http.address().port}`,token:'alice'});
+    // The first handshake is this subscription's origin: it commits head 0 and
+    // fetches no history. The server then publishes while the socket is closed,
+    // so the next handshake is above the cursor and one HTTP catch-up follows.
+    await until(async()=>(await client.syncState()).cursors.scope===0);
+    assert.equal(authorization,'Bearer alice');
+    assert.equal(requests.length,0,'no history is pulled for a fresh subscription');
+    await connection.pause();await until(()=>sockets.clients.size===0);
+    head=1;await connection.resume();
     await until(()=>requests.length===1);
     assert.equal(authorization,'Bearer alice');
     assert.equal(requests[0].authorization,'Bearer alice');
     assert.equal(requests[0].url,'/sync/pull');
+    assert.deepEqual(requests[0].body.cursors,{scope:0},'the catch-up starts at the committed cursor');
     await until(async()=>(await client.syncState()).cursors.scope===1);
     const change={cursors:{scope:{from:1,to:2,head:2}},changes:[{model:'Entry',identity:{id:'one'},stamp:1,state:{text:'live',note:null}}]};
     peer.send(JSON.stringify(change));

@@ -4,6 +4,7 @@ pub mod authority;
 pub mod connection;
 pub mod ddl;
 mod downlink;
+pub mod downlink_worker;
 pub mod engine;
 pub mod ledger;
 pub mod live;
@@ -15,14 +16,17 @@ pub mod queue;
 pub mod rows;
 pub mod schema_store;
 pub mod store;
+pub mod subscriptions;
 pub mod transport;
 
 pub use actions::{ActionCallOptions, SubmittedCall};
 pub use axton_core::*;
 pub use connection::*;
+pub use downlink_worker::*;
 pub use live::*;
 pub use query::{Direction, QueryOrder, QuerySpec};
 pub use store::*;
+pub use subscriptions::{Initialization, SubscriptionState};
 pub use transport::*;
 
 use engine::Engine;
@@ -251,7 +255,7 @@ pub struct AbandonedCall {
 
 /// Marker a transaction leaves in its changed set when it subscribes or
 /// unsubscribes a channel; stripped before the set reaches watchers.
-const SUBSCRIPTION_MARK: &str = "axton_subscription:";
+pub(crate) const SUBSCRIPTION_MARK: &str = "axton_subscription:";
 
 /// In-memory memory of the pulls this client issued and of how many times each
 /// channel's subscription changed since open. A page whose request predates the
@@ -363,7 +367,7 @@ impl<S: ClientStore> Client<S> {
                 ),
                 None => {
                     let id = uuid::Uuid::new_v4().to_string();
-                    store.execute("INSERT INTO axton_client (client_id, next_ordinal, next_push, generation) VALUES (?,1,1,1)", &[Value::from(id.clone())])?;
+                    store.execute("INSERT INTO axton_client (client_id, next_ordinal, next_push, generation, next_subscription) VALUES (?,1,1,1,1)", &[Value::from(id.clone())])?;
                     (id, 1)
                 }
             };
@@ -476,10 +480,13 @@ impl<S: ClientStore> Client<S> {
         Ok(client)
     }
     /// Create `<path>.<n>`, initialise it for `schema`, carry the old file's
-    /// subscriptions over at cursor 0, and point the sidecar at it. Files are
-    /// numbered upward: a numbered file above the one in use was never pointed
-    /// at (an interrupted rebuild) and is removed; the file in use and every
-    /// earlier generation are kept.
+    /// subscribed Scopes over as fresh uninitialized subscriptions, and point
+    /// the sidecar at it. The replacement resets every delivery boundary and
+    /// allocates identities above the replaced file's counter, so no handle,
+    /// acknowledgement or request of the old replica matches one of them.
+    /// Files are numbered upward: a numbered file above the one in use was
+    /// never pointed at (an interrupted rebuild) and is removed; the file in
+    /// use and every earlier generation are kept.
     fn rebuild_beside(
         path: &std::path::Path,
         factory: &dyn Fn(&std::path::Path) -> Result<S>,
@@ -509,6 +516,12 @@ impl<S: ClientStore> Client<S> {
                     .collect()
             })
             .unwrap_or_default();
+        // Absent in an earlier layout, which allocated no subscription
+        // identities: this replica starts its own at one.
+        let next_subscription = old
+            .query_committed("SELECT next_subscription FROM axton_client", &[])
+            .ok()
+            .and_then(|rows| rows.rows.first().and_then(|r| r[0].as_u64()));
         let columns = old.query_committed("PRAGMA table_info(axton_mutation)", &[])?;
         let has = |name: &str| columns.rows.iter().any(|r| r[1].as_str() == Some(name));
         let abandoned_calls = if has("call_id") && has("push") {
@@ -522,10 +535,13 @@ impl<S: ClientStore> Client<S> {
             vec![]
         };
         let mut client = Self::open(factory(&new_file)?, schema.clone())?;
-        if !channels.is_empty() {
+        if !channels.is_empty() || next_subscription.is_some() {
             client.write(|e| {
+                if let Some(next) = next_subscription {
+                    e.carry_subscription_allocator(next)?;
+                }
                 for channel in &channels {
-                    e.set_cursor(channel, 0)?;
+                    e.ensure_subscription(channel)?;
                 }
                 Ok(())
             })?;
@@ -835,9 +851,6 @@ impl<S: ClientStore> Client<S> {
             Ok(total)
         })
     }
-    pub fn cursor(&mut self, channel: &str) -> Result<u64> {
-        self.view(|e| Ok(e.cursor(channel)?.unwrap_or(0)))
-    }
     /// The record's stamp evidence: the last authoritative version this client
     /// applied, retained across deletion and unsubscription; 0 when none.
     pub fn record_stamp(&mut self, key: &RecordKey) -> Result<u64> {
@@ -847,12 +860,6 @@ impl<S: ClientStore> Client<S> {
     /// The sequence of the last push a receipt completed.
     pub fn last_completed_push(&mut self) -> Result<u64> {
         self.view(|e| e.last_completed_push())
-    }
-    pub fn subscriptions(&mut self) -> Result<Vec<(String, u64)>> {
-        self.view(|e| e.subscriptions())
-    }
-    pub fn desired_channels(&mut self) -> Result<BTreeSet<String>> {
-        Ok(self.subscriptions()?.into_iter().map(|(c, _)| c).collect())
     }
     /// The read contracts this client expects; see [`declared_models`].
     pub fn declared_models(&self) -> std::collections::BTreeMap<String, u64> {
@@ -1084,22 +1091,25 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
             }
         }
     }
+    /// Subscribe or unsubscribe `channel` in this transaction. Subscribing
+    /// registers durable intent with no delivery position; subscribing an
+    /// already subscribed channel is not a membership change: it touches no
+    /// cursor and leaves the subscription generation alone.
     pub fn set_channel(&mut self, channel: String, subscribed: bool) -> Result<()> {
         if subscribed {
-            if self.engine.cursor(&channel)?.is_none() {
-                self.engine.set_cursor(&channel, 0)?;
-                self.engine
-                    .changed
-                    .insert(format!("{SUBSCRIPTION_MARK}{channel}"));
+            // Registration is intent only: the first delivery boundary is the
+            // head the Downlink worker's next handshake acknowledges, not zero
+            // ([#150](https://github.com/zanminwang/axton/issues/150)).
+            let (_, created) = self.engine.ensure_subscription(&channel)?;
+            if created {
+                self.engine.mark_subscription(&channel);
             }
             Ok(())
         } else {
-            if self.engine.cursor(&channel)?.is_some() {
-                self.engine
-                    .changed
-                    .insert(format!("{SUBSCRIPTION_MARK}{channel}"));
+            if self.engine.unsubscribe(&channel)? {
+                self.engine.mark_subscription(&channel);
             }
-            self.engine.unsubscribe(&channel)
+            Ok(())
         }
     }
     pub fn enqueue(&mut self, mutation: Mutation) -> Result<u64> {

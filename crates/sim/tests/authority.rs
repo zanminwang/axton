@@ -86,9 +86,9 @@ fn a2_pages_apply_only_in_cursor_order() {
     sim.apply(Action::Deliver).unwrap();
     sim.apply(Action::Duplicate).unwrap(); // the same page twice
     sim.apply(Action::Deliver).unwrap();
-    assert_eq!(sim.client(0).cursor("a").unwrap(), 2);
+    assert_eq!(sim.client(0).cursor("a").unwrap(), Some(2));
     sim.apply(Action::Deliver).unwrap(); // stale duplicate
-    assert_eq!(sim.client(0).cursor("a").unwrap(), 2);
+    assert_eq!(sim.client(0).cursor("a").unwrap(), Some(2));
     sim.check().unwrap();
 }
 
@@ -112,14 +112,14 @@ fn reordered_receipt_and_page_agree_in_either_order() {
         let pending_after_first = sim.client(0).pending_count().unwrap();
         if page_first {
             assert_eq!(pending_after_first, 1, "a page never completes a push");
-            assert_eq!(sim.client(0).cursor("a").unwrap(), 2);
+            assert_eq!(sim.client(0).cursor("a").unwrap(), Some(2));
         } else {
             assert_eq!(pending_after_first, 0, "the receipt completes it alone");
-            assert_eq!(sim.client(0).cursor("a").unwrap(), 1);
+            assert_eq!(sim.client(0).cursor("a").unwrap(), Some(1));
         }
         sim.apply(Action::Deliver).unwrap();
         assert_eq!(sim.client(0).pending_count().unwrap(), 0);
-        assert_eq!(sim.client(0).cursor("a").unwrap(), 2);
+        assert_eq!(sim.client(0).cursor("a").unwrap(), Some(2));
         assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("x"));
         assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 2);
         assert_eq!(sim.host.stamp(&entry_key("e1")), 2);
@@ -242,7 +242,7 @@ fn a2_page_from_a_previous_subscription_is_stale_not_a_gap() {
         sim.apply(Action::Deliver).is_ok(),
         "the client must drop the stale page rather than error"
     );
-    assert_eq!(sim.client(0).cursor("a").unwrap(), 0);
+    assert_eq!(sim.client(0).cursor("a").unwrap(), Some(0));
     assert_eq!(
         sim.read_text(0, &entry_key("e2")).as_deref(),
         Some("2"),
@@ -279,7 +279,7 @@ fn batches_complete_on_their_receipts_without_any_page() {
     assert_eq!(sim.client(0).last_completed_push().unwrap(), 1);
     assert_eq!(
         sim.client(0).cursor("slow").unwrap(),
-        0,
+        Some(0),
         "no page was pulled"
     );
     assert_eq!(sim.host.head("slow"), 1);
@@ -300,7 +300,7 @@ fn batches_complete_on_their_receipts_without_any_page() {
     assert_eq!(sim.client(0).record_stamp(&entry_key("n")).unwrap(), 1);
     sim.check().unwrap();
     sim.settle();
-    assert_eq!(sim.client(0).cursor("slow").unwrap(), 1);
+    assert_eq!(sim.client(0).cursor("slow").unwrap(), Some(1));
     assert_eq!(sim.conflicts, 0);
     sim.check().unwrap();
 }

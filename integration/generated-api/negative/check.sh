@@ -25,6 +25,9 @@ expected=(
   "'archived' is deprecated and shouldn't be used. archive with RemoveEntries instead"
   "'index' is deprecated and shouldn't be used. counters are not indexed"
   "'maybe' is deprecated and shouldn't be used. use entries"
+  "'active' can't be used as a setter because it's final"
+  "'scope' can't be used as a setter because it's final"
+  "The method 'get' isn't defined for the type 'Scopes'"
 )
 failed=0
 for message in "${expected[@]}"; do

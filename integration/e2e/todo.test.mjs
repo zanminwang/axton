@@ -43,14 +43,28 @@ async function scenario(body) {
   directory,
   errors,
   get url() { return server.url; },
-  /** Opens a client database with a live connection under `token`; `server: false` opens it offline. */
+  /**
+   * Opens a client database with a live connection under `token`; `server: false`
+   * opens it offline. A subscription starts at the first head its handshake
+   * acknowledges (#150), so the seeds published at startup are not loaded by
+   * subscribing: once a connected client reports that boundary the backend
+   * publishes them again, which is how a from-now client meets existing data
+   * until #151 adds the explicit `bootstrap()`. `ready: false` skips that for a
+   * client whose handshake is not expected to succeed.
+   */
   async open(name, token, options = {}) {
    const client = await GeneratedClient.open({
     path: join(directory, `${name}.sqlite`),
     ...(options.server === false ? {} : { server: { url: server.url, token }, connection: { onError: error => errors.push(error) } }),
    });
    clients.add(client);
-   if (options.subscribe !== false) await client.channels.subscribe(CHANNEL);
+   if (options.subscribe !== false) {
+    const subscription = await client.scopes.subscribe(CHANNEL);
+    if (options.server !== false && options.ready !== false) {
+     await wait(() => subscription.status.initialization === 'ready', `${name}'s subscription is initialized`);
+     await app.publishSeeds();
+    }
+   }
    return client;
   },
   async close(client) {
@@ -174,7 +188,9 @@ for (const [name, todo, code] of [
 
 test('unknown identity token is refused with HTTP 401 and persists nothing', async () => {
  await scenario(async ctx => {
-  const mallory = await ctx.open('mallory', 'mallory');
+  // Its token is refused, so no handshake ever acknowledges a head: the
+  // subscription stays uninitialized and the seeds are never published for it.
+  const mallory = await ctx.open('mallory', 'mallory', { ready: false });
   await addTodo(mallory, { id: 'mallory-1', title: 'Intruder', done: false, createdById: 'mallory' });
   await wait(() => ctx.errors.some(error => error?.status === 401), 'connection.onError reports 401');
   assert.equal(await ctx.row('mallory-1'), null);
@@ -233,13 +249,23 @@ test('a distinct create with an existing id is rejected as todo.id_conflict and 
 
 test('a retried frozen request after a lost receipt runs the handler once and stores one row', async () => {
  await scenario(async ctx => {
-  const alice = await ctx.open('alice', 'alice', { server: false });
+  const alice = await ctx.open('alice', 'alice', { server: false, subscribe: false });
   const transport = async (kind, body) => {
    const response = await fetch(`${ctx.url}/sync/${kind === 'push' ? 'mutations' : 'pull'}`, { method: 'POST', headers: { authorization: 'Bearer alice', 'content-type': 'application/json' }, body });
    if (!response.ok) throw Error(`HTTP ${response.status}: ${await response.text()}`);
    return response.text();
   };
   const models = declaredModels(ctx.app.schema);
+  // The raw wire fixture pulls from a committed cursor and never from zero, so
+  // this client first establishes its origin the way an application does: one
+  // live session whose acknowledged head becomes the subscription's first
+  // boundary. The seeds are published again after that and the pull delivers them.
+  const subscription = await alice.scopes.subscribe(CHANNEL);
+  const origin = await alice.connect({ url: ctx.url, token: 'alice' }, { onError: error => ctx.errors.push(error) });
+  await wait(() => subscription.status.initialization === 'ready', 'the origin is committed');
+  await origin.close();
+  assert.equal(await alice.models.todo.get({ id: 'seed-1' }), null, 'subscribing loaded nothing published earlier');
+  await ctx.app.publishSeeds();
   await syncProtocol(alice.client, transport, models);
   assert.equal((await alice.models.todo.get({ id: 'seed-1' })).title, 'Buy milk');
   await addTodo(alice, { id: 'retry-1', title: 'Once', done: false, createdById: 'alice' });
@@ -354,12 +380,15 @@ test('a backend restart on the same database keeps state and delivers work queue
   await ctx.restart();
   assert.equal((await ctx.row('seed-2')).done, true, 'seeding after restart does not reset edits');
   assert.deepEqual(await ctx.row('restart-1'), { id: 'restart-1', title: 'Before restart', done: false, createdById: 'alice' });
+  // Bob joins through the restarted backend before the next task is created, so
+  // it reaches him on the stream: his subscription starts at the head his
+  // handshake acknowledged and loads nothing older (#150).
+  const bob = await ctx.open('bob', 'bob');
+  await wait(async () => (await bob.models.todo.get({ id: 'seed-2' }))?.done === true, 'the republished seeds carry the edit made before the restart');
   await addTodo(alice, { id: 'restart-2', title: 'After restart', done: false, createdById: 'alice' });
   await ctx.settled(alice);
   assert.equal(ctx.app.handlerCalls, 1, 'only the post-restart mutation ran on the new backend');
-  const bob = await ctx.open('bob', 'bob');
   await wait(async () => (await bob.models.todo.get({ id: 'restart-2' }))?.title === 'After restart', 'Bob loads through the restarted backend');
-  assert.equal((await bob.models.todo.get({ id: 'seed-2' })).done, true);
  });
 });
 

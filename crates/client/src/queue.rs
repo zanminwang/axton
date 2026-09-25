@@ -78,7 +78,7 @@ fn decode_op(row: &[Value]) -> Result<QueuedOp> {
 }
 
 impl<S: ClientStore> Engine<'_, S> {
-    fn bump(&mut self, column: &str) -> Result<u64> {
+    pub(crate) fn bump(&mut self, column: &str) -> Result<u64> {
         let current = self
             .scalar(&format!("SELECT {column} FROM axton_client"), &[])?
             .ok_or_else(|| invalid("client row missing"))?;

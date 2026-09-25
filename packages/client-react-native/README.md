@@ -28,7 +28,7 @@ const client = await GeneratedClient.open({
   server: { url: 'http://127.0.0.1:4242', token: 'demo-user' },
   connection: { onError: error => console.error(error) },
 });
-await client.channels.subscribe('book:demo');
+await client.scopes.subscribe('book:demo');
 ```
 
 The URL above is for a simulator using a backend on its host. Configure a reachable address and the application's real authentication for other environments. Local HTTP permission belongs to the development app configuration.

@@ -105,10 +105,36 @@ pub fn rejecting(
         .collect();
     r
 }
-/// Only a subscribed channel may be pulled: `apply_page` drops a page for any other.
+/// Commit first delivery boundaries the way a session's acknowledgement at
+/// these heads does: the expected identities are the stored ones, so nothing
+/// here is stale ([#150](https://github.com/zanminwang/axton/issues/150)).
+pub fn acknowledge(c: &mut Client<SqliteStore>, heads: &[(&str, u64)]) -> Initialization {
+    let mut expected = BTreeMap::new();
+    for (scope, _) in heads {
+        let state = c
+            .subscription_state(scope)
+            .unwrap()
+            .expect("a registered subscription");
+        expected.insert(state.scope, state.subscription_id);
+    }
+    let heads = heads.iter().map(|(c, h)| (c.to_string(), *h)).collect();
+    c.initialize_subscriptions(&expected, &heads).unwrap()
+}
+/// Only a subscribed channel may be pulled: `apply_page` drops a page for any
+/// other. Registration alone has no delivery position, so this fixture also
+/// commits the boundary a first acknowledgement at head zero establishes -
+/// where these tests measure their pages from.
 pub fn subscribe(c: &mut Client<SqliteStore>, channel: &str) {
     c.transaction(|tx| tx.set_channel(channel.into(), true))
         .unwrap();
+    acknowledge(c, &[(channel, 0)]);
+}
+/// Unsubscribe and subscribe again: a new identity, initialized at zero as its
+/// own first acknowledgement would leave it.
+pub fn resubscribe(c: &mut Client<SqliteStore>, channel: &str) {
+    c.transaction(|tx| tx.set_channel(channel.into(), false))
+        .unwrap();
+    subscribe(c, channel);
 }
 pub fn seed(c: &mut Client<SqliteStore>, text: &str) {
     c.transaction(|tx| {

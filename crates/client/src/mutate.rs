@@ -365,10 +365,11 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         Ok(())
     }
-    /// Stop following a channel. Records it delivered stay: a channel is a
-    /// delivery path, not an owner, so local content, stamps, before images
-    /// and pending operations are all retained.
-    pub fn unsubscribe(&mut self, channel: &str) -> Result<()> {
-        self.delete_subscription(channel)
+    /// Stop following a channel, whichever subscription it holds; whether one
+    /// was removed. Records it delivered stay: a channel is a delivery path,
+    /// not an owner, so local content, stamps, before images and pending
+    /// operations are all retained.
+    pub fn unsubscribe(&mut self, channel: &str) -> Result<bool> {
+        self.remove_subscription(channel, None)
     }
 }

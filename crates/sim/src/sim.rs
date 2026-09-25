@@ -419,6 +419,23 @@ impl Sim {
                 self.client(client)
                     .transaction(|tx| tx.set_channel(channel.clone(), true))
                     .map_err(|e| e.to_string())?;
+                // Registration is intent only; the simulated client is one whose
+                // session acknowledged head zero, so the whole published log is
+                // what it converges on
+                // ([#150](https://github.com/zanminwang/axton/issues/150)).
+                let state = self
+                    .client(client)
+                    .subscription_state(&channel)
+                    .map_err(|e| e.to_string())?
+                    .ok_or("the registration left no subscription")?;
+                if state.starting_cursor.is_none() {
+                    self.client(client)
+                        .initialize_subscriptions(
+                            &BTreeMap::from([(channel.clone(), state.subscription_id)]),
+                            &BTreeMap::from([(channel.clone(), 0)]),
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
                 if fresh {
                     *self.clients[client].generations.entry(channel).or_insert(0) += 1;
                 }
@@ -849,7 +866,7 @@ mod tests {
         sim.apply(Action::Deliver).unwrap(); // pull reaches server, page queued
         sim.apply(Action::Deliver).unwrap(); // page reaches client: same stamp, no rewrite
         assert_eq!(sim.client(0).pending_count().unwrap(), 0);
-        assert_eq!(sim.client(0).cursor("a").unwrap(), 1);
+        assert_eq!(sim.client(0).cursor("a").unwrap(), Some(1));
         assert_eq!(sim.read_text(0, &entry_key("e1")), Some("hi".into()));
         assert_eq!(sim.conflicts, 0);
         assert_eq!(sim.trace.len(), 8);

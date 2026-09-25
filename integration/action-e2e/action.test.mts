@@ -100,10 +100,15 @@ test("direct result retains Loader snapshot while independent durable optimism r
   let client: GeneratedClient | undefined;
   try {
     client = await GeneratedClient.open({ path: join(directory, "client.sqlite"), server: server() });
+    // The subscription's origin is the first head its handshake acknowledges
+    // (#150), so it is registered and initialized before the changes it must
+    // receive; a null boundary is never read as zero and the pull below starts at
+    // that committed cursor.
+    const subscription = await client.scopes.subscribe("todos:demo");
+    await wait(async () => subscription.status.initialization === "ready", "first initialization");
     const created = await client.actions.addTodo({ todo: { id: "direct", title: "A" } });
     assert.equal((await created.wait()).error, null);
     await client.connection!.pause();
-    await client.channels.subscribe("todos:demo");
     const pending = await client.actions.updateTodo({ todo: { id: "direct", title: "B" } });
     assert.equal(pending.status, "pending");
     assert.equal((await client.models.todo.get({ id: "direct" }))?.title, "B");
@@ -125,10 +130,11 @@ test("direct result retains Loader snapshot while independent durable optimism r
     assert.equal(secondOutcome.result.todo.title, "C", "second invocation keeps its later Loader snapshot");
     assert.equal((await client.models.todo.get({ id: "direct" }))?.title, "C");
     const beforePage = await client.syncState();
-    const page = await post("pull", JSON.stringify({ cursors: { "todos:demo": beforePage.cursors["todos:demo"] ?? 0 }, models: { Todo: 1 } }));
+    assert.equal(typeof beforePage.cursors["todos:demo"], "number", "the subscription has a committed delivery position");
+    const page = await post("pull", JSON.stringify({ cursors: { "todos:demo": beforePage.cursors["todos:demo"] }, models: { Todo: 1 } }));
     await client.client.applyPull(page);
     const afterPage = await client.syncState();
-    assert.ok((afterPage.cursors["todos:demo"] ?? 0) > (beforePage.cursors["todos:demo"] ?? 0), "page advances the cursor after the receipt");
+    assert.ok(afterPage.cursors["todos:demo"] > beforePage.cursors["todos:demo"], "page advances the cursor after the receipt");
     assert.equal((await client.models.todo.get({ id: "direct" }))?.title, "C", "the later page cannot regress receipt authority");
     assert.equal(result.todos[0]?.title, "A", "result does not change after later settlement");
   } finally { await client?.close(); await rm(directory, { recursive: true, force: true }); }
@@ -212,16 +218,24 @@ test("committed response loss replays frozen intent and stored result after a ch
   let upgraded: EvolvedClient | undefined;
   let evolvedListener: Awaited<ReturnType<ReturnType<typeof createEvolvedBackend<PgClient>>["listen"]>> | undefined;
   try {
-    client = await GeneratedClient.open({ path });
-    await client.channels.subscribe("todos:demo");
+    client = await GeneratedClient.open({ path, server: server() });
+    // One session establishes the subscription's origin, then the socket is
+    // paused so the Action is pushed by hand: the page below is pulled from that
+    // committed cursor, never from zero (#150).
+    const subscription = await client.scopes.subscribe("todos:demo");
+    await wait(async () => subscription.status.initialization === "ready", "first initialization");
+    await client.connection!.pause();
+    const origin = (await client.syncState()).cursors["todos:demo"];
+    assert.equal(typeof origin, "number");
     await client.actions.addTodo({ todo: { id: "replay", title: "  saved  " } });
     const frozen = await client.client.freeze();
     assert.ok(frozen);
     const first = await post("mutations", frozen);
-    const page = await post("pull", JSON.stringify({ cursors: { "todos:demo": 0 }, models: { Todo: 1 } }));
+    const page = await post("pull", JSON.stringify({ cursors: { "todos:demo": origin }, models: { Todo: 1 } }));
     await client.client.applyPull(page);
     const handled = fixture.handlerCalls;
     const loaded = fixture.loaderCalls;
+    assert.equal((await client.models.todo.get({ id: "replay" }))?.title, "saved", "the page delivered the published record");
     assert.equal((await client.syncState()).pending, 1, "page authority alone does not complete the Action");
     await client.close();
     await fixture.pool.query("ALTER TABLE action_e2e_todo ADD COLUMN note text");

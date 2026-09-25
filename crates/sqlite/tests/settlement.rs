@@ -154,7 +154,7 @@ fn channel_first_then_receipt_dedups_and_still_completes() {
     let report = c.acknowledge(1, r).unwrap();
     assert_eq!((report.applied, report.conflicts()), (0, 0));
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
-    assert_eq!(c.cursor("book").unwrap(), 2);
+    assert_eq!(c.cursor("book").unwrap(), Some(2));
     assert_quiet(&mut c);
 }
 
@@ -180,7 +180,7 @@ fn receipt_first_then_channel_is_a_no_op_that_advances_the_cursor() {
         (0, 0),
         "the same stamp and content changes nothing"
     );
-    assert_eq!(c.cursor("book").unwrap(), 2);
+    assert_eq!(c.cursor("book").unwrap(), Some(2));
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
 }
 

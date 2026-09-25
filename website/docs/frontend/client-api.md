@@ -252,18 +252,24 @@ The TypeScript/React Native Action observer requires a working `WeakRef`; a runt
 === "TypeScript"
 
     ```ts
-    await client.channels.subscribe('book:demo');
-    await client.channels.unsubscribe('book:demo');
+    const followed = await client.scopes.subscribe('book:demo');
+    console.log(followed.status.initialization, followed.status.connection);
+    await followed.unsubscribe();
     ```
 
 === "Flutter"
 
     ```dart
-    await client.channels.subscribe('book:demo');
-    await client.channels.unsubscribe('book:demo');
+    final followed = await client.scopes.subscribe('book:demo');
+    print('${followed.status.initialization} ${followed.status.connection}');
+    await followed.unsubscribe();
     ```
 
-These operations persist the desired subscription and wake a running connection. Subscribing does not wait for all records to arrive. Use `watch` to observe the initial pull and later changes.
+`client.scopes.subscribe(channel)` persists the desired subscription, wakes a running connection and answers with a handle for that registration: the same channel answers with the same handle while it is subscribed. It resolves on the local commit, so it works with no network. `client.channels.subscribe / unsubscribe` are the retained spelling of the same registrations, by channel name.
+
+**Subscribing delivers later changes, not the channel's existing records.** The position the server acknowledges the first time a session is negotiated becomes that subscription's starting point; nothing published earlier is downloaded, and reconnecting keeps that starting point rather than jumping ahead. Use `watch` to observe what arrives. Loading existing records in one operation is planned as `bootstrap()` in [#151](https://github.com/zanminwang/axton/issues/151).
+
+`status` is a snapshot with `active`, `initialization` (`pending` until the starting point is committed, then `ready`) and `connection` (`offline`, `connecting`, `catching-up`, `live`, `stopped`); `live` means the stream is healthy, not that all records have arrived. `watch(listener)` delivers the current snapshot and every change, and returns a function that stops observing (Dart returns a `Stream`). `unsubscribe()` removes this registration; work through a handle that was unsubscribed, or whose client was closed, fails with `subscription.closed`. Closing the client stops the handles and removes no subscription.
 
 A channel name must match what your backend publishes to. A subscription is a request for data; loaders must still enforce read permissions. Unsubscribing stops that channel's synchronization and removes nothing: records, their stamps and pending edits stay. See [sync and recovery](sync.md) for cache and account-change behavior.
 

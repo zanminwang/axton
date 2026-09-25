@@ -12,7 +12,7 @@ struct Entry {
     client: Client<SqliteStore>,
     cycle: SyncCycle,
     connection: ConnectionDriver,
-    live: LiveSession,
+    downlink: DownlinkWorker,
 }
 impl RuntimeHost {
     pub fn call(&mut self, request: Value) -> Result<Value> {
@@ -47,7 +47,7 @@ impl RuntimeHost {
                     client,
                     cycle: SyncCycle::default(),
                     connection: ConnectionDriver::default(),
-                    live: LiveSession::default(),
+                    downlink: DownlinkWorker::default(),
                 },
             );
             let schema_state = schema_json(self.clients[&handle].client.schema_state());
@@ -201,6 +201,23 @@ impl RuntimeHost {
                     return Err(invalid("client transaction active"));
                 }
                 match op {
+                    // The Scope commands behind the SDK subscription handles:
+                    // each owns its own local transaction, so none of them is
+                    // part of an application transaction. An uninitialized
+                    // boundary answers as `null`, never as zero
+                    // ([#150](https://github.com/zanminwang/axton/issues/150)).
+                    "scopeSubscribe" => serde_json::to_value(
+                        e.client.ensure_subscription(text(&request, "scope")?)?,
+                    )?,
+                    "scopeState" => match e.client.subscription_state(text(&request, "scope")?)? {
+                        Some(state) => serde_json::to_value(state)?,
+                        None => Value::Null,
+                    },
+                    "scopeUnsubscribe" => {
+                        let scope = text(&request, "scope")?.to_string();
+                        let subscription_id = read_counter(&request["subscriptionId"], true)?;
+                        json!({"removed":e.client.remove_subscription(&scope, subscription_id)?})
+                    }
                     "connection" => {
                         let connection = &mut e.connection;
                         let now = read_now(&request)?;
@@ -221,12 +238,17 @@ impl RuntimeHost {
                             Value::Null
                         }
                     }
-                    "live" => {
-                        let event: LiveEvent = serde_json::from_value(request.clone())
-                            .map_err(|e| invalid(format!("invalid live event: {e}")))?;
+                    "downlink" => {
+                        let event: DownlinkEvent = serde_json::from_value(request.clone())
+                            .map_err(|e| invalid(format!("invalid downlink event: {e}")))?;
                         let now = read_now(&request)?;
                         let entropy = read_entropy(&request)?;
-                        serde_json::to_value(e.live.handle(&mut e.client, event, now, entropy)?)?
+                        serde_json::to_value(e.downlink.handle(
+                            &mut e.client,
+                            event,
+                            now,
+                            entropy,
+                        )?)?
                     }
                     "startSync" => {
                         match request.get("pushOnly") {
@@ -328,7 +350,7 @@ impl RuntimeHost {
                             .unwrap_or(false);
                         let report = e.client.rebuild(discard)?;
                         e.cycle = SyncCycle::default();
-                        e.live = LiveSession::default();
+                        e.downlink = DownlinkWorker::default();
                         json!({"oldFile":report.old_file,"newFile":report.new_file,"reason":report.reason,"leftPending":report.left_pending,"leftDirect":report.left_direct,"abandonedCalls":abandoned_json(&report.abandoned_calls)})
                     }
                     _ => return Err(invalid(format!("unknown client command {op}"))),

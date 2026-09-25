@@ -47,7 +47,7 @@ fn offline_queue_and_frozen_bytes_survive_restart_and_receipt_completes_at_once(
         "the same stamp and content is a no-op"
     );
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "NORMALIZED");
-    assert_eq!(c.cursor("book").unwrap(), 2);
+    assert_eq!(c.cursor("book").unwrap(), Some(2));
 }
 
 #[test]

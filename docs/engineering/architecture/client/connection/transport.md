@@ -17,11 +17,11 @@ Both transports do the same things with language-native tools:
 | HTTP | `fetch` with an `AbortSignal` | one `HttpClient` per request, force-closed on cancel |
 | WebSocket | `ws` with an 8 MiB frame limit | `dart:io` with an 8 MiB text check |
 | Frame buffer | 64 frames; the socket is paused while a frame is delivered | 128 frames or 8 MiB in total |
-| Overflow | buffer cleared, the frame that arrived is kept, `overflow` reported to the session | same |
+| Overflow | buffer cleared, the frame that arrived is kept, `overflow` reported to the worker | same |
 | Oversized frame | `ws` closes the socket (code 1009) | the frame is refused and the socket ends |
 | Cancellation | abort signal terminates the socket, even mid-upgrade | a future completes and closes the socket |
 
-The buffer only bounds delivery: frames are handed to the [live session](controller/live-session.md) one at a time, in order. On `overflow` the session recovers every channel from the durable cursor; overflowing never restarts an in-flight HTTP request, so a burst of pages cannot starve the catch-up that advances the durable cursor. The session's own bound on pages it holds during a catch-up is the same in both languages. An oversized frame is not a protocol violation the session judges: either transport ends the socket and reports `closed`, and the session reconnects with backoff like any other dropped socket.
+The buffer only bounds delivery: frames are handed to the [Downlink worker](controller/downlink-worker.md) one at a time, in order, and handing one over only queues it. On `overflow` the worker recovers every channel from the durable cursor; overflowing never restarts an in-flight HTTP request, so a burst of pages cannot starve the catch-up that advances the durable cursor. The worker's own bound on pages it holds is the same in both languages. An oversized frame is not a protocol violation the worker judges: either transport ends the socket and reports `closed`, and the worker reconnects with backoff like any other dropped socket.
 
 Code: [client-js/transport.mts](../../../../../packages/client-js/transport.mts), [client-js/live.mts](../../../../../packages/client-js/live.mts), [dart/live.dart](../../../../../packages/dart/lib/src/live.dart).
 

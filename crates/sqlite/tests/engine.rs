@@ -100,15 +100,53 @@ fn ledger_tracks_stamps_and_subscriptions() {
     e.set_record_stamp(&key("t1"), 9).unwrap();
     assert_eq!(e.record_stamp(&key("t1")).unwrap(), 9);
     assert_eq!(e.cursor("x").unwrap(), None);
-    e.set_cursor("x", 0).unwrap();
-    e.set_cursor("x", 4).unwrap();
-    e.set_cursor("y", 2).unwrap();
+    let (x, created) = e.ensure_subscription("x").unwrap();
+    assert!(created);
+    assert_eq!(
+        e.cursor("x").unwrap(),
+        None,
+        "a registration is not a delivery position"
+    );
+    assert!(
+        e.advance_cursor("x", x.subscription_id, 4).is_err(),
+        "an uninitialized subscription has no cursor to advance"
+    );
+    assert!(
+        e.initialize_subscription("x", x.subscription_id, 0)
+            .unwrap()
+    );
+    assert!(
+        !e.initialize_subscription("x", x.subscription_id, 3)
+            .unwrap(),
+        "only the first initialization writes the origin"
+    );
+    e.advance_cursor("x", x.subscription_id, 4).unwrap();
+    let (y, _) = e.ensure_subscription("y").unwrap();
+    e.initialize_subscription("y", y.subscription_id, 2)
+        .unwrap();
     assert_eq!(
         e.subscriptions().unwrap(),
         vec![("x".to_string(), 4), ("y".to_string(), 2)]
     );
-    e.delete_subscription("x").unwrap();
+    assert!(
+        e.advance_cursor("x", y.subscription_id, 5).is_err(),
+        "an advance is fenced by the identity the caller read"
+    );
+    assert_eq!(
+        e.cursor("x").unwrap(),
+        Some(4),
+        "the stale advance moved nothing"
+    );
+    assert!(
+        !e.remove_subscription("x", Some(y.subscription_id)).unwrap(),
+        "removal is fenced by the identity it names"
+    );
+    assert!(e.remove_subscription("x", Some(x.subscription_id)).unwrap());
     assert_eq!(e.cursor("x").unwrap(), None);
+    assert!(
+        e.advance_cursor("x", x.subscription_id, 5).is_err(),
+        "a removed subscription cannot be resurrected by a page"
+    );
     s.rollback().unwrap();
 }
 

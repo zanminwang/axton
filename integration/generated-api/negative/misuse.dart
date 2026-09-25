@@ -1,6 +1,7 @@
 // Generated Dart API misuse that must NOT analyze. verify.sh runs `dart analyze`
 // on this directory alone and requires every error below to be reported; the
-// TypeScript twin is the `@ts-expect-error` block in ../test.ts.
+// TypeScript twin is the `@ts-expect-error` file beside it, misuse.ts, with the
+// older negatives still in ../test.ts.
 // ignore_for_file: unused_local_variable
 import '../generated.dart';
 
@@ -31,4 +32,16 @@ void misuse(GeneratedClient client, GeneratedTransaction tx, Entry row) {
   final Status old = Status.archived;
   final int? index = const Counter(id: 'c', index: 1).index;
   client.mutate.removeEntries(entries: const [], maybe: EntryIdentity(id: row.id));
+}
+
+// The Scope facade refuses the same misuse the TypeScript twin does
+// ([#150](https://github.com/zanminwang/axton/issues/150)): an immutable status,
+// a fixed Scope, and no get-only accessor.
+void scopeMisuse(GeneratedClient client, Subscription subscription) {
+  // a status snapshot is immutable
+  subscription.status.active = false;
+  // the Scope a handle names is fixed for its lifetime
+  subscription.scope = 'other';
+  // the first Scope API deliberately omits a get-only accessor
+  client.scopes.get('project:123');
 }

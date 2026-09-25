@@ -40,6 +40,8 @@ A **Channel** is an explicitly named distribution scope, such as a shared book. 
 
 A **Cursor** is the client's receive position within a Channel. Numbers from different Channels are not comparable, and a Cursor says nothing about a Record's content; that is the Stamp's job.
 
+A subscription is durable local state, and its Cursor starts where the server was when the subscription was first established: what the Channel distributed earlier is not delivered by subscribing, and reconnecting resumes from the saved Cursor instead of jumping to the current position. Loading a Channel's existing Records is a separate, explicit operation ([#151](https://github.com/zanminwang/axton/issues/151)).
+
 Channels distribute access to current state. They are not event logs that promise delivery of every historical intermediate value. Pull uses Loaders to obtain the current authoritative content for invalidated identities.
 
 ## How a receipt replaces optimism

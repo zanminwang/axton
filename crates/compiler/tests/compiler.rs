@@ -630,6 +630,14 @@ fn rejects_model_and_enum_names_the_generated_client_uses() {
         "ActionContext",
         "ActionRejected",
         "Transaction",
+        // The Scope facade and the handle types it re-exports
+        // ([#150](https://github.com/zanminwang/axton/issues/150)).
+        "Scopes",
+        "Subscription",
+        "SubscriptionStatus",
+        "SubscriptionInitialization",
+        "SubscriptionConnection",
+        "SubscriptionClosedException",
     ] {
         let e = compile(&format!("model {name} {{ id UUID @@id(id) }}")).unwrap_err();
         assert!(e.contains("generated client"), "{name}: {e}");
@@ -639,7 +647,14 @@ fn rejects_model_and_enum_names_the_generated_client_uses() {
         .unwrap_err();
         assert!(e.contains("generated client"), "enum {name}: {e}");
     }
-    for name in ["Status", "SyncStates", "Rejections", "Order"] {
+    for name in [
+        "Status",
+        "SyncStates",
+        "Rejections",
+        "Order",
+        "Scope",
+        "Subscriptions",
+    ] {
         assert!(
             compile(&format!("model {name} {{ id UUID @@id(id) }}")).is_ok(),
             "{name} should stay valid"
@@ -1272,6 +1287,43 @@ fn action_only_and_model_only_clients_have_no_legacy_mutate_facade() {
     }
 }
 
+/// The Scope facade is the public spelling the generated client carries: a thin
+/// delegate to the runtime, with the handle types named through the generated
+/// module and no get-only accessor
+/// ([#150](https://github.com/zanminwang/axton/issues/150)).
+#[test]
+fn generated_clients_expose_the_scope_facade() {
+    let schema = compile("model Entry { id String title String @@id(id) } mutation Edit { entry Entry.update<title> }").unwrap();
+    let ts = axton_compiler::client_typescript(&schema, "@example/custom-runtime");
+    for line in [
+        "type Subscription, type SubscriptionStatus",
+        " subscribe(scope: string): Promise<Subscription> { return this.#client.subscribeScope(scope); }",
+        " readonly scopes: Scopes;",
+        "this.scopes = new Scopes(client);",
+        " subscribe(channel: string): Promise<Subscription> { return this.#client.subscribe(channel); }",
+    ] {
+        assert!(ts.contains(line), "{line} missing from {ts}");
+    }
+    assert!(
+        !ts.contains("get(scope"),
+        "a get-only accessor is deliberately omitted: {ts}"
+    );
+    let dart = axton_compiler::dart(&schema);
+    for line in [
+        "Subscription, SubscriptionStatus, SubscriptionInitialization, SubscriptionConnection",
+        "class Scopes { final Client client; Scopes(this.client);",
+        " Future<Subscription> subscribe(String scope) => client.subscribeScope(scope);",
+        " late final Scopes scopes = Scopes(client);",
+        " Future<Subscription> subscribe(String channel) => client.subscribe(channel);",
+    ] {
+        assert!(dart.contains(line), "{line} missing from {dart}");
+    }
+    assert!(
+        !dart.contains("get(String scope"),
+        "a get-only accessor is deliberately omitted: {dart}"
+    );
+}
+
 #[test]
 fn action_store_options_name_only_explicit_model_outputs_in_both_languages() {
     let v = compile("model Todo { id String title String @@id(id) } action AddTodo(todo Todo.create, gone Todo.delete[]) { related Todo? matches Todo[] count Int } action Ping() action Open(store String) { main Todo }").unwrap();
@@ -1356,5 +1408,5 @@ fn store_eligible_outputs_cannot_reuse_dart_selector_member_names() {
 fn generated_dart_reexports_action_store() {
     let v = compile("action Ping()").unwrap();
     let dart = axton_compiler::dart(&v);
-    assert!(dart.contains("ActionError, ActionStore;"), "{dart}");
+    assert!(dart.contains("ActionError, ActionStore,"), "{dart}");
 }

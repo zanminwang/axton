@@ -90,12 +90,29 @@ fn an_incompatible_schema_sends_unsent_work_from_the_old_file_then_rebuilds_and_
         None,
         "fresh file, no rows"
     );
+    let carried = sim
+        .client(0)
+        .subscription_state("a")
+        .unwrap()
+        .expect("the Scope is carried over");
+    assert_eq!(
+        (carried.starting_cursor, carried.cursor),
+        (None, None),
+        "the replacement resets the delivery boundary, so nothing claims old progress"
+    );
+    assert!(sim.client(0).subscriptions().unwrap().is_empty());
+    sim.check().unwrap();
+    // Registering the Scope again commits a boundary for the new identity, and
+    // the rebuilt file converges from it like a new client.
+    sim.apply(Action::Subscribe {
+        client: 0,
+        channel: "a".into(),
+    })
+    .unwrap();
     assert_eq!(
         sim.client(0).subscriptions().unwrap(),
-        vec![("a".to_string(), 0)],
-        "subscriptions copied at cursor 0"
+        vec![("a".to_string(), 0)]
     );
-    sim.check().unwrap();
     sim.settle();
     assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("one"));
     assert_eq!(sim.read_text(0, &entry_key("e2")).as_deref(), Some("two"));
@@ -129,6 +146,11 @@ fn discarding_unsent_work_rebuilds_at_once_and_reports_what_the_old_file_keeps()
     let report = state.last_rebuild.expect("the report of the rebuild");
     assert_eq!((report.left_pending, report.left_direct), (1, 1));
     assert_eq!(sim.read_text(0, &entry_key("e2")), None);
+    sim.apply(Action::Subscribe {
+        client: 0,
+        channel: "a".into(),
+    })
+    .unwrap();
     sim.settle();
     assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("one"));
     assert_eq!(

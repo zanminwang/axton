@@ -69,6 +69,19 @@ export async function createExample() {
         publish({ channel: "book:demo" });
       });
     },
+    /**
+     * Publish the current `Entry` rows again, without changing them. A
+     * subscription's origin is the first head its handshake acknowledges
+     * ([#150](https://github.com/zanminwang/axton/issues/150)), so a client that
+     * subscribes after `initialize` receives the seeded rows only when they are
+     * published again. Whole-Scope loading is #151's `bootstrap()`.
+     */
+    async notify(ids: string[] = ["entry-1"]) {
+      await backend.transaction(async ({ changes, publish }) => {
+        for (const id of ids) changes.add({ model: "Entry", identity: { id } });
+        publish({ channel: "book:demo" });
+      });
+    },
     listen(port: number) {
       return backend.listen({ port }).then((started) => {
         server = started;

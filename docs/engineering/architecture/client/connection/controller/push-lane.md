@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-The push lane moves frozen batches to the server and their receipts back into the engine. It never pulls: authoritative content arrives through the [live session](live-session.md).
+The push lane moves frozen batches to the server and their receipts back into the engine. It never pulls: authoritative content arrives through the [Downlink worker](downlink-worker.md).
 
 ## 3. Context and Scope
 

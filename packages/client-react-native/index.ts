@@ -17,6 +17,11 @@ export type {
 } from "../client-js/connection.mts";
 export type { ServerOptions } from "../client-js/live.mts";
 export type {
+  Subscription,
+  SubscriptionState,
+  SubscriptionStatus,
+} from "../client-js/runtime.mts";
+export type {
   ClientSyncState,
   ModelSyncState,
   PendingMutation,

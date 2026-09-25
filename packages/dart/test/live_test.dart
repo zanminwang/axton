@@ -242,8 +242,12 @@ void main() {
     await server.close(force: true);
   });
 
+  // The SDK no longer cancels the socket before it writes: an unsubscribe is a
+  // local commit, and the Downlink worker decides what the committed membership
+  // means for the session it holds
+  // ([#150](https://github.com/zanminwang/axton/issues/150)).
   test(
-    'unsubscribe invalidates a pending token before a held transaction drains',
+    'an unsubscribe waiting on the database leaves the socket alone; the committed change ends it',
     () async {
       final dir = await Directory.systemTemp.createTemp(
         'axton-dart-token-generation-',
@@ -260,7 +264,19 @@ void main() {
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       var requests = 0;
+      final sockets = <WebSocket>[];
+      final subscribes = <Map>[];
       server.listen((request) async {
+        if (WebSocketTransformer.isUpgradeRequest(request)) {
+          final socket = await WebSocketTransformer.upgrade(request);
+          sockets.add(socket);
+          socket.listen((message) {
+            final sub = jsonDecode(message as String) as Map;
+            subscribes.add(sub);
+            socket.add(ack(sub));
+          }, onError: (Object _) {});
+          return;
+        }
         requests++;
         await request.response.close();
       });
@@ -286,21 +302,42 @@ void main() {
         });
         await txEntered.future;
         final removing = client.unsubscribe('scope');
-        token.complete('obsolete');
-        await Future<void>.delayed(const Duration(milliseconds: 30));
+        token.complete('secret');
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (subscribes.isEmpty) {
+          if (DateTime.now().isAfter(deadline)) {
+            throw StateError('the pending authentication opened no socket');
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
         expect(
           requests,
           0,
-          reason: 'network cancellation must not await the database queue',
+          reason: 'an acknowledged session at its head pulls nothing',
         );
         held.complete();
         await transaction;
         await removing;
+        // The committed change invalidates the session; with no Scope left the
+        // lane opens nothing in its place.
+        final ended = DateTime.now().add(const Duration(seconds: 5));
+        while (sockets.first.closeCode == null) {
+          if (DateTime.now().isAfter(ended)) {
+            throw StateError('the committed change did not end the session');
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(subscribes, hasLength(1));
+        expect((await client.syncState())['channels'], isEmpty);
         expect(errors, isEmpty);
       } finally {
         if (!held.isCompleted) held.complete();
         if (!token.isCompleted) token.complete('cleanup');
         await client.close();
+        for (final socket in sockets) {
+          await socket.close();
+        }
         await server.close(force: true);
         await dir.delete(recursive: true);
       }
@@ -574,10 +611,13 @@ void main() {
       var entered = Completer<void>();
       var held = true;
       var version = 'initial';
-      var serverHead = 55;
-      // A resubscribed channel restarts at cursor 0 while the records it
-      // delivered before are retained at their stamps, so the "fresh" catch-up
-      // carries newer stamps than the "initial" one did.
+      // A subscription's origin is the head its first handshake acknowledged,
+      // so this server starts empty and publishes once the client has its
+      // boundary ([#150](https://github.com/zanminwang/axton/issues/150)).
+      var serverHead = 0;
+      // A recreated subscription starts over at the next acknowledged head
+      // while the records the old one delivered are retained at their stamps,
+      // so a "fresh" page carries newer stamps than the "initial" ones.
       var stampBase = 0;
       Map<String, dynamic> page(int from, int to, String text) => {
         'cursors': {
@@ -643,6 +683,18 @@ void main() {
           ),
           onError: errors.add,
         );
+        // The first handshake is the origin: head zero, no history fetched.
+        await until(
+          () async => (await client.syncState())['cursors']['scope'] == 0,
+        );
+        expect(requests, isEmpty, reason: 'a fresh subscription pulls nothing');
+        expect(await client.query('Entry'), isEmpty);
+        // The server publishes while the socket is closed, so the next
+        // handshake acknowledges a head above the committed cursor and the
+        // catch-up this test holds begins.
+        await connection.pause();
+        serverHead = 55;
+        await connection.resume();
         await entered.future.timeout(const Duration(seconds: 3));
         expect(await client.query('Entry'), isEmpty);
         // A commit observed live during catch-up is buffered, then recognized as covered.
@@ -672,16 +724,35 @@ void main() {
         stampBase = 100;
         await client.subscribe('scope');
         hold.complete();
+        // The recreated subscription starts over at the head its own handshake
+        // acknowledges and loads no history; the stream is the truth from there.
+        await until(() async => sockets.length >= 4);
+        await until(
+          () async => (await client.syncState())['cursors']['scope'] == 57,
+        );
+        sockets.last.add(jsonEncode(page(57, 58, 'fresh')));
         await until(
           () async =>
-              (await client.read('Entry', {'id': 'e55'}))?['text'] == 'fresh',
+              (await client.read('Entry', {'id': 'e58'}))?['text'] == 'fresh',
         );
-        expect((await client.read('Entry', {'id': 'e1'}))?['text'], 'fresh');
-        // The fresh session pulls to the server's head: the record the earlier
-        // session delivered is delivered again, on a newer stamp.
-        expect((await client.read('Entry', {'id': 'e56'}))?['text'], 'fresh');
-        expect((await client.read('Entry', {'id': 'e57'}))?['text'], 'fresh');
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        expect(
+          await client.read('Entry', {'id': 'e57'}),
+          isNull,
+          reason: 'the obsolete HTTP completion applied nothing',
+        );
+        expect(
+          (await client.read('Entry', {'id': 'e1'}))?['text'],
+          'initial',
+          reason: 'unsubscribing retains what was delivered',
+        );
+        expect(
+          (await client.read('Entry', {'id': 'e56'}))?['text'],
+          'live',
+          reason: 'the page the old session streamed is retained too',
+        );
         expect((await client.query('Entry')).length, 57);
+        expect((await client.syncState())['cursors']['scope'], 58);
         expect(errors, isEmpty);
         await connection.close();
       } finally {
@@ -848,7 +919,7 @@ void main() {
         sync: (_) async {},
         transport: (_, __) async => '',
       );
-      parent.attachLive(child, () {
+      parent.attachDownlink(child, () {
         live.cancelPush();
         if (!next.isCompleted) next.complete();
       });
@@ -892,7 +963,12 @@ void moreTests() {
       final sockets = <WebSocket>[];
       final errors = <Object>[];
       final stamps = FakeStamps();
-      var allowUpgrades = false, upgradeAttempts = 0, pushes = 0, pulls = 0;
+      var allowUpgrades = false,
+          upgradeAttempts = 0,
+          pushes = 0,
+          pulls = 0,
+          acks = 0,
+          head = 0;
       Future<void> until(FutureOr<bool> Function() check) async {
         final deadline = DateTime.now().add(const Duration(seconds: 5));
         while (DateTime.now().isBefore(deadline)) {
@@ -914,7 +990,8 @@ void moreTests() {
           sockets.add(socket);
           socket.listen((message) {
             final sub = jsonDecode(message as String) as Map;
-            socket.add(ack(sub, 1));
+            acks++;
+            socket.add(ack(sub, head));
           });
           return;
         }
@@ -1002,6 +1079,19 @@ void moreTests() {
           reason: 'upgrade refusals reach onError: $errors',
         );
         allowUpgrades = true;
+        await until(() => acks == 1);
+        await until(
+          () async => (await client.syncState())['cursors']['scope'] == 0,
+        );
+        expect(
+          pulls,
+          0,
+          reason: 'an acknowledged session at its head pulls no history',
+        );
+        // Only a publication the closed socket missed leaves a gap for HTTP.
+        await connection.pause();
+        head = 1;
+        await connection.resume();
         await until(
           () async =>
               (await client.read('Entry', {'id': 'live'}))?['text'] ==
@@ -1040,7 +1130,11 @@ void moreTests() {
       final sockets = <WebSocket>[];
       final errors = <Object>[];
       final entered = Completer<void>(), gate = Completer<void>();
-      var head = 1, pulls = 0;
+      // The subscription's origin is the head of its first handshake, so this
+      // server acknowledges zero, then publishes while the socket is closed:
+      // the session after that starts the catch-up this test holds
+      // ([#150](https://github.com/zanminwang/axton/issues/150)).
+      var head = 1, pulls = 0, ackHead = 0;
       final pullCursors = <int>[];
       Map<String, dynamic> page(String text, int cursor, int to) => {
         'cursors': {'scope': range(cursor, to)},
@@ -1068,7 +1162,7 @@ void moreTests() {
           sockets.add(socket);
           socket.listen((message) {
             final sub = jsonDecode(message as String) as Map;
-            socket.add(ack(sub, 1));
+            socket.add(ack(sub, ackHead));
           });
           return;
         }
@@ -1094,10 +1188,18 @@ void moreTests() {
           ),
           onError: errors.add,
         );
+        await until(
+          () async => (await client.syncState())['cursors']['scope'] == 0,
+        );
+        expect(pulls, 0, reason: 'a fresh subscription pulls no history');
+        await connection.pause();
+        ackHead = 1;
+        await connection.resume();
         await entered.future.timeout(const Duration(seconds: 5));
+        final opened = sockets.length;
         // Flush more pages than the 128-page bound, then let the listener
         // receive them while the initial HTTP response remains held.
-        await sockets.first.addStream(
+        await sockets.last.addStream(
           Stream.fromIterable([
             for (var cursor = 1; cursor <= 200; cursor++)
               jsonEncode(page('live $cursor', cursor, cursor + 1)),
@@ -1123,7 +1225,7 @@ void moreTests() {
         );
         expect(
           sockets.length,
-          1,
+          opened,
           reason: 'overflow must not restart the socket and starve catch-up',
         );
         expect(
@@ -1433,7 +1535,11 @@ void moreTests() {
       final sockets = <WebSocket>[];
       final errors = <Object>[];
       final entered = Completer<void>(), gate = Completer<void>();
-      var head = 1, pulls = 0;
+      // The subscription's origin is the head of its first handshake, so this
+      // server acknowledges zero, then publishes while the socket is closed:
+      // the session after that starts the catch-up this test holds
+      // ([#150](https://github.com/zanminwang/axton/issues/150)).
+      var head = 1, pulls = 0, ackHead = 0;
       final pullCursors = <int>[];
       Map<String, dynamic> page(String text, int cursor, int to) => {
         'cursors': {'scope': range(cursor, to)},
@@ -1471,7 +1577,7 @@ void moreTests() {
           sockets.add(socket);
           socket.listen((message) {
             final sub = jsonDecode(message as String) as Map;
-            socket.add(ack(sub, 1));
+            socket.add(ack(sub, ackHead));
           });
           return;
         }
@@ -1497,10 +1603,18 @@ void moreTests() {
           ),
           onError: errors.add,
         );
+        await until(
+          () async => (await client.syncState())['cursors']['scope'] == 0,
+        );
+        expect(pulls, 0, reason: 'a fresh subscription pulls no history');
+        await connection.pause();
+        ackHead = 1;
+        await connection.resume();
         await entered.future.timeout(const Duration(seconds: 5));
+        final opened = sockets.length;
         // Flush fewer pages than the 128-page bound but more bytes than the
         // 8 MiB bound while the initial HTTP response remains held.
-        await sockets.first.addStream(
+        await sockets.last.addStream(
           Stream.fromIterable([
             for (var cursor = 1; cursor <= largePages; cursor++)
               jsonEncode(page('live $cursor $filler', cursor, cursor + 1)),
@@ -1526,7 +1640,7 @@ void moreTests() {
         );
         expect(
           sockets.length,
-          1,
+          opened,
           reason: 'overflow must not restart the socket and starve catch-up',
         );
         expect(

@@ -2,11 +2,10 @@ import {
   AxtonReport,
   directFailure,
   startConnection,
-  startLiveLane,
+  startDownlinkLane,
   type Connection,
   type DirectConnection,
   type ConnectionOptions,
-  type LiveLane,
   type ReportDetails,
   type Transport,
 } from "./connection.mts";
@@ -65,6 +64,16 @@ import { strictJson, type QuerySpec, type RecordValue } from "./values.mts";
 import type { ServerOptions, ServerConnection } from "./live.mts";
 import { Events } from "./events.mts";
 import {
+  Subscriptions,
+  type Subscription,
+  type SubscriptionState,
+} from "./subscriptions.mts";
+export type {
+  Subscription,
+  SubscriptionState,
+  SubscriptionStatus,
+} from "./subscriptions.mts";
+import {
   ActionRegistry,
   ActionError,
   actionError,
@@ -76,7 +85,7 @@ import {
 function storeOption(options?: ActionOptions): { store?: unknown } {
   return options?.store === undefined ? {} : { store: options.store };
 }
-/** Report application callback failures without changing an applied Action outcome. */
+/** Report an application callback's failure without changing what was committed. */
 function reportActionCallbackError(error: unknown): void {
   if (typeof globalThis.reportError === "function") {
     globalThis.reportError(error);
@@ -101,7 +110,6 @@ export function createClient<
   createServerConnection: (options: ServerOptions) => ServerConnection,
 ) {
   return class Client {
-    #live: LiveLane | undefined;
     #syncing: Promise<void> | undefined;
     #tasks: Promise<void> | undefined;
     #connection: Connection | undefined;
@@ -117,6 +125,35 @@ export function createClient<
     #tail: Promise<unknown> = Promise.resolve();
     #activePublicTx: Tx | undefined;
     #events = new Events();
+    /** Subscription handles by persistent identity, and the status they publish. */
+    #subscriptions = new Subscriptions({
+      subscribe: (scope) =>
+        this.#exclusive(() =>
+          this.#send({ op: "scopeSubscribe", scope }),
+        ) as Promise<SubscriptionState>,
+      state: (scope) =>
+        this.#exclusive(() =>
+          this.#send({ op: "scopeState", scope }),
+        ) as Promise<SubscriptionState | null>,
+      remove: async (scope, subscriptionId) =>
+        (
+          await this.#exclusive(() =>
+            this.#send({ op: "scopeUnsubscribe", scope, subscriptionId }),
+          )
+        ).removed === true,
+      removeScope: async (scope) => {
+        await this.#exclusive(() =>
+          this.#send({ op: "channel", channel: scope, subscribed: false }),
+        );
+      },
+      // A committed membership change wakes the lanes; Rust decides what it
+      // means for the socket.
+      committed: () => {
+        this.#events.emit("channels");
+        this.#events.emit("work");
+      },
+      report: reportActionCallbackError,
+    });
     readonly clientId: string;
     private constructor(handle: number, id: string) {
       this.#handle = handle;
@@ -408,28 +445,27 @@ export function createClient<
         }
       });
     }
-    subscribe(channel: string) {
-      return this.#setChannel(channel, true);
+    /**
+     * Register durable intent to follow `scope` and answer with its handle. It
+     * resolves when the local transaction commits: it awaits no
+     * authentication, connection or acknowledgement, and the same Scope answers
+     * with the same handle while its registration lives. The socket is never
+     * cancelled here; the Downlink worker sees the committed change and
+     * reconciles its own session.
+     */
+    subscribeScope(scope: string): Promise<Subscription> {
+      return this.#subscriptions.subscribe(scope);
     }
-    unsubscribe(channel: string) {
-      return this.#setChannel(channel, false);
+    /** The Scope surface the generated `scopes` facade delegates to, with no logic of its own. */
+    get scopes(): { subscribe(scope: string): Promise<Subscription> } {
+      return { subscribe: (scope) => this.subscribeScope(scope) };
     }
-    /** The live session is abandoned at once; once the change commits, Rust starts one for the new channel set. */
-    #setChannel(channel: string, subscribed: boolean) {
-      this.#live?.cancel();
-      return this.#exclusive(() =>
-        this.#send({ op: "channel", channel, subscribed }).then(
-          (value) => {
-            this.#events.emit("channels");
-            this.#events.emit("work");
-            return value;
-          },
-          (error) => {
-            this.#events.emit("channels");
-            throw error;
-          },
-        ),
-      );
+    subscribe(channel: string): Promise<Subscription> {
+      return this.subscribeScope(channel);
+    }
+    /** Remove whatever registration this Scope name has; its handle stops. */
+    unsubscribe(channel: string): Promise<void> {
+      return this.#subscriptions.unsubscribeScope(channel);
     }
     async connect(
       server: ServerOptions,
@@ -484,11 +520,11 @@ export function createClient<
           live.push,
           driverOptions,
         );
-        const streaming = await startLiveLane(
+        const streaming = await startDownlinkLane(
           (event) =>
             this.#exclusive(() =>
               this.#send({
-                op: "live",
+                op: "downlink",
                 ...event,
                 now: Date.now(),
                 entropy: Math.floor(Math.random() * 0x100000000),
@@ -497,8 +533,9 @@ export function createClient<
           live,
           driverOptions,
           () => void connection.wake().catch(options.onError ?? (() => {})),
+          (signal) => this.#subscriptions.signal(signal),
         );
-        this.#live = streaming;
+        this.#subscriptions.attach();
         const channels = () => {
           void streaming.wake().catch(options.onError ?? (() => {}));
         };
@@ -521,13 +558,11 @@ export function createClient<
           close: async () => {
             this.#direct = undefined;
             this.#directOnError = undefined;
+            this.#subscriptions.detach();
             this.#events.off("work", wake);
             this.#events.off("channels", channels);
             await Promise.all([streaming.close(), connection.close()]);
-            if (this.#connection === result) {
-              this.#connection = undefined;
-              this.#live = undefined;
-            }
+            if (this.#connection === result) this.#connection = undefined;
           },
         };
         this.#connection = result;
@@ -635,6 +670,9 @@ export function createClient<
     ): Promise<RebuildReport> {
       return this.#exclusive(() =>
         this.#send({ op: "rebuild", ...options }).then((value) => {
+          // The replica that answered every handle is gone: no handle from
+          // before it names a registration of the file this client now reads.
+          this.#subscriptions.rebuilt();
           this.#deliverCompletions(
             (value.abandonedCalls ?? []).map(
               (abandoned: { callId: string; frozen: boolean }) => ({
@@ -704,6 +742,7 @@ export function createClient<
     }
     close(): Promise<void> {
       this.#actions.close();
+      this.#subscriptions.close();
       return (this.#closing ??= this.#finishClose());
     }
     async #finishClose(): Promise<void> {

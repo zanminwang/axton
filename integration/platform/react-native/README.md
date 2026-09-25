@@ -48,14 +48,14 @@ The runner creates an isolated PostgreSQL cluster and two per-client proxies. It
 
 Scenarios:
 
-1. Alice and Bob subscribe and exchange live edits through native HTTP/WebSocket.
+1. Alice and Bob subscribe and exchange live edits through native HTTP/WebSocket. The seeded record is not among those live edits: a subscription starts at the head its first handshake acknowledges ([#150](https://github.com/zanminwang/axton/issues/150)), so the harness backend publishes the seeded row again until each phone's session is live, standing in for [#151](https://github.com/zanminwang/axton/issues/151)'s `bootstrap()`. What the SDK delivers here is the republication, not the channel's history.
 2. Alice's first successful push response is dropped; retry must reuse its receipt without executing the handler twice.
 3. Alice's proxy disconnects real network traffic. She creates a record and queues a dependent edit locally.
 4. Her process is terminated and relaunched while disconnected; records, queued work, and client ID must survive.
 5. Bob edits another record while Alice is disconnected.
 6. Alice reconnects. Both clients and PostgreSQL must agree, with distinct client IDs, zero pending work, and no duplicate handler execution.
 
-The runner prints an evidence directory containing phase assertions, screenshots and backend results. Any assertion failure or timeout fails the run. Local polling in the harness waits for assertions; the SDK's synchronization uses live delivery rather than periodic polling.
+The runner prints an evidence directory containing phase assertions, screenshots and backend results. Any assertion failure or timeout fails the run. Local polling in the harness waits for assertions, and its timed republication of the seeded row substitutes for the historical load #151 will provide; the SDK's synchronization itself uses live delivery rather than periodic polling.
 
 ## Evidence
 

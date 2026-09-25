@@ -91,7 +91,7 @@ fn an_incompatible_schema_gets_a_fresh_file_and_keeps_the_old_one() {
     let mut c = open_at(&path, schema());
     subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
-    assert_eq!(c.cursor("book").unwrap(), 1);
+    assert_eq!(c.cursor("book").unwrap(), Some(1));
     drop(c);
     let mut c = open_at(&path, breaking());
     let state = c.schema_state().clone();
@@ -106,10 +106,19 @@ fn an_incompatible_schema_gets_a_fresh_file_and_keeps_the_old_one() {
         c.read(&key()).unwrap().is_none(),
         "the new file starts empty"
     );
+    let carried = c.subscription_state("book").unwrap().expect("carried over");
     assert_eq!(
-        c.subscriptions().unwrap(),
-        vec![("book".to_string(), 0)],
-        "subscriptions carry over at cursor 0"
+        (carried.starting_cursor, carried.cursor),
+        (None, None),
+        "the Scope carries over, its delivery boundary does not"
+    );
+    assert_eq!(
+        carried.subscription_id, 2,
+        "a fresh identity above the replaced replica's counter"
+    );
+    assert!(
+        c.subscriptions().unwrap().is_empty(),
+        "an uninitialized subscription asks for nothing"
     );
     // The old file still holds its row and its own schema.
     let mut old = Client::open(SqliteStore::open(&path).unwrap(), schema()).unwrap();
@@ -119,7 +128,11 @@ fn an_incompatible_schema_gets_a_fresh_file_and_keeps_the_old_one() {
     // Reopening follows the sidecar and rebuilds nothing.
     let mut c = open_at(&path, breaking());
     assert!(!c.schema_state().rebuilt);
-    assert_eq!(c.subscriptions().unwrap(), vec![("book".to_string(), 0)]);
+    assert_eq!(
+        c.subscription_state("book").unwrap(),
+        Some(carried),
+        "the rebuilt file keeps the carried subscription"
+    );
 }
 
 #[test]
@@ -128,7 +141,7 @@ fn an_earlier_framework_layout_is_rebuilt_beside_not_refused() {
     let path = dir.path().join("db");
     let mut s = SqliteStore::open(&path).unwrap();
     s.execute_batch(ddl::FRAMEWORK_DDL).unwrap();
-    s.execute_batch("CREATE TABLE axton_push_checkpoint (push INTEGER NOT NULL, channel TEXT NOT NULL, cursor INTEGER NOT NULL, PRIMARY KEY (push, channel)); INSERT INTO axton_push_checkpoint VALUES (1,'a',1); INSERT INTO axton_client (client_id, next_ordinal, next_push, generation) VALUES ('old',1,1,1); INSERT INTO axton_subscription VALUES ('a', 9)").unwrap();
+    s.execute_batch("CREATE TABLE axton_push_checkpoint (push INTEGER NOT NULL, channel TEXT NOT NULL, cursor INTEGER NOT NULL, PRIMARY KEY (push, channel)); INSERT INTO axton_push_checkpoint VALUES (1,'a',1); INSERT INTO axton_client (client_id, next_ordinal, next_push, generation, next_subscription) VALUES ('old',1,1,1,8); INSERT INTO axton_subscription (channel, subscription_id, starting_cursor, cursor) VALUES ('a', 7, 9, 9)").unwrap();
     drop(s);
     assert!(
         Client::open(SqliteStore::open(&path).unwrap(), schema()).is_err(),
@@ -144,13 +157,94 @@ fn an_earlier_framework_layout_is_rebuilt_beside_not_refused() {
             .reason
             .contains("axton_push_checkpoint")
     );
-    assert_eq!(c.subscriptions().unwrap(), vec![("a".to_string(), 0)]);
+    let carried = c.subscription_state("a").unwrap().expect("carried over");
+    assert_eq!((carried.starting_cursor, carried.cursor), (None, None));
+    assert_eq!(
+        carried.subscription_id, 8,
+        "the allocator carries forward, so no identity is reissued"
+    );
     assert_ne!(c.client_id(), "old", "a fresh client identity");
     let mut s = SqliteStore::open(&path).unwrap();
     let rows = s
         .query_committed("SELECT COUNT(*) AS n FROM axton_push_checkpoint", &[])
         .unwrap();
     assert_eq!(rows.rows[0][0], json!(1), "the old file is untouched");
+}
+
+/// The framework layout this issue replaced: `axton_subscription` without a
+/// subscription identity and an `axton_client` without the allocator
+/// ([#150](https://github.com/zanminwang/axton/issues/150)). It cannot be opened
+/// in place, and the rebuild carries the Scope names with no delivery boundary.
+#[test]
+fn a_subscription_table_without_identities_is_rebuilt_beside() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut s = SqliteStore::open(&path).unwrap();
+    s.execute_batch(
+        "CREATE TABLE axton_client (client_id TEXT PRIMARY KEY, next_ordinal INTEGER NOT NULL, next_push INTEGER NOT NULL, generation INTEGER NOT NULL, last_completed_push INTEGER NOT NULL DEFAULT 0, push_models TEXT, push_results TEXT);
+         CREATE TABLE axton_subscription (channel TEXT PRIMARY KEY, cursor INTEGER NOT NULL);
+         INSERT INTO axton_client (client_id, next_ordinal, next_push, generation) VALUES ('old', 1, 1, 1);
+         INSERT INTO axton_subscription VALUES ('a', 9);
+         INSERT INTO axton_subscription VALUES ('b', 4);",
+    )
+    .unwrap();
+    drop(s);
+    let mut s = SqliteStore::open(&path).unwrap();
+    assert!(
+        matches!(ddl::check_layout(&mut s).unwrap(), ddl::Layout::Legacy(reason) if reason.contains("next_subscription")),
+        "an allocator-less client row is an earlier layout"
+    );
+    drop(s);
+    assert!(
+        Client::open(SqliteStore::open(&path).unwrap(), schema()).is_err(),
+        "a bare store refuses it rather than converting it"
+    );
+
+    let mut c = open_at(&path, schema());
+    assert!(c.schema_state().rebuilt);
+    assert!(
+        c.schema_state()
+            .last_rebuild
+            .as_ref()
+            .unwrap()
+            .reason
+            .contains("next_subscription")
+    );
+    let mut identities = vec![];
+    for channel in ["a", "b"] {
+        let carried = c
+            .subscription_state(channel)
+            .unwrap()
+            .expect("carried over");
+        assert_eq!(
+            (carried.starting_cursor, carried.cursor),
+            (None, None),
+            "the Scope carries over, the old cursor does not"
+        );
+        identities.push(carried.subscription_id);
+    }
+    assert_eq!(
+        identities,
+        vec![1, 2],
+        "the replaced layout allocated no identity, so this replica starts at one"
+    );
+    assert!(c.subscriptions().unwrap().is_empty());
+    drop(c);
+
+    let mut s = SqliteStore::open(&path).unwrap();
+    assert_eq!(
+        s.query_committed(
+            "SELECT cursor FROM axton_subscription ORDER BY channel",
+            &[]
+        )
+        .unwrap()
+        .rows
+        .iter()
+        .map(|r| r[0].clone())
+        .collect::<Vec<_>>(),
+        vec![json!(9), json!(4)],
+        "the old file keeps its own cursors"
+    );
 }
 
 #[test]

@@ -562,7 +562,7 @@ mod tests {
         .unwrap();
         frozen_batch(&mut sim, "e1");
         sim.settle();
-        assert_eq!(sim.client(0).cursor("a").unwrap(), 1);
+        assert_eq!(sim.client(0).cursor("a").unwrap(), Some(1));
         // A second edit is left pending so the unsubscribe has queue state to keep.
         sim.apply(Action::Enqueue {
             client: 0,
@@ -593,7 +593,7 @@ mod tests {
         })
         .unwrap();
         // The cursor restarted at 0 in a new generation; that is not a regression.
-        assert_eq!(sim.client(0).cursor("a").unwrap(), 0);
+        assert_eq!(sim.client(0).cursor("a").unwrap(), Some(0));
         sim.check().unwrap();
         sim.settle();
         assert_eq!(

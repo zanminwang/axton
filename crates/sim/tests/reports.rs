@@ -38,8 +38,8 @@ fn two_channels_sharing_a_record_arrive_in_one_pull() {
     change(&mut sim, "e1", Some("hi"), &["a", "b"]);
     pull(&mut sim, 0);
     assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("hi"));
-    assert_eq!(sim.client(0).cursor("a").unwrap(), 1);
-    assert_eq!(sim.client(0).cursor("b").unwrap(), 1);
+    assert_eq!(sim.client(0).cursor("a").unwrap(), Some(1));
+    assert_eq!(sim.client(0).cursor("b").unwrap(), Some(1));
     assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 1);
     assert!(sim.reports.is_empty());
     sim.check().unwrap();
@@ -77,7 +77,7 @@ fn a_loader_failure_isolates_one_record() {
     );
     assert_eq!(
         sim.client(0).cursor("a").unwrap(),
-        sim.host.head("a"),
+        Some(sim.host.head("a")),
         "the cursor still advances"
     );
     let failed: Vec<_> = sim
@@ -137,7 +137,7 @@ fn a_malformed_change_is_skipped_and_reported() {
     let good = if bad == "e1" { "e2" } else { "e1" };
     assert_eq!(sim.read_text(0, &entry_key(&bad)), None);
     assert!(sim.read_text(0, &entry_key(good)).is_some());
-    assert_eq!(sim.client(0).cursor("a").unwrap(), sim.host.head("a"));
+    assert_eq!(sim.client(0).cursor("a").unwrap(), Some(sim.host.head("a")));
     sim.check().unwrap();
     sim.settle();
     assert!(sim.read_text(0, &entry_key(&bad)).is_some());

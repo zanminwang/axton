@@ -2,6 +2,7 @@ import 'connection.dart';
 import 'actions.dart';
 import 'live.dart';
 import 'port.dart';
+import 'subscriptions.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
@@ -70,7 +71,6 @@ class Client implements WritePort, MutatePort {
   final int _handle;
   final String clientId;
   Future<void> _tail = Future<void>.value();
-  LiveLane? _live;
   final _channels = StreamController<void>.broadcast(sync: true);
   Future<void>? _syncing;
   Future<void>? _tasks;
@@ -115,6 +115,47 @@ class Client implements WritePort, MutatePort {
       cause: error,
     );
   }
+
+  /// Subscription handles by persistent identity, and the status they publish.
+  late final Subscriptions _subscriptions = Subscriptions(
+    SubscriptionCommands(
+      subscribe: (scope) => _exclusive(
+        () async => SubscriptionState.fromRecord(
+          (await _send({'op': 'scopeSubscribe', 'scope': scope}))
+              as Map<String, dynamic>,
+        ),
+      ),
+      state: (scope) => _exclusive(() async {
+        final state = await _send({'op': 'scopeState', 'scope': scope});
+        return state == null
+            ? null
+            : SubscriptionState.fromRecord(state as Map<String, dynamic>);
+      }),
+      remove: (scope, subscriptionId) => _exclusive(
+        () async =>
+            ((await _send({
+                  'op': 'scopeUnsubscribe',
+                  'scope': scope,
+                  'subscriptionId': subscriptionId,
+                }))
+                as Map<String, dynamic>)['removed'] ==
+            true,
+      ),
+      removeScope: (scope) => _exclusive(() async {
+        await _send({'op': 'channel', 'channel': scope, 'subscribed': false});
+      }),
+      // A committed membership change wakes the lanes; Rust decides what it
+      // means for the socket.
+      committed: () {
+        _channels.add(null);
+        _work.add(null);
+      },
+    ),
+  );
+
+  /// The Scope surface the generated `scopes` facade delegates to, with no
+  /// logic of its own.
+  late final ClientScopes scopes = ClientScopes(this);
 
   final Object _txZoneKey = Object();
   Object? _activeTxToken;
@@ -473,28 +514,19 @@ class Client implements WritePort, MutatePort {
     return applied;
   }
 
-  Future<void> subscribe(String channel) => _setChannel(channel, true);
-  Future<void> unsubscribe(String channel) => _setChannel(channel, false);
+  /// Register durable intent to follow [scope] and answer with its handle. It
+  /// resolves when the local transaction commits: it awaits no
+  /// authentication, connection or acknowledgement, and the same Scope answers
+  /// with the same handle while its registration lives. The socket is never
+  /// cancelled here; the Downlink worker sees the committed change and
+  /// reconciles its own session.
+  Future<Subscription> subscribeScope(String scope) =>
+      _subscriptions.subscribe(scope);
+  Future<Subscription> subscribe(String channel) => subscribeScope(channel);
 
-  /// The live session is abandoned at once; once the change commits, Rust
-  /// starts one for the new channel set.
-  Future<void> _setChannel(String channel, bool subscribed) {
-    _live?.cancel();
-    return _exclusive(() async {
-      try {
-        await _send({
-          'op': 'channel',
-          'channel': channel,
-          'subscribed': subscribed,
-        });
-      } catch (_) {
-        _channels.add(null);
-        rethrow;
-      }
-      _channels.add(null);
-      _work.add(null);
-    });
-  }
+  /// Remove whatever registration this Scope name has; its handle stops.
+  Future<void> unsubscribe(String channel) =>
+      _subscriptions.unsubscribeScope(channel);
 
   Future<RuntimeConnection> connect(
     SyncServer server, {
@@ -532,11 +564,11 @@ class Client implements WritePort, MutatePort {
         refreshAuth: refreshAuth == null ? null : refresh,
         directTimeout: directTimeout,
       );
-      final streaming = await LiveLane.start(
+      final streaming = await DownlinkLane.start(
         command: (event) => _exclusive(
           () async =>
               (await _send({
-                    'op': 'live',
+                    'op': 'downlink',
                     ...event,
                     'now': DateTime.now().millisecondsSinceEpoch,
                     'entropy': Random().nextInt(0x100000000),
@@ -551,8 +583,9 @@ class Client implements WritePort, MutatePort {
         ),
         onError: onError,
         refreshAuth: refreshAuth == null ? null : refresh,
+        report: _subscriptions.signal,
       );
-      _live = streaming;
+      _subscriptions.attach();
       final channelSubscription = _channels.stream.listen((_) {
         unawaited(
           streaming.wake().catchError((Object error) {
@@ -560,7 +593,7 @@ class Client implements WritePort, MutatePort {
           }),
         );
       });
-      connection.attachLive(streaming, live.cancelPush);
+      connection.attachDownlink(streaming, live.cancelPush);
       final subscription = _work.stream.listen((_) {
         unawaited(
           connection.wake().catchError((Object error) {
@@ -574,9 +607,9 @@ class Client implements WritePort, MutatePort {
         connection.closed.then((_) async {
           await subscription.cancel();
           await channelSubscription.cancel();
+          _subscriptions.detach();
           if (identical(_connection, connection)) {
             _connection = null;
-            _live = null;
             _directOnError = null;
           }
         }),
@@ -711,6 +744,9 @@ class Client implements WritePort, MutatePort {
         final report =
             (await _send({'op': 'rebuild', 'discardPending': discardPending}))
                 as Map<String, dynamic>;
+        // The replica that answered every handle is gone: no handle from before
+        // it names a registration of the file this client now reads.
+        _subscriptions.rebuilt();
         _deliverCompletions(
           (report['abandonedCalls'] as List).map((abandoned) {
             final call = abandoned as Map<String, dynamic>;
@@ -783,6 +819,7 @@ class Client implements WritePort, MutatePort {
 
   Future<void> _finishClose() async {
     _actionObservers.close();
+    _subscriptions.close();
     await _started?.future;
     await _connection?.close();
     await _exclusive(() async {
@@ -800,6 +837,14 @@ class Client implements WritePort, MutatePort {
       }
     });
   }
+}
+
+/// The Scope surface of one client: what the generated `scopes` facade
+/// delegates to.
+class ClientScopes {
+  final Client _client;
+  const ClientScopes(this._client);
+  Future<Subscription> subscribe(String scope) => _client.subscribeScope(scope);
 }
 
 class Transaction implements WritePort {

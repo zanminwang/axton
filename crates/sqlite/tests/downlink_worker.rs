@@ -921,3 +921,34 @@ fn a_restarted_lane_does_not_close_the_socket_of_the_lane_it_replaced() {
         "nothing of the replaced lane's session is announced to this one"
     );
 }
+
+#[test]
+fn a_socket_the_subscription_change_abandoned_reconnects_without_backoff() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    let (first, _) = lane.streaming("a", 0);
+    // The host abandons the socket as the application subscribes; the change
+    // commits and the dead socket is reported before any wake reaches Rust.
+    lane.set("b", true);
+    let actions = lane.send(DownlinkEvent::Closed { epoch: first });
+    assert_eq!(
+        actions[0],
+        DownlinkAction::Close {
+            epoch: first,
+            reason: None
+        }
+    );
+    let (second, subscribe) = open(&actions[1]);
+    assert!(second > first);
+    assert_eq!(subscribe.channels, ["a", "b"]);
+    assert_eq!(
+        actions.len(),
+        2,
+        "the change invalidated the session, not the transport: no backoff"
+    );
+    // The failed-attempt count was not touched either, so a real transport
+    // failure still waits the first backoff rather than a doubled one.
+    let failed = lane.send(DownlinkEvent::Closed { epoch: second });
+    let backoff = wait(&failed[1]);
+    assert!((200..=300).contains(&backoff), "{backoff}");
+}

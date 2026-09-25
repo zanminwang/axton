@@ -156,7 +156,7 @@ impl DownlinkWorker {
         match event {
             DownlinkEvent::Next => self.pump(client, now, entropy),
             other => {
-                self.enqueue(other, now, entropy);
+                self.enqueue(client, other, now, entropy);
                 Ok(vec![])
             }
         }
@@ -164,8 +164,15 @@ impl DownlinkWorker {
 
     /// Take one event: lane controls reach the schedule at once, I/O reaches the
     /// queues. No database work, no page application, and nothing the pump must
-    /// see is dropped.
-    fn enqueue(&mut self, event: DownlinkEvent, now: u64, entropy: u64) {
+    /// see is dropped; the client is read only for the in-memory subscription
+    /// generation, which decides whether a failure deserves backoff.
+    fn enqueue<S: ClientStore>(
+        &mut self,
+        client: &mut Client<S>,
+        event: DownlinkEvent,
+        now: u64,
+        entropy: u64,
+    ) {
         match event {
             // Handled by `handle`; a pump is not queued.
             DownlinkEvent::Next => {}
@@ -192,12 +199,12 @@ impl DownlinkWorker {
             DownlinkEvent::Wake => self.driver.wake(),
             DownlinkEvent::Message { epoch, body } => {
                 if self.session.current(epoch) {
-                    self.frame(&body, now, entropy);
+                    self.frame(client, &body, now, entropy);
                 }
             }
             DownlinkEvent::Closed { epoch } => {
                 if self.session.current(epoch) {
-                    self.fail(None, now, entropy);
+                    self.fail(client, None, now, entropy);
                 }
             }
             DownlinkEvent::Overflow { epoch } => {
@@ -215,7 +222,7 @@ impl DownlinkWorker {
                 // The host has reported the failure already; the session ends
                 // and the lane retries with backoff.
                 if self.answers(request) {
-                    self.fail(None, now, entropy);
+                    self.fail(client, None, now, entropy);
                 }
             }
         }
@@ -229,21 +236,27 @@ impl DownlinkWorker {
 
     /// One frame of the current socket: the handshake is validated for order
     /// here and queued for the pump; a page joins the bounded queue.
-    fn frame(&mut self, body: &str, now: u64, entropy: u64) {
+    fn frame<S: ClientStore>(
+        &mut self,
+        client: &mut Client<S>,
+        body: &str,
+        now: u64,
+        entropy: u64,
+    ) {
         let decoded = match LiveMessage::decode(body.as_bytes()) {
             Ok(decoded) => decoded,
-            Err(e) => return self.fail(Some(e.to_string()), now, entropy),
+            Err(e) => return self.fail(client, Some(e.to_string()), now, entropy),
         };
         match decoded {
             LiveMessage::Acknowledged(ack) => {
                 if let Err(e) = self.session.acknowledge(&ack) {
-                    return self.fail(Some(e.to_string()), now, entropy);
+                    return self.fail(client, Some(e.to_string()), now, entropy);
                 }
                 self.control.push_back(Control::Acknowledged(ack));
             }
             LiveMessage::Page(page) => {
                 if let Err(e) = self.session.streamed() {
-                    return self.fail(Some(e.to_string()), now, entropy);
+                    return self.fail(client, Some(e.to_string()), now, entropy);
                 }
                 if self.pages.len() >= QUEUED_FRAMES {
                     return self.overflowed();
@@ -278,10 +291,39 @@ impl DownlinkWorker {
     }
 
     /// A protocol violation or a transport failure: the session ends and the
-    /// lane retries with backoff.
-    fn fail(&mut self, reason: Option<String>, now: u64, entropy: u64) {
+    /// lane retries with backoff - unless a committed subscription change had
+    /// already invalidated it, in which case the change, not the transport,
+    /// ended it: the lane opens the next session at once and counts no failed
+    /// attempt. The SDKs abandon the socket as soon as `subscribe` is called, so
+    /// the dead socket is often reported before the commit's wake arrives.
+    fn fail<S: ClientStore>(
+        &mut self,
+        client: &mut Client<S>,
+        reason: Option<String>,
+        now: u64,
+        entropy: u64,
+    ) {
+        if self.stale(client) {
+            return self.invalidate(now);
+        }
         self.end(reason);
         self.driver.complete(false, now, entropy);
+    }
+
+    /// Whether the open session subscribed under a subscription set that a
+    /// commit has since replaced.
+    fn stale<S: ClientStore>(&self, client: &mut Client<S>) -> bool {
+        self.session
+            .generation()
+            .is_some_and(|generation| generation != client.subscription_generation())
+    }
+
+    /// The subscribed set the session negotiated is gone: end it and open the
+    /// next one without backoff.
+    fn invalidate(&mut self, now: u64) {
+        self.end(None);
+        self.driver.complete(true, now, 0);
+        self.driver.wake();
     }
 
     /// Tell the host to close a session the worker ended, in order.
@@ -304,14 +346,8 @@ impl DownlinkWorker {
         self.flush(&mut actions);
         // A committed subscribe or unsubscribe invalidates the session: the
         // lane starts over with the new channel set, without backoff.
-        if self
-            .session
-            .generation()
-            .is_some_and(|generation| generation != client.subscription_generation())
-        {
-            self.end(None);
-            self.driver.complete(true, now, 0);
-            self.driver.wake();
+        if self.stale(client) {
+            self.invalidate(now);
             self.flush(&mut actions);
         }
         self.process(client, now, entropy, &mut actions)?;
@@ -343,6 +379,8 @@ impl DownlinkWorker {
             let committed = match control {
                 Control::Acknowledged(ack) => {
                     self.acknowledged(client, &ack, actions)?;
+                    // #150 Task 2 commits the first delivery boundary here: it
+                    // must answer `true` so one pump still holds one commit.
                     false
                 }
                 Control::Overflow => {
@@ -473,14 +511,19 @@ impl DownlinkWorker {
         let page = match PullPage::decode(body.as_bytes()) {
             Ok(page) => page,
             Err(e) => {
-                self.fail(Some(format!("invalid pull response: {e}")), now, entropy);
+                self.fail(
+                    client,
+                    Some(format!("invalid pull response: {e}")),
+                    now,
+                    entropy,
+                );
                 return Ok(false);
             }
         };
         let progress = match client.receive_downlink(page, Some(pending.request)) {
             Ok(progress) => progress,
             Err(e) if e.to_string() == "response does not match pull request" => {
-                self.fail(Some(e.to_string()), now, entropy);
+                self.fail(client, Some(e.to_string()), now, entropy);
                 return Ok(false);
             }
             Err(e) => return Err(e),

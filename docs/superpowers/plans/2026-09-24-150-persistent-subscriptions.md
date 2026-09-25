@@ -67,12 +67,12 @@ host loop:
 
 ## Task 2: Initialize from acknowledged head, then resume
 
-**Files:** Modify `crates/client/src/{downlink_worker,live,transport,downlink,lib,subscriptions}.rs`, `crates/sqlite/tests/{live,downlink,subscriptions}.rs`; extend `crates/server/tests/live.rs` only for server race evidence.
+**Files:** Modify `crates/client/src/{downlink_worker,live,transport,downlink,lib,subscriptions}.rs`, `crates/sqlite/tests/{downlink_worker,downlink,subscriptions}.rs`; extend `crates/server/tests/live.rs` only for server race evidence.
 
 **Interfaces:** Add `Client::initialize_subscriptions(&mut self, expected: &BTreeMap<String, u64>, heads: &BTreeMap<String, u64>) -> Result<()>`. `DownlinkWorker` holds the expected identity map for the subordinate socket session epoch. Normal pulls consume initialized states only; desired socket membership consumes all rows.
 
 - [ ] Add deterministic event cases: offline subscribe; acknowledgment at zero; fresh acknowledgment at 100; reconnect at 120 from saved 100; acknowledgment after unsubscribe/recreate; transaction rollback; duplicate registration without an extra Open/Close action.
-- [ ] Run `cargo test -p axton-sqlite --test live --locked`; confirm the fresh subscription currently requests historical data and the new assertion fails.
+- [ ] Run `cargo test -p axton-sqlite --test downlink_worker --locked`; confirm the fresh subscription currently requests historical data and the new assertion fails.
 - [ ] Implement initialization before applying buffered live frames, using this transaction rule:
 
 ```text

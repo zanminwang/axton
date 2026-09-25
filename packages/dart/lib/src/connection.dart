@@ -521,7 +521,6 @@ class DownlinkLane implements LaneControls {
   }
 }
 
-
 /// A delivery the client could not apply, handed to `onError`. The client
 /// stays consistent: a `readFailed` or `skipped` record keeps its local
 /// content and stamp, a `conflict` keeps the local content, a `diverged`

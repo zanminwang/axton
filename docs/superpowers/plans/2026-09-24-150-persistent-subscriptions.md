@@ -4,7 +4,7 @@
 
 **Goal:** Implement durable offline Scope subscriptions, stable SDK handles and one committed synchronization origin per subscription identity.
 
-**Architecture:** SQLite owns intent and progress; the Rust live controller owns initialization and session decisions. SDK objects observe committed state and register local commands. Implement this before #151.
+**Architecture:** SQLite owns intent and progress; a dedicated Rust Downlink worker owns initialization, page processing and recovery. The live-session component owns only socket-session mechanics. SDK objects observe committed state and register local commands. Implement this before #151.
 
 **Tech Stack:** Rust core/client, SQLite, shared native bindings, TypeScript/React Native, Dart, generated APIs, existing WebSocket transport.
 
@@ -43,11 +43,33 @@ assert!(client.subscription_state("project:123")?.is_some());
 - [ ] Add the spec's table constraints and `axton_client.next_subscription`. Carry the allocator forward when rebuilding a current-format replica, and invalidate old handles/controllers on replacement. Allocate and insert in one transaction; duplicate subscribe reads the existing row without incrementing generation. Replace cursor upsert with update-only operations fenced by subscription identity. Preserve desired Scope names but allocate fresh identities when the explicit incompatible-layout rebuild path resets metadata.
 - [ ] Run `cargo test -p axton-client -p axton-sqlite --locked`; fix actual regressions in cursor callers and rebuild tests. Commit the ledger change with its tests.
 
+## Task 1A: Extract the Downlink worker from LiveSession
+
+**Files:** Create `crates/client/src/downlink_worker.rs`, `crates/sqlite/tests/downlink_worker.rs`; modify `crates/client/src/{lib,live,transport}.rs`, `bindings/common/src/lib.rs`, `packages/client-js/{connection,runtime}.mts`, `packages/dart/lib/src/{connection,client}.dart` and existing live/connection integration tests.
+
+**Interfaces:** `DownlinkWorker` is the long-lived Rust owner of the inbound queue and downlink scheduling. Introduce typed `DownlinkEvent` for socket messages/close/overflow, HTTP completion/failure and committed-work wake; typed `DownlinkAction` for socket open/close, HTTP request, retry wait, reports and post-commit status. Reuse existing wire bodies and policy types. Native `downlink` commands expose enqueue/control and bounded `next` pumping; SDK hosts provide `startDownlinkLane` / Dart `DownlinkLane` and a wake-generation loop. `LiveSession` remains a subordinate socket-session component and no longer calls Client page-application or pull-building methods. Preserve existing outward client connection controls.
+
+- [ ] Characterize current behavior with tests before moving it: buffered gap repair, overlapping/covered frames, overflow, reconnect, stale socket epoch, independent Uplink progress, pause/close and lost-wake prevention. Run `cargo test -p axton-sqlite --test live --locked` plus existing SDK connection tests for a baseline.
+- [ ] Add tests separating enqueue from pump: enqueue a valid page and assert no Model/cursor commit yet; pump and assert data/progress commit together. Replace the socket and assert the worker remains active; keep an HTTP request pending and prove further control events still execute.
+- [ ] Move queue consumption, Client application, catch-up requests and scheduling decisions to `DownlinkWorker`. Keep transport callbacks as producers and all sync policy in Rust:
+
+```text
+callback(socket or HTTP event): enqueue tagged event; wake host loop
+host loop:
+    next = Rust worker's bounded pump
+    execute returned socket/HTTP actions asynchronously
+    yield between page commits
+    wait only if idle and wake generation is unchanged
+```
+
+- [ ] Preserve the existing 64-live-frame recovery bound. Keep lifecycle/acknowledgment and HTTP completion events deliverable when the stream buffer overflows; coalesce wakes. A held gap page cannot block processing its repair response. Scope request correlation by worker/session/subscription identity as appropriate; never silently discard a completion because a live queue was full.
+- [ ] Run `cargo test -p axton-client -p axton-sqlite -p axton-binding --locked`; rebuild bindings and run JS/RN live and connection suites plus Dart equivalents. Existing wire/recovery behavior must pass before changing initialization defaults. Commit this extraction separately within the #150 PR for review.
+
 ## Task 2: Initialize from acknowledged head, then resume
 
-**Files:** Modify `crates/client/src/{live,transport,downlink,lib,subscriptions}.rs`, `crates/sqlite/tests/{live,downlink,subscriptions}.rs`; extend `crates/server/tests/live.rs` only for server race evidence.
+**Files:** Modify `crates/client/src/{downlink_worker,live,transport,downlink,lib,subscriptions}.rs`, `crates/sqlite/tests/{live,downlink,subscriptions}.rs`; extend `crates/server/tests/live.rs` only for server race evidence.
 
-**Interfaces:** Add `Client::initialize_subscriptions(&mut self, expected: &BTreeMap<String, u64>, heads: &BTreeMap<String, u64>) -> Result<()>`. `LiveSession` holds the expected identity map for its existing session epoch. Normal pulls consume initialized states only; desired socket membership consumes all rows.
+**Interfaces:** Add `Client::initialize_subscriptions(&mut self, expected: &BTreeMap<String, u64>, heads: &BTreeMap<String, u64>) -> Result<()>`. `DownlinkWorker` holds the expected identity map for the subordinate socket session epoch. Normal pulls consume initialized states only; desired socket membership consumes all rows.
 
 - [ ] Add deterministic event cases: offline subscribe; acknowledgment at zero; fresh acknowledgment at 100; reconnect at 120 from saved 100; acknowledgment after unsubscribe/recreate; transaction rollback; duplicate registration without an extra Open/Close action.
 - [ ] Run `cargo test -p axton-sqlite --test live --locked`; confirm the fresh subscription currently requests historical data and the new assertion fails.
@@ -85,7 +107,7 @@ subscribe(scope):
     return handle
 ```
 
-- [ ] Derive connection status from Rust transport events, not a second SDK network state machine. Close observers and process-local handles without deleting SQLite rows. Reject other operations on closed handles; repeated old-handle unsubscribe is harmless.
+- [ ] Derive connection status from the Rust Downlink worker and subordinate socket-session events, not a second SDK network state machine. Close observers and process-local handles without deleting SQLite rows. Reject other operations on closed handles; repeated old-handle unsubscribe is harmless.
 - [ ] After `bash scripts/build.sh`, run `node --test integration/bindings/client-js/*.test.mjs` and `node --test integration/bindings/client-react-native/*.test.mjs`. Run Dart analysis/tests with the native library configured per `docs/engineering/testing/running.md`. Commit only after relevant host tests pass.
 
 ## Task 4: Generated Scope facade and frontend conformance

@@ -70,15 +70,27 @@ This is a pre-release metadata contract change, not a backward compatibility pro
 
 ## 4. Engine ownership and state transitions
 
+### Dedicated Downlink worker
+
+Extract downlink orchestration from the current `LiveSession` before adding first-initialization behavior. The existing Uplink already has a host run loop driven by Rust scheduling; Downlink needs the same clear lifetime and ownership boundary. A long-lived Downlink worker belongs to the connected client, survives individual socket replacements, processes queued events and committed local intent, and sleeps when idle. It is a logical worker; no dedicated OS thread, busy polling or second database is required.
+
+The Rust `DownlinkWorker` owns inbound page processing, subscription initialization, gap detection, HTTP catch-up scheduling, cursor commits, bounded buffering, work/retry scheduling and post-commit notifications. #151 adds Bootstrap work to this same worker. `LiveSession` is narrowed to socket session state: desired wire subscription, connection epoch, handshake framing/order, open/close and reconnection mechanics as directed by the worker. It must not own database writes, page application, delta pagination or Bootstrap completion. The worker consumes validated acknowledgment information and establishes the durable origin.
+
+WebSocket and HTTP callbacks enqueue tagged events and wake the host loop; they do not apply pages or decide recovery. The host loop asks Rust for work, executes returned network/timer actions without awaiting their responses inside the processing loop, and queues responses back. Rust consumes events in a serialized, bounded pump and performs short local commits. Return/yield between page applications so live, bootstrap and foreground operations can make progress. Queue notification plus the host wake-generation check must prevent a wake between the idle decision and sleep from being lost.
+
+The queue is bounded in memory, not a second durable inbox. Committed subscription/Bootstrap progress is the recovery source after restart. Retain the existing 64-frame live bound; overflow makes the worker recover from durable live cursors. Never silently drop acknowledgments, lifecycle events or HTTP completions: reserve/control their delivery separately from overflowable live-page buffering; coalesce redundant wakes, and keep HTTP completions bounded by the request concurrency limit. A stream gap can hold later stream pages while HTTP repair proceeds, without preventing the worker from processing repair responses or other task classes. This is extraction of existing policies, not removal of their guarantees.
+
+A socket replacement invalidates old socket events; unsubscribe/recreate additionally fences work by persistent subscription identity. Closing the client stops the worker and its I/O. Replacing only the socket must not delete durable task state or recreate the worker. #144 remains responsible for avoiding socket replacement on a changed desired set.
+
 ### Local registration
 
-The frontend command commits durable intent and emits the existing post-commit work/subscription wake. A rolled-back transaction emits no subscription update. The SDK no longer cancels the live session before attempting the write. The Rust live controller decides whether committed membership actually changed.
+The frontend command commits durable intent and emits the existing post-commit work/subscription wake. A rolled-back transaction emits no subscription update. The SDK no longer cancels the live session before attempting the write. The Rust Downlink worker decides whether committed membership actually changed and instructs the live-session component to reconcile its connection.
 
-The current one-subscribe-frame-per-socket protocol may still reconnect on a genuine membership change in #150. #144 separately replaces that behavior with updates on a healthy socket. Identical subscribe calls cause neither generation changes nor reconnects. Both issues must use this same ledger and epoch fencing.
+The Downlink worker may still request reconnection under the current one-subscribe-frame-per-socket protocol on a genuine membership change in #150. #144 separately replaces that behavior with updates on a healthy socket. Identical subscribe calls cause neither generation changes nor reconnects. Both issues must use this same ledger and epoch fencing.
 
 ### First remote initialization
 
-1. When configured connectivity is available, the controller opens a session for desired Scopes. It snapshots their persistent subscription IDs with the local session generation.
+1. When configured connectivity is available, the Downlink worker opens a session for desired Scopes. The worker snapshots their persistent subscription IDs with the local session generation.
 2. Existing server negotiation captures heads and establishes replay/listener coverage. The listener-then-initial-drain behavior must cover changes racing the head read.
 3. Validate the acknowledgment against the current session and desired set before writing anything.
 4. In one local transaction, initialize only still-matching rows whose `starting_cursor` is NULL: set `starting_cursor = cursor = acknowledgedHead`.
@@ -128,6 +140,6 @@ Add native commands `scopeSubscribe`, `scopeState`, and `scopeUnsubscribe`, carr
 
 Required scenarios: offline registration; idempotent/concurrent calls; committed versus rolled-back registration; head zero; crash/reopen before and after first initialization; 100-to-120 reconnect; stale acknowledgment after unsubscribe/resubscribe; identical calls without cancellation; Scope addition without resetting unchanged cursors; callback failure after commit; client close versus unsubscribe; old-handle unsubscribe after replacement; no network configuration.
 
-Use SQLite tests for atomic state/reopen, Rust live-controller and server live tests for event ordering, real socket integration for handshake/gap behavior, and TypeScript/React Native host/Dart tests for handle identity and observation. Do not claim mobile-device behavior from host tests. Update the frontend, storage, live controller, protocol and guarantee documentation, explicitly identifying the first-subscription default change.
+Use SQLite tests for atomic state/reopen, Rust Downlink-worker, socket-session and server live tests for event ordering, real socket integration for handshake/gap behavior, and TypeScript/React Native host/Dart tests for handle identity and observation. Do not claim mobile-device behavior from host tests. Update the frontend, storage, live controller, protocol and guarantee documentation, explicitly identifying the first-subscription default change.
 
 Implement #150 before #151. The frontend surface above is the reviewed implementation baseline; do not request another approval for routine implementation details. #144, #152, #153, #154, #139 and #140 retain their separate responsibilities.

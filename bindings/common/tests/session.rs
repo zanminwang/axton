@@ -152,8 +152,8 @@ fn rust_selects_transport_actions_and_reuses_frozen_request_on_retry() {
         .clone();
     let id = opened["handle"].clone();
     let client_id = opened["clientId"].clone();
-    host.call(json!({"op":"channel","handle":id,"channel":"book","subscribed":true}))
-        .unwrap();
+    // The HTTP cycle pulls from a committed boundary; the handshake establishes it.
+    streaming(&mut host, &id);
     host.call(json!({"op":"startSync","handle":id})).unwrap();
     let action = host.call(json!({"op":"next","handle":id})).unwrap()["value"].clone();
     assert_eq!(action["kind"], "pull");
@@ -191,8 +191,7 @@ fn live_push_cycle_keeps_receipts_but_leaves_reads_to_the_stream() {
         .clone();
     let id = opened["handle"].clone();
     let client_id = opened["clientId"].clone();
-    host.call(json!({"op":"channel","handle":id,"channel":"book","subscribed":true}))
-        .unwrap();
+    streaming(&mut host, &id);
     host.call(json!({"op":"startSync","handle":id,"pushOnly":true}))
         .unwrap();
     assert!(host.call(json!({"op":"next","handle":id})).unwrap()["value"].is_null());
@@ -321,8 +320,11 @@ fn downlink_and_push_drivers_have_independent_lifecycle_and_retry_state() {
 }
 
 /// Drive one downlink session to its streaming phase: subscribe `book`, start
-/// the lane, acknowledge, and answer the first catch-up with `first`.
-fn streaming(host: &mut RuntimeHost, id: &Value, first: &Value) -> Value {
+/// the lane and acknowledge at head zero, which commits that Scope's first
+/// delivery boundary - a registration has none until a session negotiates one
+/// ([#150](https://github.com/zanminwang/axton/issues/150)). Answers with the
+/// epoch of the socket the test then streams on.
+fn streaming(host: &mut RuntimeHost, id: &Value) -> Value {
     host.call(json!({"op":"channel","handle":id,"channel":"book","subscribed":true}))
         .unwrap();
     let opened = downlink(host, id, json!({"event":"start"}));
@@ -331,27 +333,15 @@ fn streaming(host: &mut RuntimeHost, id: &Value, first: &Value) -> Value {
         serde_json::from_str::<Value>(opened[0]["subscribe"].as_str().unwrap()).unwrap(),
         json!({"type":"subscribe","channels":["book"],"models":{"Entry":1}})
     );
-    // The acknowledged head is beyond the durable cursor: one pull from it.
-    let ack = json!({"type":"subscribed","cursors":{"book":first["cursors"]["book"]["head"]}})
-        .to_string();
-    let acknowledged = downlink(
-        host,
-        id,
-        json!({"event":"message","epoch":epoch,"body":ack}),
-    );
-    if first["cursors"]["book"]["head"] == 0 {
-        assert_eq!(acknowledged, json!([]), "at the head: no catch-up");
-        return epoch;
-    }
-    let request = requested(&acknowledged[0]);
+    let ack = json!({"type":"subscribed","cursors":{"book":0}}).to_string();
     assert_eq!(
-        serde_json::from_str::<Value>(acknowledged[0]["body"].as_str().unwrap()).unwrap()["cursors"],
-        json!({"book":0})
-    );
-    downlink(
-        host,
-        id,
-        json!({"event":"response","request":request,"body":first.to_string()}),
+        downlink(
+            host,
+            id,
+            json!({"event":"message","epoch":epoch,"body":ack})
+        ),
+        json!([{"type":"changed","scopes":["book"]}]),
+        "the acknowledged head is the first boundary; no history is pulled"
     );
     epoch
 }
@@ -367,7 +357,16 @@ fn incoming_pages_share_cursor_policy_and_do_not_overwrite_push_cycle() {
         .unwrap()["value"]["handle"]
         .clone();
     let page = json!({"cursors":{"book":{"from":0,"to":1,"head":1}},"changes":[{"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"A","note":null}}]});
-    let epoch = streaming(&mut host, &id, &page);
+    let epoch = streaming(&mut host, &id);
+    assert_eq!(
+        downlink(
+            &mut host,
+            &id,
+            json!({"event":"message","epoch":epoch,"body":page.to_string()})
+        ),
+        committed(json!(["book"])),
+        "the stream applies from the boundary"
+    );
     assert_eq!(
         downlink(
             &mut host,
@@ -414,8 +413,7 @@ fn incoming_overlap_is_identical_with_or_without_http_request_metadata() {
         serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
     for over_http in [false, true] {
         let id=host.call(json!({"op":"open","path":dir.path().join(if over_http {"http"} else {"ws"}),"schema":schema})).unwrap()["value"]["handle"].clone();
-        let empty = json!({"cursors":{"book":{"from":0,"to":0,"head":0}},"changes":[]});
-        let epoch = streaming(&mut host, &id, &empty);
+        let epoch = streaming(&mut host, &id);
         let first = json!({"cursors":{"book":{"from":0,"to":1,"head":1}},"changes":[{"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"first","note":null}}]});
         let overlap = json!({"cursors":{"book":{"from":0,"to":2,"head":2}},"changes":[{"model":"Entry","identity":{"id":"e"},"stamp":2,"state":{"text":"incoming overlap","note":null}}]});
         let mut repair = Value::Null;
@@ -506,8 +504,7 @@ fn incoming_overlap_is_identical_with_or_without_http_request_metadata() {
         .call(json!({"op":"open","path":dir.path().join("mismatch"),"schema":schema}))
         .unwrap()["value"]["handle"]
         .clone();
-    let first = json!({"cursors":{"book":{"from":0,"to":0,"head":0}},"changes":[]});
-    let epoch = streaming(&mut host, &id, &first);
+    let epoch = streaming(&mut host, &id);
     let gap = json!({"cursors":{"book":{"from":5,"to":6,"head":6}},"changes":[]}).to_string();
     let recovered = downlink(
         &mut host,

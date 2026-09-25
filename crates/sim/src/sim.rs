@@ -419,6 +419,23 @@ impl Sim {
                 self.client(client)
                     .transaction(|tx| tx.set_channel(channel.clone(), true))
                     .map_err(|e| e.to_string())?;
+                // Registration is intent only; the simulated client is one whose
+                // session acknowledged head zero, so the whole published log is
+                // what it converges on
+                // ([#150](https://github.com/zanminwang/axton/issues/150)).
+                let state = self
+                    .client(client)
+                    .subscription_state(&channel)
+                    .map_err(|e| e.to_string())?
+                    .ok_or("the registration left no subscription")?;
+                if state.starting_cursor.is_none() {
+                    self.client(client)
+                        .initialize_subscriptions(
+                            &BTreeMap::from([(channel.clone(), state.subscription_id)]),
+                            &BTreeMap::from([(channel.clone(), 0)]),
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
                 if fresh {
                     *self.clients[client].generations.entry(channel).or_insert(0) += 1;
                 }

@@ -72,11 +72,11 @@ import {
   type ActionOptions,
 } from "./actions.mts";
 
-/** Report application callback failures without changing an applied Action outcome. */
 /** The native command field for an Action's store option, beside its args. */
 function storeOption(options?: ActionOptions): { store?: unknown } {
   return options?.store === undefined ? {} : { store: options.store };
 }
+/** Report application callback failures without changing an applied Action outcome. */
 function reportActionCallbackError(error: unknown): void {
   if (typeof globalThis.reportError === "function") {
     globalThis.reportError(error);

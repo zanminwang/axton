@@ -352,21 +352,75 @@ dynamic _dartActionEncode(dynamic value) {
  if (value is TodoIdentity) return value.toRecord();
  return value;
 }
+/// Which explicit Model outputs of AddTodo also update local Models.
+final class AddTodoStore extends ActionStore {
+ /// Store every eligible output (the default).
+ const AddTodoStore.all() : _mode = 0;
+ /// Store no output; results are returned unchanged.
+ const AddTodoStore.none() : _mode = 1;
+ final int _mode;
+ @override
+ Object? toWire() => _mode == 0 ? null : false;
+}
+/// Which explicit Model outputs of DeleteTodo also update local Models.
+final class DeleteTodoStore extends ActionStore {
+ /// Store every eligible output (the default).
+ const DeleteTodoStore.all() : _mode = 0;
+ /// Store no output; results are returned unchanged.
+ const DeleteTodoStore.none() : _mode = 1;
+ final int _mode;
+ @override
+ Object? toWire() => _mode == 0 ? null : false;
+}
+/// Which explicit Model outputs of SearchTodos also update local Models.
+final class SearchTodosStore extends ActionStore {
+ /// Store every eligible output (the default).
+ const SearchTodosStore.all() : _mode = 0, todos = null, first = null;
+ /// Store no output; results are returned unchanged.
+ const SearchTodosStore.none() : _mode = 1, todos = null, first = null;
+ /// Choose outputs by name; null leaves an output at the default (stored).
+ const SearchTodosStore.outputs({this.todos, this.first}) : _mode = 2;
+ final int _mode;
+ final bool? todos;
+ final bool? first;
+ @override
+ Object? toWire() => switch (_mode) { 0 => null, 1 => false, _ => <String, bool>{if (todos != null) 'todos': todos!, if (first != null) 'first': first!} };
+}
+/// Which explicit Model outputs of SendEmail also update local Models.
+final class SendEmailStore extends ActionStore {
+ /// Store every eligible output (the default).
+ const SendEmailStore.all() : _mode = 0;
+ /// Store no output; results are returned unchanged.
+ const SendEmailStore.none() : _mode = 1;
+ final int _mode;
+ @override
+ Object? toWire() => _mode == 0 ? null : false;
+}
+/// Which explicit Model outputs of UpdateTodo also update local Models.
+final class UpdateTodoStore extends ActionStore {
+ /// Store every eligible output (the default).
+ const UpdateTodoStore.all() : _mode = 0;
+ /// Store no output; results are returned unchanged.
+ const UpdateTodoStore.none() : _mode = 1;
+ final int _mode;
+ @override
+ Object? toWire() => _mode == 0 ? null : false;
+}
 class Actions {
  final Client client; Actions(this.client); late final DirectCalls call = DirectCalls(client);
- Future<ActionCall<AddTodoOutput>> addTodo({required TodoCreate todo}) => client.invokeAction<AddTodoOutput>('AddTodo', 2, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return AddTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
- Future<ActionCall<DeleteTodoOutput>> deleteTodo({required TodoDelete todo}) => client.invokeAction<DeleteTodoOutput>('DeleteTodo', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return DeleteTodoOutput(todo: TodoIdentity.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
- Future<ActionCall<SearchTodosOutput>> searchTodos({required String? query}) => client.invokeAction<SearchTodosOutput>('SearchTodos', 2, {'query': _dartActionEncode(query)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SearchTodosOutput(todos: (row['todos'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList(), first: row['first'] == null ? null : Todo.fromRecord((row['first'] as Map).cast<String,dynamic>()), count: row['count'] as int, labels: (row['labels'] as List).map((e) => e as String).toList(), hint: row['hint'] == null ? null : row['hint'] as String); });
- Future<ActionCall<SendEmailOutput>> sendEmail({required String to, required String subject, required String body}) => client.invokeAction<SendEmailOutput>('SendEmail', 1, {'to': _dartActionEncode(to), 'subject': _dartActionEncode(subject), 'body': _dartActionEncode(body)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SendEmailOutput(messageId: row['messageId'] as String); });
- Future<ActionCall<UpdateTodoOutput>> updateTodo({required UpdateTodoTodoUpdate todo}) => client.invokeAction<UpdateTodoOutput>('UpdateTodo', 2, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return UpdateTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
+ Future<ActionCall<AddTodoOutput>> addTodo({required TodoCreate todo, AddTodoStore? store}) => client.invokeAction<AddTodoOutput>('AddTodo', 2, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return AddTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, store: store);
+ Future<ActionCall<DeleteTodoOutput>> deleteTodo({required TodoDelete todo, DeleteTodoStore? store}) => client.invokeAction<DeleteTodoOutput>('DeleteTodo', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return DeleteTodoOutput(todo: TodoIdentity.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, store: store);
+ Future<ActionCall<SearchTodosOutput>> searchTodos({required String? query, SearchTodosStore? store}) => client.invokeAction<SearchTodosOutput>('SearchTodos', 2, {'query': _dartActionEncode(query)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SearchTodosOutput(todos: (row['todos'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList(), first: row['first'] == null ? null : Todo.fromRecord((row['first'] as Map).cast<String,dynamic>()), count: row['count'] as int, labels: (row['labels'] as List).map((e) => e as String).toList(), hint: row['hint'] == null ? null : row['hint'] as String); }, store: store);
+ Future<ActionCall<SendEmailOutput>> sendEmail({required String to, required String subject, required String body, SendEmailStore? store}) => client.invokeAction<SendEmailOutput>('SendEmail', 1, {'to': _dartActionEncode(to), 'subject': _dartActionEncode(subject), 'body': _dartActionEncode(body)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SendEmailOutput(messageId: row['messageId'] as String); }, store: store);
+ Future<ActionCall<UpdateTodoOutput>> updateTodo({required UpdateTodoTodoUpdate todo, UpdateTodoStore? store}) => client.invokeAction<UpdateTodoOutput>('UpdateTodo', 2, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return UpdateTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, store: store);
 }
 class DirectCalls {
  final Client client; DirectCalls(this.client);
- Future<AddTodoOutput> addTodo({required TodoCreate todo}) => client.invokeDirectAction<AddTodoOutput>('AddTodo', 2, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return AddTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
- Future<DeleteTodoOutput> deleteTodo({required TodoDelete todo}) => client.invokeDirectAction<DeleteTodoOutput>('DeleteTodo', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return DeleteTodoOutput(todo: TodoIdentity.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
- Future<SearchTodosOutput> searchTodos({required String? query}) => client.invokeDirectAction<SearchTodosOutput>('SearchTodos', 2, {'query': _dartActionEncode(query)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SearchTodosOutput(todos: (row['todos'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList(), first: row['first'] == null ? null : Todo.fromRecord((row['first'] as Map).cast<String,dynamic>()), count: row['count'] as int, labels: (row['labels'] as List).map((e) => e as String).toList(), hint: row['hint'] == null ? null : row['hint'] as String); });
- Future<SendEmailOutput> sendEmail({required String to, required String subject, required String body}) => client.invokeDirectAction<SendEmailOutput>('SendEmail', 1, {'to': _dartActionEncode(to), 'subject': _dartActionEncode(subject), 'body': _dartActionEncode(body)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SendEmailOutput(messageId: row['messageId'] as String); });
- Future<UpdateTodoOutput> updateTodo({required UpdateTodoTodoUpdate todo}) => client.invokeDirectAction<UpdateTodoOutput>('UpdateTodo', 2, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return UpdateTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
+ Future<AddTodoOutput> addTodo({required TodoCreate todo, AddTodoStore? store}) => client.invokeDirectAction<AddTodoOutput>('AddTodo', 2, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return AddTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, store: store);
+ Future<DeleteTodoOutput> deleteTodo({required TodoDelete todo, DeleteTodoStore? store}) => client.invokeDirectAction<DeleteTodoOutput>('DeleteTodo', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return DeleteTodoOutput(todo: TodoIdentity.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, store: store);
+ Future<SearchTodosOutput> searchTodos({required String? query, SearchTodosStore? store}) => client.invokeDirectAction<SearchTodosOutput>('SearchTodos', 2, {'query': _dartActionEncode(query)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SearchTodosOutput(todos: (row['todos'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList(), first: row['first'] == null ? null : Todo.fromRecord((row['first'] as Map).cast<String,dynamic>()), count: row['count'] as int, labels: (row['labels'] as List).map((e) => e as String).toList(), hint: row['hint'] == null ? null : row['hint'] as String); }, store: store);
+ Future<SendEmailOutput> sendEmail({required String to, required String subject, required String body, SendEmailStore? store}) => client.invokeDirectAction<SendEmailOutput>('SendEmail', 1, {'to': _dartActionEncode(to), 'subject': _dartActionEncode(subject), 'body': _dartActionEncode(body)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SendEmailOutput(messageId: row['messageId'] as String); }, store: store);
+ Future<UpdateTodoOutput> updateTodo({required UpdateTodoTodoUpdate todo, UpdateTodoStore? store}) => client.invokeDirectAction<UpdateTodoOutput>('UpdateTodo', 2, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return UpdateTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, store: store);
 }
 class LiveModels { final Client port; LiveModels(this.port);
  late final TodoLiveModel todo = TodoLiveModel(port);

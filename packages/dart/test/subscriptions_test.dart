@@ -413,6 +413,94 @@ void main() {
     },
   );
 
+  // A replica rebuild carries the Scope names over with fresh identities, so a
+  // handle from before it names a registration that no longer exists: the one
+  // public path where an identity-fenced removal answers "nothing went" while
+  // the Scope has a live registration.
+  test(
+    'a stale handle from before a rebuild cannot disturb the subscription that replaced it',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'axton-dart-subscriptions-rebuild-',
+      );
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      final breaking = jsonDecode(jsonEncode(schema)) as Map<String, dynamic>;
+      ((breaking['models'] as List).first as Map)['fields'].add({
+        'name': 'due',
+        'nullable': false,
+        'type': {'kind': 'scalar', 'name': 'string'},
+      });
+      final network = await FakeServer.start();
+      Client? client;
+      try {
+        client = await Client.open(
+          path: '${directory.path}/db',
+          schema: schema,
+          libraryPath: Platform.environment['AXTON_LIBRARY']!,
+        );
+        await client.subscribe('scope');
+        // Unsent work keeps the incompatible file open, so the rebuild happens
+        // with this client - and its handle - already alive.
+        await client.mutate({
+          'name': 'Create',
+          'operations': [
+            {
+              'model': 'Entry',
+              'op': 'create',
+              'identity': {'id': 'e'},
+              'values': {'text': 'A', 'note': null},
+            },
+          ],
+        });
+        await client.close();
+        client = await Client.open(
+          path: '${directory.path}/db',
+          schema: breaking,
+          libraryPath: Platform.environment['AXTON_LIBRARY']!,
+        );
+        final stale = await client.subscribe('scope');
+        await client.rebuild(discardPending: true);
+        final current = await client.subscribe('scope');
+        expect(identical(current, stale), isFalse);
+        final connection = await client.connect(network.config);
+        await until(
+          () async =>
+              current.status.connection == SubscriptionConnection.live &&
+              current.status.initialization == SubscriptionInitialization.ready,
+          'the carried subscription goes live',
+        );
+        // The old handle removes nothing: the Scope's current registration is
+        // another identity, whose acknowledgement is not this handle's to
+        // forget.
+        await stale.unsubscribe();
+        expect(
+          (await client.syncState())['channels'],
+          ['scope'],
+          reason: 'the current registration stands',
+        );
+        expect(
+          current.status,
+          const SubscriptionStatus(
+            active: true,
+            initialization: SubscriptionInitialization.ready,
+            connection: SubscriptionConnection.live,
+          ),
+          reason: 'a removal that removed nothing changes no status',
+        );
+        expect(stale.status.connection, SubscriptionConnection.stopped);
+        await connection.close();
+      } finally {
+        await client?.close();
+        await network.close();
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+
   test(
     'unsubscribe removes one registration; an old handle cannot remove its replacement',
     () async {

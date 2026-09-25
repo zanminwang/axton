@@ -162,6 +162,44 @@ test('a recreated subscription is connecting until its own handshake acknowledge
  } finally { await fixture.close();await network.close(); }
 });
 
+// A replica rebuild carries the Scope names over with fresh identities, so a
+// handle from before it names a registration that no longer exists: the one
+// public path where an identity-fenced removal answers "nothing went" while the
+// Scope has a live registration ([#150](https://github.com/zanminwang/axton/issues/150)).
+test('a stale handle from before a rebuild cannot disturb the subscription that replaced it', async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'axton-subscriptions-rebuild-'));
+ const path=join(dir,'client.sqlite');
+ const schema=JSON.parse(await readFile(new URL('../../../fixtures/schemas/entry.json',import.meta.url),'utf8'));
+ const breaking=structuredClone(schema);
+ breaking.models[0].fields.push({name:'due',nullable:false,type:{kind:'scalar',name:'string'}});
+ const network=await fakeServer({scope:0});
+ let client;
+ try {
+  client=await runtime.Client.open({path,schema});
+  await client.subscribe('scope');
+  // Unsent work keeps the incompatible file open, so the rebuild happens with
+  // this client - and its handle - already alive.
+  await client.mutate({name:'Create',operations:[{model:'Entry',op:'create',identity:{id:'e'},values:{text:'A',note:null}}]});
+  await client.close();
+  client=await runtime.Client.open({path,schema:breaking});
+  const stale=await client.subscribe('scope');
+  await client.rebuild({discardPending:true});
+  const current=await client.subscribe('scope');
+  assert.notEqual(current,stale,'the carried Scope is a new registration, never the same handle');
+  const connection=await client.connect(network.config);
+  await until(()=>current.status.connection==='live'&&current.status.initialization==='ready',
+   'the carried subscription goes live');
+  // The old handle removes nothing: the Scope's current registration is another
+  // identity, whose acknowledgement is not this handle's to forget.
+  await stale.unsubscribe();
+  assert.deepEqual((await client.syncState()).channels,['scope'],'the current registration stands');
+  assert.deepEqual({...current.status},{active:true,initialization:'ready',connection:'live'},
+   'a removal that removed nothing changes no status');
+  assert.deepEqual({...stale.status},{active:false,initialization:'pending',connection:'stopped'});
+  await connection.close();
+ } finally { await client?.close();await network.close();await rm(dir,{recursive:true,force:true}); }
+});
+
 test('unsubscribe removes one registration; an old handle cannot remove its replacement', async()=>{
  const fixture=await openClient();const {client}=fixture;
  try {

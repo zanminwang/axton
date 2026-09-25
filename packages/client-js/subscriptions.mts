@@ -143,8 +143,6 @@ class Handle implements Subscription {
       return;
     this.#snapshot = next;
     this.#deliver(next);
-    // A closed handle has no changes left after that last snapshot.
-    if (this.closed) this.#listeners.clear();
   }
   #deliver(status: SubscriptionStatus): void {
     for (const listener of [...this.#listeners])
@@ -167,6 +165,7 @@ class Handle implements Subscription {
     if (reason === "removed") this.#removed = true;
     else this.#stopped = true;
     this.refresh();
+    // A closed handle has no changes left after that last snapshot.
     this.#listeners.clear();
   }
   watch(listener: (status: SubscriptionStatus) => void): () => void {
@@ -265,8 +264,12 @@ export class Subscriptions {
       this.#handles.delete(subscriptionId);
       handle.close("removed");
     }
-    this.#forget(scope);
-    if (removed) this.#commands.committed();
+    // Nothing went: another registration is this Scope's current one, and the
+    // acknowledgement it may hold is not this handle's to forget.
+    if (removed) {
+      this.#forget(scope);
+      this.#commands.committed();
+    }
   }
   /**
    * The open session's handshake covered the registration that just went, not

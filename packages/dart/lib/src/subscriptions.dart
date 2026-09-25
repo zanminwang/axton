@@ -304,8 +304,12 @@ class Subscriptions {
     final removed = await _commands.remove(scope, subscriptionId);
     final handle = _handles.remove(subscriptionId);
     handle?._close(removed: true);
-    _forget(scope);
-    if (removed) _commands.committed();
+    // Nothing went: another registration is this Scope's current one, and the
+    // acknowledgement it may hold is not this handle's to forget.
+    if (removed) {
+      _forget(scope);
+      _commands.committed();
+    }
   }
 
   /// The open session's handshake covered the registration that just went, not

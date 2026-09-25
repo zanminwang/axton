@@ -232,8 +232,50 @@ fn live_push_cycle_keeps_receipts_but_leaves_reads_to_the_stream() {
     );
 }
 
+/// The host loop over the downlink lane: enqueue one event - which answers with
+/// no actions of its own - then pump until the worker waits or has nothing left.
+fn downlink(host: &mut RuntimeHost, id: &Value, mut event: Value) -> Value {
+    event["op"] = json!("downlink");
+    event["handle"] = id.clone();
+    event["now"] = json!(0);
+    event["entropy"] = json!(0);
+    assert_eq!(
+        host.call(event).unwrap()["value"],
+        json!([]),
+        "an enqueue decides nothing: the pump answers"
+    );
+    pump(host, id)
+}
+/// Pump until the worker waits or has nothing left, collecting its actions.
+fn pump(host: &mut RuntimeHost, id: &Value) -> Value {
+    let mut actions = vec![];
+    for _ in 0..8 {
+        let pumped = host
+            .call(json!({"op":"downlink","handle":id,"event":"next","now":0,"entropy":0}))
+            .unwrap()["value"]
+            .as_array()
+            .cloned()
+            .unwrap();
+        let stop = pumped.is_empty() || pumped.iter().any(|a| a["type"] == "wait");
+        actions.extend(pumped);
+        if stop {
+            return Value::Array(actions);
+        }
+    }
+    panic!("the pump never went idle: {actions:?}")
+}
+/// The id the host answers this catch-up request by.
+fn requested(action: &Value) -> Value {
+    assert_eq!(action["type"], "request", "{action}");
+    action["request"].clone()
+}
+/// What an applied page answers: the push wake and the Scopes it committed.
+fn committed(scopes: Value) -> Value {
+    json!([{"type":"wake","lane":"push"},{"type":"changed","scopes":scopes}])
+}
+
 #[test]
-fn live_and_push_drivers_have_independent_lifecycle_and_retry_state() {
+fn downlink_and_push_drivers_have_independent_lifecycle_and_retry_state() {
     let dir = tempfile::tempdir().unwrap();
     let mut host = RuntimeHost::default();
     let schema: Value =
@@ -251,17 +293,11 @@ fn live_and_push_drivers_have_independent_lifecycle_and_retry_state() {
             .unwrap()["value"]["type"],
         "sync"
     );
-    let opened = host
-        .call(json!({"op":"live","handle":id,"event":"start","now":0}))
-        .unwrap()["value"]
-        .clone();
+    let opened = downlink(&mut host, &id, json!({"event":"start"}));
     assert_eq!(opened[0]["type"], "open");
     let epoch = opened[0]["epoch"].clone();
     // The live socket drops: its lane backs off while the push lane is unaffected.
-    let closed = host
-        .call(json!({"op":"live","handle":id,"event":"closed","epoch":epoch,"now":0,"entropy":0}))
-        .unwrap()["value"]
-        .clone();
+    let closed = downlink(&mut host, &id, json!({"event":"closed","epoch":epoch}));
     assert_eq!(
         closed[0],
         json!({"type":"close","epoch":epoch,"reason":null})
@@ -274,29 +310,22 @@ fn live_and_push_drivers_have_independent_lifecycle_and_retry_state() {
             .unwrap()["value"]["type"],
         "idle"
     );
-    assert_eq!(
-        host.call(json!({"op":"live","handle":id,"event":"next","now":0}))
-            .unwrap()["value"][0]["type"],
-        "wait"
-    );
+    assert_eq!(pump(&mut host, &id)[0]["type"], "wait");
     for bad in [
-        json!({"op":"live","handle":id,"event":"unknown","now":0}),
-        json!({"op":"live","handle":id,"event":"message","now":0}),
+        json!({"op":"downlink","handle":id,"event":"unknown","now":0}),
+        json!({"op":"downlink","handle":id,"event":"message","now":0}),
         json!({"op":"connection","handle":id,"event":"unknown","now":0}),
     ] {
         assert!(host.call(bad).is_err());
     }
 }
 
-/// Drive one live session to its streaming phase: subscribe `book`, start the
-/// lane, acknowledge, and answer the first catch-up with `first`.
+/// Drive one downlink session to its streaming phase: subscribe `book`, start
+/// the lane, acknowledge, and answer the first catch-up with `first`.
 fn streaming(host: &mut RuntimeHost, id: &Value, first: &Value) -> Value {
     host.call(json!({"op":"channel","handle":id,"channel":"book","subscribed":true}))
         .unwrap();
-    let opened = host
-        .call(json!({"op":"live","handle":id,"event":"start","now":0}))
-        .unwrap()["value"]
-        .clone();
+    let opened = downlink(host, id, json!({"event":"start"}));
     let epoch = opened[0]["epoch"].clone();
     assert_eq!(
         serde_json::from_str::<Value>(opened[0]["subscribe"].as_str().unwrap()).unwrap(),
@@ -305,21 +334,25 @@ fn streaming(host: &mut RuntimeHost, id: &Value, first: &Value) -> Value {
     // The acknowledged head is beyond the durable cursor: one pull from it.
     let ack = json!({"type":"subscribed","cursors":{"book":first["cursors"]["book"]["head"]}})
         .to_string();
-    let requested = host
-        .call(json!({"op":"live","handle":id,"event":"message","epoch":epoch,"body":ack,"now":0}))
-        .unwrap()["value"]
-        .clone();
+    let acknowledged = downlink(
+        host,
+        id,
+        json!({"event":"message","epoch":epoch,"body":ack}),
+    );
     if first["cursors"]["book"]["head"] == 0 {
-        assert_eq!(requested, json!([]), "at the head: no catch-up");
+        assert_eq!(acknowledged, json!([]), "at the head: no catch-up");
         return epoch;
     }
-    assert_eq!(requested[0]["type"], "request");
+    let request = requested(&acknowledged[0]);
     assert_eq!(
-        serde_json::from_str::<Value>(requested[0]["body"].as_str().unwrap()).unwrap()["cursors"],
+        serde_json::from_str::<Value>(acknowledged[0]["body"].as_str().unwrap()).unwrap()["cursors"],
         json!({"book":0})
     );
-    host.call(json!({"op":"live","handle":id,"event":"catchUp","epoch":epoch,"body":first.to_string(),"now":0}))
-        .unwrap();
+    downlink(
+        host,
+        id,
+        json!({"event":"response","request":request,"body":first.to_string()}),
+    );
     epoch
 }
 
@@ -335,15 +368,22 @@ fn incoming_pages_share_cursor_policy_and_do_not_overwrite_push_cycle() {
         .clone();
     let page = json!({"cursors":{"book":{"from":0,"to":1,"head":1}},"changes":[{"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"A","note":null}}]});
     let epoch = streaming(&mut host, &id, &page);
-    let deliver = |host: &mut RuntimeHost, event: &str, page: &Value| {
-        host.call(json!({"op":"live","handle":id,"event":event,"epoch":epoch,"body":page.to_string(),"now":0}))
-            .unwrap()["value"]
-            .clone()
-    };
-    assert_eq!(deliver(&mut host, "message", &page), json!([]), "covered");
+    assert_eq!(
+        downlink(
+            &mut host,
+            &id,
+            json!({"event":"message","epoch":epoch,"body":page.to_string()})
+        ),
+        json!([]),
+        "covered"
+    );
     let gap = json!({"cursors":{"book":{"from":2,"to":3,"head":3}},"changes":[]});
-    let recovered = deliver(&mut host, "message", &gap);
-    assert_eq!(recovered[0]["type"], "request", "a gap recovers over HTTP");
+    let recovered = downlink(
+        &mut host,
+        &id,
+        json!({"event":"message","epoch":epoch,"body":gap.to_string()}),
+    );
+    let repair = requested(&recovered[0]);
     host.call(json!({"op":"enqueue","handle":id,"mutation":{"name":"Edit","operations":[{"model":"Entry","op":"update","identity":{"id":"e"},"values":{"text":"B"}}]}})).unwrap();
     host.call(json!({"op":"startSync","handle":id,"pushOnly":true}))
         .unwrap();
@@ -351,13 +391,17 @@ fn incoming_pages_share_cursor_policy_and_do_not_overwrite_push_cycle() {
     // The pull covers the held gap frame, which is then discarded.
     let covering = json!({"cursors":{"book":{"from":1,"to":3,"head":3}},"changes":[]});
     assert_eq!(
-        deliver(&mut host, "catchUp", &covering),
-        json!([{"type":"wake","lane":"push"}])
+        downlink(
+            &mut host,
+            &id,
+            json!({"event":"response","request":repair,"body":covering.to_string()})
+        ),
+        committed(json!(["book"]))
     );
     assert_eq!(
         host.call(json!({"op":"next","handle":id})).unwrap()["value"],
         push,
-        "the live session never touches the push cycle"
+        "the downlink worker never touches the push cycle"
     );
     assert_eq!(push["kind"], "push");
 }
@@ -372,48 +416,65 @@ fn incoming_overlap_is_identical_with_or_without_http_request_metadata() {
         let id=host.call(json!({"op":"open","path":dir.path().join(if over_http {"http"} else {"ws"}),"schema":schema})).unwrap()["value"]["handle"].clone();
         let empty = json!({"cursors":{"book":{"from":0,"to":0,"head":0}},"changes":[]});
         let epoch = streaming(&mut host, &id, &empty);
-        let deliver = |host: &mut RuntimeHost, event: &str, page: &Value| {
-            host.call(json!({"op":"live","handle":id,"event":event,"epoch":epoch,"body":page.to_string(),"now":0}))
-                .unwrap()["value"]
-                .clone()
-        };
         let first = json!({"cursors":{"book":{"from":0,"to":1,"head":1}},"changes":[{"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"first","note":null}}]});
         let overlap = json!({"cursors":{"book":{"from":0,"to":2,"head":2}},"changes":[{"model":"Entry","identity":{"id":"e"},"stamp":2,"state":{"text":"incoming overlap","note":null}}]});
+        let mut repair = Value::Null;
         if over_http {
             // A streamed gap makes the session request from cursor 0; the first
             // page then lands through the stream before the answer arrives.
             let gap = json!({"cursors":{"book":{"from":5,"to":6,"head":6}},"changes":[]});
-            assert_eq!(deliver(&mut host, "message", &gap)[0]["type"], "request");
+            let recovered = downlink(
+                &mut host,
+                &id,
+                json!({"event":"message","epoch":epoch,"body":gap.to_string()}),
+            );
+            repair = requested(&recovered[0]);
         }
         // While a pull is in flight, a streamed page waits in the queue and is
         // covered once the HTTP answer lands; in streaming it applies at once.
         assert_eq!(
-            deliver(&mut host, "message", &first),
+            downlink(
+                &mut host,
+                &id,
+                json!({"event":"message","epoch":epoch,"body":first.to_string()})
+            ),
             if over_http {
                 json!([])
             } else {
-                json!([{"type":"wake","lane":"push"}])
+                committed(json!(["book"]))
             }
         );
-        assert_eq!(
-            deliver(
-                &mut host,
-                if over_http { "catchUp" } else { "message" },
-                &overlap
-            ),
+        let applied = downlink(
+            &mut host,
+            &id,
             if over_http {
-                // The pull applied, then the queue: `first` is covered and the
-                // gap frame still does not connect, so one more pull runs.
-                json!([{"type":"wake","lane":"push"},{"type":"request","epoch":epoch,"body":"{\"cursors\":{\"book\":2},\"models\":{\"Entry\":1}}"}])
+                json!({"event":"response","request":repair,"body":overlap.to_string()})
             } else {
-                json!([{"type":"wake","lane":"push"}])
+                json!({"event":"message","epoch":epoch,"body":overlap.to_string()})
             },
-            "applied over {}",
-            if over_http { "HTTP" } else { "the stream" }
         );
+        let actions = applied.as_array().unwrap();
         assert_eq!(
-            host.call(json!({"op":"live","handle":id,"event":"message","epoch":epoch,"body":overlap.to_string(),"now":0}))
-                .unwrap()["value"],
+            actions[..2],
+            committed(json!(["book"])).as_array().unwrap()[..]
+        );
+        if over_http {
+            // The pull applied, then the queue: `first` is covered and the gap
+            // frame still does not connect, so one more pull runs.
+            assert_eq!(
+                serde_json::from_str::<Value>(actions[2]["body"].as_str().unwrap()).unwrap(),
+                json!({"cursors":{"book":2},"models":{"Entry":1}})
+            );
+            assert_eq!(actions.len(), 3);
+        } else {
+            assert_eq!(actions.len(), 2);
+        }
+        assert_eq!(
+            downlink(
+                &mut host,
+                &id,
+                json!({"event":"message","epoch":epoch,"body":overlap.to_string()})
+            ),
             json!([]),
             "covered"
         );
@@ -429,10 +490,10 @@ fn incoming_overlap_is_identical_with_or_without_http_request_metadata() {
             "incoming overlap"
         );
         for old in [
+            "live",
             "downlinkRequest",
             "downlinkPage",
             "downlinkComplete",
-            "downlinkLive",
         ] {
             assert!(
                 host.call(json!({"op":old,"handle":id,"scope":"book","page":overlap}))
@@ -448,13 +509,18 @@ fn incoming_overlap_is_identical_with_or_without_http_request_metadata() {
     let first = json!({"cursors":{"book":{"from":0,"to":0,"head":0}},"changes":[]});
     let epoch = streaming(&mut host, &id, &first);
     let gap = json!({"cursors":{"book":{"from":5,"to":6,"head":6}},"changes":[]}).to_string();
-    host.call(json!({"op":"live","handle":id,"event":"message","epoch":epoch,"body":gap,"now":0}))
-        .unwrap();
+    let recovered = downlink(
+        &mut host,
+        &id,
+        json!({"event":"message","epoch":epoch,"body":gap}),
+    );
+    let repair = requested(&recovered[0]);
     let other = json!({"cursors":{"other":{"from":0,"to":2,"head":2}},"changes":[]}).to_string();
-    let ended = host
-        .call(json!({"op":"live","handle":id,"event":"catchUp","epoch":epoch,"body":other,"now":0}))
-        .unwrap()["value"]
-        .clone();
+    let ended = downlink(
+        &mut host,
+        &id,
+        json!({"event":"response","request":repair,"body":other}),
+    );
     assert_eq!(ended[0]["type"], "close");
     assert_eq!(ended[0]["reason"], "response does not match pull request");
 }

@@ -125,7 +125,10 @@ impl Bootstrapping for Lane {
 }
 
 /// A load registered before #150 commits an origin has no interval to scan:
-/// the session opens, and the scheduler asks for nothing at all.
+/// the session opens and the scheduler asks for nothing at all. The
+/// acknowledgement that commits the origin is the bound the interval was
+/// missing, so the same host loop asks for the first page; a run registered
+/// offline must not wait for some unrelated commit to wake it.
 #[test]
 fn no_page_is_asked_for_before_the_origin_is_committed() {
     let dir = tempfile::tempdir().unwrap();
@@ -146,13 +149,14 @@ fn no_page_is_asked_for_before_the_origin_is_committed() {
     );
     assert_eq!(statuses(&actions), Vec::<&BootstrapState>::new());
     assert_eq!(lane.load("a").state, BootstrapPhase::Requested);
-    // The acknowledgement commits the origin; the next wake schedules the page.
-    let (epoch, acknowledged) = (1, lane.message(1, ack(&[("a", 100)])));
-    assert_eq!(requests(&acknowledged), vec![]);
-    let asked = lane.send(DownlinkEvent::Wake);
-    let (_, request) = only(&asked);
+    // The acknowledgement commits the origin, and the host loop that ran it
+    // asks for the first page of the interval it has just bounded.
+    let acknowledged = lane.message(1, ack(&[("a", 100)]));
+    let (_, request) = only(&acknowledged);
     assert_eq!((request.after, request.until), (0, 100));
-    assert!(epoch == 1);
+    assert_eq!(lane.load("a").state, BootstrapPhase::Requested);
+    // And nothing asks twice: a later wake finds the request already in flight.
+    assert_eq!(requests(&lane.send(DownlinkEvent::Wake)), vec![]);
 }
 
 /// The first page of a registered load: one request for the interval `(0, S]`,

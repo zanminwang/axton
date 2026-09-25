@@ -875,6 +875,12 @@ impl DownlinkWorker {
         }
         let committed = !initialization.initialized.is_empty();
         if committed {
+            // A load registered before its subscription had an origin has
+            // nothing to bound its interval, so the schedule passed it over.
+            // The boundary this transaction committed is that bound: without
+            // this wake the run would wait for some unrelated commit
+            // ([#151](https://github.com/zanminwang/axton/issues/151)).
+            self.loading.wake();
             actions.push(DownlinkAction::Changed {
                 scopes: initialization.initialized,
             });

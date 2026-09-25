@@ -9,12 +9,40 @@ import {createExample} from './fixtures/round-trip/server.mts';
 import {Client} from '../../packages/client-js/index.mts';
 import {syncProtocol,declaredModels} from './protocol-fixture.mjs';
 
+const repoRoot=fileURLToPath(new URL('../..',import.meta.url));
+/**
+ * Run one of the Dart clients beside this file. It prints `READY` once its
+ * subscriptions are initialized at the heads their handshake acknowledged;
+ * `onReady` then publishes what it is meant to receive, because a new
+ * subscription loads nothing published before its origin (#150) and #151 owns
+ * the explicit whole-Scope bootstrap().
+ */
+const runDartClient=(script,args,onReady)=>new Promise((resolve,reject)=>{
+ const child=spawn('dart',[`--packages=${join(repoRoot,'packages/dart/.dart_tool/package_config.json')}`,join(repoRoot,'integration/e2e',script),...args],{cwd:join(repoRoot,'packages/dart'),env:{...process.env,AXTON_LIBRARY:process.env.AXTON_LIBRARY??join(repoRoot,`target/debug/libaxton_dart.${process.platform==='darwin'?'dylib':'so'}`)},stdio:['ignore','pipe','inherit']});
+ let output='';let waiting=onReady;
+ child.stdout.on('data',chunk=>{process.stdout.write(chunk);output+=chunk;if(waiting&&output.includes('READY\n')){const publish=waiting;waiting=undefined;Promise.resolve(publish()).catch(reject);}});
+ child.on('error',reject);
+ child.on('exit',code=>code===0?resolve():reject(Error(`${script} exited ${code}`)));
+});
+
 test('Node SDK -> native Rust -> HTTP -> Rust backend -> Prisma -> SQLite, then Dart',async()=>{
  const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'axton-e2e-'));let client;let server;
  try{
   await app.initialize();server=await app.listen(0);const url=server.url;
   const transport=async(kind,body)=>{const response=await fetch(`${url}/sync/${kind==='push'?'mutations':'pull'}`,{method:'POST',headers:{authorization:'Bearer demo-user','content-type':'application/json'},body});if(!response.ok)throw Error(`HTTP ${response.status}: ${await response.text()}`);return response.text();};
-  client=await Client.open({path:join(directory,'client.sqlite'),schema:app.schema});await client.subscribe('book:demo');await syncProtocol(client,transport,declaredModels(app.schema));assert.equal((await client.read('Entry',{id:'entry-1'})).text,'Hello from the server');
+  client=await Client.open({path:join(directory,'client.sqlite'),schema:app.schema});
+  // A subscription's origin is the first head a handshake acknowledges (#150),
+  // so one live session establishes it and nothing published earlier is loaded.
+  // The raw wire fixture below then pulls from that origin; whole-Scope loading
+  // is #151's bootstrap().
+  const subscription=await client.subscribe('book:demo');
+  const first=await client.connect({url,token:'demo-user'});
+  for(let i=0;i<1000&&subscription.status.initialization!=='ready';i++)await new Promise(r=>setTimeout(r,10));
+  assert.equal(subscription.status.initialization,'ready','the handshake committed the first boundary');
+  assert.equal(await client.read('Entry',{id:'entry-1'}),null,'subscribing loaded no record published before the origin');
+  await first.close();
+  await app.notify();
+  await syncProtocol(client,transport,declaredModels(app.schema));assert.equal((await client.read('Entry',{id:'entry-1'})).text,'Hello from the server');
   await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'  offline edit  '}}]});
   assert.equal((await client.read('Entry',{id:'entry-1'})).text,'  offline edit  ');const frozen=await client.freeze();await client.close();
   client=await Client.open({path:join(directory,'client.sqlite'),schema:app.schema});assert.equal(await client.freeze(),frozen);
@@ -31,8 +59,7 @@ test('Node SDK -> native Rust -> HTTP -> Rust backend -> Prisma -> SQLite, then 
   const background=await client.connect({url,token:'demo-user'});
   const waitSettled=async()=>{for(let i=0;i<200;i++){if((await client.syncState()).pending===0)return;await new Promise(r=>setTimeout(r,10));}throw Error('background sync did not settle');};
   try{await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'  background  '}}]});await waitSettled();assert.equal((await client.read('Entry',{id:'entry-1'})).text,'background');await background.pause();await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'  resumed  '}}]});await new Promise(r=>setTimeout(r,30));assert.equal((await client.syncState()).pending,1);await background.resume();await waitSettled();assert.equal((await client.read('Entry',{id:'entry-1'})).text,'resumed');}finally{await background.close();}
-  const root=fileURLToPath(new URL('../..',import.meta.url));
-  await new Promise((resolve,reject)=>{const child=spawn('dart',[`--packages=${join(root,'packages/dart/.dart_tool/package_config.json')}`,'../../integration/e2e/dart_client.dart',url,directory],{cwd:join(root,'packages/dart'),env:{...process.env,AXTON_LIBRARY:process.env.AXTON_LIBRARY ?? join(root,`target/debug/libaxton_dart.${process.platform === 'darwin' ? 'dylib' : 'so'}`)},stdio:'inherit'});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`Dart E2E exited ${code}`)));});
+  await runDartClient('dart_client.dart',[url,directory],()=>app.notify());
   assert.equal((await app.db.entry.findUnique({where:{id:'entry-1'}})).text,'from Dart');
  }finally{await client?.close();await server?.close();await app.close();await rm(directory,{recursive:true,force:true});}
 });
@@ -73,6 +100,12 @@ test('documented CLI keeps offline edits local and syncs them on online', { time
    child.stdin.write(`${line}\n`);
    await waitFor(() => output.slice(start).includes(expected) && output.slice(start).includes('> '), line);
   };
+  // The CLI's subscription starts at the head its handshake acknowledges, so the
+  // record seeded before it is not loaded (#150). Once it is live the backend
+  // publishes again and the same record arrives on the stream.
+  await waitFor(() => output.includes('book:demo ready/live'), 'the subscription reports live');
+  assert.ok(!output.includes("id: 'entry-1'"), `subscribing loaded no earlier record: ${output}`);
+  await app.notify();
   await waitFor(() => output.includes("id: 'entry-1'") && output.includes('> '), 'initial record');
   await command('offline', 'Sync paused.');
   await command('edit   documented draft   ', "text: '  documented draft   '");
@@ -97,16 +130,31 @@ test('built-in live catch-up pages, dependent pushes, watches, offline reconnect
  const wait=async(predicate,label)=>{const deadline=Date.now()+10000;while(Date.now()<deadline){if(await predicate())return;await new Promise(r=>setTimeout(r,5));}throw Error(`${label}: ${errors.map(String)}`);};
  try{
   await app.initialize();const server=await app.listen(0);
-  await app.backend.transaction(async({tx,changes,publish})=>{
-   for(let i=0;i<55;i++){await tx.entry.upsert({where:{id:`paged-${i}`},create:{id:`paged-${i}`,text:`record ${i}`},update:{text:`record ${i}`}});changes.add({model:'Entry',identity:{id:`paged-${i}`}});}
-   publish({channel:'book:demo'});
-  });
   reader=await Client.open({path:join(directory,'reader.sqlite'),schema:app.schema});
   writer=await Client.open({path:join(directory,'writer.sqlite'),schema:app.schema});
-  await reader.subscribe('book:demo');await writer.subscribe('book:demo');
+  const readerSubscription=await reader.subscribe('book:demo');const writerSubscription=await writer.subscribe('book:demo');
   const config={url:server.url,token:'demo-user'};
   await writer.connect(config,{onError:e=>errors.push(e)});
-  await wait(async()=>(await writer.query('Entry')).length>=56,'writer catchup');
+  const connection=await reader.connect(config,{onError:e=>errors.push(e)});
+  // Each subscription's origin is the head its first handshake acknowledged
+  // (#150): neither client loads the record seeded before it, and the reader's
+  // catch-up below starts at that origin instead of at zero.
+  await wait(async()=>writerSubscription.status.initialization==='ready'&&readerSubscription.status.initialization==='ready','first initialization');
+  assert.equal(await reader.read('Entry',{id:'entry-1'}),null,'a new subscription loads no record published before it');
+  const origin=(await reader.syncState()).cursors['book:demo'];
+  assert.ok(origin>0,`the origin is the acknowledged head, not zero: ${origin}`);
+  // The reader is offline for the burst, so its reconnect has to fetch more than
+  // one page over HTTP from the cursor it committed.
+  await connection.pause();
+  await wait(async()=>readerSubscription.status.connection==='offline','the reader lane is offline');
+  await app.backend.transaction(async({tx,changes,publish})=>{
+   for(let i=0;i<55;i++){await tx.entry.upsert({where:{id:`paged-${i}`},create:{id:`paged-${i}`,text:`record ${i}`},update:{text:`record ${i}`}});changes.add({model:'Entry',identity:{id:`paged-${i}`}});}
+   // The seeded record is published inside the burst too: it is above both
+   // origins there, so the live writer and the catching-up reader both hold it.
+   changes.add({model:'Entry',identity:{id:'entry-1'}});
+   publish({channel:'book:demo'});
+  });
+  await wait(async()=>(await writer.query('Entry')).length>=56,'writer receives the burst');
   const observed=[];const unwatch=reader.watch('Entry',{},rows=>observed.push(rows));
   let overlapped=false;
   // Pulls carry no client id. The writer is caught up: its cursor equals the
@@ -124,11 +172,12 @@ test('built-in live catch-up pages, dependent pushes, watches, offline reconnect
    }
    return response;
   };
-  const connection=await reader.connect(config,{onError:e=>errors.push(e)});
+  await connection.resume();
   await wait(async()=>(await reader.query('Entry')).length>=56 && (await reader.read('Entry',{id:'entry-1'}))?.text==='during catchup','multi-page catchup');
   assert.ok(observed.some(rows=>rows.length>=56));
   assert.ok(pullRequests.length>=2,'more than 50 records catch up via HTTP pages');
-  assert.deepEqual(pullRequests[0].cursors,{'book:demo':0});
+  assert.deepEqual(pullRequests[0].cursors,{'book:demo':origin},'catch-up starts at the committed cursor');
+  assert.equal((await reader.readSql('SELECT starting_cursor FROM axton_subscription WHERE channel=?',['book:demo']))[0].starting_cursor,origin,'catching up did not move the origin');
   const caughtUpPulls=pullRequests.length;
   // Queue two edits to the same record. Each batch completes from its own receipt
   // (no channel page is awaited); the second push must follow the first without
@@ -177,7 +226,9 @@ test('built-in live catch-up pages, dependent pushes, watches, offline reconnect
   assert.equal(pullRequests[caughtUpPulls].cursors['book:demo'],saved,'reconnect HTTP starts at persisted cursor');
   assert.equal(errors.length,0);
   unwatch();await connection.close();
-  const root=fileURLToPath(new URL('../..',import.meta.url));
-  await new Promise((resolve,reject)=>{const child=spawn('dart',[`--packages=${join(root,'packages/dart/.dart_tool/package_config.json')}`,join(root,'integration/e2e/dart_live_client.dart'),server.url,directory],{cwd:join(root,'packages/dart'),env:{...process.env,AXTON_LIBRARY:join(root,`target/debug/libaxton_dart.${process.platform==='darwin'?'dylib':'so'}`)},stdio:'inherit'});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`Dart live exited ${code}`)));});
+  // The Dart clients subscribe from scratch, so nothing published so far is
+  // theirs: they print READY once initialized and the backend publishes the same
+  // 56 records again for them.
+  await runDartClient('dart_live_client.dart',[server.url,directory],()=>app.notify(['entry-1',...Array.from({length:55},(_,i)=>`paged-${i}`)]));
  }finally{globalThis.fetch=fetchOriginal;await reader?.close();await writer?.close();await app.close();await rm(directory,{recursive:true,force:true});}
 });

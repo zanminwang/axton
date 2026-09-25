@@ -134,6 +134,17 @@ export async function createExample() {
       );
       await seed(backend);
     },
+    /**
+     * Publish the seed users and tasks again, creating nothing new. A
+     * subscription starts at the first head its handshake acknowledges
+     * ([#150](https://github.com/zanminwang/axton/issues/150)), so a client that
+     * subscribes after startup receives the seeds only when they are published
+     * again. Loading a Scope's history explicitly is
+     * [#151](https://github.com/zanminwang/axton/issues/151)'s `bootstrap()`.
+     */
+    publishSeeds() {
+      return seed(backend);
+    },
     listen(port: number) {
       return backend.listen({ port }).then((started) => {
         server = started;

@@ -48,7 +48,11 @@ export async function openTodoSession(options: {
     server: { url: options.url, token: options.user },
     connection: { onError: options.onConnectionError },
   });
-  await client.channels.subscribe(channel);
+  // A subscription is durable and starts at the first head the server
+  // acknowledges: from then on the phone receives what is published on the Scope.
+  // TODO(#151): call the explicit `bootstrap()` here to load the tasks the list
+  // already held; today they arrive only when the backend publishes them again.
+  await client.scopes.subscribe(channel);
   const session: TodoSession = {
     watch(listener, onError) {
       return client.models.todo.watch(

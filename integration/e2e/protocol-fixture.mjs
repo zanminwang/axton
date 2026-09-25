@@ -12,9 +12,12 @@ export async function syncProtocol(client, transport, models) {
   }
   if(caughtUp)return;
   const status=await client.syncState();
-  if(status.channels.length===0)return;
-  // One pull covers every subscribed channel; it repeats while any channel continues.
-  const cursors=Object.fromEntries(status.channels.map(channel=>[channel,status.cursors[channel]??0]));
+  // Only an initialized subscription has a delivery position to pull from: a
+  // registration still waiting for its first acknowledged head is in `channels`
+  // and not in `cursors`, and a null boundary is never read as zero (#150).
+  const cursors={...status.cursors};
+  if(Object.keys(cursors).length===0)return;
+  // One pull covers every initialized channel; it repeats while any channel continues.
   const page=JSON.parse(await transport('pull',JSON.stringify({cursors,models})));await client.applyPull(page);
   caughtUp=Object.values(page.cursors).every(range=>range.to>=range.head);
  }

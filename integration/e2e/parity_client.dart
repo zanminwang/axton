@@ -35,11 +35,25 @@ Future<void> main(List<String> args) async {
     libraryPath: Platform.environment['AXTON_LIBRARY']!,
   );
   try {
-    await client.subscribe('book:demo');
+    final subscription = await client.subscribe('book:demo');
     final connection = await client.connect(
       SyncServer(url: args[0], token: () => 'demo-user'),
     );
     Future<bool> settled() async => (await client.syncState())['pending'] == 0;
+    // The origin is the first head this handshake acknowledges (#150): nothing
+    // published earlier arrives, so READY asks the harness to publish again.
+    await waitFor(
+      () async =>
+          subscription.status.initialization ==
+          SubscriptionInitialization.ready,
+      'first initialization',
+    );
+    if (await client.read('Entry', {'id': 'entry-1'}) != null)
+      throw StateError(
+        'a new subscription loaded a record published before it',
+      );
+    stdout.writeln('READY');
+    await stdout.flush();
     await waitFor(
       () async => await client.read('Entry', {'id': 'entry-1'}) != null,
       'initial catch-up',

@@ -39,15 +39,29 @@ Future<void> main(List<String> args) async {
     ],
   };
   final live = SyncServer(url: args[0], token: () => 'demo-user');
+  Future<void> initialized(Subscription subscription) => wait(
+    () async =>
+        subscription.status.initialization == SubscriptionInitialization.ready,
+  );
   try {
     final connection = await client.connect(live, onError: errors.add);
-    await client.subscribe('book:demo');
-    await wait(() async => (await client.query('Entry')).length >= 56);
-    await writer.subscribe('book:demo');
+    final subscription = await client.subscribe('book:demo');
     final writerConnection = await writer.connect(
       SyncServer(url: args[0], token: () => 'demo-user'),
       onError: errors.add,
     );
+    final writerSubscription = await writer.subscribe('book:demo');
+    // Each subscription starts at the head its own handshake acknowledged
+    // (#150), so neither client holds what was published before it. READY tells
+    // the harness to publish those records again; #151 owns loading a whole
+    // Scope explicitly.
+    await initialized(subscription);
+    await initialized(writerSubscription);
+    if ((await client.query('Entry')).isNotEmpty)
+      throw StateError('a new subscription loaded records published before it');
+    stdout.writeln('READY');
+    await stdout.flush();
+    await wait(() async => (await client.query('Entry')).length >= 56);
     await wait(() async => (await writer.query('Entry')).length >= 56);
     var seen = false;
     final watch = client.watch('Entry').listen((rows) {
@@ -70,9 +84,17 @@ Future<void> main(List<String> args) async {
     if ((await client.read('Entry', {'id': 'entry-1'}))?['text'] !=
         'Dart offline')
       throw StateError('offline edit missing');
+    // Unsubscribing removes only the registration: the records, their stamps and
+    // the pending queue stay (guarantee D6). Registering again is a new
+    // subscription identity, which starts over at the next acknowledged head and
+    // reloads nothing.
     await client.unsubscribe('book:demo');
-    await client.subscribe('book:demo');
-    await wait(() async => (await client.query('Entry')).length >= 56);
+    if ((await client.query('Entry')).length < 56)
+      throw StateError('unsubscribing removed local records');
+    final recreated = await client.subscribe('book:demo');
+    await initialized(recreated);
+    if ((await client.query('Entry')).length < 56)
+      throw StateError('a recreated subscription lost local records');
     await watch.cancel();
     await connection.close();
     await writerConnection.close();

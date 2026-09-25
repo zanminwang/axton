@@ -12,7 +12,14 @@ const client = await GeneratedClient.open({
   },
   connection: { onError: (error) => console.error(`sync: ${String(error)}`) },
 });
-await client.channels.subscribe("book:demo");
+// A subscription is durable and starts at the first head the server
+// acknowledges: it delivers what is published from then on, not the records the
+// channel already held (#150; the explicit whole-Scope load is #151's
+// `bootstrap()`). The status line shows when this client is live.
+const subscription = await client.scopes.subscribe("book:demo");
+subscription.watch((status) =>
+  console.log(`book:demo ${status.initialization}/${status.connection}`),
+);
 
 // Print the entry whenever it changes: first the local edit, then the server's version.
 client.models.entry.watch({}, (rows) => console.log(rows[0] ?? null));

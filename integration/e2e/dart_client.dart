@@ -12,10 +12,30 @@ Future<void> main(List<String> args) async {
     libraryPath: Platform.environment['AXTON_LIBRARY']!,
   );
   try {
-    await client.subscribe('book:demo');
+    final subscription = await client.subscribe('book:demo');
     final connection = await client.connect(
       SyncServer(url: args[0], token: () => 'demo-user'),
     );
+    // The subscription's origin is the first head this handshake acknowledges
+    // (#150): nothing published earlier is loaded, so the harness publishes the
+    // entry again once READY is printed.
+    for (
+      var i = 0;
+      i < 1000 &&
+          subscription.status.initialization !=
+              SubscriptionInitialization.ready;
+      i++
+    ) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    if (subscription.status.initialization != SubscriptionInitialization.ready)
+      throw StateError('Dart subscription was not initialized');
+    if (await client.read('Entry', {'id': 'entry-1'}) != null)
+      throw StateError(
+        'a new subscription loaded a record published before it',
+      );
+    stdout.writeln('READY');
+    await stdout.flush();
     for (
       var i = 0;
       i < 500 && (await client.read('Entry', {'id': 'entry-1'})) == null;

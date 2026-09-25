@@ -110,6 +110,25 @@ const control = createServer(async (req, res) => {
   }
 });
 await new Promise<void>((resolve) => control.listen(0, "127.0.0.1", resolve));
+// A subscription starts at the first head its handshake acknowledges
+// ([#150](https://github.com/zanminwang/axton/issues/150)), so the seeds
+// published at startup are not loaded by subscribing. Until
+// [#151](https://github.com/zanminwang/axton/issues/151) gives the app an
+// explicit `bootstrap()`, this harness publishes them again on a timer: whenever
+// a phone's session becomes live, the next publication delivers them to it. The
+// rows never change, so nothing else in the run depends on the interval.
+let publishing = false;
+const reseed = setInterval(() => {
+  if (publishing) return;
+  publishing = true;
+  void app
+    .publishSeeds()
+    .catch((error) => console.log("seed:", String(error)))
+    .finally(() => {
+      publishing = false;
+    });
+}, 1000);
+reseed.unref();
 const ports = {
   alice: alice.url,
   bob: bob.url,
@@ -121,6 +140,7 @@ let closing = false;
 async function close() {
   if (closing) return;
   closing = true;
+  clearInterval(reseed);
   await Promise.all([alice.close(), bob.close()]);
   await new Promise<void>((resolve) => control.close(() => resolve()));
   await app.close();

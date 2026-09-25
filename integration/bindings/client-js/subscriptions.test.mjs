@@ -183,12 +183,20 @@ test('a stale handle from before a rebuild cannot disturb the subscription that 
   await client.close();
   client=await runtime.Client.open({path,schema:breaking});
   const stale=await client.subscribe('scope');
+  const observed=[];const stop=stale.watch(status=>observed.push({...status}));
   await client.rebuild({discardPending:true});
+  assert.deepEqual({...stale.status},{active:false,initialization:'pending',connection:'stopped'},
+   'the rebuild invalidated every handle of the replica it replaced');
+  assert.deepEqual(observed.at(-1),{active:false,initialization:'pending',connection:'stopped'},
+   'the observer was told, and the handle has no changes left');
+  stop();
   const current=await client.subscribe('scope');
   assert.notEqual(current,stale,'the carried Scope is a new registration, never the same handle');
   const connection=await client.connect(network.config);
   await until(()=>current.status.connection==='live'&&current.status.initialization==='ready',
    'the carried subscription goes live');
+  assert.deepEqual({...stale.status},{active:false,initialization:'pending',connection:'stopped'},
+   'the new session acknowledges the Scope name, not the stale handle');
   // The old handle removes nothing: the Scope's current registration is another
   // identity, whose acknowledgement is not this handle's to forget.
   await stale.unsubscribe();

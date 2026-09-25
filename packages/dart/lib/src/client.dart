@@ -735,6 +735,9 @@ class Client implements WritePort, MutatePort {
         final report =
             (await _send({'op': 'rebuild', 'discardPending': discardPending}))
                 as Map<String, dynamic>;
+        // The replica that answered every handle is gone: no handle from before
+        // it names a registration of the file this client now reads.
+        _subscriptions.rebuilt();
         _deliverCompletions(
           (report['abandonedCalls'] as List).map((abandoned) {
             final call = abandoned as Map<String, dynamic>;

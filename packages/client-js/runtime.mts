@@ -644,6 +644,9 @@ export function createClient<
     ): Promise<RebuildReport> {
       return this.#exclusive(() =>
         this.#send({ op: "rebuild", ...options }).then((value) => {
+          // The replica that answered every handle is gone: no handle from
+          // before it names a registration of the file this client now reads.
+          this.#subscriptions.rebuilt();
           this.#deliverCompletions(
             (value.abandonedCalls ?? []).map(
               (abandoned: { callId: string; frozen: boolean }) => ({

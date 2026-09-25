@@ -320,12 +320,27 @@ class Subscriptions {
     _publish();
   }
 
+  /// The replica was replaced: the ledger this client reads now holds fresh
+  /// identities, so every handle names a registration of the file that was
+  /// left behind. They close the way an unsubscribed handle does - `watch`
+  /// completes and a later `unsubscribe` is a harmless no-op - and the lane
+  /// forgets its acknowledgements, because none of them belong to an identity
+  /// that still exists.
+  void rebuilt() {
+    final handles = _handles.values.toList();
+    _handles.clear();
+    _lane.acknowledged.clear();
+    for (final handle in handles) {
+      handle._close(removed: true);
+    }
+  }
+
   /// The lane is running for this client: until then, and once it closes,
   /// every subscription is offline.
   void attach() {
     _lane.attached = true;
     _lane.paused = false;
-    _endSession();
+    _publish();
   }
 
   void detach() {

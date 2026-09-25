@@ -280,11 +280,25 @@ export class Subscriptions {
     this.#lane.acknowledged.delete(scope);
     this.#publish();
   }
+  /**
+   * The replica was replaced: the ledger this client reads now holds fresh
+   * identities, so every handle names a registration of the file that was left
+   * behind. They close the way an unsubscribed handle does - `watch` completes
+   * and a later `unsubscribe` is a harmless no-op - and the lane forgets its
+   * acknowledgements, because none of them belong to an identity that still
+   * exists.
+   */
+  rebuilt(): void {
+    const handles = [...this.#handles.values()];
+    this.#handles.clear();
+    this.#lane.acknowledged.clear();
+    for (const handle of handles) handle.close("removed");
+  }
   /** The lane is running for this client: until then, and once it closes, every subscription is offline. */
   attach(): void {
     this.#lane.attached = true;
     this.#lane.paused = false;
-    this.#endSession();
+    this.#publish();
   }
   detach(): void {
     this.#lane.attached = false;

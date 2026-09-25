@@ -463,7 +463,34 @@ void main() {
           libraryPath: Platform.environment['AXTON_LIBRARY']!,
         );
         final stale = await client.subscribe('scope');
+        final seen = <SubscriptionStatus>[];
+        var completed = false;
+        final watching = stale.watch().listen(
+          seen.add,
+          onDone: () => completed = true,
+        );
         await client.rebuild(discardPending: true);
+        const invalidated = SubscriptionStatus(
+          active: false,
+          initialization: SubscriptionInitialization.pending,
+          connection: SubscriptionConnection.stopped,
+        );
+        expect(
+          stale.status,
+          invalidated,
+          reason:
+              'the rebuild invalidated every handle of the replica it replaced',
+        );
+        await until(
+          () async => completed,
+          "the stale handle's observers are completed",
+        );
+        expect(
+          seen.last,
+          invalidated,
+          reason: 'the observer was told, and the handle has no changes left',
+        );
+        await watching.cancel();
         final current = await client.subscribe('scope');
         expect(identical(current, stale), isFalse);
         final connection = await client.connect(network.config);
@@ -472,6 +499,12 @@ void main() {
               current.status.connection == SubscriptionConnection.live &&
               current.status.initialization == SubscriptionInitialization.ready,
           'the carried subscription goes live',
+        );
+        expect(
+          stale.status,
+          invalidated,
+          reason:
+              'the new session acknowledges the Scope name, not the stale handle',
         );
         // The old handle removes nothing: the Scope's current registration is
         // another identity, whose acknowledgement is not this handle's to

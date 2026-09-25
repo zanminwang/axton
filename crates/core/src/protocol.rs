@@ -573,6 +573,190 @@ impl PullPage {
     }
 }
 
+/// The `mode` a bounded pull carries on the shared pull route. An absent mode
+/// is the ordinary delta pull; this is the only other value either side
+/// accepts ([Protocol / Pull](../../../docs/engineering/architecture/protocol/pull.md)).
+pub const BOOTSTRAP_MODE: &str = "bootstrap";
+/// Read the pull mode of a request body: `None` for an ordinary delta pull,
+/// `Some(mode)` for a present one, which only [`BOOTSTRAP_MODE`] satisfies. A
+/// body that is not an object carries no mode; decoding refuses it later.
+pub fn pull_mode(bytes: &[u8]) -> Option<String> {
+    serde_json::from_slice::<Value>(bytes)
+        .ok()?
+        .as_object()?
+        .get("mode")
+        .map(|mode| match mode {
+            Value::String(mode) => mode.clone(),
+            other => other.to_string(),
+        })
+}
+/// Read the one channel name of a bounded pull envelope.
+fn read_channel(value: &Value) -> Result<String> {
+    let channel = value
+        .as_str()
+        .ok_or_else(|| invalid("channel must be a string"))?;
+    check_channel(channel)?;
+    Ok(channel.to_string())
+}
+/// Require the bounded-pull mode: the envelope is not a bootstrap one without it.
+fn read_bootstrap_mode(value: &Value) -> Result<()> {
+    if value.as_str() == Some(BOOTSTRAP_MODE) {
+        Ok(())
+    } else {
+        Err(invalid("mode must be \"bootstrap\""))
+    }
+}
+/// One bounded page request of a Scope's historical interval: the channel it
+/// loads, the read contracts it expects (as in [`PullRequest::models`]), the
+/// committed progress `after` (B) and the subscription origin `until` (S).
+/// The server walks `(after, until]` and never chases a moving head; the owner
+/// comes from authentication
+/// ([#151](https://github.com/zanminwang/axton/issues/151)).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BootstrapRequest {
+    pub channel: String,
+    pub models: BTreeMap<String, u64>,
+    pub after: u64,
+    pub until: u64,
+}
+impl BootstrapRequest {
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let value: Value = serde_json::from_slice(bytes)?;
+        if !value.is_object() {
+            return Err(invalid("bootstrap request must be an object"));
+        }
+        read_bootstrap_mode(&value["mode"])?;
+        let request = Self {
+            channel: read_channel(&value["channel"])?,
+            models: read_models(&value["models"])?,
+            after: read_counter(&value["after"], false)?,
+            until: read_counter(&value["until"], false)?,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+    pub fn validate(&self) -> Result<()> {
+        check_channel(&self.channel)?;
+        read_models(&serde_json::to_value(&self.models)?)?;
+        counter(self.after)?;
+        counter(self.until)?;
+        if self.after > self.until {
+            return Err(invalid("bootstrap progress is past its origin"));
+        }
+        Ok(())
+    }
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        self.validate()?;
+        Ok(canonical_json(&serde_json::json!({
+            "mode": BOOTSTRAP_MODE,
+            "channel": self.channel,
+            "models": self.models,
+            "after": self.after,
+            "until": self.until,
+        }))?
+        .into_bytes())
+    }
+    /// Whether the interval is already exhausted, so the page is empty.
+    pub fn exhausted(&self) -> bool {
+        self.after == self.until
+    }
+}
+/// One bounded page of a Scope's historical interval: the echoed channel and
+/// origin, the interval `(from, to]` the page covers, the channel head its
+/// transaction observed, and the records published at or below `until` in that
+/// interval, at most [`limits::PULL_CHANGES`] of them, once each at their
+/// current stamp. `to == until` completes the interval, so no done flag
+/// travels; `head` is the completion barrier the client stores on that final
+/// page ([Protocol / Pull](../../../docs/engineering/architecture/protocol/pull.md)).
+#[derive(Clone, Debug, PartialEq)]
+pub struct BootstrapPage {
+    pub channel: String,
+    pub from: u64,
+    pub to: u64,
+    pub until: u64,
+    pub head: u64,
+    pub records: Vec<AuthorityRecord>,
+}
+impl BootstrapPage {
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let value: Value = serde_json::from_slice(bytes)?;
+        if !value.is_object() {
+            return Err(invalid("bootstrap page must be an object"));
+        }
+        read_bootstrap_mode(&value["mode"])?;
+        for field in ["channel", "from", "to", "until", "head", "records"] {
+            if value.get(field).is_none() {
+                return Err(invalid(format!("bootstrap page {field} missing")));
+            }
+        }
+        let page = Self {
+            channel: read_channel(&value["channel"])?,
+            from: read_counter(&value["from"], false)?,
+            to: read_counter(&value["to"], false)?,
+            until: read_counter(&value["until"], false)?,
+            head: read_counter(&value["head"], false)?,
+            records: value["records"]
+                .as_array()
+                .ok_or_else(|| invalid("bootstrap page records must be an array"))?
+                .iter()
+                .map(decode_record)
+                .collect::<Result<Vec<_>>>()?,
+        };
+        page.validate()?;
+        Ok(page)
+    }
+    pub fn validate(&self) -> Result<()> {
+        check_channel(&self.channel)?;
+        for cursor in [self.from, self.to, self.until, self.head] {
+            counter(cursor)?;
+        }
+        if self.to < self.from {
+            return Err(invalid("bootstrap page moves backwards"));
+        }
+        if self.until < self.to {
+            return Err(invalid("bootstrap page reaches past its origin"));
+        }
+        if self.head < self.until {
+            return Err(invalid("bootstrap origin is past the channel head"));
+        }
+        if self.records.len() > limits::PULL_CHANGES {
+            return Err(invalid(format!(
+                "bootstrap page exceeds {} records",
+                limits::PULL_CHANGES
+            )));
+        }
+        unique_records(&self.records)
+    }
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        self.validate()?;
+        Ok(canonical_json(&serde_json::json!({
+            "mode": BOOTSTRAP_MODE,
+            "channel": self.channel,
+            "from": self.from,
+            "to": self.to,
+            "until": self.until,
+            "head": self.head,
+            "records": self.records,
+        }))?
+        .into_bytes())
+    }
+    /// Whether the page finished the historical interval: the client stores
+    /// `head` as its completion barrier and asks for no further page.
+    pub fn terminal(&self) -> bool {
+        self.to == self.until
+    }
+    /// Whether the page answers this request: the echoed channel and origin,
+    /// the requested `from`, and progress that never moves backwards. A
+    /// nonterminal page must advance, so a repeated `from` is refused.
+    pub fn answers(&self, request: &BootstrapRequest) -> bool {
+        self.channel == request.channel
+            && self.from == request.after
+            && self.until == request.until
+            && self.to >= self.from
+            && (self.terminal() || self.to > self.from)
+    }
+}
+
 /// The one client frame of a live session:
 /// `{"type":"subscribe","channels":[…],"models":{…}}`. Channels are normalized
 /// on decode and on construction: deduplicated and sorted by UTF-16 code

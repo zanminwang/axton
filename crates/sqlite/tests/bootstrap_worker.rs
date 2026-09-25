@@ -79,6 +79,17 @@ fn only(actions: &[DownlinkAction]) -> (u64, BootstrapRequest) {
     asked.into_iter().next().unwrap()
 }
 
+/// An answer for a request the ledger no longer knows, built from its id.
+type Stale = fn(u64) -> DownlinkEvent;
+
+/// The epoch of the session these actions opened, if any.
+fn session(actions: &[DownlinkAction]) -> Option<u64> {
+    actions.iter().find_map(|action| match action {
+        DownlinkAction::Open { epoch, .. } => Some(*epoch),
+        _ => None,
+    })
+}
+
 trait Bootstrapping {
     /// Register a durable load of `scope`, as the native command does, without
     /// telling the lane about it.
@@ -292,6 +303,75 @@ fn a_stale_historical_answer_writes_nothing() {
     assert!(lane.client.subscription_state("a").unwrap().is_none());
 }
 
+/// The same for an answer that would fail the run rather than advance it: a
+/// refusal the server decided, and a body that decodes to nothing, for a
+/// registration that is gone. Naming a closed registration is how the ledger
+/// reports one, with an error - and an error here would leave the pump, discard
+/// the actions it had gathered and end the live session, which a stale answer
+/// must never do.
+#[test]
+fn a_stale_refusal_writes_nothing_and_errors_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.streaming("a", 100);
+    let mut head = 100;
+    let mut epoch;
+    let refusals: [(&str, Stale); 2] = [
+        ("b", |request| DownlinkEvent::Failed {
+            request,
+            reason: Some("request.invalid".into()),
+            status: Some(400),
+        }),
+        ("c", |request| DownlinkEvent::Response {
+            request,
+            body: "not a bootstrap page".into(),
+        }),
+    ];
+    for (scope, stale) in refusals {
+        // Another Scope, registered and initialized, with its page in flight.
+        lane.saved(scope, 200);
+        epoch = session(&lane.drain()).expect("the membership change replaced the socket");
+        lane.message(epoch, ack(&[("a", head), (scope, 200)]));
+        lane.intend(scope);
+        let (id, request) = only(&lane.send(DownlinkEvent::Wake));
+        assert_eq!(request.channel, scope);
+        // The registration goes while its page is in flight.
+        lane.set(scope, false);
+        lane.enqueue(stale(id));
+        let pumped = lane
+            .worker
+            .handle(&mut lane.client, DownlinkEvent::Next, lane.now, 500)
+            .expect("a stale answer must not error the pump");
+        assert_eq!(
+            statuses(&pumped),
+            Vec::<&BootstrapState>::new(),
+            "nothing was written and nothing announced: {pumped:?}"
+        );
+        assert!(
+            !pumped.iter().any(|action| matches!(
+                action,
+                DownlinkAction::Close {
+                    reason: Some(_),
+                    ..
+                }
+            )),
+            "no protocol violation was reported: {pumped:?}"
+        );
+        // The membership change alone replaced the session, and delivery on the
+        // one the lane opens next goes on as before.
+        epoch = session(&pumped)
+            .or_else(|| session(&lane.drain()))
+            .expect("the lane opened its next session");
+        lane.message(epoch, ack(&[("a", head)]));
+        committed(
+            &lane.frame(epoch, &page("a", head, head + 20, Some("live"))),
+            &["a"],
+        );
+        head += 20;
+        assert_eq!(lane.cursor("a"), Some(head));
+    }
+}
+
 /// The slot is cleared when the lane stops, so whatever its request still
 /// delivers after a reopen belongs to nobody.
 #[test]
@@ -456,7 +536,24 @@ fn an_overflowing_live_queue_keeps_the_historical_answer() {
             body: text(&page("a", 500 + i, 501 + i, Some("gap"))),
         });
     }
-    lane.drain();
+    // The lost frames are recovered from the durable cursor.
+    let recovered = lane.drain();
+    let (pull, pulled) = recovered
+        .iter()
+        .filter(|a| {
+            matches!(
+                a,
+                DownlinkAction::Request {
+                    bootstrap: false,
+                    ..
+                }
+            )
+        })
+        .map(request)
+        .next()
+        .expect("a recovery pull");
+    assert_eq!(cursors(&pulled), vec![("a", 100)]);
+    // The historical answer was not lost with them.
     let applied = lane.answer(
         id,
         historical(
@@ -478,6 +575,13 @@ fn an_overflowing_live_queue_keeps_the_historical_answer() {
         (state.state, state.cursor, state.barrier),
         (BootstrapPhase::CatchingUp, 100, Some(130))
     );
+    // Nor is the completion: the recovery answer takes delivery to the barrier.
+    let complete = lane.response(pull, &page("a", 100, 130, Some("recovered")));
+    committed(&complete, &["a"]);
+    let settled = statuses(&complete);
+    assert_eq!(settled.len(), 1, "the completion landed too: {complete:?}");
+    assert_eq!(settled[0].state, BootstrapPhase::Complete);
+    assert_eq!(lane.cursor("a"), Some(130));
 }
 
 /// A load belongs to the client, not to a socket: replacing the socket keeps
@@ -693,4 +797,106 @@ fn a_reopen_resumes_a_loading_run_from_its_committed_progress() {
         (40, 100),
         "from the persisted progress, bounded by the same origin"
     );
+}
+
+/// A page whose records could not all be applied hands the reports to the
+/// application first, then announces the run the ledger failed: the authority
+/// that did apply stays, the interval does not advance, and the retry revisits
+/// the same page.
+#[test]
+fn a_page_with_a_failed_record_reports_it_and_then_fails_the_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.streaming("a", 100);
+    let (id, _) = only(&lane.register("a"));
+    // One record the schema refuses beside one it accepts.
+    let mut broken = authority_of("x", Some("x"), 5);
+    broken.state = json!({"text": 22});
+    let answered = lane.answer(
+        id,
+        historical(
+            "a",
+            0,
+            40,
+            100,
+            130,
+            vec![authority_of("h", Some("kept"), 4), broken],
+        ),
+    );
+    assert_eq!(
+        reports(&answered[0]).len(),
+        1,
+        "the reports reach the application first: {answered:?}"
+    );
+    let state = announced(&answered[1]);
+    assert_eq!(state.state, BootstrapPhase::Failed);
+    let error = state.error.as_ref().expect("a stored failure");
+    assert_eq!(error.code, "bootstrap.records_failed");
+    assert_eq!(error.records.len(), 1);
+    assert_eq!(state.cursor, 0, "the interval did not advance");
+    assert_eq!(
+        requests(&lane.drain()),
+        vec![],
+        "a failed run is not retried by the scheduler"
+    );
+    // The retry revisits the same page, and what applied is still there.
+    lane.client
+        .request_bootstrap("a", state.subscription_id)
+        .unwrap();
+    let (_, request) = only(&lane.send(DownlinkEvent::Wake));
+    assert_eq!(request.after, 0);
+    assert_eq!(
+        lane.client
+            .read(&schema().record_key("Entry", &json!({"id":"h"})).unwrap())
+            .unwrap()
+            .expect("the record that applied is committed")["text"],
+        json!("kept")
+    );
+}
+
+/// A pause stops the schedule without touching the load: nothing is asked for,
+/// the page the host already fetched is still applied - no I/O, and stamps make
+/// it idempotent - and the resume clears the deferral a failure left behind.
+#[test]
+fn a_pause_keeps_the_slot_and_a_resume_clears_the_deferral() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.streaming("a", 100);
+    let (id, _) = only(&lane.register("a"));
+    // A transport failure defers the next page.
+    let failed = lane.send(DownlinkEvent::Failed {
+        request: id,
+        reason: Some("offline".into()),
+        status: None,
+    });
+    assert!((200..=30_000).contains(&wait(failed.last().expect("a wait"))));
+    // The pause silences the schedule entirely: no request, and no sleep to
+    // wake from - the resume is what starts work again.
+    let paused = lane.send(DownlinkEvent::Pause);
+    assert_eq!(requests(&paused), vec![], "a paused lane asks for nothing");
+    assert!(
+        !paused.iter().any(waiting),
+        "a paused lane sleeps on nothing: {paused:?}"
+    );
+    // Resume clears the deferral: the page goes out at once, on the same clock
+    // the backoff was measured from.
+    let (second, request) = only(&lane.send(DownlinkEvent::Resume));
+    assert_eq!((request.after, request.until), (0, 100));
+    // Pausing again keeps that page's slot: the answer the host had already
+    // fetched is applied while paused, and nothing is asked for until resume.
+    lane.send(DownlinkEvent::Pause);
+    let applied = lane.answer(
+        second,
+        historical("a", 0, 40, 100, 130, vec![authority(Some("history"), 7)]),
+    );
+    let state = announced(&applied[0]);
+    assert_eq!(
+        (state.state, state.cursor),
+        (BootstrapPhase::Loading, 40),
+        "the held answer committed while paused: {applied:?}"
+    );
+    assert_eq!(lane.text(), json!("history"), "its authority landed");
+    assert_eq!(requests(&applied), vec![], "and still nothing is asked for");
+    let (_, next) = only(&lane.send(DownlinkEvent::Resume));
+    assert_eq!(next.after, 40, "the next page follows the resume");
 }

@@ -740,8 +740,15 @@ impl DownlinkWorker {
     }
 
     /// Store a failure the ledger cannot see for itself and announce it;
-    /// `false` when the run it named is no longer the active one, in which case
-    /// nothing was written.
+    /// `false` when the answer named no run this client still holds, in which
+    /// case nothing was written and nothing is announced.
+    ///
+    /// The registration is checked on the committed reader first, because
+    /// naming one that is gone - unsubscribed, or replaced by another identity
+    /// while the page was in flight - is how the ledger reports a closed
+    /// subscription: with an error. An error here would leave the pump, discard
+    /// the actions it had gathered and end the live session, and a stale answer
+    /// must do none of that.
     fn refuse<S: ClientStore>(
         &mut self,
         client: &mut Client<S>,
@@ -750,6 +757,12 @@ impl DownlinkWorker {
         actions: &mut Vec<DownlinkAction>,
     ) -> Result<bool> {
         let scope = &pending.request.channel;
+        let held = client
+            .subscription_state(scope)?
+            .is_some_and(|state| state.subscription_id == pending.subscription_id);
+        if !held {
+            return Ok(false);
+        }
         if !client.fail_bootstrap(scope, pending.subscription_id, pending.run, error)? {
             return Ok(false);
         }

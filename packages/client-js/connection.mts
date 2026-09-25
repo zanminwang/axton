@@ -369,8 +369,14 @@ export async function startDownlinkLane(
       (text) => enqueue({ event: "response", request, body: text }),
       async (error) => {
         if (stopped) return;
-        options.onError?.(error);
-        await refresh(error);
+        // A page this lane abandoned itself - `pause` - is not the
+        // application's failure, as an abandoned session's request is not; the
+        // worker is still told, so it clears its slot and asks again on
+        // `resume`.
+        if (!signal.aborted) {
+          options.onError?.(error);
+          await refresh(error);
+        }
         await enqueue({
           event: "failed",
           request,

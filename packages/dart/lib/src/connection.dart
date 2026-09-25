@@ -408,8 +408,18 @@ class DownlinkLane implements LaneControls {
                 _enqueue({'event': 'response', 'request': id, 'body': text}),
             onError: (Object error) async {
               if (_stopped) return;
-              onError?.call(error);
-              await _refresh(error);
+              // A page this lane abandoned itself - `pause` - is not the
+              // application's failure, as an abandoned session's request is
+              // not; the worker is still told, so it clears its slot and asks
+              // again on `resume`.
+              // A page this lane abandoned itself - `pause` - is not the
+              // application's failure, as an abandoned session's request is
+              // not; the worker is still told, so it clears its slot and asks
+              // again on `resume`.
+              if (!cancellation.isCompleted) {
+                onError?.call(error);
+                await _refresh(error);
+              }
               await _enqueue({
                 'event': 'failed',
                 'request': id,

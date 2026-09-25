@@ -126,6 +126,53 @@ fn registration_before_initialization_waits_for_its_origin() {
     );
 }
 
+/// Registering a load changes no membership, so it must not make the open live
+/// session stale: the subscription generation and the channel epochs stay put,
+/// while the commit still names the Scope whose load changed and still notifies
+/// the row's watchers.
+#[test]
+fn registering_a_load_does_not_invalidate_the_live_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 5).subscription_id;
+    // A pull issued under the current subscription: a mark would make its answer
+    // stale and force the lane to reconnect.
+    c.apply_page(page("a", 5, 6, Some("live"))).unwrap();
+    let generation = c.subscription_generation();
+    let watcher = c.watch(std::collections::BTreeSet::from([
+        "axton_subscription".to_string()
+    ]));
+
+    let state = c.request_bootstrap("a", id).unwrap();
+    assert_eq!(state.state, BootstrapPhase::Requested);
+    assert_eq!(
+        c.subscription_generation(),
+        generation,
+        "a load request is not a membership change"
+    );
+    assert_eq!(
+        c.last_bootstrap_scopes(),
+        &std::collections::BTreeSet::from(["a".to_string()]),
+        "the commit still names the Scope whose load changed"
+    );
+    assert!(
+        !c.last_changed()
+            .iter()
+            .any(|t| t.contains("axton_bootstrap")),
+        "the mark is a signal, not a table: {:?}",
+        c.last_changed()
+    );
+    assert!(watcher.try_recv().is_ok(), "the row's watchers still fire");
+    // The epoch map is untouched, so the page answering the pull issued before
+    // the registration still applies.
+    let report = c.apply_page(page("a", 6, 7, Some("later"))).unwrap();
+    assert!(!report.stale, "the pull in flight was not invalidated");
+    assert_eq!(c.cursor("a").unwrap(), Some(7));
+    // A call that changes nothing names nothing.
+    c.request_bootstrap("a", id).unwrap();
+    assert!(c.last_bootstrap_scopes().is_empty());
+}
+
 /// Only the first active call registers work: duplicate calls share the run,
 /// and a completed task answers locally without starting another one.
 #[test]

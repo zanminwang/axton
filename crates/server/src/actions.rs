@@ -1,20 +1,17 @@
 //! Shared transactional Action executor. A stored call response is independent
 //! of the batch receipt, so replay retains its own result and authority.
-use crate::host::{
-    Acknowledged, Claimed, ClaimedCall, HandledAction, HostExt, HostRequest, Loaded, Stamped,
-};
+use crate::host::{Acknowledged, Claimed, ClaimedCall, HandledAction, HostExt, HostRequest};
 use crate::readback::{self, Changes, Outcome};
 use crate::{
     Config, Error, Host, Result, code, internal, principal, request_invalid, storage_invalid,
 };
 use axton_core::{
-    ActionInputDescriptor, ActionIntent, ActionOutcome, ActionOutputSource, AuthorityRecord,
-    CallCompletion, DirectActionRequest, DirectActionResponse, ExecutionState, PushReceipt,
-    PushRequest, RecordKey, Rejection, canonical_json, materialize_action_model,
-    normalize_action_args, normalize_call_id, validate_action_result,
+    ActionInputDescriptor, ActionIntent, ActionOutcome, AuthorityRecord, CallCompletion,
+    DirectActionRequest, DirectActionResponse, ExecutionState, PushReceipt, PushRequest, Rejection,
+    canonical_json, normalize_action_args, normalize_call_id, validate_action_result,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -47,8 +44,14 @@ fn call_error(error: &Error) -> bool {
     )
 }
 
+/// The canonical call identity. The store policy joins it only when it is
+/// not the default, so default requests keep their existing fingerprint.
 fn canonical_intent(call: &ActionIntent, models: &BTreeMap<String, u64>) -> Result<String> {
-    canonical_json(&json!({"callId":call.call_id,"name":call.name,"version":call.version,"args":call.args,"models":models})).map_err(internal)
+    let mut identity = json!({"callId":call.call_id,"name":call.name,"version":call.version,"args":call.args,"models":models});
+    if let Some(store) = call.store.wire() {
+        identity["store"] = store;
+    }
+    canonical_json(&identity).map_err(internal)
 }
 
 fn current_authority(
@@ -184,6 +187,9 @@ async fn execute_fresh(
         .map_err(|_| Error::code("action_version_unsupported"))?;
     let args = normalize_action_args(&config.schema, action, &call.args)
         .map_err(|_| Error::code("action.invalid"))?;
+    call.store
+        .validate(action)
+        .map_err(|_| Error::code("action.invalid"))?;
     let mut changes = Changes::new();
     for input in &action.inputs {
         if let ActionInputDescriptor::Model { name, model, .. } = input {
@@ -232,15 +238,16 @@ async fn execute_fresh(
             Outcome::Refused(code) => return Err(Error::code(code)),
             Outcome::Records(records) => records,
         };
-    let (result, additional) = assemble_result(
+    let (result, additional) = crate::action_results::assemble_result(
         config,
         owner,
         action,
         &args,
         &outputs,
-        ResultReadback {
+        crate::action_results::ResultReadback {
             records: &records,
             models,
+            store: &call.store,
         },
         host,
     )
@@ -257,7 +264,7 @@ async fn execute_fresh(
     })
 }
 
-fn input_identities(
+pub(crate) fn input_identities(
     schema: &axton_core::Schema,
     model: &str,
     value: &Value,
@@ -302,229 +309,6 @@ fn input_identities(
                 .map_err(|_| Error::code("action.invalid"))
         })
         .collect()
-}
-
-async fn load_one_state(
-    config: &Config,
-    owner: &str,
-    key: &RecordKey,
-    version: u64,
-    host: &impl Host,
-) -> Result<Value> {
-    let loaded: Loaded = host
-        .call_typed(HostRequest::Load {
-            model: key.model.clone(),
-            version,
-            identities: vec![key.identity.clone()],
-            owner: owner.into(),
-        })
-        .await?;
-    match loaded {
-        Loaded::Rows(rows) if rows.len() == 1 => match rows.into_iter().next().unwrap() {
-            Some(row) => config
-                .contract(&key.model, version)
-                .ok_or_else(|| Error::code(code::MODEL_VERSION_UNSUPPORTED))?
-                .normalize_state(&key.model, &row)
-                .map_err(|_| Error::code(code::LOADER_INVALID)),
-            None => Ok(Value::Null),
-        },
-        Loaded::Refused { rejection } => Err(Error::code(rejection)),
-        Loaded::Failed { .. } => Err(Error::code(code::LOADER_FAILED)),
-        _ => Err(Error::code(code::LOADER_INVALID)),
-    }
-}
-
-struct ResultReadback<'a> {
-    records: &'a [AuthorityRecord],
-    models: &'a BTreeMap<String, u64>,
-}
-
-async fn assemble_result(
-    config: &Config,
-    owner: &str,
-    action: &axton_core::ActionDescriptor,
-    args: &Value,
-    outputs: &Value,
-    readback: ResultReadback<'_>,
-    host: &impl Host,
-) -> Result<(Value, Vec<AuthorityRecord>)> {
-    let explicit = outputs
-        .as_object()
-        .ok_or_else(|| Error::code(code::HANDLER_INVALID))?;
-    if action.outputs.is_empty() && explicit.is_empty() {
-        return Ok((Value::Null, vec![]));
-    }
-    if explicit.keys().any(|name| {
-        !action.outputs.iter().any(|output| {
-            output.name == *name && matches!(output.source, ActionOutputSource::Named(_))
-        })
-    }) {
-        return Err(Error::code(code::HANDLER_INVALID));
-    }
-    let ResultReadback { records, models } = readback;
-    let mut result = Map::new();
-    let mut additional: BTreeMap<String, AuthorityRecord> = BTreeMap::new();
-    for output in &action.outputs {
-        let selected = match &output.source {
-            ActionOutputSource::Named(_) => explicit
-                .get(&output.name)
-                .ok_or_else(|| Error::code(code::HANDLER_INVALID))?
-                .clone(),
-            ActionOutputSource::InputIdentity { input_identity } => {
-                let input = action
-                    .inputs
-                    .iter()
-                    .find(|input| input.name() == input_identity)
-                    .ok_or_else(|| Error::code(code::HANDLER_INVALID))?;
-                let model = output
-                    .model
-                    .as_deref()
-                    .ok_or_else(|| Error::code(code::HANDLER_INVALID))?;
-                let identities =
-                    input_identities(&config.schema, model, &args[input_identity], input)?;
-                match output.cardinality.as_str() {
-                    "list" => Value::Array(identities),
-                    "optional" if identities.is_empty() => Value::Null,
-                    _ if identities.len() == 1 => identities[0].clone(),
-                    _ => return Err(Error::code(code::HANDLER_INVALID)),
-                }
-            }
-        };
-        if output.kind == "model" {
-            let model = output
-                .model
-                .as_deref()
-                .ok_or_else(|| Error::code(code::HANDLER_INVALID))?;
-            let version = output
-                .model_read_version
-                .ok_or_else(|| Error::code(code::HANDLER_INVALID))?;
-            let one = |identity: &Value| -> Result<RecordKey> {
-                config
-                    .schema
-                    .record_key(model, identity)
-                    .map_err(|_| Error::code(code::HANDLER_INVALID))
-            };
-            let identities: Vec<RecordKey> = match output.cardinality.as_str() {
-                "list" => selected
-                    .as_array()
-                    .ok_or_else(|| Error::code(code::HANDLER_INVALID))?
-                    .iter()
-                    .map(one)
-                    .collect::<Result<_>>()?,
-                "optional" if selected.is_null() => vec![],
-                _ => vec![one(&selected)?],
-            };
-            let mut values = vec![];
-            for key in &identities {
-                let changed = records
-                    .iter()
-                    .find(|record| record.model == key.model && record.identity == key.identity);
-                let encoded = key.encoded().map_err(internal)?;
-                let stamp = if let Some(record) = changed {
-                    record.stamp
-                } else if let Some(record) = additional.get(&encoded) {
-                    record.stamp
-                } else {
-                    let Stamped(stamp) = host
-                        .call_typed(HostRequest::EnsureStamp {
-                            model: model.into(),
-                            identity_key: key.encoded_identity().map_err(internal)?,
-                        })
-                        .await?;
-                    stamp
-                };
-                let authority_version = *models
-                    .get(model)
-                    .ok_or_else(|| Error::code(code::MODEL_VERSION_UNSUPPORTED))?;
-                if config.contract(model, authority_version).is_none() {
-                    return Err(Error::code(code::MODEL_VERSION_UNSUPPORTED));
-                }
-                let state = if let Some(record) = changed.filter(|_| authority_version == version) {
-                    record.state.clone()
-                } else if let Some(record) = additional
-                    .get(&encoded)
-                    .filter(|_| authority_version == version)
-                {
-                    record.state.clone()
-                } else {
-                    load_one_state(config, owner, key, version, host).await?
-                };
-                if changed.is_none() && !additional.contains_key(&encoded) {
-                    let authority_state = if authority_version == version {
-                        state.clone()
-                    } else {
-                        load_one_state(config, owner, key, authority_version, host).await?
-                    };
-                    additional.insert(
-                        encoded,
-                        AuthorityRecord {
-                            model: model.into(),
-                            identity: key.identity.clone(),
-                            stamp,
-                            state: authority_state,
-                            error: None,
-                        },
-                    );
-                }
-                if state.is_null() {
-                    if output.cardinality != "optional"
-                        || matches!(&output.source, ActionOutputSource::InputIdentity { .. })
-                    {
-                        return Err(Error::code(code::LOADER_INVALID));
-                    }
-                    values.push(Value::Null);
-                } else {
-                    values.push(
-                        materialize_action_model(
-                            &config.schema,
-                            model,
-                            version,
-                            &key.identity,
-                            &state,
-                        )
-                        .map_err(|_| Error::code(code::LOADER_INVALID))?,
-                    );
-                }
-            }
-            result.insert(
-                output.name.clone(),
-                if output.cardinality == "list" {
-                    Value::Array(values)
-                } else {
-                    values.into_iter().next().unwrap_or(Value::Null)
-                },
-            );
-        } else {
-            if output.kind == "deleteIdentity" {
-                let model = output
-                    .model
-                    .as_deref()
-                    .ok_or_else(|| Error::code(code::HANDLER_INVALID))?;
-                let identities: Vec<&Value> = if output.cardinality == "list" {
-                    selected
-                        .as_array()
-                        .ok_or_else(|| Error::code(code::HANDLER_INVALID))?
-                        .iter()
-                        .collect()
-                } else if selected.is_null() {
-                    vec![]
-                } else {
-                    vec![&selected]
-                };
-                for identity in identities {
-                    if !records.iter().any(|record| {
-                        record.model == model
-                            && record.identity == *identity
-                            && record.state.is_null()
-                    }) {
-                        return Err(Error::code(code::LOADER_INVALID));
-                    }
-                }
-            }
-            result.insert(output.name.clone(), selected);
-        }
-    }
-    Ok((Value::Object(result), additional.into_values().collect()))
 }
 
 /// Process a durable Action batch while the application owns the outer transaction.

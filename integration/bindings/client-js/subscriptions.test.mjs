@@ -23,18 +23,39 @@ async function until(predicate,what='condition') {
 }
 const ack = (sub, heads={}) => JSON.stringify({type:'subscribed',cursors:Object.fromEntries(sub.channels.map(c=>[c,heads[c]??0]))});
 const page = (text, cursor=0, stamp=cursor+1) => ({cursors:{scope:{from:cursor,to:cursor+1,head:cursor+1}},changes:[{model:'Entry',identity:{id:'live'},stamp,state:{text,note:null}}]});
-/** A fake server whose handshake acknowledges `heads` and whose pull answers when `hold` resolves. */
+/** The `bootstrap` part of a status snapshot before anything asked for a load. */
+const notRequested={phase:'not-requested',error:null};
+/**
+ * One terminal bootstrap page covering the whole requested interval, with the
+ * channel head it observed - the barrier completion then waits for
+ * ([#151](https://github.com/zanminwang/axton/issues/151)).
+ */
+const loaded=(body,head=body.until)=>({mode:'bootstrap',channel:body.channel,from:body.after,to:body.until,until:body.until,head,records:[]});
+/**
+ * A fake server whose handshake acknowledges `heads` and whose pull answers when
+ * `hold` resolves. A bootstrap request is answered by `load` behind its own
+ * `loadHold`, and a `load` that answers `null` is refused with HTTP 400.
+ */
 async function fakeServer(heads={scope:0}) {
  const sockets=[];const handshakes=[];const pulls=[];let hold=Promise.resolve();let answer=(body)=>({cursors:{scope:{from:body.cursors.scope,to:heads.scope,head:heads.scope}},changes:[]});
+ let loadHold=Promise.resolve();let load=(body)=>loaded(body,heads.scope);
  const http=createServer(async(req,res)=>{
   const chunks=[];for await(const c of req)chunks.push(c);const body=JSON.parse(Buffer.concat(chunks));
-  pulls.push(body);await hold;res.end(JSON.stringify(answer(body)));
+  pulls.push(body);
+  if(body.mode==='bootstrap'){
+   await loadHold;const answered=load(body);
+   if(answered===null){res.statusCode=400;res.end('the server refuses this interval');return;}
+   res.end(JSON.stringify(answered));return;
+  }
+  await hold;res.end(JSON.stringify(answer(body)));
  });
  await new Promise(r=>http.listen(0,'127.0.0.1',r));
  const ws=new WebSocketServer({server:http});
  ws.on('connection',s=>{sockets.push(s);s.on('message',m=>{const sub=JSON.parse(m);handshakes.push(sub);s.send(ack(sub,heads));});});
  return {sockets,handshakes,pulls,heads,
+  get loads(){return pulls.filter(p=>p.mode==='bootstrap');},
   set hold(promise){hold=promise;},set answer(fn){answer=fn;},
+  set loadHold(promise){loadHold=promise;},set load(fn){load=fn;},
   config:{url:`http://127.0.0.1:${http.address().port}`,token:'secret'},
   async close(){for(const s of ws.clients)s.terminate();await new Promise(r=>ws.close(r));await new Promise(r=>http.close(r));}};
 }
@@ -46,7 +67,7 @@ test('one handle per subscription identity: concurrent and repeated calls coales
   assert.equal(first,second,'concurrent calls obtain one cached handle');
   assert.equal(await client.scopes.subscribe('scope'),first,'the scopes facade shares the cache');
   assert.equal(first.scope,'scope');
-  assert.deepEqual({...first.status},{active:true,initialization:'pending',connection:'offline'},
+  assert.deepEqual({...first.status},{active:true,initialization:'pending',connection:'offline',bootstrap:notRequested},
    'registered offline: durable intent with no boundary and no transport');
   assert.deepEqual((await client.syncState()).channels,['scope']);
   assert.deepEqual((await client.syncState()).cursors,{},'an uninitialized subscription has no cursor at all');
@@ -141,7 +162,7 @@ test('status follows the committed boundary and the lane: offline, connecting, c
   await until(()=>subscription.status.connection==='live','live again after the catch-up');
   assert.deepEqual(network.pulls.map(p=>p.cursors),[{scope:0}],'one pull, from the committed cursor');
   await connection.close();
-  assert.deepEqual({...subscription.status},{active:true,initialization:'ready',connection:'offline'},
+  assert.deepEqual({...subscription.status},{active:true,initialization:'ready',connection:'offline',bootstrap:notRequested},
    'a closed connection leaves the subscription registered and offline');
  } finally { await fixture.close();await network.close(); }
 });
@@ -156,14 +177,14 @@ test('a recreated subscription is connecting until its own handshake acknowledge
   await first.unsubscribe();
   const second=await client.subscribe('scope');
   assert.notEqual(second,first,'a new registration is a new handle');
-  assert.deepEqual({...second.status},{active:true,initialization:'pending',connection:'connecting'},
+  assert.deepEqual({...second.status},{active:true,initialization:'pending',connection:'connecting',bootstrap:notRequested},
    'the open session never subscribed this registration: it is not live and has no boundary');
   // The worker replaces the socket for the new membership; that handshake is
   // this subscription's own.
   await until(()=>network.handshakes.length>=2,'the socket the new membership needs');
   await until(()=>second.status.connection==='live'&&second.status.initialization==='ready',
    'the new subscription goes live on its own acknowledgement');
-  assert.deepEqual({...first.status},{active:false,initialization:'ready',connection:'stopped'},
+  assert.deepEqual({...first.status},{active:false,initialization:'ready',connection:'stopped',bootstrap:notRequested},
    'the handle it replaced stays stopped');
   await connection.close();
  } finally { await fixture.close();await network.close(); }
@@ -192,9 +213,9 @@ test('a stale handle from before a rebuild cannot disturb the subscription that 
   const stale=await client.subscribe('scope');
   const observed=[];const stop=stale.watch(status=>observed.push({...status}));
   await client.rebuild({discardPending:true});
-  assert.deepEqual({...stale.status},{active:false,initialization:'pending',connection:'stopped'},
+  assert.deepEqual({...stale.status},{active:false,initialization:'pending',connection:'stopped',bootstrap:notRequested},
    'the rebuild invalidated every handle of the replica it replaced');
-  assert.deepEqual(observed.at(-1),{active:false,initialization:'pending',connection:'stopped'},
+  assert.deepEqual(observed.at(-1),{active:false,initialization:'pending',connection:'stopped',bootstrap:notRequested},
    'the observer was told, and the handle has no changes left');
   stop();
   const current=await client.subscribe('scope');
@@ -202,15 +223,15 @@ test('a stale handle from before a rebuild cannot disturb the subscription that 
   const connection=await client.connect(network.config);
   await until(()=>current.status.connection==='live'&&current.status.initialization==='ready',
    'the carried subscription goes live');
-  assert.deepEqual({...stale.status},{active:false,initialization:'pending',connection:'stopped'},
+  assert.deepEqual({...stale.status},{active:false,initialization:'pending',connection:'stopped',bootstrap:notRequested},
    'the new session acknowledges the Scope name, not the stale handle');
   // The old handle removes nothing: the Scope's current registration is another
   // identity, whose acknowledgement is not this handle's to forget.
   await stale.unsubscribe();
   assert.deepEqual((await client.syncState()).channels,['scope'],'the current registration stands');
-  assert.deepEqual({...current.status},{active:true,initialization:'ready',connection:'live'},
+  assert.deepEqual({...current.status},{active:true,initialization:'ready',connection:'live',bootstrap:notRequested},
    'a removal that removed nothing changes no status');
-  assert.deepEqual({...stale.status},{active:false,initialization:'pending',connection:'stopped'});
+  assert.deepEqual({...stale.status},{active:false,initialization:'pending',connection:'stopped',bootstrap:notRequested});
   await connection.close();
  } finally { await client?.close();await network.close();await rm(dir,{recursive:true,force:true}); }
 });
@@ -220,7 +241,7 @@ test('unsubscribe removes one registration; an old handle cannot remove its repl
  try {
   const first=await client.subscribe('scope');
   await first.unsubscribe();
-  assert.deepEqual({...first.status},{active:false,initialization:'pending',connection:'stopped'});
+  assert.deepEqual({...first.status},{active:false,initialization:'pending',connection:'stopped',bootstrap:notRequested});
   assert.deepEqual((await client.syncState()).channels,[],'the registration is gone');
   await first.unsubscribe();
   assert.deepEqual((await client.syncState()).channels,[],'repeating it on a closed handle is a no-op');
@@ -233,7 +254,7 @@ test('unsubscribe removes one registration; an old handle cannot remove its repl
   // The Scope-named form removes whatever is registered and closes its handle.
   await client.unsubscribe('scope');
   assert.deepEqual((await client.syncState()).channels,[]);
-  assert.deepEqual({...second.status},{active:false,initialization:'pending',connection:'stopped'});
+  assert.deepEqual({...second.status},{active:false,initialization:'pending',connection:'stopped',bootstrap:notRequested});
  } finally { await fixture.close(); }
 });
 
@@ -246,7 +267,7 @@ test('closing the client stops handles and deletes nothing; work through them fa
   const subscription=await client.subscribe('scope');
   const seen=[];subscription.watch(status=>seen.push(status));
   await client.close();
-  assert.deepEqual({...subscription.status},{active:false,initialization:'pending',connection:'stopped'});
+  assert.deepEqual({...subscription.status},{active:false,initialization:'pending',connection:'stopped',bootstrap:notRequested});
   assert.deepEqual(seen.map(s=>s.connection),['offline','stopped'],'observers hear the stop, then are cancelled');
   const failed=await subscription.unsubscribe().then(()=>null,error=>error);
   assert.equal(failed?.code,'subscription.closed','a stopped handle cannot commit work');
@@ -257,4 +278,151 @@ test('closing the client stops handles and deletes nothing; work through them fa
    assert.equal(restored.status.active,true);
   } finally { await reopened.close(); }
  } finally { await rm(dir,{recursive:true,force:true}); }
+});
+
+// Whole-Scope bootstrap through the handle
+// ([#151](https://github.com/zanminwang/axton/issues/151)): registration is
+// eager and local, completion is a committed transition, and the status says
+// which of the two the run is waiting for.
+test('bootstrap is submitted eagerly, concurrent calls share one run, and the barrier completes it', async()=>{
+ const fixture=await openClient();const {client}=fixture;
+ const network=await fakeServer({scope:0});
+ try {
+  const subscription=await client.subscribe('scope');
+  const phases=[];subscription.watch(status=>{if(phases.at(-1)!==status.bootstrap.phase)phases.push(status.bootstrap.phase);});
+  assert.deepEqual({...subscription.status.bootstrap},notRequested,'a registration asks for no load of its own');
+  const connection=await client.connect(network.config);
+  await until(()=>subscription.status.initialization==='ready','the committed boundary');
+  // The page is held: the calls submit their registration when they are made,
+  // so the task runs and the status moves with nobody awaiting the promises.
+  const gate=Promise.withResolvers();network.loadHold=gate.promise;
+  network.load=body=>loaded(body,3);
+  const first=subscription.bootstrap();
+  const second=subscription.bootstrap();
+  let settled=false;const both=Promise.all([first,second]).then(()=>{settled=true;});
+  await until(()=>subscription.status.bootstrap.phase==='loading','a registered load');
+  await until(()=>network.loads.length===1,'the one page the run asked for');
+  assert.equal(settled,false,'no call resolved before the completion committed');
+  gate.resolve();
+  // The terminal page fixed the barrier at the head it saw, which delivery has
+  // not reached: the run waits for the stream, not for another page.
+  await until(()=>subscription.status.bootstrap.phase==='catching-up','the fixed barrier');
+  assert.equal(settled,false,'a barrier delivery has not reached does not complete the run');
+  assert.equal(network.loads.length,1,'two concurrent calls registered one task');
+  assert.deepEqual(network.loads[0].after,0,'the page asked for the interval from committed progress');
+  network.sockets[0].send(JSON.stringify({cursors:{scope:{from:0,to:3,head:3}},changes:[{model:'Entry',identity:{id:'live'},stamp:3,state:{text:'delivered',note:null}}]}));
+  await both;
+  assert.deepEqual({...subscription.status.bootstrap},{phase:'complete',error:null});
+  assert.ok(Object.isFrozen(subscription.status.bootstrap),'the load status is immutable too');
+  assert.deepEqual(phases,['not-requested','loading','catching-up','complete'],
+   'the observed transitions, in the order they committed');
+  assert.equal(network.loads.length,1,'completion asked for no further page');
+  await connection.close();
+ } finally { await fixture.close();await network.close(); }
+});
+
+test('a load registered before initialization waits for the boundary, and a closing client rejects its waiters', async()=>{
+ const fixture=await openClient();const {client}=fixture;
+ try {
+  const subscription=await client.subscribe('scope');
+  const first=subscription.bootstrap();const second=subscription.bootstrap();
+  const outcome=Promise.all([first,second]).then(()=>'resolved',error=>error.code);
+  await until(()=>subscription.status.bootstrap.phase==='waiting-for-initialization',
+   'a registered load with no boundary yet');
+  assert.equal(subscription.status.connection,'offline','waiting for connectivity is not failure');
+  // Closing the client is not a failure of the durable task: it rejects the
+  // waiters of this process and removes nothing.
+  await fixture.close();
+  assert.equal(await outcome,'client_closed');
+  assert.equal((await subscription.bootstrap().then(()=>null,error=>error))?.code,'subscription.closed',
+   'a stopped handle starts nothing');
+ } finally { await fixture.close(); }
+});
+
+test('a completed bootstrap resolves offline, and an interrupted one resumes on the next client', async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'axton-bootstrap-'));
+ const path=join(dir,'client.sqlite');
+ const schema=JSON.parse(await readFile(new URL('../../../fixtures/schemas/entry.json',import.meta.url),'utf8'));
+ const network=await fakeServer({scope:0});
+ let client;
+ try {
+  client=await runtime.Client.open({path,schema});
+  let subscription=await client.subscribe('scope');
+  let connection=await client.connect(network.config);
+  await until(()=>subscription.status.initialization==='ready','the committed boundary');
+  const gate=Promise.withResolvers();network.loadHold=gate.promise;
+  const interrupted=subscription.bootstrap().then(()=>null,error=>error);
+  await until(()=>network.loads.length===1,'the page the run asked for');
+  await client.close();
+  assert.equal((await interrupted)?.code,'client_closed','the waiters of this process were rejected');
+  gate.resolve();
+  // A reopened client resumes the same run from its committed progress, with no
+  // new call at all.
+  client=await runtime.Client.open({path,schema});
+  subscription=await client.subscribe('scope');
+  const observed=[];subscription.watch(status=>{if(observed.at(-1)!==status.bootstrap.phase)observed.push(status.bootstrap.phase);});
+  connection=await client.connect(network.config);
+  await until(()=>subscription.status.bootstrap.phase==='complete','the resumed run completes with no new call');
+  assert.deepEqual(network.loads.map(l=>[l.after,l.until]),[[0,0],[0,0]],
+   'the resumed run asked for the same interval from the same progress, and registered no second run');
+  assert.ok(observed.includes('loading'),`the resumed run was observable while it ran: ${observed}`);
+  await connection.close();
+  await client.close();
+  // Completion is durable and local: a client with no network at all resolves
+  // the call from what was committed.
+  client=await runtime.Client.open({path,schema});
+  subscription=await client.subscribe('scope');
+  await subscription.bootstrap();
+  assert.deepEqual({...subscription.status.bootstrap},{phase:'complete',error:null});
+  assert.equal(subscription.status.connection,'offline','no transport was needed');
+  assert.equal(network.loads.length,2,'a completed run asks for nothing more');
+ } finally { await client?.close();await network.close();await rm(dir,{recursive:true,force:true}); }
+});
+
+test('unsubscribing rejects that handle every load it was waiting for', async()=>{
+ const fixture=await openClient();const {client}=fixture;
+ const network=await fakeServer({scope:0});
+ try {
+  const subscription=await client.subscribe('scope');
+  const connection=await client.connect(network.config);
+  await until(()=>subscription.status.initialization==='ready','the committed boundary');
+  const gate=Promise.withResolvers();network.loadHold=gate.promise;
+  const pending=subscription.bootstrap().then(()=>null,error=>error);
+  await until(()=>subscription.status.bootstrap.phase==='loading','a registered load');
+  // The row and its load state go together: the epoch's task is gone, so the
+  // waiters of that handle cannot be kept.
+  await subscription.unsubscribe();
+  assert.equal((await pending)?.code,'subscription.closed');
+  assert.equal((await subscription.bootstrap().then(()=>null,error=>error))?.code,'subscription.closed');
+  assert.equal(subscription.status.active,false);
+  gate.resolve();
+  await connection.close();
+ } finally { await fixture.close();await network.close(); }
+});
+
+test('a failed run stays failed for the calls it belongs to; an explicit retry is another run', async()=>{
+ const fixture=await openClient();const {client}=fixture;
+ const network=await fakeServer({scope:0});
+ try {
+  const subscription=await client.subscribe('scope');
+  const connection=await client.connect(network.config,{onError(){}});
+  await until(()=>subscription.status.initialization==='ready','the committed boundary');
+  network.load=()=>null;
+  const failure=subscription.bootstrap().then(()=>null,error=>error);
+  await until(()=>subscription.status.bootstrap.phase==='failed','the refused page fails the run');
+  const stored=subscription.status.bootstrap.error;
+  assert.equal(stored?.code,'bootstrap.request_rejected');
+  assert.match(stored.message,/refused with HTTP 400/);
+  assert.deepEqual(Object.keys(stored),['code','message'],'the stored record reports are not public status');
+  assert.equal((await failure)?.code,'bootstrap.request_rejected','the caller was rejected with the stored failure');
+  assert.equal((await failure)?.message,stored.message);
+  // The retry is a new run, and it cannot turn the call that failed into a
+  // success.
+  network.load=body=>loaded(body);
+  await subscription.bootstrap();
+  assert.deepEqual({...subscription.status.bootstrap},{phase:'complete',error:null});
+  assert.equal((await failure)?.code,'bootstrap.request_rejected','the earlier call stayed failed');
+  assert.equal(network.loads.length,2,'one page per run');
+  await connection.close();
+ } finally { await fixture.close();await network.close(); }
 });

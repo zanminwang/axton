@@ -26,6 +26,19 @@ Map<String, Object?> page(String text, int cursor, int stamp) => {
   ],
 };
 
+/// One terminal bootstrap page covering the whole requested interval, with the
+/// channel head it observed - the barrier completion then waits for
+/// ([#151](https://github.com/zanminwang/axton/issues/151)).
+Map<String, Object?> loaded(Map body, int head) => {
+  'mode': 'bootstrap',
+  'channel': body['channel'],
+  'from': body['after'],
+  'to': body['until'],
+  'until': body['until'],
+  'head': head,
+  'records': <Object>[],
+};
+
 Future<void> until(Future<bool> Function() predicate, String what) async {
   final deadline = DateTime.now().add(const Duration(seconds: 5));
   while (DateTime.now().isBefore(deadline)) {
@@ -76,7 +89,16 @@ class FakeServer {
   int head = 0;
   Future<void> hold = Future<void>.value();
   Map<String, Object?> Function(Map pull)? answer;
+
+  /// A bootstrap request is answered by [load] behind its own [loadHold]; a
+  /// [load] that answers null is refused with HTTP 400.
+  Future<void> loadHold = Future<void>.value();
+  Map<String, Object?>? Function(Map request)? load;
   FakeServer(this.server);
+
+  /// The bootstrap requests this server was asked for, in order.
+  List<Map> get loads =>
+      pulls.where((pull) => pull['mode'] == 'bootstrap').toList();
   SyncServer get config =>
       SyncServer(url: 'http://127.0.0.1:${server.port}', token: () => 'secret');
   static Future<FakeServer> start() async {
@@ -87,6 +109,18 @@ class FakeServer {
       if (request.uri.path == '/sync/pull') {
         final pull = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
         fake.pulls.add(pull);
+        if (pull['mode'] == 'bootstrap') {
+          await fake.loadHold;
+          final page = (fake.load ?? (body) => loaded(body, fake.head))(pull);
+          if (page == null) {
+            request.response.statusCode = 400;
+            request.response.write('the server refuses this interval');
+          } else {
+            request.response.write(jsonEncode(page));
+          }
+          await request.response.close();
+          return;
+        }
         await fake.hold;
         request.response.write(
           jsonEncode(
@@ -623,6 +657,351 @@ void main() {
         }
       } finally {
         await directory.delete(recursive: true);
+      }
+    },
+  );
+
+  // Whole-Scope bootstrap through the handle
+  // ([#151](https://github.com/zanminwang/axton/issues/151)): registration is
+  // eager and local, completion is a committed transition, and the status says
+  // which of the two the run is waiting for.
+  test(
+    'bootstrap is submitted eagerly, concurrent calls share one run, and the barrier completes it',
+    () async {
+      final fixture = await Fixture.open();
+      final client = fixture.client;
+      final network = await FakeServer.start();
+      try {
+        final subscription = await client.subscribe('scope');
+        final phases = <BootstrapPhase>[];
+        final observer = subscription.watch().listen((status) {
+          if (phases.isEmpty || phases.last != status.bootstrap.phase) {
+            phases.add(status.bootstrap.phase);
+          }
+        });
+        expect(
+          subscription.status.bootstrap,
+          const BootstrapStatus(phase: BootstrapPhase.notRequested),
+          reason: 'a registration asks for no load of its own',
+        );
+        final connection = await client.connect(network.config);
+        await until(
+          () async =>
+              subscription.status.initialization ==
+              SubscriptionInitialization.ready,
+          'the committed boundary',
+        );
+        // The page is held: the calls submit their registration when they are
+        // made, so the task runs and the status moves with nobody awaiting the
+        // Futures.
+        final gate = Completer<void>();
+        network.loadHold = gate.future;
+        network.load = (body) => loaded(body, 3);
+        final first = subscription.bootstrap();
+        final second = subscription.bootstrap();
+        var settled = false;
+        final both = Future.wait([first, second]).then((_) => settled = true);
+        await until(
+          () async =>
+              subscription.status.bootstrap.phase == BootstrapPhase.loading,
+          'a registered load',
+        );
+        await until(() async => network.loads.length == 1, 'the one page');
+        expect(
+          settled,
+          isFalse,
+          reason: 'no call completed before the completion committed',
+        );
+        gate.complete();
+        // The terminal page fixed the barrier at the head it saw, which delivery
+        // has not reached: the run waits for the stream, not for another page.
+        await until(
+          () async =>
+              subscription.status.bootstrap.phase == BootstrapPhase.catchingUp,
+          'the fixed barrier',
+        );
+        expect(
+          settled,
+          isFalse,
+          reason:
+              'a barrier delivery has not reached does not complete the run',
+        );
+        expect(
+          network.loads,
+          hasLength(1),
+          reason: 'two concurrent calls registered one task',
+        );
+        network.sockets.last.add(
+          jsonEncode({
+            'cursors': {
+              'scope': {'from': 0, 'to': 3, 'head': 3},
+            },
+            'changes': [
+              {
+                'model': 'Entry',
+                'identity': {'id': 'live'},
+                'stamp': 3,
+                'state': {'text': 'delivered', 'note': null},
+              },
+            ],
+          }),
+        );
+        await both;
+        expect(
+          subscription.status.bootstrap,
+          const BootstrapStatus(phase: BootstrapPhase.complete),
+        );
+        await pumpEventQueue();
+        expect(phases, [
+          BootstrapPhase.notRequested,
+          BootstrapPhase.loading,
+          BootstrapPhase.catchingUp,
+          BootstrapPhase.complete,
+        ], reason: 'the observed transitions, in the order they committed');
+        expect(
+          network.loads,
+          hasLength(1),
+          reason: 'completion asked for no further page',
+        );
+        await observer.cancel();
+        await connection.close();
+      } finally {
+        await fixture.close();
+        await network.close();
+      }
+    },
+  );
+
+  test(
+    'a load registered before initialization waits for the boundary, and a closing client rejects its waiters',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'axton-dart-bootstrap-waiting-',
+      );
+      final client = await Fixture.openClient(directory);
+      try {
+        final subscription = await client.subscribe('scope');
+        final outcome = Future.wait([
+          subscription.bootstrap(),
+          subscription.bootstrap(),
+        ]).then((_) => 'resolved', onError: (Object error) => '$error');
+        await until(
+          () async =>
+              subscription.status.bootstrap.phase ==
+              BootstrapPhase.waitingForInitialization,
+          'a registered load with no boundary yet',
+        );
+        expect(
+          subscription.status.connection,
+          SubscriptionConnection.offline,
+          reason: 'waiting for connectivity is not failure',
+        );
+        // Closing the client is not a failure of the durable task: it rejects
+        // the waiters of this process and removes nothing.
+        await client.close();
+        expect(await outcome, 'client_closed');
+        await expectLater(
+          subscription.bootstrap(),
+          throwsA(isA<SubscriptionClosedException>()),
+          reason: 'a stopped handle starts nothing',
+        );
+      } finally {
+        await client.close();
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'a completed bootstrap resolves offline, and an interrupted one resumes on the next client',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'axton-dart-bootstrap-restart-',
+      );
+      final network = await FakeServer.start();
+      var client = await Fixture.openClient(directory);
+      try {
+        var subscription = await client.subscribe('scope');
+        var connection = await client.connect(network.config);
+        await until(
+          () async =>
+              subscription.status.initialization ==
+              SubscriptionInitialization.ready,
+          'the committed boundary',
+        );
+        final gate = Completer<void>();
+        network.loadHold = gate.future;
+        final interrupted = subscription.bootstrap().then(
+          (_) => 'resolved',
+          onError: (Object error) => '$error',
+        );
+        await until(() async => network.loads.length == 1, 'the page');
+        await connection.close();
+        await client.close();
+        expect(
+          await interrupted,
+          'client_closed',
+          reason: 'the waiters of this process were rejected',
+        );
+        gate.complete();
+        // A reopened client resumes the same run from its committed progress,
+        // with no new call at all.
+        client = await Fixture.openClient(directory);
+        subscription = await client.subscribe('scope');
+        final observed = <BootstrapPhase>[];
+        final observer = subscription.watch().listen((status) {
+          if (observed.isEmpty || observed.last != status.bootstrap.phase) {
+            observed.add(status.bootstrap.phase);
+          }
+        });
+        connection = await client.connect(network.config);
+        await until(
+          () async =>
+              subscription.status.bootstrap.phase == BootstrapPhase.complete,
+          'the resumed run completes with no new call',
+        );
+        expect(
+          network.loads.map((load) => [load['after'], load['until']]),
+          [
+            [0, 0],
+            [0, 0],
+          ],
+          reason:
+              'the resumed run asked for the same interval from the same '
+              'progress, and registered no second run',
+        );
+        expect(
+          observed,
+          contains(BootstrapPhase.loading),
+          reason: 'the resumed run was observable while it ran',
+        );
+        await observer.cancel();
+        await connection.close();
+        await client.close();
+        // Completion is durable and local: a client with no network at all
+        // completes the call from what was committed.
+        client = await Fixture.openClient(directory);
+        subscription = await client.subscribe('scope');
+        await subscription.bootstrap();
+        expect(
+          subscription.status.bootstrap,
+          const BootstrapStatus(phase: BootstrapPhase.complete),
+        );
+        expect(
+          subscription.status.connection,
+          SubscriptionConnection.offline,
+          reason: 'no transport was needed',
+        );
+        expect(
+          network.loads,
+          hasLength(2),
+          reason: 'a completed run asks for nothing more',
+        );
+      } finally {
+        await client.close();
+        await network.close();
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'unsubscribing rejects that handle every load it was waiting for',
+    () async {
+      final fixture = await Fixture.open();
+      final client = fixture.client;
+      final network = await FakeServer.start();
+      try {
+        final subscription = await client.subscribe('scope');
+        final connection = await client.connect(network.config);
+        await until(
+          () async =>
+              subscription.status.initialization ==
+              SubscriptionInitialization.ready,
+          'the committed boundary',
+        );
+        final gate = Completer<void>();
+        network.loadHold = gate.future;
+        final pending = subscription.bootstrap().then(
+          (_) => 'resolved',
+          onError: (Object error) => '$error',
+        );
+        await until(
+          () async =>
+              subscription.status.bootstrap.phase == BootstrapPhase.loading,
+          'a registered load',
+        );
+        // The row and its load state go together: the epoch's task is gone, so
+        // the waiters of that handle cannot be kept.
+        await subscription.unsubscribe();
+        expect(await pending, 'subscription.closed');
+        await expectLater(
+          subscription.bootstrap(),
+          throwsA(isA<SubscriptionClosedException>()),
+        );
+        expect(subscription.status.active, isFalse);
+        gate.complete();
+        await connection.close();
+      } finally {
+        await fixture.close();
+        await network.close();
+      }
+    },
+  );
+
+  test(
+    'a failed run stays failed for the calls it belongs to; an explicit retry is another run',
+    () async {
+      final fixture = await Fixture.open();
+      final client = fixture.client;
+      final network = await FakeServer.start();
+      try {
+        final subscription = await client.subscribe('scope');
+        final connection = await client.connect(
+          network.config,
+          onError: (_) {},
+        );
+        await until(
+          () async =>
+              subscription.status.initialization ==
+              SubscriptionInitialization.ready,
+          'the committed boundary',
+        );
+        network.load = (_) => null;
+        final failure = subscription.bootstrap().then<Object?>(
+          (_) => null,
+          onError: (Object error) => error,
+        );
+        await until(
+          () async =>
+              subscription.status.bootstrap.phase == BootstrapPhase.failed,
+          'the refused page fails the run',
+        );
+        final stored = subscription.status.bootstrap.error;
+        expect(stored?.code, 'bootstrap.request_rejected');
+        expect(stored?.message, contains('refused with HTTP 400'));
+        final rejected = await failure;
+        expect(rejected, isA<BootstrapFailedException>());
+        expect((rejected as BootstrapFailedException).code, stored?.code);
+        expect(rejected.message, stored?.message);
+        // The retry is a new run, and it cannot turn the call that failed into a
+        // success.
+        network.load = (body) => loaded(body, network.head);
+        await subscription.bootstrap();
+        expect(
+          subscription.status.bootstrap,
+          const BootstrapStatus(phase: BootstrapPhase.complete),
+        );
+        expect(
+          await failure,
+          same(rejected),
+          reason: 'the earlier call stayed failed',
+        );
+        expect(network.loads, hasLength(2), reason: 'one page per run');
+        await connection.close();
+      } finally {
+        await fixture.close();
+        await network.close();
       }
     },
   );

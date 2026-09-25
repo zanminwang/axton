@@ -58,11 +58,14 @@ fn applied(outcome: &BootstrapApply) -> (&BootstrapState, &ApplyReport) {
         other => panic!("expected an applied page, got {other:?}"),
     }
 }
-fn failed(outcome: &BootstrapApply) -> &BootstrapState {
+fn failed(outcome: &BootstrapApply) -> (&BootstrapState, &ApplyReport) {
     match outcome {
-        BootstrapApply::Failed(state) => state,
+        BootstrapApply::Failed { state, report } => (state, report),
         other => panic!("expected a failed run, got {other:?}"),
     }
+}
+fn scopes(c: &Client<SqliteStore>) -> Vec<String> {
+    c.last_bootstrap_scopes().iter().cloned().collect()
 }
 /// A record whose state this client's schema refuses: a `Skipped` report.
 fn refused(id: &str, stamp: u64) -> AuthorityRecord {
@@ -212,7 +215,7 @@ fn a_retry_after_failure_is_a_new_run_over_the_same_progress() {
     let page = historical("a", 0, 4, 10, 12, vec![authority_of("k", Some("K"), 4)]);
     assert_eq!(applied(&apply(&mut c, "a", &page)).0.cursor, 4);
     let bad = historical("a", 4, 6, 10, 12, vec![refused("bad", 6)]);
-    let state = failed(&apply(&mut c, "a", &bad)).clone();
+    let state = failed(&apply(&mut c, "a", &bad)).0.clone();
     assert_eq!(state.state, BootstrapPhase::Failed);
     assert_eq!((state.run, state.cursor), (1, 4));
     assert!(state.error.is_some());
@@ -427,7 +430,11 @@ fn a_record_failure_keeps_the_successful_authority_and_holds_the_interval() {
         ],
     );
     let outcome = apply(&mut c, "a", &page);
-    let state = failed(&outcome);
+    let (state, report) = failed(&outcome);
+    assert_eq!(
+        report.applied, 2,
+        "the report of what did land is the caller's"
+    );
     assert_eq!(state.state, BootstrapPhase::Failed);
     assert_eq!(state.cursor, 0, "the interval does not advance");
     assert_eq!(state.barrier, None);
@@ -478,6 +485,11 @@ fn a_record_failure_keeps_the_successful_authority_and_holds_the_interval() {
     let (state, report) = applied(&outcome);
     assert_eq!(state.cursor, 6);
     assert_eq!(state.state, BootstrapPhase::Loading);
+    assert_eq!(
+        scopes(&c),
+        vec!["a".to_string()],
+        "the page named its Scope"
+    );
     assert_eq!(report.applied, 2, "the two already applied are idempotent");
     assert_eq!(c.read(&entry("bad")).unwrap().unwrap()["text"], "F");
 }
@@ -550,6 +562,53 @@ fn a_diverged_replay_does_not_fail_the_run() {
     assert_eq!(report.reports[0].ordinal, Some(ordinal));
     assert_eq!(state.error, None, "a divergence is not a coverage failure");
     assert_eq!(c.pending_count().unwrap(), 1, "the edit is still sent");
+}
+
+/// A page that fails on one record still reports the `Diverged` replay of
+/// another: the failure is coverage, the divergence is observation, and the
+/// caller needs both.
+#[test]
+fn a_failed_page_still_reports_its_diverged_replay() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let id = origin(&mut c, "a", 10).subscription_id;
+    seed(&mut c, "local");
+    let ordinal = c.transaction(|tx| tx.enqueue(mutation("edited"))).unwrap();
+    c.request_bootstrap("a", id).unwrap();
+    // The deletion diverges the queued update; the other record is refused.
+    let outcome = apply(
+        &mut c,
+        "a",
+        &historical(
+            "a",
+            0,
+            6,
+            10,
+            12,
+            vec![authority(None, 5), refused("bad", 6)],
+        ),
+    );
+    let (state, report) = failed(&outcome);
+    assert_eq!(state.state, BootstrapPhase::Failed);
+    assert_eq!(state.cursor, 0, "the interval is held");
+    assert_eq!(report.applied, 1, "the deletion did apply");
+    assert_eq!(report.diverged(), 1, "and the replay failure is observable");
+    assert_eq!(
+        report
+            .reports
+            .iter()
+            .find(|r| r.kind == ReportKind::Diverged)
+            .and_then(|r| r.ordinal),
+        Some(ordinal)
+    );
+    // Only the record that failed coverage is in the stored bounded error.
+    let error = state.error.clone().expect("a stored failure");
+    assert_eq!(error.code, "bootstrap.records_failed");
+    assert_eq!(error.records.len(), 1, "a divergence is not summarised");
+    assert_eq!(error.records[0].identity, json!({"id":"bad"}));
+    assert_eq!(error.records[0].code, "skipped");
+    assert_eq!(c.pending_count().unwrap(), 1, "the edit is still sent");
+    assert_eq!(scopes(&c), vec!["a".to_string()]);
 }
 
 /// Newer authority already applied is not replaced by the historical interval,
@@ -641,13 +700,42 @@ fn the_terminal_page_fixes_a_barrier_that_ordinary_delivery_settles() {
     let (state, _) = applied(&terminal);
     assert_eq!(state.state, BootstrapPhase::CatchingUp);
     assert_eq!((state.cursor, state.barrier), (5, Some(9)));
-    assert!(
-        c.settle_bootstrap_barriers(&["a".to_string()])
-            .unwrap()
-            .is_empty(),
-        "delivery is behind the barrier"
-    );
+    // Waiting out a barrier must not commit an empty transaction once per
+    // delivered page: nothing is written, so no generation moves and no watcher
+    // is told anything happened.
+    let generations = (c.generation(), c.subscription_generation());
+    let watcher = c.watch(std::collections::BTreeSet::from([
+        "axton_subscription".to_string(),
+        "axton_client".to_string(),
+    ]));
+    for _ in 0..3 {
+        assert!(
+            c.settle_bootstrap_barriers(&["a".to_string()])
+                .unwrap()
+                .is_empty(),
+            "delivery is behind the barrier"
+        );
+        assert_eq!(
+            (c.generation(), c.subscription_generation()),
+            generations,
+            "a settlement with nothing to settle commits nothing"
+        );
+        assert!(
+            watcher.try_recv().is_err(),
+            "and so notifies no watcher: there was no commit"
+        );
+    }
     assert_eq!(c.cursor("a").unwrap(), Some(5));
+    // A terminal response lost before its commit and retried arrives after the
+    // barrier was already stored: the run is catching up, not loading, so the
+    // page answers nothing and writes nothing.
+    let late = c
+        .apply_bootstrap_page("a", id, 1, 5, &historical("a", 5, 5, 5, 11, vec![]))
+        .unwrap();
+    assert!(late.is_stale(), "{late:?}");
+    let state = bootstrap(&mut c, "a");
+    assert_eq!(state.state, BootstrapPhase::CatchingUp);
+    assert_eq!(state.barrier, Some(9), "H is fixed, never refreshed");
 
     // Ordinary delivery reaches the barrier; the transaction that observes both
     // conditions marks the run complete.
@@ -656,6 +744,11 @@ fn the_terminal_page_fixes_a_barrier_that_ordinary_delivery_settles() {
     assert_eq!(settled.len(), 1);
     assert_eq!(settled[0].state, BootstrapPhase::Complete);
     assert_eq!(settled[0].barrier, Some(9), "the barrier is retained");
+    assert_eq!(
+        scopes(&c),
+        vec!["a".to_string()],
+        "the settlement named the Scope it completed"
+    );
     assert!(
         c.settle_bootstrap_barriers(&["a".to_string()])
             .unwrap()

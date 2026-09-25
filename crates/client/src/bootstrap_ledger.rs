@@ -146,6 +146,32 @@ impl<S: ClientStore> Engine<'_, S> {
             .map(|r| decode(r).map(|row| row.state))
             .collect()
     }
+    /// The named Scopes whose fixed barrier ordinary delivery has reached: the
+    /// runs a settlement would actually complete. Read on the committed reader
+    /// so a caller can tell there is nothing to do without opening a write.
+    pub(crate) fn settleable_scopes(&mut self, scopes: &[String]) -> Result<Vec<String>> {
+        if scopes.is_empty() {
+            return Ok(vec![]);
+        }
+        let named = vec!["?"; scopes.len()].join(",");
+        let rows = self.rows(
+            &format!(
+                "SELECT channel FROM axton_subscription \
+                 WHERE bootstrap_state='catching_up' AND bootstrap_barrier IS NOT NULL \
+                   AND cursor IS NOT NULL AND cursor >= bootstrap_barrier \
+                   AND channel IN ({named}) ORDER BY channel"
+            ),
+            &scopes.iter().map(|s| json!(s)).collect::<Vec<_>>(),
+        )?;
+        rows.rows
+            .iter()
+            .map(|r| {
+                r[0].as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| invalid("stored Scope name is not text"))
+            })
+            .collect()
+    }
     /// Mark a run complete when the barrier it fixed has been reached, and
     /// answer with the state it committed. Reading L and writing the phase in
     /// one transaction is what makes the completion evidence exact.

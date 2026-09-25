@@ -87,23 +87,24 @@ pub struct BootstrapRecordFailure {
     pub code: String,
 }
 impl BootstrapRecordFailure {
-    /// The summary of one report. A report the server attributed keeps its
-    /// code; one this client made carries the kind that made it.
-    fn of(report: &Report) -> Self {
-        Self {
+    /// The summary of one report that fails Bootstrap coverage, or `None` for
+    /// one that does not: only `ReadFailed`, `Skipped` and `Conflict` do, so a
+    /// `Diverged` pending-Action replay is never summarised here. A report the
+    /// server attributed keeps its code; one this client made carries the kind
+    /// that made it.
+    fn of(report: &Report) -> Option<Self> {
+        let kind = match report.kind {
+            ReportKind::ReadFailed => "readFailed",
+            ReportKind::Skipped => "skipped",
+            ReportKind::Conflict => "conflict",
+            ReportKind::Diverged => return None,
+        };
+        Some(Self {
             model: report.model.clone(),
             identity: report.identity.clone(),
             stamp: report.stamp,
-            code: report.code.clone().unwrap_or_else(|| {
-                match report.kind {
-                    ReportKind::ReadFailed => "readFailed",
-                    ReportKind::Skipped => "skipped",
-                    ReportKind::Conflict => "conflict",
-                    ReportKind::Diverged => "diverged",
-                }
-                .to_string()
-            }),
-        }
+            code: report.code.clone().unwrap_or_else(|| kind.to_string()),
+        })
     }
 }
 
@@ -194,8 +195,12 @@ pub enum BootstrapApply {
     Stale,
     /// A record of the page could not be applied. The page's successful
     /// authority is committed, the interval did not advance, and the run is
-    /// failed until an explicit retry.
-    Failed(BootstrapState),
+    /// failed until an explicit retry. The report is still the caller's: the
+    /// records that did apply, and every `Diverged` replay, stay observable.
+    Failed {
+        state: BootstrapState,
+        report: ApplyReport,
+    },
     /// The page's authority and its progress committed together.
     Applied {
         state: BootstrapState,
@@ -207,11 +212,18 @@ impl BootstrapApply {
     pub fn is_stale(&self) -> bool {
         matches!(self, Self::Stale)
     }
+    /// What the page applied, for either outcome that applied anything.
+    pub fn report(&self) -> Option<&ApplyReport> {
+        match self {
+            Self::Stale => None,
+            Self::Failed { report, .. } | Self::Applied { report, .. } => Some(report),
+        }
+    }
     /// The state the page committed, for either outcome that wrote one.
     pub fn state(&self) -> Option<&BootstrapState> {
         match self {
             Self::Stale => None,
-            Self::Failed(state) | Self::Applied { state, .. } => Some(state),
+            Self::Failed { state, .. } | Self::Applied { state, .. } => Some(state),
         }
     }
 }
@@ -308,13 +320,7 @@ impl<S: ClientStore> Client<S> {
             let failures: Vec<BootstrapRecordFailure> = report
                 .reports
                 .iter()
-                .filter(|r| {
-                    matches!(
-                        r.kind,
-                        ReportKind::ReadFailed | ReportKind::Skipped | ReportKind::Conflict
-                    )
-                })
-                .map(BootstrapRecordFailure::of)
+                .filter_map(BootstrapRecordFailure::of)
                 .collect();
             if !failures.is_empty() {
                 // The authority that did apply stays: it is coverage the retry
@@ -334,7 +340,7 @@ impl<S: ClientStore> Client<S> {
                 ));
                 written(e.set_bootstrap(&state, state.run)?)?;
                 e.mark_bootstrap(scope);
-                return Ok(BootstrapApply::Failed(state));
+                return Ok(BootstrapApply::Failed { state, report });
             }
             state.cursor = page.to;
             state.state = BootstrapPhase::Loading;
@@ -369,30 +375,33 @@ impl<S: ClientStore> Client<S> {
             }
             state.state = BootstrapPhase::Failed;
             state.error = Some(error);
-            let failed = e.set_bootstrap(&state, run)?;
-            if failed {
-                e.mark_bootstrap(scope);
-            }
-            Ok(failed)
+            written(e.set_bootstrap(&state, run)?)?;
+            e.mark_bootstrap(scope);
+            Ok(true)
         })
     }
     /// Complete every named run whose fixed barrier ordinary delivery has
     /// reached, in one transaction, and answer with the states it committed.
     /// The caller runs it after committed delivery progress; a Scope that is
     /// not catching up, or is still behind its barrier, contributes nothing.
+    /// An empty list names no Scope and settles nothing.
+    ///
+    /// Which Scopes are settleable is decided by one query on the committed
+    /// reader, barrier and delivery cursor included, so a run still short of
+    /// its barrier opens no transaction at all: waiting out a barrier must not
+    /// commit an empty write - and bump the client generation - once per
+    /// delivered page.
     pub fn settle_bootstrap_barriers(&mut self, scopes: &[String]) -> Result<Vec<BootstrapState>> {
-        let settleable = self.view(|e| {
-            let tasks = e.bootstrap_tasks()?;
-            Ok(tasks
-                .iter()
-                .any(|t| t.state == BootstrapPhase::CatchingUp && scopes.contains(&t.scope)))
-        })?;
-        if !settleable {
+        if scopes.is_empty() {
+            return Ok(vec![]);
+        }
+        let settleable = self.view(|e| e.settleable_scopes(scopes))?;
+        if settleable.is_empty() {
             return Ok(vec![]);
         }
         self.write(|e| {
             let mut settled = vec![];
-            for scope in scopes {
+            for scope in &settleable {
                 settled.extend(e.settle_barrier(scope)?);
             }
             Ok(settled)

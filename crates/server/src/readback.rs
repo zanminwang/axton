@@ -159,7 +159,7 @@ pub(crate) async fn publish_intents(
         if axton_core::check_channel(&intent.channel).is_err() {
             return Err(Error::new(
                 code::PUBLISH_INVALID,
-                "channel must not be empty",
+                "channel must not be blank",
             ));
         }
         let members: Changes = match &intent.records {

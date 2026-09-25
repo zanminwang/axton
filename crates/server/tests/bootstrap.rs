@@ -47,11 +47,13 @@ fn entry(cursor: u64, id: &str, stamp: u64) -> Value {
     row("a", cursor, "Entry", id, stamp)
 }
 
-/// An in-memory host over one channel: `head` answers the configured head and
-/// `scan` answers the configured rows above `after` in cursor order, at most
-/// `limit` of them, as PostgreSQL's cursor-ordered scan does. The rows stay
-/// raw, so a test can also feed the engine an answer the contract refuses.
-/// Every `load` is recorded to prove which identities a page actually read.
+/// An in-memory host over one channel: `head` answers the configured head, and
+/// `scan` answers the configured rows of the scanned channel whose cursor is
+/// above `after`, sorted by cursor and truncated to `limit`, as PostgreSQL's
+/// cursor-ordered scan does. In `verbatim` mode it answers the configured rows
+/// exactly as given instead, so a test can feed the engine an answer the scan
+/// contract refuses. Every `load` is recorded to prove which identities a page
+/// actually read.
 struct Scoped {
     head: u64,
     rows: Vec<Value>,
@@ -71,8 +73,9 @@ impl Scoped {
             verbatim: false,
         }
     }
-    /// A host whose `scan` answers the configured rows exactly as given, so a
-    /// test can feed the engine an answer the scan contract refuses.
+    /// A host whose `scan` answers the configured rows exactly as given -
+    /// unsorted and unfiltered - so a test can feed the engine an answer the
+    /// scan contract refuses.
     fn raw(head: u64, rows: Vec<Value>) -> Self {
         Self {
             verbatim: true,
@@ -113,14 +116,22 @@ impl Host for Scoped {
                         .lock()
                         .unwrap()
                         .push((channel.clone(), *after, *limit));
-                    Value::Array(
-                        self.rows
+                    if self.verbatim {
+                        Value::Array(self.rows.iter().take(*limit as usize).cloned().collect())
+                    } else {
+                        let mut rows: Vec<Value> = self
+                            .rows
                             .iter()
-                            .filter(|row| self.verbatim || row["cursor"].as_u64().unwrap() > *after)
-                            .take(*limit as usize)
+                            .filter(|row| {
+                                row["channel"] == json!(channel)
+                                    && row["cursor"].as_u64().unwrap() > *after
+                            })
                             .cloned()
-                            .collect(),
-                    )
+                            .collect();
+                        rows.sort_by_key(|row| row["cursor"].as_u64().unwrap());
+                        rows.truncate(*limit as usize);
+                        Value::Array(rows)
+                    }
                 }
                 HostRequest::Load {
                     model,

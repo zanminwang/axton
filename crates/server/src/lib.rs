@@ -683,23 +683,9 @@ async fn process_delta(
         }
         let mut previous = *from;
         for row in &rows {
-            if row.channel != *channel || row.cursor <= previous || row.cursor > maximum {
-                return Err(storage_invalid("invalid invalidation order"));
-            }
+            let key = loading::validate_row(config, channel, maximum, previous, row)?;
             previous = row.cursor;
-            if !config.loaders.contains(&row.model) {
-                return Err(Error::new(code::LOADER_UNREGISTERED, "unregistered loader"));
-            }
-            let key = config
-                .schema
-                .record_key(&row.model, &row.identity)
-                .map_err(storage_invalid)?;
-            if row.identity_key != key.encoded_identity().map_err(storage_invalid)? {
-                return Err(storage_invalid("noncanonical identity"));
-            }
-            let encoded = key.encoded().map_err(internal)?;
-            let entry = records.entry(encoded).or_insert((key, row.stamp));
-            entry.1 = entry.1.max(row.stamp);
+            loading::insert(&mut records, key, row.stamp)?;
         }
         let to = if rows.len() == limits::PULL_CHANGES {
             previous

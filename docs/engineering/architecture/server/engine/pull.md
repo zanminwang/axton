@@ -36,7 +36,7 @@ The walk fills `(after, until]` of one channel, where `after` is the client's co
 3. With `after == until` the interval is exhausted: answer an empty terminal page carrying that head and scan nothing.
 4. Otherwise scan up to `limits::PULL_CHANGES` (50) invalidations after `after`, and validate every row with exactly the delta path's rules: increasing cursor, within the head, a registered loader, a canonical identity key.
 5. Keep only rows at or below `until` - a row exactly at the origin is historical. A row above it is a record republished into the subscription's own delivery coverage and is neither loaded nor delivered here.
-6. `to` is `until` when the scan was short or its last row reached or crossed `until`; otherwise it is the last historical cursor. A page that neither reaches `until` nor advances past `after` would loop the client forever and is reported as `storage.invalid`.
+6. `to` is `until` when the scan was short or its last row reached or crossed `until`; otherwise it is the last historical cursor. A page that neither reaches `until` nor advances past `after` would loop the client forever, so it is reported as `storage.invalid`; that guard is defensive and unreachable while the scan honours the increasing-cursor contract.
 7. Resolve the historical identities through the same `resolve_records`, and answer `{mode, channel, from: after, to, until, head, records}`.
 
 **Termination.** The upper bound is fixed for the whole walk and every new publication lands strictly above it, so pagination cannot be outrun. Nothing rewinds or advances the subscription's own cursor, and no snapshot transaction is held between pages.

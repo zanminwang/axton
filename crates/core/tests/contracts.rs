@@ -1370,3 +1370,49 @@ fn bootstrap_page_fixture_cases_decode_as_declared() {
     // An ordinary pull page and a bootstrap page never decode as each other.
     assert!(PullPage::decode(canonical["wire"].as_str().unwrap().as_bytes()).is_err());
 }
+
+#[test]
+fn a_bootstrap_page_answers_only_the_request_it_continues() {
+    let request = |after: u64, until: u64| BootstrapRequest {
+        channel: "a".into(),
+        models: [("Entry".to_string(), 1)].into(),
+        after,
+        until,
+    };
+    let page = |channel: &str, from: u64, to: u64, until: u64| BootstrapPage {
+        channel: channel.into(),
+        from,
+        to,
+        until,
+        head: 200,
+        records: vec![],
+    };
+    let asked = request(40, 100);
+    // A terminal page and a nonterminal page that advanced both answer it.
+    let terminal = page("a", 40, 100, 100);
+    assert!(terminal.answers(&asked) && terminal.terminal());
+    let nonterminal = page("a", 40, 60, 100);
+    assert!(nonterminal.answers(&asked) && !nonterminal.terminal());
+    // Another channel, another origin, or another starting point is not an
+    // answer to this request.
+    assert!(!page("b", 40, 100, 100).answers(&asked), "another channel");
+    assert!(!page("a", 40, 100, 120).answers(&asked), "another origin");
+    assert!(!page("a", 0, 100, 100).answers(&asked), "another `from`");
+    // A nonterminal page must advance: repeating `from` would loop the client.
+    let stalled = page("a", 40, 40, 100);
+    assert!(
+        !stalled.terminal() && !stalled.answers(&asked),
+        "no progress"
+    );
+    // `to == from` is fine when that finishes the interval.
+    let exhausted = request(100, 100);
+    let empty = page("a", 100, 100, 100);
+    assert!(empty.answers(&exhausted) && empty.terminal());
+    // Backwards progress is refused by `validate` and by `answers`.
+    let backwards = BootstrapPage {
+        to: 30,
+        ..page("a", 40, 30, 100)
+    };
+    assert!(!backwards.answers(&asked));
+    assert!(backwards.validate().is_err());
+}

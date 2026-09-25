@@ -55,28 +55,15 @@ pub(crate) async fn process_bootstrap(
         let mut previous = request.after;
         let mut last_historical = request.after;
         for row in &rows {
-            if row.channel != channel || row.cursor <= previous || row.cursor > maximum {
-                return Err(storage_invalid("invalid invalidation order"));
-            }
+            let key = validate_row(config, channel, maximum, previous, row)?;
             previous = row.cursor;
-            if !config.loaders.contains(&row.model) {
-                return Err(Error::new(code::LOADER_UNREGISTERED, "unregistered loader"));
-            }
-            let key = config
-                .schema
-                .record_key(&row.model, &row.identity)
-                .map_err(storage_invalid)?;
-            if row.identity_key != key.encoded_identity().map_err(storage_invalid)? {
-                return Err(storage_invalid("noncanonical identity"));
-            }
             // Only a position at or below the origin is historical; a record
             // published above it is the subscription's to deliver.
             if row.cursor > request.until {
                 continue;
             }
             last_historical = row.cursor;
-            let encoded = key.encoded().map_err(internal)?;
-            insert(&mut historical, encoded, key, row.stamp);
+            insert(&mut historical, key, row.stamp)?;
         }
         // The interval is finished when the scan ran out of rows or reached
         // the origin; otherwise the page stops at its last historical cursor.
@@ -85,8 +72,11 @@ pub(crate) async fn process_bootstrap(
         } else {
             last_historical
         };
-        // A page that neither finishes the interval nor advances would make
-        // the client loop forever: the scan contract was violated.
+        // Defensive, and unreachable while the scan honours its contract: with
+        // strictly increasing cursors a full scan that reached no historical row
+        // has already crossed the origin and is therefore terminal. Reported
+        // rather than assumed, because an empty nonterminal page would make the
+        // client ask for the same interval forever.
         if to != request.until && to <= request.after {
             return Err(storage_invalid("bootstrap page makes no progress"));
         }
@@ -109,14 +99,43 @@ pub(crate) async fn process_bootstrap(
     };
     String::from_utf8(page.encode().map_err(internal)?).map_err(internal)
 }
-/// Keep one entry per record at the highest stamp seen for it.
-fn insert(
+/// Validate one scan row against the rules both pull modes apply, and answer
+/// its canonical record key: the row belongs to the scanned channel, its cursor
+/// advances past `previous` without passing the channel head, its model has a
+/// registered loader, and its stored identity key is the canonical encoding of
+/// its identity. The caller decides what to do with the row; this decides
+/// whether the row is usable at all.
+pub(crate) fn validate_row(
+    config: &Config,
+    channel: &str,
+    maximum: u64,
+    previous: u64,
+    row: &Invalidation,
+) -> Result<RecordKey> {
+    if row.channel != channel || row.cursor <= previous || row.cursor > maximum {
+        return Err(storage_invalid("invalid invalidation order"));
+    }
+    if !config.loaders.contains(&row.model) {
+        return Err(Error::new(code::LOADER_UNREGISTERED, "unregistered loader"));
+    }
+    let key = config
+        .schema
+        .record_key(&row.model, &row.identity)
+        .map_err(storage_invalid)?;
+    if row.identity_key != key.encoded_identity().map_err(storage_invalid)? {
+        return Err(storage_invalid("noncanonical identity"));
+    }
+    Ok(key)
+}
+/// Keep one entry per record, keyed canonically, at the highest stamp seen for
+/// it: a record published to two scanned channels is one entry at its current
+/// stamp, whichever mode collected it.
+pub(crate) fn insert(
     records: &mut BTreeMap<String, (RecordKey, u64)>,
-    encoded: String,
     key: RecordKey,
     stamp: u64,
-) {
-    match records.entry(encoded) {
+) -> Result<()> {
+    match records.entry(key.encoded().map_err(internal)?) {
         Entry::Vacant(slot) => {
             slot.insert((key, stamp));
         }
@@ -125,6 +144,7 @@ fn insert(
             entry.1 = entry.1.max(stamp);
         }
     }
+    Ok(())
 }
 /// Resolve the authority of a page's records: group them by model, call each
 /// declared version's Loader once with all its identities, normalize the rows
@@ -147,8 +167,7 @@ pub(crate) async fn resolve_records(
     let records = {
         let mut canonical: BTreeMap<String, (RecordKey, u64)> = BTreeMap::new();
         for (key, stamp) in records {
-            let encoded = key.encoded().map_err(internal)?;
-            insert(&mut canonical, encoded, key, stamp);
+            insert(&mut canonical, key, stamp)?;
         }
         canonical
     };

@@ -6,6 +6,7 @@ use axton_client::*;
 use axton_sqlite::SqliteStore;
 use common::*;
 use serde_json::json;
+use std::collections::BTreeMap;
 
 /// Run `sql` on its own connection to the same file: the tests reach past the
 /// Client to prove the table, not the code writing it, holds the contract.
@@ -83,28 +84,42 @@ fn a_rolled_back_registration_leaves_no_subscription() {
     );
 }
 
-/// The transaction-scoped path initializes a new row at zero (removed by the
-/// first-initialization change) and repeating it changes nothing at all.
+/// The transaction-scoped path registers intent without a boundary, and
+/// repeating it changes nothing at all. The boundary is the head the first
+/// acknowledgement negotiates.
 #[test]
-fn set_channel_initializes_once_and_repeats_without_a_generation_change() {
+fn set_channel_registers_without_a_boundary_and_repeats_without_a_generation_change() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
-    subscribe(&mut c, "a");
-    let first = state(&mut c, "a");
-    assert_eq!((first.starting_cursor, first.cursor), (Some(0), Some(0)));
-    c.apply_page(page("a", 0, 2, Some("A"))).unwrap();
+    c.transaction(|tx| tx.set_channel("a".into(), true))
+        .unwrap();
+    let registered = state(&mut c, "a");
+    assert_eq!(
+        (registered.starting_cursor, registered.cursor),
+        (None, None),
+        "registration commits no delivery position"
+    );
+    acknowledge(&mut c, &[("a", 100)]);
+    let initialized = state(&mut c, "a");
+    assert_eq!(
+        (initialized.starting_cursor, initialized.cursor),
+        (Some(100), Some(100)),
+        "the first acknowledged head is the origin and the cursor"
+    );
+    c.apply_page(page("a", 100, 102, Some("A"))).unwrap();
     let moved = state(&mut c, "a");
     assert_eq!(
         (moved.starting_cursor, moved.cursor),
-        (Some(0), Some(2)),
+        (Some(100), Some(102)),
         "page application advances the cursor and leaves the origin"
     );
     let generation = c.subscription_generation();
-    subscribe(&mut c, "a");
+    c.transaction(|tx| tx.set_channel("a".into(), true))
+        .unwrap();
     let again = state(&mut c, "a");
     assert_eq!(
         (again.subscription_id, again.starting_cursor, again.cursor),
-        (moved.subscription_id, Some(0), Some(2)),
+        (moved.subscription_id, Some(100), Some(102)),
         "a repeated subscribe reads the row and touches no cursor"
     );
     assert_eq!(
@@ -112,6 +127,183 @@ fn set_channel_initializes_once_and_repeats_without_a_generation_change() {
         generation,
         "a repeated subscribe is not a membership change"
     );
+}
+
+/// The initialization rule in one transaction: only a still-matching row
+/// waiting for its boundary takes the acknowledged head, an initialized row
+/// keeps its cursor and is reported for catch-up when the head is beyond it,
+/// and a row whose identity was replaced takes nothing.
+#[test]
+fn initialization_commits_waiting_rows_and_leaves_every_other_row_alone() -> Result<()> {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let a = c.ensure_subscription("a")?;
+    let b = c.ensure_subscription("b")?;
+    let d = c.ensure_subscription("d")?;
+    // An earlier session gave a and d their first boundaries.
+    let first = c.initialize_subscriptions(
+        &BTreeMap::from([
+            ("a".into(), a.subscription_id),
+            ("d".into(), d.subscription_id),
+        ]),
+        &BTreeMap::from([("a".into(), 80), ("d".into(), 5)]),
+    )?;
+    assert_eq!(first.initialized, ["a", "d"]);
+    assert_eq!(first.catch_up, [] as [String; 0]);
+    assert_eq!(first.fault, None);
+    // c was recreated after this session snapshotted its identity.
+    let snapshotted = c.ensure_subscription("c")?;
+    c.remove_subscription("c", snapshotted.subscription_id)?;
+    let current = c.ensure_subscription("c")?;
+    let outcome = c.initialize_subscriptions(
+        &BTreeMap::from([
+            ("a".into(), a.subscription_id),
+            ("b".into(), b.subscription_id),
+            ("c".into(), snapshotted.subscription_id),
+            ("d".into(), d.subscription_id),
+        ]),
+        &BTreeMap::from([
+            ("a".into(), 100),
+            ("b".into(), 200),
+            ("c".into(), 300),
+            ("d".into(), 5),
+        ]),
+    )?;
+    assert_eq!(outcome.initialized, ["b"]);
+    assert_eq!(outcome.catch_up, ["a"], "a is behind its head");
+    assert_eq!(outcome.fault, None);
+    let a = state(&mut c, "a");
+    assert_eq!(
+        (a.starting_cursor, a.cursor),
+        (Some(80), Some(80)),
+        "an initialized row keeps its progress"
+    );
+    let b = state(&mut c, "b");
+    assert_eq!((b.starting_cursor, b.cursor), (Some(200), Some(200)));
+    let c_state = state(&mut c, "c");
+    assert_eq!(
+        (c_state.subscription_id, c_state.starting_cursor),
+        (current.subscription_id, None),
+        "a replaced identity is stale work: the current subscription is untouched"
+    );
+    let d = state(&mut c, "d");
+    assert_eq!(
+        (d.starting_cursor, d.cursor),
+        (Some(5), Some(5)),
+        "a head equal to the cursor is neither catch-up nor a change"
+    );
+    Ok(())
+}
+
+/// A head below committed progress is a reported fault: no cursor rewinds and
+/// the rows the same acknowledgement would have initialized stay untouched.
+#[test]
+fn a_head_below_a_committed_cursor_faults_and_initializes_nothing() -> Result<()> {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    // `a` sorts before the faulting `z`, so a rule that wrote as it went would
+    // already have initialized it.
+    let a = c.ensure_subscription("a")?;
+    subscribe(&mut c, "z");
+    c.apply_page(page("z", 0, 10, Some("Z")))?;
+    let z = state(&mut c, "z");
+    let expected = BTreeMap::from([
+        ("a".into(), a.subscription_id),
+        ("z".into(), z.subscription_id),
+    ]);
+    let outcome = c.initialize_subscriptions(
+        &expected,
+        &BTreeMap::from([("a".into(), 200), ("z".into(), 9)]),
+    )?;
+    let fault = outcome.fault.expect("a server-state fault");
+    assert!(fault.contains("below its committed cursor 10"), "{fault}");
+    assert_eq!(outcome.initialized, [] as [String; 0]);
+    assert_eq!(outcome.catch_up, [] as [String; 0]);
+    assert_eq!(
+        (state(&mut c, "z").starting_cursor, c.cursor("z")?),
+        (Some(0), Some(10)),
+        "progress is not modified by a fault"
+    );
+    assert_eq!(
+        (state(&mut c, "a").starting_cursor, c.cursor("a")?),
+        (None, None),
+        "the whole acknowledgement was without effect"
+    );
+    // The same acknowledgement without the fault initializes a and catches z up.
+    let outcome = c.initialize_subscriptions(
+        &expected,
+        &BTreeMap::from([("a".into(), 200), ("z".into(), 11)]),
+    )?;
+    assert_eq!(
+        (outcome.initialized, outcome.catch_up),
+        (vec!["a".to_string()], vec!["z".to_string()])
+    );
+    Ok(())
+}
+
+/// An acknowledgement that does not name exactly the session's subscriptions,
+/// or carries a head no host can represent, is malformed: nothing is written.
+#[test]
+fn a_malformed_acknowledgement_writes_nothing() -> Result<()> {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    let a = c.ensure_subscription("a")?;
+    let expected = BTreeMap::from([("a".into(), a.subscription_id)]);
+    for heads in [
+        BTreeMap::from([("a".into(), 1), ("x".into(), 2)]),
+        BTreeMap::new(),
+        BTreeMap::from([("a".into(), MAX_SAFE_INTEGER + 1)]),
+    ] {
+        let outcome = c.initialize_subscriptions(&expected, &heads)?;
+        assert!(outcome.fault.is_some(), "{heads:?}");
+        assert_eq!(outcome.initialized, [] as [String; 0]);
+        assert_eq!(
+            (state(&mut c, "a").starting_cursor, c.cursor("a")?),
+            (None, None)
+        );
+        assert!(c.subscription_state("x")?.is_none());
+    }
+    Ok(())
+}
+
+/// The boundary is committed by one transaction: a crash before it leaves the
+/// row waiting and the next acknowledgement initializes it at the head of that
+/// session, while a committed boundary is resumed after reopen and never
+/// re-initialized.
+#[test]
+fn a_first_boundary_survives_a_reopen_only_once_committed() -> Result<()> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open(&path);
+    let a = c.ensure_subscription("a")?;
+    let expected = BTreeMap::from([("a".into(), a.subscription_id)]);
+    drop(c);
+
+    let mut c = open(&path);
+    assert_eq!(
+        (state(&mut c, "a").starting_cursor, c.cursor("a")?),
+        (None, None),
+        "a crash before the transaction retries first initialization"
+    );
+    c.initialize_subscriptions(&expected, &BTreeMap::from([("a".into(), 100)]))?;
+    drop(c);
+
+    let mut c = open(&path);
+    let resumed = state(&mut c, "a");
+    assert_eq!(
+        (resumed.starting_cursor, resumed.cursor),
+        (Some(100), Some(100)),
+        "a crash after it resumes from the committed boundary"
+    );
+    let outcome = c.initialize_subscriptions(&expected, &BTreeMap::from([("a".into(), 130)]))?;
+    assert_eq!(outcome.initialized, [] as [String; 0]);
+    assert_eq!(outcome.catch_up, ["a"], "the gap is caught up, not reset");
+    assert_eq!(
+        (state(&mut c, "a").starting_cursor, c.cursor("a")?),
+        (Some(100), Some(100)),
+        "only the first initialization writes the origin"
+    );
+    Ok(())
 }
 
 /// Unsubscribing through the transaction path removes whatever identity the
@@ -128,10 +320,15 @@ fn set_channel_removes_the_current_identity_and_recreation_starts_over() {
         .unwrap();
     assert!(c.subscription_state("a").unwrap().is_none());
     assert!(c.subscription_generation() > generation);
-    subscribe(&mut c, "a");
+    c.transaction(|tx| tx.set_channel("a".into(), true))
+        .unwrap();
     let after = state(&mut c, "a");
     assert_ne!(after.subscription_id, before.subscription_id);
-    assert_eq!((after.starting_cursor, after.cursor), (Some(0), Some(0)));
+    assert_eq!(
+        (after.starting_cursor, after.cursor),
+        (None, None),
+        "the recreated subscription waits for its own first boundary"
+    );
 }
 
 /// `remove_subscription` is fenced by identity: an old handle's unsubscribe
@@ -285,11 +482,17 @@ fn the_table_refuses_a_half_initialized_cursor_pair() {
     assert!(error.contains("UNIQUE"), "one identity per row: {error}");
 }
 
-/// A subscription's identity is stored, serializable state the host can carry.
+/// A subscription's identity is stored, serializable state the host can carry;
+/// an uninitialized boundary travels as null, never as zero.
 #[test]
 fn subscription_state_is_serializable() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    let registered = c.ensure_subscription("waiting").unwrap();
+    assert_eq!(
+        serde_json::to_value(&registered).unwrap(),
+        json!({"scope":"waiting","subscriptionId":registered.subscription_id,"startingCursor":null,"cursor":null})
+    );
     subscribe(&mut c, "a");
     let state = state(&mut c, "a");
     assert_eq!(

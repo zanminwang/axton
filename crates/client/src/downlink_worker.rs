@@ -125,6 +125,11 @@ pub struct DownlinkWorker {
     /// A session an enqueued event ended; the next pump tells the host to close
     /// its socket.
     closing: Option<(u64, Option<String>)>,
+    /// The subscription identity of every Scope the open session subscribed,
+    /// snapshotted with the generation when it began. It fences the boundaries
+    /// its acknowledgement establishes: a Scope that has been unsubscribed, or
+    /// recreated, since is another subscription and takes nothing from it.
+    expected: BTreeMap<String, u64>,
 }
 
 /// Collect one page's outcome into the actions: the push lane wakes and the
@@ -288,6 +293,7 @@ impl DownlinkWorker {
         self.pages.clear();
         self.active = None;
         self.again = false;
+        self.expected.clear();
     }
 
     /// A protocol violation or a transport failure: the session ends and the
@@ -378,10 +384,7 @@ impl DownlinkWorker {
             };
             let committed = match control {
                 Control::Acknowledged(ack) => {
-                    self.acknowledged(client, &ack, actions)?;
-                    // #150 Task 2 commits the first delivery boundary here: it
-                    // must answer `true` so one pump still holds one commit.
-                    false
+                    self.acknowledged(client, &ack, now, entropy, actions)?
                 }
                 Control::Overflow => {
                     self.recover(client, actions)?;
@@ -413,21 +416,27 @@ impl DownlinkWorker {
         Ok(())
     }
 
-    /// Snapshot the channels and the generation; with no channels the session
-    /// ends successfully and the lane stays idle until a subscribe wakes it.
+    /// Snapshot the desired Scopes, their subscription identities and the
+    /// generation; with no Scope the session ends successfully and the lane
+    /// stays idle until a subscribe wakes it. A Scope still waiting for its
+    /// first boundary belongs to the set the socket asks for.
     fn begin<S: ClientStore>(
         &mut self,
         client: &mut Client<S>,
         now: u64,
         actions: &mut Vec<DownlinkAction>,
     ) -> Result<()> {
-        let channels: Vec<String> = client.desired_channels()?.into_iter().collect();
-        if channels.is_empty() {
+        let desired = client.subscription_states()?;
+        if desired.is_empty() {
             self.driver.complete(true, now, 0);
             return Ok(());
         }
+        self.expected = desired
+            .iter()
+            .map(|s| (s.scope.clone(), s.subscription_id))
+            .collect();
         let (epoch, subscribe) = self.session.begin(
-            channels,
+            self.expected.keys().cloned().collect(),
             client.declared_models(),
             client.subscription_generation(),
         )?;
@@ -435,25 +444,37 @@ impl DownlinkWorker {
         Ok(())
     }
 
-    /// The handshake landed. Every channel at its head: the stream is the truth
-    /// from here. Any channel behind: one pull from the durable cursors first.
+    /// The handshake landed: one transaction commits the first delivery
+    /// boundary of every subscription still waiting for one and leaves every
+    /// initialized cursor where it is
+    /// ([`Client::initialize_subscriptions`]). Status follows that commit and
+    /// no queued page is applied before it, so the answer is `true` whenever a
+    /// boundary landed and one pump still holds one commit. A channel behind
+    /// its acknowledged head catches up over HTTP first; a head below a
+    /// committed cursor is a server-state fault that ends the session.
     fn acknowledged<S: ClientStore>(
         &mut self,
         client: &mut Client<S>,
         ack: &SubscriptionAck,
+        now: u64,
+        entropy: u64,
         actions: &mut Vec<DownlinkAction>,
-    ) -> Result<()> {
-        let mut behind = false;
-        for (channel, head) in &ack.cursors {
-            // An uninitialized subscription has no cursor to be behind.
-            if client.cursor(channel)?.is_some_and(|cursor| *head > cursor) {
-                behind = true;
-            }
+    ) -> Result<bool> {
+        let initialization = client.initialize_subscriptions(&self.expected, &ack.cursors)?;
+        if let Some(reason) = initialization.fault {
+            self.fail(client, Some(reason), now, entropy);
+            return Ok(false);
         }
-        if behind {
-            return self.pull(client, actions);
+        let committed = !initialization.initialized.is_empty();
+        if committed {
+            actions.push(DownlinkAction::Changed {
+                scopes: initialization.initialized,
+            });
         }
-        Ok(())
+        if !initialization.catch_up.is_empty() {
+            self.pull(client, actions)?;
+        }
+        Ok(committed)
     }
 
     /// Recover every channel from its durable cursor after lost frames. A pull

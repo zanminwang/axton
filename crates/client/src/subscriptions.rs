@@ -10,6 +10,7 @@ use crate::{Client, SUBSCRIPTION_MARK};
 use axton_core::{MAX_SAFE_INTEGER, Result, invalid};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 /// One stored subscription. `subscription_id` is client-local and never
 /// recycled: it fences a handle, an acknowledgement or a request against the
@@ -23,6 +24,21 @@ pub struct SubscriptionState {
     pub starting_cursor: Option<u64>,
     /// How far delivery has committed, at or above `starting_cursor`.
     pub cursor: Option<u64>,
+}
+
+/// What one acknowledgement's initialization decided, in one local
+/// transaction: nothing else of it is observable, and a `fault` means nothing
+/// was written at all.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Initialization {
+    /// The Scopes whose first delivery boundary this transaction committed.
+    pub initialized: Vec<String>,
+    /// The already initialized Scopes whose committed cursor is behind the
+    /// acknowledged head: ordinary catch-up fills the gap.
+    pub catch_up: Vec<String>,
+    /// Why the acknowledgement was refused, with no row touched: a protocol or
+    /// server-state fault the session ends with.
+    pub fault: Option<String>,
 }
 
 const COLUMNS: &str = "channel, subscription_id, starting_cursor, cursor";
@@ -120,6 +136,70 @@ impl<S: ClientStore> Engine<'_, S> {
         )?;
         Ok(affected == 1)
     }
+    /// Establish the first delivery boundaries one acknowledgement negotiated.
+    /// `expected` is the identity map the session snapshotted when it
+    /// subscribed and `heads` what the server acknowledged for exactly those
+    /// Scopes. Every Scope is decided before anything is written, so a fault
+    /// leaves the whole acknowledgement without effect:
+    ///
+    /// - an acknowledgement that names another set, or a head no host can
+    ///   represent, is malformed and is refused;
+    /// - a Scope whose stored subscription is another one, or none, is stale
+    ///   work and is skipped;
+    /// - an uninitialized Scope takes `starting_cursor = cursor = head`;
+    /// - a head below an initialized cursor is a server-state fault, never a
+    ///   rewind;
+    /// - any other initialized Scope keeps its cursor, and a head beyond it is
+    ///   reported for catch-up.
+    pub fn initialize_subscriptions(
+        &mut self,
+        expected: &BTreeMap<String, u64>,
+        heads: &BTreeMap<String, u64>,
+    ) -> Result<Initialization> {
+        let mut outcome = Initialization::default();
+        if !heads.keys().eq(expected.keys()) {
+            outcome.fault =
+                Some("acknowledged Scopes are not the ones this session subscribed".into());
+            return Ok(outcome);
+        }
+        let mut boundaries = Vec::new();
+        for (scope, head) in heads {
+            if *head > MAX_SAFE_INTEGER {
+                outcome.fault = Some(format!(
+                    "acknowledged head {head} for {scope} is beyond the safe integer range"
+                ));
+                return Ok(outcome);
+            }
+            let Some(state) = self.subscription(scope)? else {
+                continue;
+            };
+            if expected.get(scope) != Some(&state.subscription_id) {
+                continue;
+            }
+            // The stored pair moves together, so the cursor tells an
+            // uninitialized subscription from an initialized one at zero.
+            match state.cursor {
+                None => boundaries.push((scope.clone(), state.subscription_id, *head)),
+                Some(cursor) if *head < cursor => {
+                    outcome.fault = Some(format!(
+                        "acknowledged head {head} for {scope} is below its committed cursor {cursor}"
+                    ));
+                    return Ok(outcome);
+                }
+                Some(cursor) => {
+                    if *head > cursor {
+                        outcome.catch_up.push(scope.clone());
+                    }
+                }
+            }
+        }
+        for (scope, subscription_id, head) in boundaries {
+            if self.initialize_subscription(&scope, subscription_id, head)? {
+                outcome.initialized.push(scope);
+            }
+        }
+        Ok(outcome)
+    }
     /// Move the cursor of the initialized subscription `subscription_id`
     /// names. An update, never an insert: it cannot resurrect a Scope this
     /// client unsubscribed, cannot initialize one whose first boundary is still
@@ -197,6 +277,23 @@ impl<S: ClientStore> Client<S> {
     pub fn subscription_state(&mut self, scope: &str) -> Result<Option<SubscriptionState>> {
         self.view(|e| e.subscription(scope))
     }
+    /// Every subscription with its identity and boundary: the set a live
+    /// session subscribes for, and the identities its acknowledgement is
+    /// fenced by.
+    pub fn subscription_states(&mut self) -> Result<Vec<SubscriptionState>> {
+        self.view(|e| e.subscription_states())
+    }
+    /// Commit the first delivery boundaries one acknowledgement negotiated, in
+    /// one local transaction; see [`Engine::initialize_subscriptions`]. The
+    /// answer says which Scopes were initialized - status follows the commit -
+    /// and which initialized ones need catch-up.
+    pub fn initialize_subscriptions(
+        &mut self,
+        expected: &BTreeMap<String, u64>,
+        heads: &BTreeMap<String, u64>,
+    ) -> Result<Initialization> {
+        self.write(|e| e.initialize_subscriptions(expected, heads))
+    }
     /// Unsubscribe the registration `subscription_id` names. A Scope whose
     /// current subscription is another one is left alone: an old handle cannot
     /// remove the subscription that replaced it.
@@ -221,7 +318,7 @@ impl<S: ClientStore> Client<S> {
     /// the set a live session asks for.
     pub fn desired_channels(&mut self) -> Result<std::collections::BTreeSet<String>> {
         Ok(self
-            .view(|e| e.subscription_states())?
+            .subscription_states()?
             .into_iter()
             .map(|s| s.scope)
             .collect())

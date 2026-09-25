@@ -332,10 +332,7 @@ fn page_from_a_previous_subscription_is_stale_not_a_gap() {
     c.apply_page(page("a", 0, 1, Some("A"))).unwrap();
     let in_flight = c.downlink_request().unwrap().unwrap();
     assert!(in_flight.contains("\"cursors\":{\"a\":1}"));
-    c.transaction(|tx| tx.set_channel("a".into(), false))
-        .unwrap();
-    c.transaction(|tx| tx.set_channel("a".into(), true))
-        .unwrap();
+    resubscribe(&mut c, "a");
     assert_eq!(c.cursor("a").unwrap(), Some(0));
 
     // apply_page: the answer to the old request is dropped, the cursor stays at 0
@@ -356,10 +353,7 @@ fn page_from_a_previous_subscription_is_stale_not_a_gap() {
     // receive_downlink: covered rather than recover, so the SDK does not re-catch-up.
     let request = PullRequest::decode(c.downlink_request().unwrap().unwrap().as_bytes()).unwrap();
     assert_eq!(request.cursors["a"], 2);
-    c.transaction(|tx| tx.set_channel("a".into(), false))
-        .unwrap();
-    c.transaction(|tx| tx.set_channel("a".into(), true))
-        .unwrap();
+    resubscribe(&mut c, "a");
     let progress = c
         .receive_downlink(page("a", 2, 3, Some("C")), Some(request))
         .unwrap();
@@ -369,10 +363,7 @@ fn page_from_a_previous_subscription_is_stale_not_a_gap() {
     // new subscription issues its own request from the same cursor; the fresh
     // answer applies, and the obsolete answer is then dropped.
     let old = PullRequest::decode(c.downlink_request().unwrap().unwrap().as_bytes()).unwrap();
-    c.transaction(|tx| tx.set_channel("a".into(), false))
-        .unwrap();
-    c.transaction(|tx| tx.set_channel("a".into(), true))
-        .unwrap();
+    resubscribe(&mut c, "a");
     let fresh = PullRequest::decode(c.downlink_request().unwrap().unwrap().as_bytes()).unwrap();
     assert_eq!((old.cursors["a"], fresh.cursors["a"]), (0, 0));
     // Stamps keep counting up: the retained row only takes newer content.
@@ -387,10 +378,7 @@ fn page_from_a_previous_subscription_is_stale_not_a_gap() {
     assert_eq!(progress.disposition, "covered");
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "fresh");
     // Back to a clean channel for the SyncCycle steps below.
-    c.transaction(|tx| tx.set_channel("a".into(), false))
-        .unwrap();
-    c.transaction(|tx| tx.set_channel("a".into(), true))
-        .unwrap();
+    resubscribe(&mut c, "a");
     // An unrequested page beyond the cursor is still a gap to recover from.
     let progress = c
         .receive_downlink(page("a", 2, 3, Some("C")), None)
@@ -402,10 +390,7 @@ fn page_from_a_previous_subscription_is_stale_not_a_gap() {
     cycle.restart();
     let action = cycle.next(&mut c).unwrap().unwrap();
     assert_eq!(action.kind, "pull");
-    c.transaction(|tx| tx.set_channel("a".into(), false))
-        .unwrap();
-    c.transaction(|tx| tx.set_channel("a".into(), true))
-        .unwrap();
+    resubscribe(&mut c, "a");
     cycle
         .complete(
             &mut c,
@@ -440,10 +425,7 @@ fn older_subscription_response_cannot_discard_a_fresh_response() {
     let mut c = open(&dir.path().join("db"));
     subscribe(&mut c, "a");
     let old = PullRequest::decode(c.downlink_request().unwrap().unwrap().as_bytes()).unwrap();
-    c.transaction(|tx| tx.set_channel("a".into(), false))
-        .unwrap();
-    c.transaction(|tx| tx.set_channel("a".into(), true))
-        .unwrap();
+    resubscribe(&mut c, "a");
     let fresh = PullRequest::decode(c.downlink_request().unwrap().unwrap().as_bytes()).unwrap();
     // The requests have identical wire identities. Receiving the old answer
     // first must not consume the fresh request and discard its later answer.

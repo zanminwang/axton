@@ -97,7 +97,31 @@ struct Lane {
 }
 impl Lane {
     fn new(dir: &std::path::Path) -> Self {
-        let mut client = common::open(&dir.join("db"));
+        Self::of(common::open(&dir.join("db")))
+    }
+    /// A replica rebuilt from the layout this issue replaced: `a` and `b` carry
+    /// over as Scope names with fresh identities and no delivery boundary, and
+    /// their old cursors stay in the file that was left behind
+    /// ([rebuild](rebuild.rs)).
+    fn rebuilt(dir: &std::path::Path) -> Self {
+        let path = dir.join("db");
+        let mut store = SqliteStore::open(&path).unwrap();
+        store
+            .execute_batch(
+                "CREATE TABLE axton_client (client_id TEXT PRIMARY KEY, next_ordinal INTEGER NOT NULL, next_push INTEGER NOT NULL, generation INTEGER NOT NULL, last_completed_push INTEGER NOT NULL DEFAULT 0, push_models TEXT, push_results TEXT);
+                 CREATE TABLE axton_subscription (channel TEXT PRIMARY KEY, cursor INTEGER NOT NULL);
+                 INSERT INTO axton_client (client_id, next_ordinal, next_push, generation) VALUES ('old', 1, 1, 1);
+                 INSERT INTO axton_subscription VALUES ('a', 9);
+                 INSERT INTO axton_subscription VALUES ('b', 4);",
+            )
+            .unwrap();
+        drop(store);
+        let factory: StoreFactory<SqliteStore> = Box::new(|p| SqliteStore::open(p));
+        let client = Client::open_at(&path, schema(), factory, false).unwrap();
+        assert!(client.schema_state().rebuilt);
+        Self::of(client)
+    }
+    fn of(mut client: Client<SqliteStore>) -> Self {
         seed(&mut client, "local");
         Self {
             client,
@@ -152,7 +176,8 @@ impl Lane {
             body: text(page),
         })
     }
-    /// Every channel a downlink test drives is subscribed and initialized.
+    /// How far `channel` committed delivery; `None` while it waits for its
+    /// first boundary.
     fn cursor(&mut self, channel: &str) -> Option<u64> {
         self.client.cursor(channel).unwrap()
     }
@@ -161,11 +186,22 @@ impl Lane {
             .transaction(|tx| tx.set_channel(channel.into(), subscribed))
             .unwrap();
     }
+    /// A subscription an earlier session left at `cursor`: registered, and its
+    /// first boundary already committed there, as that session's
+    /// acknowledgement did. Every session this lane then opens negotiates
+    /// against durable progress instead of initializing.
+    fn saved(&mut self, channel: &str, cursor: u64) {
+        self.set(channel, true);
+        acknowledge(&mut self.client, &[(channel, cursor)]);
+        assert_eq!(self.cursor(channel), Some(cursor));
+    }
     fn text(&mut self) -> Value {
         self.client.read(&key()).unwrap().unwrap()["text"].clone()
     }
     /// Subscribe `channel`, start the lane and acknowledge at `head`: the
-    /// epoch of the socket and what the acknowledgement asked for.
+    /// epoch of the socket and what the acknowledgement asked for. A channel
+    /// with no committed boundary initializes at `head`; one [`Lane::saved`]
+    /// left behind catches up to it.
     fn streaming(&mut self, channel: &str, head: u64) -> (u64, Vec<DownlinkAction>) {
         self.set(channel, true);
         let actions = self.send(DownlinkEvent::Start);
@@ -176,18 +212,388 @@ impl Lane {
     }
 }
 
+/// The behaviour change of [#150](https://github.com/zanminwang/axton/issues/150):
+/// a fresh subscription's first delivery boundary is the head its first
+/// handshake acknowledged. It asks for no history, and the stream is the truth
+/// from that head on.
+#[test]
+fn a_fresh_subscription_initializes_at_the_acknowledged_head_and_loads_no_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.set("a", true);
+    assert_eq!(
+        lane.cursor("a"),
+        None,
+        "a registration has no delivery position until a head is acknowledged"
+    );
+    let actions = lane.send(DownlinkEvent::Start);
+    let (epoch, subscribe) = open(&actions[0]);
+    assert_eq!(
+        subscribe.channels,
+        ["a"],
+        "an uninitialized subscription is still asked for on the socket"
+    );
+    assert_eq!(actions.len(), 1);
+    assert_eq!(
+        lane.message(epoch, ack(&[("a", 100)])),
+        vec![DownlinkAction::Changed {
+            scopes: vec!["a".into()]
+        }],
+        "the acknowledged head is committed and announced; no history is pulled"
+    );
+    let state = lane.client.subscription_state("a").unwrap().unwrap();
+    assert_eq!(
+        (state.starting_cursor, state.cursor),
+        (Some(100), Some(100)),
+        "both cursor fields are the acknowledged head"
+    );
+    // From that boundary the stream applies directly.
+    assert_eq!(
+        lane.frame(epoch, &page("a", 100, 101, Some("from now"))),
+        applied(&["a"])
+    );
+    assert_eq!(
+        (lane.cursor("a"), lane.text()),
+        (Some(101), json!("from now"))
+    );
+}
+
+/// Subscribing offline is durable intent and nothing else: no boundary, no
+/// request, nothing for the lane to do until connectivity gives it a head.
+#[test]
+fn an_offline_subscribe_registers_without_a_boundary_and_asks_for_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.set("a", true);
+    assert_eq!(lane.cursor("a"), None);
+    assert_eq!(
+        lane.client.subscriptions().unwrap(),
+        vec![],
+        "no delivery position, so no cursor to pull from"
+    );
+    assert!(lane.client.desired_channels().unwrap().contains("a"));
+    assert_eq!(
+        lane.client.downlink_request().unwrap(),
+        None,
+        "never coerced into a request from zero"
+    );
+    assert_eq!(
+        lane.drain(),
+        vec![],
+        "the lane was never started: the intent waits"
+    );
+}
+
+/// Zero is a boundary like any other: an unknown Scope acknowledged at head
+/// zero is initialized there, not left uninitialized.
+#[test]
+fn an_acknowledgement_at_head_zero_initializes_at_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    let (epoch, acknowledged) = lane.streaming("a", 0);
+    assert_eq!(
+        acknowledged,
+        vec![DownlinkAction::Changed {
+            scopes: vec!["a".into()]
+        }]
+    );
+    let state = lane.client.subscription_state("a").unwrap().unwrap();
+    assert_eq!((state.starting_cursor, state.cursor), (Some(0), Some(0)));
+    assert_eq!(
+        lane.frame(epoch, &page("a", 0, 1, Some("first"))),
+        applied(&["a"]),
+        "the stream applies from zero"
+    );
+}
+
+/// Reconnect is not a new origin: a subscription saved at 100 keeps it and
+/// fetches the gap up to the newly acknowledged 120.
+#[test]
+fn a_reconnect_catches_up_from_the_saved_cursor_instead_of_the_new_head() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.saved("a", 100);
+    let (_, acknowledged) = lane.streaming("a", 120);
+    let (id, pull) = request(&acknowledged[0]);
+    assert_eq!(cursors(&pull), vec![("a", 100)]);
+    assert_eq!(
+        acknowledged.len(),
+        1,
+        "nothing was initialized, so nothing is announced"
+    );
+    assert_eq!(
+        lane.response(id, &page("a", 100, 120, Some("the gap"))),
+        applied(&["a"])
+    );
+    let state = lane.client.subscription_state("a").unwrap().unwrap();
+    assert_eq!(
+        (state.starting_cursor, state.cursor),
+        (Some(100), Some(120)),
+        "the origin is fixed for this subscription; only the cursor moved"
+    );
+}
+
+/// A head below committed progress is a reported server-state fault: the
+/// session ends with it and no cursor is rewound or reinitialized.
+#[test]
+fn a_head_below_the_committed_cursor_is_a_fault_that_rewinds_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.saved("a", 120);
+    lane.set("b", true);
+    let (epoch, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let actions = lane.message(epoch, ack(&[("a", 100), ("b", 7)]));
+    let DownlinkAction::Close {
+        epoch: closed,
+        reason: Some(reason),
+    } = &actions[0]
+    else {
+        panic!("expected a close with a reason, got {actions:?}")
+    };
+    assert_eq!(*closed, epoch);
+    assert!(
+        reason.contains("below its committed cursor 120"),
+        "{reason}"
+    );
+    assert!((200..=300).contains(&wait(&actions[1])));
+    assert_eq!(lane.cursor("a"), Some(120), "progress is untouched");
+    assert_eq!(
+        lane.cursor("b"),
+        None,
+        "the whole acknowledgement was refused: b was not initialized either"
+    );
+}
+
+/// The local cursor decides what a page is: at 120 a page spanning 120 to 125
+/// applies directly, while one from 124 waits for the pull that connects it.
+#[test]
+fn a_page_spanning_the_cursor_applies_and_one_starting_beyond_it_is_repaired() {
+    let direct = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(direct.path());
+    lane.saved("a", 120);
+    let (epoch, acknowledged) = lane.streaming("a", 120);
+    assert_eq!(acknowledged, vec![], "at its head: nothing to do");
+    assert_eq!(
+        lane.frame(epoch, &page("a", 120, 125, Some("direct"))),
+        applied(&["a"])
+    );
+    assert_eq!(
+        (lane.cursor("a"), lane.text()),
+        (Some(125), json!("direct"))
+    );
+
+    let gapped = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(gapped.path());
+    lane.saved("a", 120);
+    let (epoch, _) = lane.streaming("a", 120);
+    let actions = lane.frame(epoch, &page("a", 124, 125, Some("beyond")));
+    let (id, repair) = request(&actions[0]);
+    assert_eq!(
+        cursors(&repair),
+        vec![("a", 120)],
+        "one pull from the cursor"
+    );
+    assert_eq!(actions.len(), 1);
+    assert_eq!(
+        lane.cursor("a"),
+        Some(120),
+        "the page waits, nothing applied"
+    );
+    // The repair connects the held page, which is applied in a commit of its own.
+    let actions = lane.response(id, &page("a", 120, 124, Some("repair")));
+    assert_eq!(actions, [applied(&["a"]), applied(&["a"])].concat());
+    assert_eq!(
+        (lane.cursor("a"), lane.text()),
+        (Some(125), json!("beyond"))
+    );
+}
+
+/// One socket carries only what this client subscribes: an initialized Scope
+/// keeps its cursor and catches up, one waiting for a boundary is initialized
+/// at its head in the same transaction, and a Scope with no row is in neither.
+#[test]
+fn a_mixed_set_catches_up_one_scope_initializes_another_and_never_asks_for_a_third() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.saved("a", 80);
+    lane.set("b", true);
+    let actions = lane.send(DownlinkEvent::Start);
+    let (epoch, subscribe) = open(&actions[0]);
+    assert_eq!(
+        subscribe.channels,
+        ["a", "b"],
+        "c has no row: it is not desired"
+    );
+    let acknowledged = lane.message(epoch, ack(&[("a", 100), ("b", 200)]));
+    assert_eq!(
+        acknowledged[0],
+        DownlinkAction::Changed {
+            scopes: vec!["b".into()]
+        },
+        "only b crossed into initialized"
+    );
+    let (id, pull) = request(&acknowledged[1]);
+    assert_eq!(
+        cursors(&pull),
+        vec![("a", 80), ("b", 200)],
+        "a catches up from 80; b asks from the boundary it just committed"
+    );
+    assert!(!pull.cursors.contains_key("c"));
+    assert_eq!(acknowledged.len(), 2);
+    let b = lane.client.subscription_state("b").unwrap().unwrap();
+    assert_eq!((b.starting_cursor, b.cursor), (Some(200), Some(200)));
+    let a = lane.client.subscription_state("a").unwrap().unwrap();
+    assert_eq!(
+        (a.starting_cursor, a.cursor),
+        (Some(80), Some(80)),
+        "a's committed progress is preserved, not replaced by 100"
+    );
+    assert_eq!(
+        lane.response(
+            id,
+            &multi(
+                &[("a", 80, 100, 100), ("b", 200, 200, 200)],
+                vec![authority(Some("caught up"), 90)]
+            )
+        ),
+        applied(&["a"]),
+        "only a moved"
+    );
+    assert_eq!((lane.cursor("a"), lane.cursor("b")), (Some(100), Some(200)));
+    assert!(
+        lane.client.subscription_state("c").unwrap().is_none(),
+        "c was never touched by any of it"
+    );
+}
+
+/// Neither lane asks for anything while the only subscription waits for its
+/// first boundary: not the automatic catch-up, not a manual delta request.
+#[test]
+fn an_uninitialized_subscription_produces_no_request_in_either_lane() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.set("a", true);
+    let mut cycle = SyncCycle::default();
+    cycle.restart();
+    assert!(
+        cycle.next(&mut lane.client).unwrap().is_none(),
+        "a delta request with no initialized subscription is no work"
+    );
+    let actions = lane.send(DownlinkEvent::Start);
+    let (epoch, _) = open(&actions[0]);
+    assert_eq!(
+        actions.len(),
+        1,
+        "the session negotiates before anything is requested"
+    );
+    // Once the handshake committed the boundary, both lanes ask from it.
+    assert_eq!(
+        lane.message(epoch, ack(&[("a", 7)])),
+        vec![DownlinkAction::Changed {
+            scopes: vec!["a".into()]
+        }]
+    );
+    let actions = lane.send(DownlinkEvent::Overflow { epoch });
+    assert_eq!(cursors(&request(&actions[0]).1), vec![("a", 7)]);
+    cycle.restart();
+    let manual = cycle.next(&mut lane.client).unwrap().expect("a pull");
+    assert_eq!(manual.kind, "pull");
+    assert!(manual.body.contains("\"cursors\":{\"a\":7}"), "{manual:?}");
+}
+
+/// A duplicate registration changes no membership: the socket keeps streaming,
+/// with no close, no reopen and no second subscribe frame.
+#[test]
+fn a_duplicate_registration_opens_no_new_socket() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    let (epoch, _) = lane.streaming("a", 100);
+    let generation = lane.client.subscription_generation();
+    lane.set("a", true);
+    assert_eq!(
+        lane.client.subscription_generation(),
+        generation,
+        "an identical call is not a membership change"
+    );
+    assert_eq!(lane.drain(), vec![], "nothing to reconcile");
+    assert_eq!(
+        lane.frame(epoch, &page("a", 100, 101, Some("still streaming"))),
+        applied(&["a"])
+    );
+}
+
+/// A rolled-back registration is no intent at all: the lane never asks for it.
+#[test]
+fn a_rolled_back_registration_reaches_no_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    let failed: Result<()> = lane.client.transaction(|tx| {
+        tx.set_channel("a".into(), true)?;
+        Err(invalid("host failure"))
+    });
+    assert!(failed.is_err());
+    assert!(lane.client.subscription_state("a").unwrap().is_none());
+    assert_eq!(
+        lane.send(DownlinkEvent::Start),
+        vec![],
+        "nothing subscribed: the lane stays idle"
+    );
+    lane.set("b", true);
+    let (_, subscribe) = open(&lane.send(DownlinkEvent::Wake)[0]);
+    assert_eq!(
+        subscribe.channels,
+        ["b"],
+        "only the committed registration is desired"
+    );
+}
+
+/// A replica rebuilt from an earlier layout carries the Scope names with no
+/// delivery boundary ([rebuild](rebuild.rs)); the lane starts, the first
+/// acknowledgement commits their boundaries at the negotiated heads, and
+/// streaming resumes from there.
+#[test]
+fn scopes_carried_through_a_rebuild_initialize_at_the_next_acknowledged_head() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::rebuilt(dir.path());
+    assert_eq!((lane.cursor("a"), lane.cursor("b")), (None, None));
+    let actions = lane.send(DownlinkEvent::Start);
+    let (epoch, subscribe) = open(&actions[0]);
+    assert_eq!(
+        subscribe.channels,
+        ["a", "b"],
+        "the carried Scopes are desired although neither has a boundary"
+    );
+    assert_eq!(
+        lane.message(epoch, ack(&[("a", 30), ("b", 40)])),
+        vec![DownlinkAction::Changed {
+            scopes: vec!["a".into(), "b".into()]
+        }],
+        "one transaction initializes both, at their own heads"
+    );
+    assert_eq!((lane.cursor("a"), lane.cursor("b")), (Some(30), Some(40)));
+    assert_eq!(
+        lane.frame(epoch, &page("a", 30, 31, Some("resumed"))),
+        applied(&["a"])
+    );
+    assert_eq!(lane.text(), "resumed");
+}
+
 #[test]
 fn an_enqueued_page_commits_nothing_until_the_pump_applies_it() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
-    lane.set("a", true);
+    lane.saved("a", 0);
     let actions = lane.send(DownlinkEvent::Start);
     let (epoch, _) = open(&actions[0]);
     lane.enqueue(DownlinkEvent::Message {
         epoch,
         body: ack(&[("a", 0)]),
     });
-    assert_eq!(lane.drain(), vec![], "at the head: no catch-up");
+    assert_eq!(
+        lane.drain(),
+        vec![],
+        "at the head, with a boundary already committed: nothing to do"
+    );
     // The frame only enters the queue: no transaction runs inside the callback.
     lane.enqueue(DownlinkEvent::Message {
         epoch,
@@ -320,6 +726,7 @@ fn an_http_failure_retries_the_session_and_a_stale_failure_is_ignored() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
     // The acknowledged head is beyond the cursor: one catch-up is in flight.
+    lane.saved("a", 0);
     let (epoch, actions) = lane.streaming("a", 3);
     let (id, _) = request(&actions[0]);
     assert_eq!(
@@ -356,7 +763,7 @@ fn a_session_subscribes_pulls_only_when_behind_and_then_streams() {
         vec![],
         "no channels: the lane stays idle until a subscribe wakes it"
     );
-    lane.set("a", true);
+    lane.saved("a", 0);
     let actions = lane.send(DownlinkEvent::Wake);
     let (epoch, subscribe) = open(&actions[0]);
     assert_eq!(subscribe.channels, ["a"]);
@@ -431,11 +838,8 @@ fn a_session_subscribes_pulls_only_when_behind_and_then_streams() {
 fn heads_equal_to_the_cursors_mean_no_catch_up_at_all() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
-    lane.set("a", true);
-    lane.set("b", true);
-    lane.client
-        .apply_page(multi(&[("a", 0, 3, 3), ("b", 0, 2, 2)], vec![]))
-        .unwrap();
+    lane.saved("a", 3);
+    lane.saved("b", 2);
     let (epoch, subscribe) = open(&lane.send(DownlinkEvent::Start)[0]);
     assert_eq!(subscribe.channels, ["a", "b"]);
     assert_eq!(
@@ -457,8 +861,8 @@ fn heads_equal_to_the_cursors_mean_no_catch_up_at_all() {
 fn one_pull_covers_every_channel_and_continues_while_any_channel_is_full() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
-    lane.set("b", true);
-    lane.set("a", true);
+    lane.saved("b", 0);
+    lane.saved("a", 0);
     let actions = lane.send(DownlinkEvent::Start);
     let (epoch, subscribe) = open(&actions[0]);
     assert_eq!(
@@ -499,8 +903,8 @@ fn one_pull_covers_every_channel_and_continues_while_any_channel_is_full() {
 fn overflow_discards_the_queue_and_recovers_every_channel_after_the_request_in_flight() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
-    lane.set("a", true);
-    lane.set("b", true);
+    lane.saved("a", 0);
+    lane.saved("b", 0);
     let (epoch, _) = open(&lane.send(DownlinkEvent::Start)[0]);
     let actions = lane.message(epoch, ack(&[("a", 1), ("b", 0)]));
     let (id, _) = request(&actions[0]);
@@ -548,7 +952,7 @@ fn overflow_discards_the_queue_and_recovers_every_channel_after_the_request_in_f
 fn the_frame_queue_is_bounded_and_overflows_into_recovery() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
-    lane.set("a", true);
+    lane.saved("a", 0);
     let (epoch, _) = open(&lane.send(DownlinkEvent::Start)[0]);
     assert_eq!(lane.message(epoch, ack(&[("a", 0)])), vec![]);
     // A gap frame stays queued behind one pull; the frames after it queue up.
@@ -582,7 +986,7 @@ fn the_frame_queue_is_bounded_and_overflows_into_recovery() {
 fn reports_reach_the_host_as_actions() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
-    lane.set("a", true);
+    lane.saved("a", 0);
     let (epoch, _) = open(&lane.send(DownlinkEvent::Start)[0]);
     lane.message(epoch, ack(&[("a", 0)]));
     lane.frame(epoch, &page("a", 0, 1, Some("A")));
@@ -620,7 +1024,7 @@ fn reports_reach_the_host_as_actions() {
 fn a_subscription_change_ends_the_session_and_the_next_one_uses_the_new_set() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
-    lane.set("a", true);
+    lane.saved("a", 0);
     let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
     let actions = lane.message(first, ack(&[("a", 3)]));
     let (id, pending) = request(&actions[0]);
@@ -667,7 +1071,7 @@ fn a_subscription_change_ends_the_session_and_the_next_one_uses_the_new_set() {
 fn a_dropped_socket_reconnects_with_backoff_and_resubscribes() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
-    lane.set("a", true);
+    lane.saved("a", 0);
     let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
     let actions = lane.message(first, ack(&[("a", 3)]));
     let (id, _) = request(&actions[0]);
@@ -707,7 +1111,7 @@ fn a_dropped_socket_reconnects_with_backoff_and_resubscribes() {
 fn protocol_violations_close_with_a_reason_and_retry() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
-    lane.set("a", true);
+    lane.saved("a", 0);
     let mut actions = lane.send(DownlinkEvent::Start);
     for (frame, reason) in [
         (
@@ -766,7 +1170,7 @@ fn protocol_violations_close_with_a_reason_and_retry() {
 fn pause_ends_the_session_without_backoff_resume_reopens_and_stop_is_final() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
-    lane.set("a", true);
+    lane.saved("a", 0);
     let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
     lane.message(first, ack(&[("a", 0)]));
     assert_eq!(
@@ -797,11 +1201,16 @@ fn pause_ends_the_session_without_backoff_resume_reopens_and_stop_is_final() {
     assert_eq!(lane.send(DownlinkEvent::Resume), vec![]);
 }
 
+/// An unsubscribe and a recreation replace the subscription: the recreated one
+/// is a new identity with no boundary, so the next session initializes it at
+/// the head it acknowledges, and whatever the old one had in flight applies to
+/// nothing.
 #[test]
-fn a_page_from_a_previous_subscription_is_stale_not_a_gap() {
+fn a_recreated_subscription_starts_over_at_the_next_acknowledged_head() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
-    lane.set("a", true);
+    lane.saved("a", 0);
+    let before = lane.client.subscription_state("a").unwrap().unwrap();
     let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
     let actions = lane.message(first, ack(&[("a", 9)]));
     let (id, issued) = request(&actions[0]);
@@ -817,27 +1226,41 @@ fn a_page_from_a_previous_subscription_is_stale_not_a_gap() {
         }
     );
     let (second, _) = open(&actions[1]);
+    let after = lane.client.subscription_state("a").unwrap().unwrap();
+    assert_ne!(after.subscription_id, before.subscription_id);
+    assert_eq!(
+        (after.starting_cursor, after.cursor),
+        (None, None),
+        "the recreated subscription has no boundary to catch up from"
+    );
     let actions = lane.message(second, ack(&[("a", 9)]));
-    let (fresh_id, fresh) = request(&actions[0]);
-    assert_eq!(cursors(&fresh), vec![("a", 0)]);
-    // The old answer reaches no request in flight; the engine's own gate keeps
-    // such a page stale rather than a gap ([downlink.rs] covers it directly).
+    assert_eq!(
+        actions,
+        vec![DownlinkAction::Changed {
+            scopes: vec!["a".into()]
+        }],
+        "it initializes at the head instead of reloading the Scope"
+    );
+    assert_eq!(lane.cursor("a"), Some(9));
+    // The old request's answer reaches no request in flight, and its range is
+    // below the new boundary anyway: nothing of it applies.
     assert_eq!(
         lane.response(id, &page("a", issued.cursors["a"], 9, Some("obsolete"))),
         vec![]
     );
+    assert_eq!(lane.text(), "local");
     assert_eq!(
-        lane.response(fresh_id, &page("a", 0, 9, Some("fresh"))),
+        lane.frame(second, &page("a", 9, 10, Some("from now"))),
         applied(&["a"])
     );
-    assert_eq!(lane.text(), "fresh");
+    assert_eq!(lane.text(), "from now");
 }
 
 #[test]
 fn every_event_of_a_replaced_socket_is_fenced_by_its_epoch() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
-    lane.set("a", true);
+    lane.saved("a", 0);
     let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
     let acknowledged = lane.message(first, ack(&[("a", 1)]));
     let (stale_id, _) = request(&acknowledged[0]);
@@ -871,7 +1294,7 @@ fn every_event_of_a_replaced_socket_is_fenced_by_its_epoch() {
 fn an_applied_page_leaves_the_push_lane_and_its_frozen_request_alone() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
-    lane.set("a", true);
+    lane.saved("a", 0);
     lane.client
         .transaction(|tx| tx.enqueue(mutation("queued")))
         .unwrap();

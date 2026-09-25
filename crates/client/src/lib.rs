@@ -26,7 +26,7 @@ pub use downlink_worker::*;
 pub use live::*;
 pub use query::{Direction, QueryOrder, QuerySpec};
 pub use store::*;
-pub use subscriptions::SubscriptionState;
+pub use subscriptions::{Initialization, SubscriptionState};
 pub use transport::*;
 
 use engine::Engine;
@@ -1087,21 +1087,18 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
             }
         }
     }
-    /// Subscribe or unsubscribe `channel` in this transaction. Subscribing an
+    /// Subscribe or unsubscribe `channel` in this transaction. Subscribing
+    /// registers durable intent with no delivery position; subscribing an
     /// already subscribed channel is not a membership change: it touches no
     /// cursor and leaves the subscription generation alone.
     pub fn set_channel(&mut self, channel: String, subscribed: bool) -> Result<()> {
         if subscribed {
-            let (state, created) = self.engine.ensure_subscription(&channel)?;
+            // Registration is intent only: the first delivery boundary is the
+            // head the Downlink worker's next handshake acknowledges, not zero
+            // ([#150](https://github.com/zanminwang/axton/issues/150)).
+            let (_, created) = self.engine.ensure_subscription(&channel)?;
             if created {
                 self.engine.mark_subscription(&channel);
-            }
-            // Task 2 (#150) removes this transitional initialization: the first
-            // boundary becomes the acknowledged server head, committed by the
-            // Downlink worker instead of by this registration.
-            if state.starting_cursor.is_none() {
-                self.engine
-                    .initialize_subscription(&channel, state.subscription_id, 0)?;
             }
             Ok(())
         } else {

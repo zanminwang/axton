@@ -144,6 +144,29 @@ class Client implements WritePort, MutatePort {
       removeScope: (scope) => _exclusive(() async {
         await _send({'op': 'channel', 'channel': scope, 'subscribed': false});
       }),
+      // Registration and the state read of one identity's durable load: local
+      // commands on the same serialized path, so calls for one Scope keep their
+      // order ([#151](https://github.com/zanminwang/axton/issues/151)).
+      requestBootstrap: (scope, subscriptionId) => _exclusive(
+        () async => BootstrapRun.fromRecord(
+          (await _send({
+                'op': 'scopeBootstrap',
+                'scope': scope,
+                'subscriptionId': subscriptionId,
+              }))
+              as Map<String, dynamic>,
+        ),
+      ),
+      bootstrapState: (scope, subscriptionId) => _exclusive(
+        () async => BootstrapRun.fromRecord(
+          (await _send({
+                'op': 'scopeBootstrapState',
+                'scope': scope,
+                'subscriptionId': subscriptionId,
+              }))
+              as Map<String, dynamic>,
+        ),
+      ),
       // A committed membership change wakes the lanes; Rust decides what it
       // means for the socket.
       committed: () {

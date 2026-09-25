@@ -19,7 +19,12 @@ export 'src/subscriptions.dart'
         SubscriptionState,
         SubscriptionInitialization,
         SubscriptionConnection,
-        SubscriptionClosedException;
+        SubscriptionClosedException,
+        BootstrapStatus,
+        BootstrapPhase,
+        BootstrapError,
+        BootstrapFailedException,
+        ClientClosedException;
 export 'src/connection.dart'
     show
         RuntimeConnection,

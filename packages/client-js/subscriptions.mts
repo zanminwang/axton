@@ -14,6 +14,26 @@ export type SubscriptionState = {
   startingCursor: number | null;
   cursor: number | null;
 };
+/**
+ * What the durable load of this registration's published history is doing
+ * ([#151](https://github.com/zanminwang/axton/issues/151)).
+ * `waiting-for-initialization` is a requested run with no starting boundary to
+ * bound its interval yet, `catching-up` a loaded interval whose completion
+ * barrier ordinary delivery has not reached, and `complete` says the initial
+ * publication coverage was processed - not that a snapshot was taken, nor that
+ * the Scope is currently fresh.
+ */
+export type BootstrapPhase =
+  | "not-requested"
+  | "waiting-for-initialization"
+  | "loading"
+  | "catching-up"
+  | "complete"
+  | "failed";
+export type BootstrapStatus = Readonly<{
+  phase: BootstrapPhase;
+  error: null | Readonly<{ code: string; message: string }>;
+}>;
 export type SubscriptionStatus = Readonly<{
   /** Whether this handle still names a live registration. */
   active: boolean;
@@ -21,12 +41,23 @@ export type SubscriptionStatus = Readonly<{
   initialization: "pending" | "ready";
   /** `live` means the session delivers normally, not that all history is loaded. */
   connection: "offline" | "connecting" | "catching-up" | "live" | "stopped";
+  /** The durable load of this Scope's published history, as it was last committed. */
+  bootstrap: BootstrapStatus;
 }>;
 export interface Subscription {
   readonly scope: string;
   readonly status: SubscriptionStatus;
   /** Deliver the current snapshot at once, then every change, until the returned function is called. */
   watch(listener: (status: SubscriptionStatus) => void): () => void;
+  /**
+   * Prepare this Scope's published history. The registration is submitted when
+   * the call is made, whether or not the returned Promise is awaited; the
+   * Promise resolves only after the completion transaction commits. Calls
+   * during one active run share it, a call after a valid completion resolves
+   * locally - offline too - and a call after a terminal failure explicitly
+   * retries the saved run.
+   */
+  bootstrap(): Promise<void>;
   unsubscribe(): Promise<void>;
 }
 /** Work attempted through a handle that is closed: unsubscribed, or stopped with its client. */
@@ -34,6 +65,12 @@ export const subscriptionClosed = () =>
   Object.assign(Error("subscription.closed"), {
     code: "subscription.closed" as const,
   });
+/** This process stopped waiting because its client closed; the durable task is untouched. */
+const clientClosed = () =>
+  Object.assign(Error("client_closed"), { code: "client_closed" as const });
+/** The stored failure of a run, as the waiters of that run are rejected with it. */
+const bootstrapFailed = (error: { code: string; message: string }) =>
+  Object.assign(Error(error.message), { code: error.code });
 
 /**
  * What the downlink lane tells the registry. It is transport state the lane
@@ -81,10 +118,33 @@ export type BootstrapRun = {
   };
 };
 
+/** How far a run has got, and the public phase that stored state projects to. */
+const PHASES: Record<
+  BootstrapRun["state"],
+  { rank: number; phase: BootstrapPhase }
+> = {
+  not_requested: { rank: 0, phase: "not-requested" },
+  // The worker writes `loading` on the first applied page, so a requested run
+  // whose interval is already bounded is loading as far as the caller is
+  // concerned; one without a starting boundary is waiting for #150.
+  requested: { rank: 1, phase: "loading" },
+  loading: { rank: 2, phase: "loading" },
+  catching_up: { rank: 3, phase: "catching-up" },
+  complete: { rank: 4, phase: "complete" },
+  failed: { rank: 4, phase: "failed" },
+};
+
 /** The native commands and host services the registry needs; the runtime owns the serialized command path. */
 export type SubscriptionCommands = {
   subscribe(scope: string): Promise<SubscriptionState>;
   state(scope: string): Promise<SubscriptionState | null>;
+  /** Register or explicitly retry the durable load of this identity, and answer its stored run. */
+  requestBootstrap(
+    scope: string,
+    subscriptionId: number,
+  ): Promise<BootstrapRun>;
+  /** The stored run of this identity, read through the same serialized path. */
+  bootstrapState(scope: string, subscriptionId: number): Promise<BootstrapRun>;
   /** Remove exactly the registration this identity names; `true` when a row went. */
   remove(scope: string, subscriptionId: number): Promise<boolean>;
   /** Remove whatever registration a Scope name has, in one command, so calls for one Scope keep their order. */
@@ -111,11 +171,33 @@ type Lane = {
   acknowledged: Set<string>;
 };
 
+/** The load commands of one identity, bound by the registry, and the wake a commit owes the lanes. */
+type BootstrapLoad = {
+  /** Register the run, or explicitly retry a failed one; answers what is stored. */
+  request(): Promise<BootstrapRun>;
+  read(): Promise<BootstrapRun>;
+  committed(): void;
+};
+/** One caller of `bootstrap()`, attached to the run the command answered with. */
+type Waiter = {
+  run: number;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+};
+const NOT_REQUESTED: BootstrapStatus = Object.freeze({
+  phase: "not-requested" as const,
+  error: null,
+});
+
 class Handle implements Subscription {
   readonly scope: string;
   readonly subscriptionId: number;
   #lane: Lane;
   #initialization: "pending" | "ready";
+  #load: BootstrapLoad;
+  /** The last committed run this handle has seen; phases never move backwards. */
+  #run: BootstrapRun | undefined;
+  #waiters: Waiter[] = [];
   /** This handle committed its own removal: further removals are a no-op. */
   #removed = false;
   /** The handle was stopped with its client: its status is readable, its work is not. */
@@ -129,6 +211,7 @@ class Handle implements Subscription {
     lane: Lane,
     report: (error: unknown) => void,
     remove: () => Promise<void>,
+    load: BootstrapLoad,
   ) {
     this.scope = state.scope;
     this.subscriptionId = state.subscriptionId;
@@ -136,6 +219,7 @@ class Handle implements Subscription {
     this.#initialization = state.startingCursor === null ? "pending" : "ready";
     this.#report = report;
     this.#remove = remove;
+    this.#load = load;
     this.#snapshot = this.#project();
   }
   get status(): SubscriptionStatus {
@@ -162,6 +246,25 @@ class Handle implements Subscription {
       active: !this.closed,
       initialization: this.#initialization,
       connection,
+      bootstrap: this.#bootstrap(),
+    });
+  }
+  /**
+   * What the stored run projects to. A `requested` run whose interval has no
+   * origin to bound it is waiting for #150 initialization rather than loading,
+   * and the stored record reports are not part of the public failure.
+   */
+  #bootstrap(): BootstrapStatus {
+    const run = this.#run;
+    if (!run) return NOT_REQUESTED;
+    return Object.freeze({
+      phase:
+        run.state === "requested" && this.#initialization === "pending"
+          ? ("waiting-for-initialization" as const)
+          : PHASES[run.state].phase,
+      error: run.error
+        ? Object.freeze({ code: run.error.code, message: run.error.message })
+        : null,
     });
   }
   /** Publish a new snapshot when anything changed; an observer's exception never reaches the caller. */
@@ -171,7 +274,10 @@ class Handle implements Subscription {
     if (
       next.active === previous.active &&
       next.initialization === previous.initialization &&
-      next.connection === previous.connection
+      next.connection === previous.connection &&
+      next.bootstrap.phase === previous.bootstrap.phase &&
+      next.bootstrap.error?.code === previous.bootstrap.error?.code &&
+      next.bootstrap.error?.message === previous.bootstrap.error?.message
     )
       return;
     this.#snapshot = next;
@@ -192,11 +298,104 @@ class Handle implements Subscription {
     this.#initialization = state.startingCursor === null ? "pending" : "ready";
     this.refresh();
   }
+  /**
+   * Read what is committed for this identity's load. A handle taken after a
+   * restart names a task that may already be running or finished, and no
+   * further transition has to commit for its status to be true.
+   */
+  observe(): void {
+    this.#load.read().then(
+      (run) => this.applyBootstrap(run),
+      (error) => {
+        if (!this.closed) this.#report(error);
+      },
+    );
+  }
+  /**
+   * One committed transition of this identity's load. The waiters of that run
+   * are settled by it whatever the status already shows, so a re-read that
+   * raced ahead of a lane signal cannot swallow an earlier run's outcome; the
+   * status itself never moves backwards.
+   */
+  applyBootstrap(run: BootstrapRun): void {
+    if (this.closed) return;
+    if (run.subscriptionId !== this.subscriptionId) return;
+    if (run.state === "complete") this.#settle(run.run, undefined);
+    else if (run.state === "failed")
+      this.#settle(
+        run.run,
+        bootstrapFailed(
+          // A failed run always carries its stored failure; the ledger refuses
+          // any other pairing.
+          run.error ?? {
+            code: "bootstrap.failed",
+            message: `the bootstrap of ${this.scope} failed`,
+          },
+        ),
+      );
+    const known = this.#run;
+    if (
+      known &&
+      (run.run < known.run ||
+        (run.run === known.run &&
+          PHASES[run.state].rank < PHASES[known.state].rank))
+    )
+      return;
+    this.#run = run;
+    this.refresh();
+  }
+  #settle(run: number, error: unknown): void {
+    const settled = this.#waiters.filter((waiter) => waiter.run === run);
+    if (settled.length === 0) return;
+    this.#waiters = this.#waiters.filter((waiter) => waiter.run !== run);
+    for (const waiter of settled)
+      if (error === undefined) waiter.resolve();
+      else waiter.reject(error);
+  }
+  bootstrap(): Promise<void> {
+    if (this.closed) return Promise.reject(subscriptionClosed());
+    // Eager: the registration is submitted when the call is made, not when the
+    // returned Promise is awaited.
+    return this.#register(this.#load.request());
+  }
+  async #register(submitted: Promise<BootstrapRun>): Promise<void> {
+    let run: BootstrapRun;
+    try {
+      run = await submitted;
+    } catch (error) {
+      throw this.closed ? this.#closedError() : error;
+    }
+    // The commit wakes the lanes the way a membership change does; without it
+    // the registered run waits for the next commit or reconnection.
+    this.#load.committed();
+    if (this.closed) throw this.#closedError();
+    const waiting = new Promise<void>((resolve, reject) => {
+      this.#waiters.push({ run: run.run, resolve, reject });
+    });
+    this.applyBootstrap(run);
+    // A transition that committed between the command and this waiter would
+    // otherwise be missed: re-read the stored run through the same serialized
+    // path and apply it.
+    if (this.#waiters.length > 0) this.observe();
+    return waiting;
+  }
+  #closedError(): Error {
+    return this.#stopped ? clientClosed() : subscriptionClosed();
+  }
   /** Removed durably through this handle, or stopped with the client. */
   close(reason: "removed" | "stopped"): void {
     if (this.closed) return;
     if (reason === "removed") this.#removed = true;
     else this.#stopped = true;
+    // A removal took the epoch's load state with the row; a client close leaves
+    // the durable task exactly where it was. Either way this process stops
+    // waiting for it.
+    const waiting = this.#waiters;
+    this.#waiters = [];
+    for (const waiter of waiting)
+      waiter.reject(
+        reason === "removed" ? subscriptionClosed() : clientClosed(),
+      );
     this.refresh();
     // A closed handle has no changes left after that last snapshot.
     this.#listeners.clear();
@@ -268,8 +467,18 @@ export class Subscriptions {
       this.#lane,
       (error) => this.#commands.report(error),
       () => this.#removeIdentity(state.scope, state.subscriptionId),
+      {
+        request: () =>
+          this.#commands.requestBootstrap(state.scope, state.subscriptionId),
+        read: () =>
+          this.#commands.bootstrapState(state.scope, state.subscriptionId),
+        committed: () => this.#commands.committed(),
+      },
     );
     this.#handles.set(state.subscriptionId, handle);
+    // A task of this identity may already be running from before this handle:
+    // read what is committed for it, so its status needs no new transition.
+    handle.observe();
     // The lane learns of committed membership from Rust; it is only woken here.
     this.#commands.committed();
     return handle;
@@ -369,6 +578,13 @@ export class Subscriptions {
       case "changed":
         // A commit moved these Scopes: re-read what it committed for them.
         for (const scope of signal.scopes) this.#reload(scope);
+        break;
+      case "bootstrap":
+        // A committed load transition. Another epoch's run belongs to no handle
+        // this registry still holds.
+        this.#handles
+          .get(signal.run.subscriptionId)
+          ?.applyBootstrap(signal.run);
         break;
     }
     this.#publish();

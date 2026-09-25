@@ -179,7 +179,7 @@ fn cli_action_history_options_require_explicit_initialization() {
     ];
     let missing = axton(&args);
     assert!(!missing.status.success());
-    assert!(String::from_utf8_lossy(&missing.stderr).contains("missing Action history"));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("missing operation history"));
     let uninitialized = axton(&[
         input.as_os_str(),
         out.as_os_str(),

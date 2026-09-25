@@ -158,7 +158,7 @@ fn retained_action_prerequisites_remain_available_after_a_version_bump() {
     let changed = "model Todo { id String title String @@id(id) } @version(2) mutation Save(todo Todo.create)";
     let error = reconcile_action_history(&compile(changed).unwrap(), Some(&history)).unwrap_err();
     assert!(
-        error.contains("retained Action") && error.contains("Uploaded"),
+        error.contains("retained operation") && error.contains("Uploaded"),
         "{error}"
     );
 }

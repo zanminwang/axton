@@ -116,10 +116,10 @@ fn run() -> Result<(), String> {
     let track_actions = has_actions || action_history_path.exists();
     if has_actions {
         if initialize_actions && action_history_path.exists() {
-            return Err("Action history already exists; initialization refused".into());
+            return Err("operation history already exists; initialization refused".into());
         }
         if explicit_action_history && !action_history_path.exists() && !initialize_actions {
-            return Err("missing Action history; restore it or initialize explicitly".into());
+            return Err("missing operation history; restore it or initialize explicitly".into());
         }
     }
     if initialize

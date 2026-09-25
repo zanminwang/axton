@@ -6,25 +6,27 @@ fn list<'a>(v: &'a Value, k: &str) -> Result<&'a Vec<Value>, String> {
 fn named<'a>(items: &'a [Value], name: &Value) -> Option<&'a Value> {
     items.iter().find(|item| item["name"] == *name)
 }
-/// Retain the complete input and output contract of each published Action.
-/// Output changes always require a new Action version; input compatibility
+/// Retain the complete kind, input and output contract of each published operation.
+/// Output changes always require a new operation version; input compatibility
 /// follows the existing mutation operand rules.
 pub fn reconcile_action_history(current: &Value, history: Option<&Value>) -> Result<Value, String> {
     let mut result = history
         .cloned()
         .unwrap_or(json!({"formatVersion":1,"actions":{}}));
     if result["formatVersion"] != 1 || !result["actions"].is_object() {
-        return Err("unsupported Action history format".into());
+        return Err("unsupported operation history format".into());
     }
     let actions = list(current, "actions")?;
     for name in result["actions"].as_object().unwrap().keys() {
         if !actions.iter().any(|a| a["name"] == *name) {
-            return Err(format!("retained Action {name} cannot be removed"));
+            return Err(format!("retained operation {name} cannot be removed"));
         }
     }
     for action in actions {
-        let name = action["name"].as_str().ok_or("unnamed Action")?;
-        let version = action["version"].as_u64().ok_or("invalid Action version")?;
+        let name = action["name"].as_str().ok_or("unnamed operation")?;
+        let version = action["version"]
+            .as_u64()
+            .ok_or("invalid operation version")?;
         let snapshot = capture_action(current, action)?;
         let versions = result["actions"]
             .as_object_mut()
@@ -32,17 +34,17 @@ pub fn reconcile_action_history(current: &Value, history: Option<&Value>) -> Res
             .entry(name)
             .or_insert(json!({}))
             .as_object_mut()
-            .ok_or("invalid Action history versions")?;
+            .ok_or("invalid operation history versions")?;
         if versions.is_empty() && version != 1 {
             return Err(format!(
-                "{name}: initial Action history must begin at version 1"
+                "{name}: initial operation history must begin at version 1"
             ));
         }
         let latest = versions
             .keys()
             .map(|v| {
                 v.parse::<u64>()
-                    .map_err(|_| "invalid retained Action version")
+                    .map_err(|_| "invalid retained operation version")
             })
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
@@ -80,7 +82,7 @@ pub fn reconcile_action_history(current: &Value, history: Option<&Value>) -> Res
     for versions in result["actions"].as_object().unwrap().values() {
         for snapshot in versions
             .as_object()
-            .ok_or("invalid Action history versions")?
+            .ok_or("invalid operation history versions")?
             .values()
         {
             for prerequisite in list(snapshot, "prerequisites")? {
@@ -88,7 +90,7 @@ pub fn reconcile_action_history(current: &Value, history: Option<&Value>) -> Res
                     != Some(prerequisite)
                 {
                     return Err(format!(
-                        "retained Action still requires original prerequisite {}",
+                        "retained operation still requires original prerequisite {}",
                         prerequisite["name"]
                     ));
                 }
@@ -159,7 +161,7 @@ fn capture_action(config: &Value, action: &Value) -> Result<Value, String> {
                     })
                     .ok_or_else(|| {
                         format!(
-                            "Action output {} has no retained Model read contract",
+                            "operation output {} has no retained Model read contract",
                             output["name"]
                         )
                     })?;

@@ -154,7 +154,9 @@ pub(crate) async fn publish_intents(
     host: &impl Host,
 ) -> Result<()> {
     for intent in publications {
-        if intent.channel.is_empty() {
+        // The one channel-name rule, as every frame and registration applies
+        // it: a name that is nothing but whitespace names no channel either.
+        if axton_core::check_channel(&intent.channel).is_err() {
             return Err(Error::new(
                 code::PUBLISH_INVALID,
                 "channel must not be empty",

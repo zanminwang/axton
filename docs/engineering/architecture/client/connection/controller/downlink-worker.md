@@ -97,6 +97,8 @@ Code: [client/downlink_worker.rs](../../../../../../crates/client/src/downlink_w
 
 Executed 2026-09-25: `cargo test --workspace --locked`, `node --test integration/bindings/client-js/*.test.mjs`, `node --test integration/bindings/client-react-native/*.test.mjs`, `dart test` in `packages/dart`.
 
+**Open with the first-boundary change.** The SDK live suites' fixtures subscribe and then expect a first HTTP catch-up over the Scope's history. With the boundary at the acknowledged head there is none, so those fixtures must be rewritten to publish after the handshake; [#150](https://github.com/zanminwang/axton/issues/150) Tasks 3 and 4 own them. Measured 2026-09-25: 9 tests in `client-js/live.test.mjs`, 1 in `client-react-native/network.test.mjs` and 4 in `packages/dart/test/live_test.dart` fail for that reason; the Rust suites and every other host suite pass.
+
 ## 11. Risks and Technical Debt
 
 **Accepted limitation.** A gap page waits at the front of the queue until the pull that fills it returns; pages behind it wait too. Beyond 64 queued pages the worker recovers every channel instead. Correctness does not depend on the bound; only the number of catch-up requests does.

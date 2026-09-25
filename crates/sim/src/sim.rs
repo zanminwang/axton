@@ -6,8 +6,8 @@ use crate::{
     rng::Rng,
     schema,
 };
-use axton_client::{Client, Operation, OperationKind, Report, ReportKind};
-use axton_core::{PullPage, PushReceipt, PushRequest, RecordKey};
+use axton_client::{BootstrapPhase, Client, Operation, OperationKind, Report, ReportKind};
+use axton_core::{BootstrapPage, PullPage, PushReceipt, PushRequest, RecordKey};
 use axton_sqlite::SqliteStore;
 use serde_json::json;
 use std::{
@@ -82,9 +82,28 @@ pub enum Action {
         client: usize,
         channel: String,
     },
+    /// Subscribe from now: the registration initializes at the channel's
+    /// current head, so everything already published is history this client
+    /// only reaches through Bootstrap
+    /// ([#151](https://github.com/zanminwang/axton/issues/151)).
+    SubscribeAtHead {
+        client: usize,
+        channel: String,
+    },
     Unsubscribe {
         client: usize,
         channel: String,
+    },
+    /// Register the durable load of everything published to `channel` before
+    /// this subscription's origin, as `bootstrap()` does.
+    Bootstrap {
+        client: usize,
+        channel: String,
+    },
+    /// Ask for the next historical page of whichever run's turn it is. Nothing
+    /// schedulable: nothing to ask for.
+    LoadPull {
+        client: usize,
     },
     Freeze {
         client: usize,
@@ -161,6 +180,9 @@ pub struct Slot {
     /// Subscription generation per channel: bumped every time the client goes from
     /// unsubscribed to subscribed.
     pub generations: BTreeMap<String, u64>,
+    /// The Scope whose historical page was asked for last: the rotation's
+    /// position, as the Downlink worker keeps it.
+    pub bootstrap_rotation: Option<String>,
     /// What the queue held when the client last crashed: the queued ordinals and
     /// the completion counter. `Action::Restart` requires the reopened client to
     /// show exactly this (no pending operation is lost on reopen). Cleared by the
@@ -224,9 +246,15 @@ pub struct Sim {
 
 pub const OWNER: &str = "u";
 
-/// (client index, pending mutation count, subscriptions) used to detect convergence
-/// in `Sim::settle`.
-type SimSnapshot = (usize, u64, Vec<(String, u64)>);
+/// (client index, pending mutation count, subscriptions, durable loads) used to
+/// detect convergence in `Sim::settle`. The loads are there so a settle keeps
+/// going while a historical interval still has pages to ask for.
+type SimSnapshot = (
+    usize,
+    u64,
+    Vec<(String, u64)>,
+    Vec<(String, &'static str, u64)>,
+);
 
 /// Opens through the file-selection path (sidecar, descriptor, compatibility), the
 /// way an SDK does, so a restart after a rebuild lands on the rebuilt file.
@@ -264,6 +292,7 @@ impl Sim {
                     receipts: BTreeMap::new(),
                     pushes: BTreeMap::new(),
                     generations: BTreeMap::new(),
+                    bootstrap_rotation: None,
                     crash_state: None,
                 }
             })
@@ -439,6 +468,73 @@ impl Sim {
                 if fresh {
                     *self.clients[client].generations.entry(channel).or_insert(0) += 1;
                 }
+            }
+            Action::SubscribeAtHead { client, channel } => {
+                let fresh = self
+                    .client(client)
+                    .subscriptions()
+                    .map_err(|e| e.to_string())?
+                    .iter()
+                    .all(|(c, _)| c != &channel);
+                self.client(client)
+                    .transaction(|tx| tx.set_channel(channel.clone(), true))
+                    .map_err(|e| e.to_string())?;
+                // The acknowledgement this client's session would get names the
+                // head as it is now, so nothing published before it is delivered
+                // by subscribing (D9).
+                let state = self
+                    .client(client)
+                    .subscription_state(&channel)
+                    .map_err(|e| e.to_string())?
+                    .ok_or("the registration left no subscription")?;
+                if state.starting_cursor.is_none() {
+                    let head = self.host.head(&channel);
+                    self.client(client)
+                        .initialize_subscriptions(
+                            &BTreeMap::from([(channel.clone(), state.subscription_id)]),
+                            &BTreeMap::from([(channel.clone(), head)]),
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
+                if fresh {
+                    *self.clients[client].generations.entry(channel).or_insert(0) += 1;
+                }
+            }
+            Action::Bootstrap { client, channel } => {
+                let id = self
+                    .client(client)
+                    .subscription_state(&channel)
+                    .map_err(|e| e.to_string())?
+                    .ok_or("a load needs a registered subscription")?
+                    .subscription_id;
+                self.client(client)
+                    .request_bootstrap(&channel, id)
+                    .map_err(|e| e.to_string())?;
+            }
+            Action::LoadPull { client } => {
+                // The rotation and the bound come from the ledger, the way the
+                // Downlink worker's schedule reads them; a run that is catching
+                // up has no page to ask for.
+                let rotation = self.clients[client].bootstrap_rotation.clone();
+                let Some(task) = self
+                    .client(client)
+                    .bootstrap_schedule(rotation.as_deref())
+                    .map_err(|e| e.to_string())?
+                else {
+                    return Ok(());
+                };
+                let models = self.client(client).declared_models();
+                let request = task.request(models);
+                let bytes = request.encode().map_err(|e| e.to_string())?;
+                self.clients[client].bootstrap_rotation = Some(task.state.scope.clone());
+                self.net.send(Message::Load {
+                    client,
+                    scope: task.state.scope.clone(),
+                    subscription_id: task.state.subscription_id,
+                    run: task.state.run,
+                    after: task.state.cursor,
+                    bytes,
+                });
             }
             Action::Unsubscribe { client, channel } => {
                 // A channel is a delivery path, not an owner: unsubscribing must
@@ -636,6 +732,73 @@ impl Sim {
                     bytes: page.into_bytes(),
                 });
             }
+            // Both pull modes go through the same public entry point, so the
+            // simulated backend dispatches a bootstrap request exactly as the
+            // HTTP adapter does ([#151](https://github.com/zanminwang/axton/issues/151)).
+            Message::Load {
+                scope,
+                subscription_id,
+                run,
+                after,
+                bytes,
+                ..
+            } => {
+                let page = self.host.pull(OWNER, &bytes)?;
+                self.net.send(Message::LoadPage {
+                    client,
+                    scope,
+                    subscription_id,
+                    run,
+                    after,
+                    bytes: page.into_bytes(),
+                });
+            }
+            Message::LoadPage {
+                scope,
+                subscription_id,
+                run,
+                after,
+                bytes,
+                ..
+            } => {
+                if !self.is_up(client) {
+                    self.net.send(Message::LoadPage {
+                        client,
+                        scope,
+                        subscription_id,
+                        run,
+                        after,
+                        bytes,
+                    });
+                    return Ok(());
+                }
+                let page = BootstrapPage::decode(&bytes).map_err(|e| e.to_string())?;
+                let applied = self
+                    .client(client)
+                    .apply_bootstrap_page(&scope, subscription_id, run, after, &page)
+                    .map_err(|e| e.to_string())?;
+                let reports = applied
+                    .report()
+                    .map(|report| (report.conflicts(), report.reports.clone()));
+                if let Some((conflicts, reports)) = reports {
+                    self.conflicts += conflicts;
+                    // A historical record the client could not apply leaves it
+                    // behind on purpose until the record is delivered again:
+                    // the same exemption an ordinary page's failure takes.
+                    for entry in &reports {
+                        if matches!(
+                            entry.kind,
+                            ReportKind::ReadFailed | ReportKind::Skipped | ReportKind::Conflict
+                        ) {
+                            let key = schema::schema()
+                                .record_key(&entry.model, &entry.identity)
+                                .map_err(|e| e.to_string())?;
+                            self.stale_reads.insert((client, key.encoded().unwrap()));
+                        }
+                    }
+                    self.reports.extend(reports);
+                }
+            }
             Message::Page { bytes, .. } => {
                 if !self.is_up(client) {
                     self.net.send(Message::Page { client, bytes });
@@ -763,6 +926,12 @@ impl Sim {
                         self.stale_reads.remove(&(client, key));
                     }
                 }
+                // The transaction that moved delivery may have reached a fixed
+                // completion barrier; nothing else settles one.
+                let moved: Vec<String> = ranges.keys().cloned().collect();
+                self.client(client)
+                    .settle_bootstrap_barriers(&moved)
+                    .map_err(|e| e.to_string())?;
             }
             Message::PushFailed { .. } => {}
         }
@@ -788,6 +957,11 @@ impl Sim {
                 }
                 self.apply(Action::Freeze { client: i }).unwrap();
                 self.apply(Action::Pull { client: i }).unwrap();
+                // A registered load is work the lane would issue too; a client
+                // with none adds nothing to the trace.
+                if self.client(i).bootstrap_schedule(None).unwrap().is_some() {
+                    self.apply(Action::LoadPull { client: i }).unwrap();
+                }
             }
             // A record a client could not read is corrected the next time it is
             // published: settle republishes it on its channels at its stamp, once.
@@ -817,13 +991,33 @@ impl Sim {
                 continue;
             }
             let c = self.client(i);
+            let loads = c
+                .bootstrap_tasks()
+                .unwrap()
+                .into_iter()
+                .map(|state| (state.scope, state.state.as_str(), state.cursor))
+                .collect();
             out.push((
                 i,
                 c.pending_count().unwrap() as u64,
                 c.subscriptions().unwrap(),
+                loads,
             ));
         }
         out
+    }
+    /// The committed phase of one registration's durable load.
+    pub fn bootstrap_phase(&mut self, client: usize, channel: &str) -> BootstrapPhase {
+        let id = self
+            .client(client)
+            .subscription_state(channel)
+            .unwrap()
+            .expect("a registered subscription")
+            .subscription_id;
+        self.client(client)
+            .bootstrap_state(channel, id)
+            .unwrap()
+            .state
     }
 }
 

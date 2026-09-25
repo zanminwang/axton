@@ -84,6 +84,52 @@ fn a_rolled_back_registration_leaves_no_subscription() {
     );
 }
 
+/// A Scope name the wire refuses names no Scope: the ledger refuses it too, at
+/// every registration path. A stored row for it would ask a handshake for a
+/// channel the server rejects, and every pump - for every other Scope - would
+/// fail with it.
+#[test]
+fn a_blank_scope_name_is_refused_and_registers_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    c.ensure_subscription("a").unwrap();
+    let generation = c.subscription_generation();
+    for blank in ["", " ", "\t\n", "   "] {
+        let refused = c.ensure_subscription(blank).expect_err("a blank name");
+        assert!(
+            refused.to_string().contains("channel must not be empty"),
+            "{refused}"
+        );
+        assert!(c.subscription_state(blank).unwrap().is_none(), "no row");
+        let refused = c
+            .transaction(|tx| tx.set_channel(blank.into(), true))
+            .expect_err("a blank name, through the transaction path");
+        assert!(
+            refused.to_string().contains("channel must not be empty"),
+            "{refused}"
+        );
+        assert!(c.subscription_state(blank).unwrap().is_none(), "no row");
+    }
+    assert_eq!(
+        c.subscription_generation(),
+        generation,
+        "nothing was committed, so no session was invalidated"
+    );
+    assert_eq!(
+        c.desired_channels()
+            .unwrap()
+            .into_iter()
+            .collect::<Vec<_>>(),
+        ["a".to_string()],
+        "the Scope that is registered is the only one"
+    );
+    assert_eq!(
+        c.ensure_subscription("b").unwrap().subscription_id,
+        2,
+        "a refused registration spends no identity"
+    );
+}
+
 /// The transaction-scoped path registers intent without a boundary, and
 /// repeating it changes nothing at all. The boundary is the head the first
 /// acknowledgement negotiates.

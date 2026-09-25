@@ -454,9 +454,7 @@ pub fn read_cursors(value: &Value) -> Result<BTreeMap<String, u64>> {
     object
         .iter()
         .map(|(channel, cursor)| {
-            if channel.is_empty() {
-                return Err(invalid("channel must not be empty"));
-            }
+            check_channel(channel)?;
             Ok((channel.clone(), read_counter(cursor, false)?))
         })
         .collect()
@@ -525,9 +523,7 @@ impl PullPage {
             .ok_or_else(|| invalid("page cursors must map channels to ranges"))?;
         let mut cursors = BTreeMap::new();
         for (channel, range) in cursors_value {
-            if channel.is_empty() {
-                return Err(invalid("channel must not be empty"));
-            }
+            check_channel(channel)?;
             let from = read_counter(&range["from"], false)?;
             let to = read_counter(&range["to"], false)?;
             let head = read_counter(&range["head"], false)?;
@@ -548,9 +544,7 @@ impl PullPage {
             return Err(invalid("page must name at least one channel"));
         }
         for (channel, range) in &self.cursors {
-            if channel.is_empty() {
-                return Err(invalid("channel must not be empty"));
-            }
+            check_channel(channel)?;
             counter(range.from)?;
             counter(range.to)?;
             counter(range.head)?;
@@ -598,12 +592,22 @@ struct SubscribeWire {
     #[serde(default)]
     models: Value,
 }
+/// The one channel-name rule: a name that is empty, or nothing but whitespace,
+/// names no channel. Every frame that carries channel names is refused for it,
+/// and so is a durable client registration, so a Scope no socket could ever
+/// subscribe cannot be stored either.
+pub fn check_channel(channel: &str) -> Result<()> {
+    if channel.trim().is_empty() {
+        return Err(invalid("channel must not be empty"));
+    }
+    Ok(())
+}
 fn normalize_channels(channels: Vec<String>) -> Result<Vec<String>> {
     if channels.is_empty() {
         return Err(invalid("subscribe requires at least one channel"));
     }
-    if channels.iter().any(String::is_empty) {
-        return Err(invalid("channel must not be empty"));
+    for channel in &channels {
+        check_channel(channel)?;
     }
     let mut channels: Vec<_> = channels
         .into_iter()

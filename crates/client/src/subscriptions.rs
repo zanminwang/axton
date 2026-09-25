@@ -7,7 +7,7 @@
 use crate::engine::{Engine, as_u64};
 use crate::store::ClientStore;
 use crate::{Client, SUBSCRIPTION_MARK};
-use axton_core::{MAX_SAFE_INTEGER, Result, invalid};
+use axton_core::{MAX_SAFE_INTEGER, Result, check_channel, invalid};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -100,8 +100,12 @@ impl<S: ClientStore> Engine<'_, S> {
     }
     /// The subscription for `channel`, registering it when absent, and whether
     /// this call created it. Insert-if-absent, never an upsert: a repeated
-    /// registration reads the stored identity and cursors untouched.
+    /// registration reads the stored identity and cursors untouched. A name the
+    /// wire refuses ([`check_channel`]) is refused here, so every registration
+    /// path - `set_channel`, `scopeSubscribe`, the generated facade - is held to
+    /// the one rule.
     pub fn ensure_subscription(&mut self, channel: &str) -> Result<(SubscriptionState, bool)> {
+        check_channel(channel)?;
         if let Some(state) = self.subscription(channel)? {
             return Ok((state, false));
         }
@@ -264,8 +268,11 @@ impl<S: ClientStore> Client<S> {
     /// Register durable intent to follow `scope` and answer with its stored
     /// state. Repeating it returns the same identity and the same cursors; a
     /// new registration starts uninitialized, with no delivery position until
-    /// its first boundary is committed.
+    /// its first boundary is committed. A name the wire refuses
+    /// ([`check_channel`]) is refused here too: a row no session could ever
+    /// subscribe for would fail every handshake and stop every other Scope.
     pub fn ensure_subscription(&mut self, scope: &str) -> Result<SubscriptionState> {
+        check_channel(scope)?;
         // A registration that already exists is answered from the committed
         // reader: repeating it writes nothing, so it neither bumps the client
         // generation nor notifies a watcher. The write below re-reads the row

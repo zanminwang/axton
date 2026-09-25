@@ -305,8 +305,10 @@ impl DownlinkWorker {
     /// lane retries with backoff - unless a committed subscription change had
     /// already invalidated it, in which case the change, not the transport,
     /// ended it: the lane opens the next session at once and counts no failed
-    /// attempt. The SDKs abandon the socket as soon as `subscribe` is called, so
-    /// the dead socket is often reported before the commit's wake arrives.
+    /// attempt. The server or the network can report the socket closed before
+    /// the wake of the commit that invalidated it is pumped, so the generation,
+    /// not the arrival order, decides: a session whose subscribed set a commit
+    /// has replaced reconnects without backoff however its socket ended.
     fn fail<S: ClientStore>(
         &mut self,
         client: &mut Client<S>,

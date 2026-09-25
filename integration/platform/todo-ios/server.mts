@@ -72,13 +72,15 @@ async function proxy(dropFirstPush: boolean) {
     // The HTTP server drops its own error listener on upgrade; a reset from the phone
     // (for example when the runner terminates it) must not crash the proxy.
     socket.on("error", () => {});
-    // A phone is opening its live socket: the republish timer above is bounded by this.
-    sessionUpgrades++;
-    publishedAfterSession = 0;
     if (!online) {
       socket.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
       return;
     }
+    // A phone is opening its live socket: the republish timer above is bounded by
+    // this. Only an upgrade this proxy carries counts; one it refused offline
+    // opens no session, so it neither bounds the timer nor resets its budget.
+    sessionUpgrades++;
+    publishedAfterSession = 0;
     const upstream = netConnect(Number(target.port), target.hostname, () => {
       const headers = Object.entries(req.headers).flatMap(([name, value]) =>
         Array.isArray(value) ? value.map((v) => `${name}: ${v}`) : [`${name}: ${value}`],

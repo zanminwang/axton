@@ -1469,3 +1469,92 @@ fn a_socket_the_subscription_change_abandoned_reconnects_without_backoff() {
     let backoff = wait(&failed[1]);
     assert!((200..=300).contains(&backoff), "{backoff}");
 }
+
+/// An unsubscribe and a subscribe called back to back commit before the next
+/// pump, and a catch-up the replaced session issued is still outstanding: the
+/// one pump ends that session and opens the next one for the new membership. A
+/// request in flight holds nothing back, because the session it belonged to is
+/// gone with it.
+#[test]
+fn a_commit_pair_replaces_the_session_with_a_catch_up_still_in_flight() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.saved("a", 0);
+    let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let acknowledged = lane.message(first, ack(&[("a", 1)]));
+    let (held, _) = request(&acknowledged[0]);
+    lane.set("a", false);
+    lane.set("a", true);
+    let actions = lane.pump();
+    assert_eq!(
+        actions[0],
+        DownlinkAction::Close {
+            epoch: first,
+            reason: None
+        },
+        "the session the commits invalidated ends"
+    );
+    let (second, subscribe) = open(&actions[1]);
+    assert!(second > first);
+    assert_eq!(subscribe.channels, ["a"]);
+    assert_eq!(
+        actions.len(),
+        2,
+        "the change ended the session, not the transport: no backoff, no wait"
+    );
+    // The answer to the request the replaced session issued reaches no request
+    // in flight and commits nothing.
+    assert_eq!(
+        lane.response(held, &page("a", 0, 1, Some("obsolete"))),
+        vec![]
+    );
+    assert_eq!(lane.text(), "local");
+    // The recreated subscription initializes at the head of its own handshake.
+    assert_eq!(
+        lane.message(second, ack(&[("a", 5)])),
+        vec![
+            DownlinkAction::Changed {
+                scopes: vec!["a".into()]
+            },
+            established(&["a"])
+        ]
+    );
+    assert_eq!(lane.cursor("a"), Some(5));
+}
+
+/// The same pair with a pump in between, so the lane sees an empty desired set:
+/// it closes the session, opens nothing while no Scope is subscribed, and opens
+/// the next session on the wake the recreating commit's host sends. The lane is
+/// passive - a commit decides nothing until a pump - so the SDK wakes it for
+/// every committed membership change.
+#[test]
+fn a_lane_left_with_no_scope_opens_the_next_session_on_the_recreating_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    lane.saved("a", 0);
+    let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let acknowledged = lane.message(first, ack(&[("a", 1)]));
+    let (held, _) = request(&acknowledged[0]);
+    lane.set("a", false);
+    assert_eq!(
+        lane.pump(),
+        vec![DownlinkAction::Close {
+            epoch: first,
+            reason: None
+        }],
+        "with no Scope left the session ends and nothing is opened"
+    );
+    assert_eq!(lane.pump(), vec![], "an unsubscribed lane waits, idle");
+    lane.set("a", true);
+    let actions = lane.send(DownlinkEvent::Wake);
+    let (second, subscribe) = open(&actions[0]);
+    assert!(second > first);
+    assert_eq!(subscribe.channels, ["a"]);
+    assert_eq!(actions.len(), 1, "no backoff on the way back");
+    assert_eq!(
+        lane.response(held, &page("a", 0, 1, Some("obsolete"))),
+        vec![],
+        "the catch-up of the session that went commits nothing"
+    );
+    assert_eq!(lane.text(), "local");
+}

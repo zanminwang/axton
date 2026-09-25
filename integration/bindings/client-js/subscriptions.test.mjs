@@ -52,6 +52,13 @@ test('one handle per subscription identity: concurrent and repeated calls coales
   assert.deepEqual((await client.syncState()).cursors,{},'an uninitialized subscription has no cursor at all');
   const other=await client.subscribe('other');
   assert.notEqual(other,first,'another Scope is another subscription');
+  // A name no socket could subscribe is refused before a row exists, so no
+  // handle is handed out and no lane is left with a Scope it cannot ask for.
+  for (const blank of ['','  ','\t\n'])
+   await assert.rejects(()=>client.scopes.subscribe(blank),/channel must not be empty/,
+    `a blank Scope name is refused: ${JSON.stringify(blank)}`);
+  assert.deepEqual((await client.syncState()).channels,['other','scope'],
+   'nothing of a refused registration was written');
  } finally { await fixture.close(); }
 });
 

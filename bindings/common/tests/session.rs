@@ -696,6 +696,25 @@ fn scope_commands_register_read_and_remove_one_identity() {
             .unwrap()["value"],
         registered["value"]
     );
+    // A name the wire refuses names no Scope: the registration is refused
+    // before a row exists, so no pump can be poisoned by one.
+    for blank in ["", " ", "\t\n"] {
+        assert!(
+            host.call(json!({"op":"scopeSubscribe","handle":id,"scope":blank}))
+                .is_err(),
+            "a blank Scope name is refused: {blank:?}"
+        );
+        assert!(
+            host.call(json!({"op":"channel","handle":id,"channel":blank,"subscribed":true}))
+                .is_err(),
+            "the transaction command holds the same rule: {blank:?}"
+        );
+    }
+    assert_eq!(
+        host.call(json!({"op":"status","handle":id})).unwrap()["value"]["channels"],
+        json!(["book"]),
+        "nothing of a refused registration was written"
+    );
     // The transaction command shares the ledger: the same row, the same identity.
     host.call(json!({"op":"channel","handle":id,"channel":"book","subscribed":true}))
         .unwrap();

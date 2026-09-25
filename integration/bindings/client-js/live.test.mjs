@@ -213,16 +213,20 @@ test('unified connection acknowledges listeners then catches up through HTTP bef
  } finally {await fixture.close();for(const s of ws.clients)s.terminate();await new Promise(r=>ws.close(r));await new Promise(r=>server.close(r));}
 });
 
+// `handshakes` records every subscribe frame the fake server answered. A test
+// that streams a page must wait for it: the acknowledgement is the first frame
+// of a session, and a page that arrives before it is the protocol violation the
+// client ends the session for.
 async function syncFixture(onPull, heads={}) {
- const requests=[];const sockets=[];const stamps={next:0};
+ const requests=[];const sockets=[];const handshakes=[];const stamps={next:0};
  const server=createServer(async(req,res)=>{
   const chunks=[];for await(const c of req)chunks.push(c);const body=JSON.parse(Buffer.concat(chunks));requests.push({url:req.url,body});
   if(req.url==='/sync/mutations')res.end(JSON.stringify(receiptFor(body,stamps)));
   else await onPull(body,res,requests.filter(r=>r.url==='/sync/pull').length);
  });
- const ws=new WebSocketServer({server});ws.on('connection',s=>{sockets.push(s);s.on('message',m=>s.send(ack(JSON.parse(m),heads)));});
+ const ws=new WebSocketServer({server});ws.on('connection',s=>{sockets.push(s);s.on('message',m=>{handshakes.push(JSON.parse(m));s.send(ack(JSON.parse(m),heads));});});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
- return {requests,sockets,heads,config:{url:`http://127.0.0.1:${server.address().port}`,token:'secret'},async close(){for(const s of ws.clients)s.terminate();await new Promise(r=>ws.close(r));await new Promise(r=>server.close(r));}};
+ return {requests,sockets,handshakes,heads,config:{url:`http://127.0.0.1:${server.address().port}`,token:'secret'},async close(){for(const s of ws.clients)s.terminate();await new Promise(r=>ws.close(r));await new Promise(r=>server.close(r));}};
 }
 test('late HTTP catch-up after unsubscribe and resubscribe cannot resurrect the obsolete generation',async()=>{
  const fixture=await openClient();const network=await syncFixture((b,res)=>res.end(JSON.stringify(page('obsolete'))),{scope:0});
@@ -238,7 +242,7 @@ test('late HTTP catch-up after unsubscribe and resubscribe cannot resurrect the 
   await timeout(entered.promise);await fixture.client.unsubscribe('scope');await fixture.client.subscribe('scope');
   // The recreated subscription initializes at the head of its own handshake
   // and the stream is the truth from there.
-  await until(()=>network.sockets.length>=3);
+  await until(()=>network.handshakes.length>=3,'the third session is acknowledged before its stream carries a page');
   network.sockets.at(-1).send(JSON.stringify(page('fresh',1,3)));
   await until(async()=>(await fixture.client.read('Entry',{id:'live'}))?.text==='fresh');
   gate.resolve();await new Promise(r=>setTimeout(r,30));assert.equal((await fixture.client.read('Entry',{id:'live'})).text,'fresh');
@@ -303,7 +307,7 @@ test('a reusable server config isolates cancellation and no-channel clients only
  const a=await openClient(),b=await openClient();const network=await syncFixture((body,res)=>res.end(JSON.stringify(emptyPage(body))),{scope:0});
  try{
   const ca=await a.client.connect(network.config);await b.client.subscribe('scope');const cb=await b.client.connect(network.config);
-  await until(()=>network.sockets.length===1,'only the client with a Scope opens a socket');
+  await until(()=>network.handshakes.length===1,'only the client with a Scope opens a socket, and its page follows the acknowledgement');
   network.sockets[0].send(JSON.stringify(page('shared')));
   await until(async()=>(await b.client.read('Entry',{id:'live'}))?.text==='shared');assert.equal(network.sockets.length,1);
   await a.client.mutate({name:'Create',operations:[{model:'Entry',op:'create',identity:{id:'local'},values:{text:'  push without channels  ',note:null}}]});
@@ -471,7 +475,7 @@ test('what a page cannot apply reaches onError as an AxtonReport: read failures,
  const original=network.requests;
  try{
   await client.subscribe('scope');await client.connect(network.config,{onError:e=>errors.push(e)});
-  await until(()=>network.sockets.length===1);
+  await until(()=>network.handshakes.length===1);
   network.sockets[0].send(JSON.stringify(page('first')));
   await until(async()=>(await client.read('Entry',{id:'live'}))?.text==='first');
   network.sockets[0].send(JSON.stringify({cursors:{scope:{from:1,to:3,head:3}},changes:[
@@ -493,11 +497,11 @@ test('a queued edit whose replay fails over new authority is reported as diverge
  const server=createServer(async(req,res)=>{const chunks=[];for await(const c of req)chunks.push(c);const body=JSON.parse(Buffer.concat(chunks));
   if(req.url==='/sync/mutations'){if(!allowPush){res.statusCode=503;res.end('later');return;}res.end(JSON.stringify(receiptFor(body,stamps)));return;}
   res.end(JSON.stringify(emptyPage(body)));});
- const ws=new WebSocketServer({server});const sockets=[];ws.on('connection',s=>{sockets.push(s);s.on('message',m=>s.send(ack(JSON.parse(m))));});
+ const ws=new WebSocketServer({server});const sockets=[];const handshakes=[];ws.on('connection',s=>{sockets.push(s);s.on('message',m=>{handshakes.push(JSON.parse(m));s.send(ack(JSON.parse(m)));});});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
  try{
   await client.subscribe('scope');await client.connect({url:`http://127.0.0.1:${server.address().port}`,token:'secret'},{onError:e=>errors.push(e)});
-  await until(()=>sockets.length===1);
+  await until(()=>handshakes.length===1);
   sockets[0].send(JSON.stringify(page('first')));
   await until(async()=>(await client.read('Entry',{id:'live'}))?.text==='first');
   await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'live'},values:{text:'edited offline'}}]});

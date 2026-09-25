@@ -52,6 +52,16 @@ pub fn reconcile_action_history(current: &Value, history: Option<&Value>) -> Res
             return Err(format!("{name}: version cannot decrease from {latest}"));
         }
         if let Some(old) = versions.get(&version.to_string()) {
+            // Kind is part of the retained backend contract: reclassifying a
+            // published version would change how saved calls are executed.
+            let (old_kind, new_kind) = (retained_kind(old)?, retained_kind(&snapshot)?);
+            if old_kind != new_kind {
+                return Err(format!(
+                    "{name} v{version}: kind changed from {} to {}; increase @version",
+                    kind_name(old_kind),
+                    kind_name(new_kind)
+                ));
+            }
             if old["outputs"] != snapshot["outputs"]
                 || old["outputEnums"] != snapshot["outputEnums"]
             {
@@ -86,6 +96,21 @@ pub fn reconcile_action_history(current: &Value, history: Option<&Value>) -> Res
         }
     }
     Ok(result)
+}
+
+/// A retained snapshot's kind; snapshots written before kinds existed are Mutations.
+fn retained_kind(snapshot: &Value) -> Result<axton_core::CallKind, String> {
+    match snapshot.get("kind") {
+        None => Ok(axton_core::CallKind::Mutation),
+        Some(kind) => serde_json::from_value(kind.clone())
+            .map_err(|_| format!("unsupported retained operation kind {kind}")),
+    }
+}
+fn kind_name(kind: axton_core::CallKind) -> &'static str {
+    match kind {
+        axton_core::CallKind::Mutation => "mutation",
+        axton_core::CallKind::Query => "query",
+    }
 }
 
 fn action_inputs_compatible(old: &Value, new: &Value) -> Result<bool, String> {
@@ -173,8 +198,9 @@ fn capture_action(config: &Value, action: &Value) -> Result<Value, String> {
     let output_enums = referenced(&outputs);
     let mut input = operand["input"].clone();
     input["enums"].as_array_mut().unwrap().extend(input_enums);
+    let kind = retained_kind(action)?;
     Ok(json!({
-        "name":action["name"],"version":action["version"],"inputs":inputs,"outputs":outputs,
+        "name":action["name"],"version":action["version"],"kind":kind,"inputs":inputs,"outputs":outputs,
         "input":input,"outputEnums":output_enums,
         "requirements":operand["requirements"],"prerequisites":operand["prerequisites"],
         "sequence":action["sequence"],

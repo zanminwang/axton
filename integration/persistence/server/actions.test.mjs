@@ -29,7 +29,7 @@ const loader = async ({ tx, ids }) => {
   loaders++;
   return Promise.all(ids.map(async ({ id }) => (await tx.$queryRawUnsafe('SELECT id,title FROM action_todo WHERE id=$1', id))[0] ?? null));
 };
-const backend = database => createBackend({ config, native, database, authenticate: () => 'alice', handlers: { add: handler }, loaders: { todo: loader } });
+const backend = database => createBackend({ config, native, database, authenticate: () => 'alice', mutations: { add: handler }, loaders: { todo: loader } });
 const request = (clientId, callId, id, title) => JSON.stringify({ clientId, batchSequence: 1, models: { Todo: 1 }, mutations: [{ ordinal: 1, callId, name: 'Add', version: 1, args: { todo: { id, title } } }] });
 const openShims = () => {
   const poolPg = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -53,7 +53,7 @@ test("direct HTTP Action authenticates, commits, and replays the same call ID ac
     native,
     database: prisma(db),
     authenticate: devAuth(),
-    handlers: { add: handler },
+    mutations: { add: handler },
     loaders: { todo: loader },
   });
   const listening = await app.listen({ port: 0 });
@@ -142,7 +142,7 @@ test('same frozen call replays after a nullable Model input/read field is added'
   upgraded.schema.models[0].fields.push(note);
   upgraded.schema.resultModels[0].fields = structuredClone(upgraded.schema.models[0].fields);
   const priorHandlers = handlers, priorLoaders = loaders;
-  const replay = JSON.parse(await createBackend({ config: upgraded, native, database: prisma(db), authenticate: () => 'alice', handlers: { add: handler }, loaders: { todo: loader } }).push('alice', request('after-addition', callId, 'three', 'C')));
+  const replay = JSON.parse(await createBackend({ config: upgraded, native, database: prisma(db), authenticate: () => 'alice', mutations: { add: handler }, loaders: { todo: loader } }).push('alice', request('after-addition', callId, 'three', 'C')));
   assert.deepEqual(replay.completions, original.completions, 'cached result retains its original snapshot');
   assert.deepEqual(replay.records, [{ model: 'Todo', identity: { id: 'three' }, stamp: 1, state: { title: 'C', note: null } }], 'receipt authority is normalized for the current read contract');
   assert.equal(handlers, priorHandlers);
@@ -175,7 +175,7 @@ test('two distinct calls racing on one row retry without saving a transient reje
       let arrived = 0, release;
       const both = new Promise(resolve => { release = resolve; });
       let attempts = 0;
-      const bump = createBackend({ config: bumpConfig, native, database, authenticate: () => 'alice', handlers: { async bump({ ctx }) {
+      const bump = createBackend({ config: bumpConfig, native, database, authenticate: () => 'alice', mutations: { async bump({ ctx }) {
         attempts++;
         await database.driver.query(ctx.tx, 'SELECT n FROM action_counter WHERE id=$1', [rowId]);
         if (arrived < 2) { arrived++; if (arrived === 2) release(); await both; }
@@ -219,7 +219,7 @@ test('retryable handler and Loader errors cross native bridge unchanged on every
         : Object.assign(new Error('retryable SQL fault'), { code: '40P01' });
       const reported = [];
       let handlerAttempts = 0;
-      const handlerBackend = createBackend({ config: bumpConfig, native, database, authenticate: () => 'alice', onError: error => reported.push(error), handlers: { async bump() {
+      const handlerBackend = createBackend({ config: bumpConfig, native, database, authenticate: () => 'alice', onError: error => reported.push(error), mutations: { async bump() {
         if (++handlerAttempts === 1) throw fault();
         return { n: 7 };
       } }, loaders: {} });
@@ -227,7 +227,7 @@ test('retryable handler and Loader errors cross native bridge unchanged on every
       assert.equal(handlerReceipt.completions[0].outcome.result.n, 7, name);
       assert.equal(handlerAttempts, 2, `${name} retried handler failure`);
       let loaderAttempts = 0, findAttempts = 0;
-      const loaderBackend = createBackend({ config: findConfig, native, database, authenticate: () => 'alice', onError: error => reported.push(error), handlers: { async find() { findAttempts++; return { todo: { id: 'one' } }; } }, loaders: { async todo({ tx }) {
+      const loaderBackend = createBackend({ config: findConfig, native, database, authenticate: () => 'alice', onError: error => reported.push(error), mutations: { async find() { findAttempts++; return { todo: { id: 'one' } }; } }, loaders: { async todo({ tx }) {
         if (++loaderAttempts === 1) throw fault();
         const rows = await database.driver.query(tx, 'SELECT id,title FROM action_todo WHERE id=$1', ['one']);
         return rows;
@@ -254,7 +254,7 @@ test('read-only identity holds its stamp lock through Loader read and commit', a
   const loading = new Promise(resolve => { enteredLoad = resolve; });
   const release = new Promise(resolve => { releaseLoad = resolve; });
   const advancing = new Promise(resolve => { enteredAdvance = resolve; });
-  const read = createBackend({ config: { schema, mutations: [], loaders: ['Todo'] }, native, database, authenticate: () => 'alice', handlers: { async find() { return { todo: { id: 'lock' } }; }, async edit() {} }, loaders: { async todo({ tx }) {
+  const read = createBackend({ config: { schema, mutations: [], loaders: ['Todo'] }, native, database, authenticate: () => 'alice', mutations: { async find() { return { todo: { id: 'lock' } }; }, async edit() {} }, loaders: { async todo({ tx }) {
     enteredLoad();
     await release;
     return database.driver.query(tx, 'SELECT id,title FROM action_todo WHERE id=$1', ['lock']);
@@ -263,7 +263,7 @@ test('read-only identity holds its stamp lock through Loader read and commit', a
     if (req.op === 'advanceStamp') enteredAdvance();
     return database.persistence(tx).call(req);
   } }) };
-  const write = createBackend({ config: { schema, mutations: [], loaders: ['Todo'] }, native, database: writerDatabase, authenticate: () => 'alice', handlers: { async find() { return { todo: { id: 'lock' } }; }, async edit({ ctx }) {
+  const write = createBackend({ config: { schema, mutations: [], loaders: ['Todo'] }, native, database: writerDatabase, authenticate: () => 'alice', mutations: { async find() { return { todo: { id: 'lock' } }; }, async edit({ ctx }) {
     writerPid = Number((await database.driver.query(ctx.tx, 'SELECT pg_backend_pid() AS pid', []))[0].pid);
     await database.driver.query(ctx.tx, 'UPDATE action_todo SET title=$1 WHERE id=$2', ['new', 'lock']);
   } }, loaders: { async todo({ tx }) { return database.driver.query(tx, 'SELECT id,title FROM action_todo WHERE id=$1', ['lock']); } } });
@@ -302,7 +302,7 @@ test('store policy is part of the saved call identity and replays without Loader
   ] };
   let found = 0, read = 0;
   const app = createBackend({ config: { schema, mutations: [], loaders: ['Todo'] }, native, database, authenticate: () => 'alice',
-    handlers: { async find() { found++; return { todo: { id: 'store-a' } }; } },
+    mutations: { async find() { found++; return { todo: { id: 'store-a' } }; } },
     loaders: { async todo({ tx, ids }) { read++; return Promise.all(ids.map(async ({ id }) => (await database.driver.query(tx, 'SELECT id,title FROM action_todo WHERE id=$1', [id]))[0] ?? null)); } } });
   const batch = (clientId, calls) => JSON.stringify({ clientId, batchSequence: 1, models: { Todo: 1 }, mutations: calls.map((call, index) => ({ ordinal: index + 1, name: 'Find', version: 1, args: {}, ...call })) });
   const stamps = async () => (await db.$queryRawUnsafe("SELECT stamp FROM axton_record WHERE model='Todo' AND identity_key=$1", '{"id":"store-a"}')).length;
@@ -336,5 +336,58 @@ test('store policy is part of the saved call identity and replays without Loader
     assert.equal(await stamps(), 1);
   } finally {
     await pool.end();
+  }
+});
+
+test('a forged Query settlement rolls back its own transaction writes and keeps adjacent calls', async () => {
+  // The TypeScript runtime gives a Query no changes/publish. A host that forges
+  // them anyway (a defect or another language host) is refused by the shared
+  // Rust executor; this wrapper forges them on the settlement it forwards.
+  const forging = {
+    ...native,
+    processAction: (config, owner, request, callback) => native.processAction(config, owner, request, forge(callback)),
+    processPush: (config, owner, request, callback) => native.processPush(config, owner, request, forge(callback)),
+  };
+  const forge = callback => async raw => {
+    const answer = await callback(raw);
+    const request = JSON.parse(raw);
+    if (request.op !== 'handleAction' || request.name !== 'Leak') return answer;
+    const settled = JSON.parse(answer);
+    return JSON.stringify({ ...settled, changes: [{ model: 'Todo', identity: { id: `leak-${request.callId}` } }], publications: [{ channel: 'todos' }] });
+  };
+  const leakConfig = { schema: { ...config.schema, actions: [
+    ...config.schema.actions,
+    { name: 'Leak', version: 1, kind: 'query', inputs: [], outputs: [{ name: 'n', kind: 'value', type: { kind: 'scalar', name: 'int' }, cardinality: 'single', source: 'handlerValue' }] },
+  ] }, mutations: [], loaders: ['Todo'] };
+  const { shims, close } = openShims();
+  try {
+    for (const [index, { name, database }] of shims.entries()) {
+      const leak = async ({ ctx }) => {
+        // A same-transaction write the Query contract forbids; it must roll back.
+        await database.driver.query(ctx.tx, 'INSERT INTO action_todo(id,title) VALUES($1,$2)', [`leak-${ctx.callId}`, 'forbidden']);
+        return { n: 1 };
+      };
+      const add = async ({ ctx, args }) => { await database.driver.query(ctx.tx, 'INSERT INTO action_todo(id,title) VALUES($1,$2)', [args.todo.id, args.todo.title]); };
+      const todo = async ({ tx, ids }) => Promise.all(ids.map(async ({ id }) => (await database.driver.query(tx, 'SELECT id,title FROM action_todo WHERE id=$1', [id]))[0] ?? null));
+      const app = createBackend({ config: leakConfig, native: forging, database, authenticate: () => 'alice', mutations: { add }, queries: { leak }, loaders: { todo } });
+      const ids = [0, 1, 2].map(n => `01890f47-1234-7123-8123-1234567891${index}${n}`);
+      const receipt = JSON.parse(await app.push('alice', JSON.stringify({ clientId: `forged-${name}`, batchSequence: 1, models: { Todo: 1 }, mutations: [
+        { ordinal: 1, callId: ids[0], name: 'Leak', version: 1, args: {} },
+        { ordinal: 2, callId: ids[1], name: 'Add', version: 1, args: { todo: { id: `kept-${name}`, title: 'K' } } },
+      ] })));
+      assert.deepEqual(receipt.rejections, [{ ordinal: 1, code: 'query.effects_forbidden' }], name);
+      assert.equal(receipt.completions[1].outcome.status, 'succeeded', name);
+      assert.deepEqual(receipt.records.map(record => record.identity.id), [`kept-${name}`], name);
+      const direct = JSON.parse(await app.action('alice', JSON.stringify({ call: { callId: ids[2], name: 'Leak', version: 1, args: {} }, models: { Todo: 1 } })));
+      assert.equal(direct.completion.outcome.code, 'query.effects_forbidden', name);
+      assert.deepEqual(await db.$queryRawUnsafe("SELECT id FROM action_todo WHERE id LIKE 'leak-%'"), [], `${name}: forbidden Query writes rolled back`);
+      assert.deepEqual(await db.$queryRawUnsafe('SELECT title FROM action_todo WHERE id=$1', `kept-${name}`), [{ title: 'K' }], name);
+      assert.deepEqual(await db.$queryRawUnsafe("SELECT count(*)::int AS n FROM axton_record WHERE identity_key LIKE '%leak-%'"), [{ n: 0 }], `${name}: no stamp for a forged change`);
+      // The rejection is the saved outcome: a retry replays it without running the handler.
+      const retried = JSON.parse(await app.action('alice', JSON.stringify({ call: { callId: ids[2], name: 'Leak', version: 1, args: {} }, models: { Todo: 1 } })));
+      assert.deepEqual(retried, direct, name);
+    }
+  } finally {
+    await close();
   }
 });

@@ -4,14 +4,14 @@ const todo = Todo(id: 't', title: 'Task', state: Status.open, note: null);
 const identity = TodoIdentity(id: 't');
 const created = TodoCreate(id: 't', title: 'Task', state: Status.open, note: null);
 
-Future<void> misuse(GeneratedClient client, ActionCall<AddTodoOutput> call) async {
-  await client.actions.addTodo(todo: created, gone: [], tags: []); // required nullable status
-  await client.actions.addTodo(todo: created, gone: [], status: null, tags: [], status: Status.open); // duplicate shape
-  await client.actions.addTodo(todo: created, gone: [], status: null, tags: [], patch: TodoUpdate(id: 't')); // restricted shape
-  await client.actions.addTodo(todo: created, gone: [], status: null, tags: [], patch: AddTodoPatchUpdate(id: 't', state: Present(Status.open))); // invalid patch field
-  await client.actions.call.addTodo(todo: created, gone: [], status: null, tags: [null]); // non-null list member
+Future<void> misuse(GeneratedClient client, Call<AddTodoOutput> call) async {
+  await client.mutations.addTodo(todo: created, gone: [], tags: []); // required nullable status
+  await client.mutations.addTodo(todo: created, gone: [], status: null, tags: [], status: Status.open); // duplicate shape
+  await client.mutations.addTodo(todo: created, gone: [], status: null, tags: [], patch: TodoUpdate(id: 't')); // restricted shape
+  await client.mutations.addTodo(todo: created, gone: [], status: null, tags: [], patch: AddTodoPatchUpdate(id: 't', state: Present(Status.open))); // invalid patch field
+  await client.mutations.call.addTodo(todo: created, gone: [], status: null, tags: [null]); // non-null list member
   await client.transaction((tx) async {
-    tx.actions; // Actions excluded from application transaction
+    tx.mutations; // Mutations excluded from application transaction
     tx.models.todo.watch(); // watch excluded from transaction
   });
   call.result; // no framework result field
@@ -37,7 +37,7 @@ final oldArchived = AddTodoV1Input(
 );
 
 Future<void> missingSearchQuery(GeneratedClient client) async {
-  await client.actions.search();
+  await client.mutations.search();
 }
 
 final stateListScalar = StateListHandlerOutput(states: Status.open);
@@ -47,8 +47,22 @@ final oldStateListScalar = StateListV1HandlerOutput(states: StateListV1OutputSta
 final oldStateListArchived = StateListV1HandlerOutput(states: [StateListV1OutputStatus.archived]);
 
 Future<void> storeMisuse(GeneratedClient client) async {
-  await client.actions.call.ping(store: const PingStore.outputs());
-  await client.actions.call.getTodos(store: const OpenTodoStore.none());
-  await client.actions.call.openTodo(store: null, outputStore: const OpenTodoStore.outputs(count: false));
-  await client.actions.call.getTodos(store: false);
+  await client.mutations.call.ping(store: const PingStore.outputs());
+  await client.queries.getTodos(store: const OpenTodoStore.none());
+  await client.mutations.call.openTodo(store: null, outputStore: const OpenTodoStore.outputs(count: false));
+  await client.queries.getTodos(store: false);
+}
+
+Future<void> routeMisuse(GeneratedClient client) async {
+  await client.actions.ping(); // retired namespace
+  await client.mutations.findTodos(text: 'x', cursor: null); // a Query is not a Mutation
+  await client.queries.addTodo(todo: created, gone: [], status: null, tags: []); // a Mutation is not a Query
+  final FindTodosOutput queued = await client.queries.enqueue.findTodos(text: 'x', cursor: null); // durable returns Call
+  final Call<FindTodosOutput> direct = await client.queries.findTodos(text: 'x', cursor: null); // direct returns output
+  await client.queries.findTodos(text: 'x'); // nullable input is still required
+  await client.transaction((tx) async {
+    tx.queries; // Queries excluded from application transaction
+  });
+  queued.hashCode;
+  direct.hashCode;
 }

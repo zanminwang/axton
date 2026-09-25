@@ -4,11 +4,11 @@ import { Transaction } from "./transaction.mts";
 import { createServerConnection } from "./live.mts";
 export { Transaction } from "./transaction.mts";
 export {
-  ActionError,
-  type ActionCall,
-  type ActionOptions,
-  type ActionOutcome,
-  type ActionStatus,
+  CallError,
+  type Call,
+  type CallOptions,
+  type CallOutcome,
+  type CallStatus,
 } from "../client-js/actions.mts";
 export type { QuerySpec, RecordValue } from "../client-js/values.mts";
 export type {

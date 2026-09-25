@@ -112,8 +112,8 @@ async function scenario(body) {
  }
 }
 
-const addTodo = (client, todo) => client.actions.addTodo({ todo });
-const setDone = (client, id, done) => client.actions.setTodoDone({ todo: { id, done } });
+const addTodo = (client, todo) => client.mutations.addTodo({ todo });
+const setDone = (client, id, done) => client.mutations.setTodoDone({ todo: { id, done } });
 
 test('seeds reach both participants and survive a restart without resetting edits', async () => {
  await scenario(async ctx => {
@@ -397,7 +397,7 @@ test('a completion request without a boolean done is an empty patch: a no-op the
   const alice = await ctx.open('alice', 'alice');
   await wait(async () => (await alice.models.todo.get({ id: 'seed-1' })) !== null, 'Alice catches up');
   const before = ctx.app.handlerCalls;
-  await alice.actions.setTodoDone({ todo: { id: 'seed-1' } });
+  await alice.mutations.setTodoDone({ todo: { id: 'seed-1' } });
   await ctx.settled(alice);
   assert.equal(ctx.app.handlerCalls, before + 1, 'the handler runs with an empty patch');
   assert.deepEqual((await alice.syncState()).rejections, []);
@@ -414,7 +414,7 @@ test('direct result keeps its Loader snapshot while an independent durable edit 
    const pending = await setDone(alice, 'seed-1', true);
    await gate.entered;
    assert.equal((await alice.models.todo.get({ id: 'seed-1' })).done, true, 'durable optimism is visible');
-   const result = await alice.actions.call.setTodoDone({ todo: { id: 'seed-1', done: false } });
+   const result = await alice.mutations.call.setTodoDone({ todo: { id: 'seed-1', done: false } });
    assert.equal(result.todo.done, false, 'direct result is the committed Loader snapshot');
    assert.equal((await alice.models.todo.get({ id: 'seed-1' })).done, true, 'pending optimism replays over direct authority');
    assert.equal((await alice.syncState()).pending, 1, 'direct call does not drain the independent durable queue');
@@ -438,10 +438,10 @@ test('a direct retry replays the stored result snapshot after a later update', a
    return originalFetch(url, init);
   };
   try {
-   const first = await alice.actions.call.setTodoDone({ todo: { id: 'seed-1', done: true } });
+   const first = await alice.mutations.call.setTodoDone({ todo: { id: 'seed-1', done: true } });
    assert.equal(first.todo.done, true);
    assert.equal(typeof firstBody, 'string');
-   const second = await alice.actions.call.setTodoDone({ todo: { id: 'seed-1', done: false } });
+   const second = await alice.mutations.call.setTodoDone({ todo: { id: 'seed-1', done: false } });
    assert.equal(second.todo.done, false);
    assert.equal((await ctx.row('seed-1')).done, false);
    const calls = ctx.app.handlerCalls;

@@ -13,5 +13,5 @@ model Todo {
   @@id(id)
 }
 
-action AddTodo(todo Todo.create)
-action SetTodoDone(todo Todo.update<done>)
+mutation AddTodo(todo Todo.create)
+mutation SetTodoDone(todo Todo.update<done>)

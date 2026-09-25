@@ -1,52 +1,58 @@
-import type { ActionCall, ActionOutcome, GeneratedClient } from "./client.ts";
+import type { Call, CallOutcome, GeneratedClient } from "./client.ts";
 import {
   createBackend,
-  type ActionContext,
-  type ActionHandlerCall,
-  type Handlers,
+  type MutationContext,
+  type MutationHandlerCall,
+  type QueryContext,
+  type Mutations,
+  type Queries,
   type Loaders,
   type PutV1Input,
 } from "./backend.ts";
 import type { Todo } from "./generated.ts";
 import type { Database } from "../../packages/server/index.mts";
 import type {
-  ActionCall as SdkActionCall,
-  ActionOutcome as SdkActionOutcome,
+  Call as SdkCall,
+  CallOutcome as SdkCallOutcome,
 } from "../../packages/client-js/index.mts";
 
 declare const client: GeneratedClient;
 declare const todo: Todo;
-declare const context: ActionContext<{ rows: Map<string, Todo> }>;
+declare const context: MutationContext<{ rows: Map<string, Todo> }>;
+declare const queryContext: QueryContext<{ rows: Map<string, Todo> }>;
 
 const call: Promise<
-  ActionCall<{ todo: Todo; echoed: Date; status: "open" | "closed" }>
-> = client.actions.put({
+  Call<{ todo: Todo; echoed: Date; status: "open" | "closed" }>
+> = client.mutations.put({
   todo,
   when: new Date(),
   statuses: ["open"],
   note: null,
 });
-const direct: Promise<{ todo: Todo | null }> = client.actions.call.find({
+const direct: Promise<{ todo: Todo | null }> = client.queries.find({
   at: new Date(),
 });
+const queued: Promise<Call<{ todo: Todo | null }>> =
+  client.queries.enqueue.find({ at: new Date() });
 const outcome: Promise<
-  ActionOutcome<{ todo: Todo; echoed: Date; status: "open" | "closed" }>
+  CallOutcome<{ todo: Todo; echoed: Date; status: "open" | "closed" }>
 > = call.then((handle) => handle.wait());
 const sharedCall: Promise<
-  SdkActionCall<{ todo: Todo; echoed: Date; status: "open" | "closed" }>
+  SdkCall<{ todo: Todo; echoed: Date; status: "open" | "closed" }>
 > = call;
 const sharedOutcome: Promise<
-  SdkActionOutcome<{ todo: Todo; echoed: Date; status: "open" | "closed" }>
+  SdkCallOutcome<{ todo: Todo; echoed: Date; status: "open" | "closed" }>
 > = outcome;
 const local: Promise<void> = client.models.todo.create(todo);
-const optional = client.actions.change({ at: new Date() });
-const identity = client.actions.mark({
+const optional = client.mutations.change({ at: new Date() });
+const identity = client.mutations.mark({
   moment: { at: new Date(), title: "changed" },
 });
 const removed: Promise<{ moment: { at: Date } }> =
-  client.actions.call.removeMoment({ moment: { at: new Date() } });
+  client.mutations.call.removeMoment({ moment: { at: new Date() } });
 void [
   direct,
+  queued,
   outcome,
   sharedCall,
   sharedOutcome,
@@ -58,9 +64,30 @@ void [
 context.tx.rows.set(todo.id, todo);
 context.changes.add(todo);
 context.publish({ channel: "todos", records: [todo] });
+queryContext.tx.rows.get(todo.id);
+void queryContext.callId;
+// @ts-expect-error a Query context has no changes
+queryContext.changes.add(todo);
+// @ts-expect-error a Query context has no publish
+queryContext.publish({ channel: "todos" });
 
 type Tx = { rows: Map<string, Todo> };
-const handlers: Handlers<Tx> = {
+const queries: Queries<Tx> = {
+  find: {
+    async v2({ ctx }) {
+      ctx.tx.rows.get("one");
+      // @ts-expect-error Query handlers cannot report changes
+      ctx.changes.add(todo);
+      return { todo: { id: "one" } };
+    },
+  },
+};
+// @ts-expect-error Query Model outputs are typed identities, not bare keys
+const wholeModel: Queries<Tx> = { find: { v2: async () => ({ todo: "one" }) } };
+// @ts-expect-error a Query handler registers only its Query versions
+const queryV1: Queries<Tx> = { find: { v1: async () => ({ todo: null }) } };
+void [queries, wholeModel, queryV1];
+const handlers: Mutations<Tx> = {
   put: {
     async v1({ ctx, args }) {
       ctx.tx.rows.set(args.todo.id, args.todo);
@@ -106,7 +133,7 @@ if (false) {
   const backend = createBackend({
     database,
     authenticate: () => "alice",
-    handlers: {
+    mutations: {
       ...handlers,
       async ping({ ctx }) {
         ctx.tx.rows.set("x", todo);
@@ -114,26 +141,41 @@ if (false) {
         ctx.tx.missing;
       },
     },
+    queries,
     loaders,
   });
   void backend;
+  // @ts-expect-error a schema that retains Queries requires the queries map
+  createBackend({ database, authenticate: () => "alice", mutations: handlers, loaders });
 }
-const retained = (call: ActionHandlerCall<Tx, PutV1Input>) =>
+const retained = (call: MutationHandlerCall<Tx, PutV1Input>) =>
   call.args.todo.at.getUTCFullYear();
 void retained;
 
-// @ts-expect-error every retained Action version must be registered
-const missingVersion: Handlers<Tx>["put"] = {
+// @ts-expect-error every retained Mutation version must be registered
+const missingVersion: Mutations<Tx>["put"] = {
   v2: async () => ({ echoed: new Date(), status: "open" }),
 };
 void missingVersion;
 
 // @ts-expect-error required nullable ordinary input must be present
-client.actions.put({ todo, when: new Date(), statuses: [] });
+client.mutations.put({ todo, when: new Date(), statuses: [] });
 // @ts-expect-error DateTime input uses Date
-client.actions.call.find({ at: "2026-01-01T00:00:00Z" });
+client.queries.find({ at: "2026-01-01T00:00:00Z" });
 // @ts-expect-error enum list members are checked
-client.actions.put({ todo, when: new Date(), statuses: ["typo"], note: null });
+client.mutations.put({ todo, when: new Date(), statuses: ["typo"], note: null });
+// @ts-expect-error Find is a Query now; the Mutation namespace no longer has it
+client.mutations.find({ at: new Date() });
+// @ts-expect-error a direct result has no wait
+client.queries.find({ at: new Date() }).then((result) => result.wait());
+// @ts-expect-error a durable Call has no result property
+client.mutations.ping({}).then((handle) => handle.result);
+// @ts-expect-error the old actions namespace is gone
+client.actions.ping({});
+// @ts-expect-error store keys name explicit Model outputs only
+client.queries.find({ at: new Date() }, { store: { missing: false } });
+client.queries.find({ at: new Date() }, { store: { todo: false } });
+client.queries.enqueue.find({ at: new Date() }, { store: false });
 // @ts-expect-error standalone local models have no named mutation method
 client.models.todo.mutate({});
 client.transaction(async (tx) => {
@@ -141,6 +183,8 @@ client.transaction(async (tx) => {
   tx.models.todo.watch({}, () => {});
 });
 client.transaction(async (tx) => {
-  // @ts-expect-error transactions cannot submit durable Actions
-  tx.actions.ping({});
+  // @ts-expect-error transactions cannot submit Mutations
+  tx.mutations.ping({});
+  // @ts-expect-error transactions cannot run Queries
+  tx.queries.find({ at: new Date() });
 });

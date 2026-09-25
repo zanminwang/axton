@@ -88,7 +88,8 @@ test("mobile durable diagnostics do not stop later native Actions", async () => 
   }
 });
 import {
-  makeActions,
+  makeMutations,
+  makeQueries,
   liveModels,
   schema as generatedSchema,
 } from "../../action-runtime-ts/generated.ts";
@@ -144,7 +145,7 @@ test("mobile host runtime settles Actions and standalone local writes", async ()
   }
 });
 
-test("generated Action and Model bindings run through the mobile host adapter", async () => {
+test("generated Mutation, Query and Model bindings run through the mobile host adapter", async () => {
   const native = createRequire(import.meta.url)(
     "../../../bindings/node/axton-node.node",
   );
@@ -169,18 +170,34 @@ test("generated Action and Model bindings run through the mobile host adapter", 
     });
     assert.equal((await models.todo.get({ id: "one" }))?.title, "local");
     assert.equal((await client.syncState()).pending, 0);
-    const call = await makeActions(client).ping({});
+    const call = await makeMutations(client).ping({});
     await client.drop(1);
     assert.equal((await call.wait()).error?.code, "dropped");
     const at = new Date("2026-01-01T00:00:00Z");
-    await makeActions(client).find({ at }, { store: { todo: false } });
-    await makeActions(client).find({ at }, { store: false });
+    // Queued Queries persist their store policy with zero local operations.
+    await makeQueries(client).enqueue.find({ at }, { store: { todo: false } });
+    await makeQueries(client).enqueue.find({ at }, { store: false });
     const stored = await client.readSql(
-      "SELECT store FROM axton_mutation ORDER BY ordinal",
+      "SELECT name, version, store FROM axton_mutation ORDER BY ordinal",
     );
     assert.deepEqual(
-      stored.map((row) => row.store),
-      ['{"todo":false}', "false"],
+      stored.map((row) => [row.name, row.version, row.store]),
+      [
+        ["Find", 2, '{"todo":false}'],
+        ["Find", 2, "false"],
+      ],
+    );
+    assert.equal((await models.todo.get({ id: "one" }))?.title, "local");
+    // Direct routes never fall back to the queue without a connection.
+    await assert.rejects(makeQueries(client).find({ at }), {
+      code: "action.unavailable",
+    });
+    await assert.rejects(makeMutations(client).call.ping({}), {
+      code: "action.unavailable",
+    });
+    assert.equal(
+      (await client.readSql("SELECT count(*) AS n FROM axton_mutation"))[0].n,
+      2,
     );
   } finally {
     await client.close();

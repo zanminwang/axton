@@ -307,6 +307,7 @@
             }
           }
         ],
+        "kind": "mutation",
         "name": "AddTodo",
         "outputEnums": [
           {
@@ -449,6 +450,7 @@
             "operation": "delete"
           }
         ],
+        "kind": "mutation",
         "name": "DeleteTodo",
         "outputEnums": [],
         "outputs": [
@@ -459,6 +461,80 @@
             "name": "todo",
             "source": {
               "inputIdentity": "todo"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      }
+    },
+    "FindTodos": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "text",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "cursor",
+            "nullable": true,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "kind": "query",
+        "name": "FindTodos",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "list",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 2,
+            "name": "todos",
+            "source": "handlerIdentity"
+          },
+          {
+            "cardinality": "optional",
+            "kind": "value",
+            "name": "nextCursor",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "string"
             }
           }
         ],
@@ -504,6 +580,43 @@
         "requirements": [],
         "sequence": null,
         "version": 1
+      },
+      "2": {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [],
+        "kind": "query",
+        "name": "GetTodos",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "list",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 2,
+            "name": "todos",
+            "source": "handlerIdentity"
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 2
       }
     },
     "Link": {
@@ -555,6 +668,7 @@
             "operation": "create"
           }
         ],
+        "kind": "mutation",
         "name": "Link",
         "outputEnums": [],
         "outputs": [
@@ -623,6 +737,7 @@
             }
           }
         ],
+        "kind": "mutation",
         "name": "OpenTodo",
         "outputEnums": [],
         "outputs": [
@@ -713,6 +828,7 @@
           "models": []
         },
         "inputs": [],
+        "kind": "mutation",
         "name": "Ping",
         "outputEnums": [],
         "outputs": [],
@@ -754,6 +870,7 @@
             "operation": "delete"
           }
         ],
+        "kind": "mutation",
         "name": "RemoveTodo",
         "outputEnums": [],
         "outputs": [
@@ -793,6 +910,7 @@
             }
           }
         ],
+        "kind": "mutation",
         "name": "Search",
         "outputEnums": [],
         "outputs": [],
@@ -846,6 +964,7 @@
             }
           }
         ],
+        "kind": "mutation",
         "name": "SendEmail",
         "outputEnums": [],
         "outputs": [],
@@ -895,6 +1014,7 @@
           "models": []
         },
         "inputs": [],
+        "kind": "mutation",
         "name": "StateList",
         "outputEnums": [
           {

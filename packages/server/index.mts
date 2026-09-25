@@ -202,8 +202,8 @@ export class MutationRejected extends Error {
     this.code = code;
   }
 }
-/** Public Action spelling for the same business rejection contract. */
-export { MutationRejected as ActionRejected };
+/** The Mutation and Query spelling of the same business rejection contract. */
+export { MutationRejected as CallRejected };
 export interface RecordRef {
   model: string;
   identity: object;
@@ -264,19 +264,38 @@ export type Loader<Tx, Identity = any, Row = object> = (
 /** Every retained version of one mutation, or a bare function as shorthand for a v1-only contract. */
 export type HandlerRegistration<Tx> =
   Handler<Tx> | { [version: `v${number}`]: Handler<Tx> };
-export interface ActionContext<Tx> {
+/** Trusted framework context of a Mutation: it may change business state and publish. */
+export interface MutationContext<Tx> {
   tx: Tx;
   userId: string;
   callId: string;
   changes: Changes;
   publish: Publish;
 }
-export type ActionHandler<Tx, Args = any, Outputs = any> = (call: {
-  ctx: ActionContext<Tx>;
+/**
+ * Trusted framework context of a Query. It carries no `changes` or `publish`:
+ * a Query reads without business side effects. `tx` is still the
+ * application's own transaction; the framework cannot inspect arbitrary SQL,
+ * so honoring the read-only contract is the handler's responsibility.
+ */
+export interface QueryContext<Tx> {
+  tx: Tx;
+  userId: string;
+  callId: string;
+}
+export type MutationHandler<Tx, Args = any, Outputs = any> = (call: {
+  ctx: MutationContext<Tx>;
   args: Args;
 }) => Promise<Outputs | void>;
-export type ActionHandlerRegistration<Tx> =
-  ActionHandler<Tx> | { [version: `v${number}`]: ActionHandler<Tx> };
+export type QueryHandler<Tx, Args = any, Outputs = any> = (call: {
+  ctx: QueryContext<Tx>;
+  args: Args;
+}) => Promise<Outputs | void>;
+/** Every retained version of one operation of this kind, or a bare function for a v1-only contract. */
+export type MutationHandlerRegistration<Tx> =
+  MutationHandler<Tx> | { [version: `v${number}`]: MutationHandler<Tx> };
+export type QueryHandlerRegistration<Tx> =
+  QueryHandler<Tx> | { [version: `v${number}`]: QueryHandler<Tx> };
 /** Every retained version of one model's read contract, or a bare function as shorthand for a v1-only model. */
 export type LoaderRegistration<Tx> =
   Loader<Tx> | { [version: `v${number}`]: Loader<Tx> };
@@ -286,7 +305,7 @@ export type LoaderRegistration<Tx> =
  * for the latest version. Refused at startup, naming the key and version.
  */
 function versioned<F>(
-  kind: "handler" | "loader",
+  kind: "handler" | "loader" | "mutation" | "query",
   name: string,
   key: string,
   versions: readonly number[],
@@ -383,10 +402,12 @@ export interface BackendOptions<T> {
   config: object;
   database: Database<T>;
   authenticate: Authenticate;
-  handlers: Record<
-    string,
-    HandlerRegistration<T> | ActionHandlerRegistration<T>
-  >;
+  /** Legacy slot mutations (`mutation Name { slots }`), by lower-camel name. */
+  handlers?: Record<string, HandlerRegistration<T>> | undefined;
+  /** Every retained Mutation version, by lower-camel name. */
+  mutations?: Record<string, MutationHandlerRegistration<T>> | undefined;
+  /** Every retained Query version, by lower-camel name. */
+  queries?: Record<string, QueryHandlerRegistration<T>> | undefined;
   loaders: Record<string, LoaderRegistration<T>>;
   loaderHooks?: Record<
     string,
@@ -478,6 +499,8 @@ class Session {
     if (this.closed) throw new Error("transaction session closed");
   }
 }
+/** The retained backend business kind of an operation; omitted is `mutation`. */
+type CallKind = "mutation" | "query";
 type MutationSlot = {
   name: string;
   operation: string;
@@ -508,6 +531,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
       actions?: {
         name: string;
         version: number;
+        kind?: CallKind;
         inputs?: {
           kind: string;
           name: string;
@@ -582,10 +606,22 @@ export function createBackend<T>(options: BackendOptions<T>) {
         name,
         key,
         versions,
-        options.handlers[key],
+        options.handlers?.[key],
       ),
     );
   }
+  const operations = descriptor.schema?.actions ?? [];
+  for (const key of Object.keys(options.handlers ?? {}))
+    if (![...retained.keys()].some((name) => lowerFirst(name) === key)) {
+      const operation = operations.find(
+        (action) => lowerFirst(action.name) === key,
+      );
+      throw new Error(
+        operation
+          ? `Handler ${key} names ${operation.name}; register it under ${(operation.kind ?? "mutation") === "query" ? "queries" : "mutations"}`
+          : `Unknown handler ${key}: no retained mutation ${key}`,
+      );
+    }
   const handlerTable = new Map<
     string,
     { handler: Handler<T>; slots: MutationSlot[] }
@@ -595,25 +631,46 @@ export function createBackend<T>(options: BackendOptions<T>) {
       handler: registered.get(m.name)!.get(m.version)!,
       slots: m.slots ?? [],
     });
-  const actionVersions = new Map<string, number[]>();
-  for (const action of descriptor.schema?.actions ?? [])
-    actionVersions.set(
-      action.name,
-      [...(actionVersions.get(action.name) ?? []), action.version].sort(
-        (a, b) => a - b,
-      ),
-    );
-  const actionHandlers = new Map<string, ActionHandler<T>>();
-  for (const [name, versions] of actionVersions) {
-    const registered = versioned<ActionHandler<T>>(
-      "handler",
-      name,
-      lowerFirst(name),
-      versions,
-      options.handlers[lowerFirst(name)],
-    );
-    for (const [version, handler] of registered)
-      actionHandlers.set(`${name}:${version}`, handler);
+  // Registration follows each retained version's own kind: one name may
+  // retain a Mutation version and a Query version, each in its own map.
+  const actionHandlers = new Map<
+    string,
+    MutationHandler<T> | QueryHandler<T>
+  >();
+  for (const kind of ["mutation", "query"] as const) {
+    const map = kind === "mutation" ? options.mutations : options.queries;
+    const versions = new Map<string, number[]>();
+    for (const action of operations)
+      if ((action.kind ?? "mutation") === kind)
+        versions.set(
+          action.name,
+          [...(versions.get(action.name) ?? []), action.version].sort(
+            (a, b) => a - b,
+          ),
+        );
+    for (const [name, list] of versions) {
+      const table = versioned<MutationHandler<T> | QueryHandler<T>>(
+        kind,
+        name,
+        lowerFirst(name),
+        list,
+        map?.[lowerFirst(name)],
+      );
+      for (const [version, handler] of table)
+        actionHandlers.set(`${name}:${version}`, handler);
+    }
+    const group = kind === "mutation" ? "mutations" : "queries";
+    for (const key of Object.keys(map ?? {}))
+      if (![...versions.keys()].some((name) => lowerFirst(name) === key)) {
+        const other = operations.find(
+          (action) => lowerFirst(action.name) === key,
+        );
+        throw new Error(
+          other
+            ? `${group}.${key}: ${other.name} retains no ${kind} version; register it under ${group === "mutations" ? "queries" : "mutations"}`
+            : `Unknown ${kind} ${key}: no retained ${kind} ${key}`,
+        );
+      }
   }
   const actionTable = new Map(
     (descriptor.schema?.actions ?? []).map((action) => [
@@ -748,9 +805,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
           const action = actionTable.get(`${req.name}:${req.version}`);
           const handler = actionHandlers.get(`${req.name}:${req.version}`);
           if (!action || !handler)
-            throw new Error(
-              `Missing Action handler ${req.name} v${req.version}`,
-            );
+            throw new Error(`Missing handler ${req.name} v${req.version}`);
           const args = { ...req.arguments };
           const collected = collect();
           for (const input of action.inputs ?? []) {
@@ -784,20 +839,27 @@ export function createBackend<T>(options: BackendOptions<T>) {
                 ? (value as unknown[]).map(shape)
                 : shape(value);
           }
+          // A Query context has no effect capabilities at runtime either:
+          // its settlement never carries changes or publications.
+          const query = (action.kind ?? "mutation") === "query";
           try {
             const outputs = await handler({
-              ctx: {
-                tx,
-                userId: req.owner,
-                callId: req.callId,
-                changes: collected.changes,
-                publish: collected.publish,
-              },
+              ctx: query
+                ? { tx, userId: req.owner, callId: req.callId }
+                : {
+                    tx,
+                    userId: req.owner,
+                    callId: req.callId,
+                    changes: collected.changes,
+                    publish: collected.publish,
+                  },
               args,
-            });
+            } as Parameters<MutationHandler<T>>[0]);
             result = {
               outputs: outputs === undefined ? {} : outputs,
-              ...collected.settlement(),
+              ...(query
+                ? { changes: [], publications: [] }
+                : collected.settlement()),
             };
           } catch (error) {
             if (isRetryableTransactionError(error)) throw error;

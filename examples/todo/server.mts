@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 import { prisma } from "../../packages/postgres/index.mts";
 import {
   createBackend,
-  ActionRejected,
-  type Handlers,
+  CallRejected,
+  type Mutations,
   type Loaders,
 } from "./generated/node/backend.ts";
 import { schema } from "./generated/node/generated.ts";
@@ -27,13 +27,13 @@ export function demoAuth(request: IncomingMessage): string | null {
 
 function titleForInsert(title: string): string {
   const value = title.trim();
-  if (!value) throw new ActionRejected("todo.title_empty");
+  if (!value) throw new CallRejected("todo.title_empty");
   return value;
 }
 
 function validateCreate(userId: string, values: { createdById: string; done: boolean }): void {
-  if (values.createdById !== userId) throw new ActionRejected("todo.creator_invalid");
-  if (values.done !== false) throw new ActionRejected("todo.initial_state_invalid");
+  if (values.createdById !== userId) throw new CallRejected("todo.creator_invalid");
+  if (values.done !== false) throw new CallRejected("todo.initial_state_invalid");
 }
 
 function prismaCode(error: unknown): string | undefined {
@@ -55,7 +55,7 @@ let savepoints = 0;
 export async function createExample() {
   const db = new PrismaClient();
   let calls = 0;
-  const handlers: Handlers<Tx> = {
+  const mutations: Mutations<Tx> = {
     async addTodo({ args, ctx }) {
       const { tx, userId, publish, changes } = ctx;
       calls++;
@@ -69,7 +69,7 @@ export async function createExample() {
       } catch (error) {
         if (!isTodoIdConflict(error)) throw error;
         await tx.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${savepoint}`);
-        throw new ActionRejected("todo.id_conflict");
+        throw new CallRejected("todo.id_conflict");
       }
       await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
       changes.add({ model: "Todo", identity: { id: todo.id } });
@@ -86,7 +86,7 @@ export async function createExample() {
           await tx.todo.update({ where: { id }, data: { done } });
         } catch (error) {
           if (prismaCode(error) !== "P2025") throw error;
-          throw new ActionRejected("todo.missing");
+          throw new CallRejected("todo.missing");
         }
       }
       changes.add({ model: "Todo", identity: { id } });
@@ -108,7 +108,7 @@ export async function createExample() {
   const backend = createBackend<Tx>({
     database: prisma(db),
     authenticate: demoAuth,
-    handlers,
+    mutations,
     loaders,
   });
   let server: Awaited<ReturnType<typeof backend.listen>> | undefined;

@@ -13,6 +13,9 @@ expected=(
   'undefined_named_parameter:15'
   'undefined_method:18'
   'undefined_getter:20'
+  'undefined_getter:21'
+  'invalid_assignment:22'
+  'undefined_getter:24'
 )
 for pair in "${expected[@]}"; do
   code="${pair%%:*}"

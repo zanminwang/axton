@@ -12,10 +12,11 @@ model Moment {
  title String
  @@id(at)
 }
-@version(2) action Put(todo Todo.create, when DateTime, statuses Status[], note String?) { echoed DateTime status Status }
-action Change(todo Todo.update?, at DateTime) { echoed DateTime }
-action Clear(todo Todo.delete[])
-action Ping()
-action Find(at DateTime) { todo Todo? }
-action Mark(moment Moment.update)
-action RemoveMoment(moment Moment.delete)
+@version(2) mutation Put(todo Todo.create, when DateTime, statuses Status[], note String?) { echoed DateTime status Status }
+mutation Change(todo Todo.update?, at DateTime) { echoed DateTime }
+mutation Clear(todo Todo.delete[])
+mutation Ping()
+// Find v1 was retained as a Mutation; v2 reclassifies it as a Query.
+@version(2) query Find(at DateTime) { todo Todo? }
+mutation Mark(moment Moment.update)
+mutation RemoveMoment(moment Moment.delete)

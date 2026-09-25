@@ -1,12 +1,12 @@
 import * as actionBackend from "./backend.ts";
-import type { ActionCall, GeneratedClient } from "./client.ts";
+import type { Call, GeneratedClient } from "./client.ts";
 import type { AddTodoInput, AddTodoOutput, Todo, TodoIdentity, TodoUpdate, ProjectIdentity, PingOutput } from './generated.ts';
-import type { AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, LinkHandlerOutput, PingHandlerOutput, RemoveTodoHandlerOutput, Handlers, StateListHandlerOutput, StateListV1HandlerOutput } from './backend.ts';
+import type { AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, FindTodosHandlerOutput, LinkHandlerOutput, PingHandlerOutput, QueryContext, RemoveTodoHandlerOutput, Mutations, Queries, StateListHandlerOutput, StateListV1HandlerOutput } from './backend.ts';
 
 declare const client: GeneratedClient;
 declare const concrete: GeneratedClient;
-void concrete.actions;
-declare const call: ActionCall<AddTodoOutput>;
+void [concrete.mutations, concrete.queries];
+declare const call: Call<AddTodoOutput>;
 declare const todo: Todo;
 declare const input: AddTodoInput;
 // @ts-expect-error A live call has no result property; wait for its outcome.
@@ -19,8 +19,45 @@ call.status = 'failed';
 call.output;
 // @ts-expect-error No cancel method exists on a call handle.
 call.cancel();
-// @ts-expect-error No Action can run inside an application transaction.
-client.transaction(async tx => tx.actions.addTodo(input));
+// @ts-expect-error No Mutation can run inside an application transaction.
+client.transaction(async tx => tx.mutations.addTodo(input));
+// @ts-expect-error No Query can run inside an application transaction.
+client.transaction(async tx => tx.queries.findTodos({ text: 'x', cursor: null }));
+// @ts-expect-error The retired actions namespace does not exist.
+void concrete.actions;
+// @ts-expect-error A Query is not under mutations.
+client.mutations.findTodos({ text: 'x', cursor: null });
+// @ts-expect-error A Mutation is not under queries.
+client.queries.addTodo(input);
+// @ts-expect-error A direct Mutation is not under queries.enqueue.
+client.queries.enqueue.addTodo(input);
+// @ts-expect-error A Query has no direct `call` member; it is direct by default.
+client.queries.call.findTodos({ text: 'x', cursor: null });
+// @ts-expect-error A Mutation has no `enqueue` member; it is durable by default.
+client.mutations.enqueue.addTodo(input);
+// @ts-expect-error A direct result has no wait; it is already final.
+client.queries.findTodos({ text: 'x', cursor: null }).then(result => result.wait());
+// @ts-expect-error A direct Mutation result is its output, not a Call.
+const directCall: Promise<Call<AddTodoOutput>> = client.mutations.call.addTodo(input);
+// @ts-expect-error A durable Query resolves to a Call, not its output.
+const queuedOutput: Promise<{ todos: Todo[] }> = client.queries.enqueue.findTodos({ text: 'x', cursor: null });
+// @ts-expect-error A nullable Query input is still a required argument.
+client.queries.findTodos({ text: 'x' });
+void [directCall, queuedOutput];
+declare const queryContext: QueryContext<{}>;
+// @ts-expect-error A Query context has no changes.
+queryContext.changes;
+// @ts-expect-error A Query context has no publish.
+queryContext.publish({ channel: 'todos' });
+// @ts-expect-error A Query handler cannot use Mutation effects.
+const effectfulQuery: Queries<{}>['findTodos'] = async ({ ctx }) => { ctx.changes.add({ model: 'Todo', identity: { id: 'x' } }); return { todos: [], nextCursor: null }; };
+// @ts-expect-error Query Model outputs are identity objects.
+const bareQueryOutput: FindTodosHandlerOutput = { todos: ['x'], nextCursor: null };
+// @ts-expect-error The Query version of GetTodos is v2; v1 is a Mutation.
+const wrongKindVersion: Queries<{}>['getTodos'] = { async v1() { return { todos: [] }; } };
+// @ts-expect-error A Mutation map does not register a Query-only name.
+const queryInMutations: Pick<Mutations<{}>, 'findTodos'> = {};
+void [effectfulQuery, bareQueryOutput, wrongKindVersion, queryInMutations];
 // @ts-expect-error Transaction models cannot watch.
 client.transaction(async tx => tx.models.todo.watch({}, () => {}));
 // @ts-expect-error Ordinary nullable args are required-present.
@@ -58,10 +95,10 @@ const badPingHandler: PingHandlerOutput = { unexpected: true };
 // @ts-expect-error An implicit-only Action handler must return void.
 const badRemoveHandler: RemoveTodoHandlerOutput = { todo: { id: 'x' } };
 // @ts-expect-error A retained v2 handler cannot be omitted.
-const missingV2: Pick<Handlers<{}>, 'addTodo'> = { addTodo: { async v1() { return { relatedTodo: null, matches: [], count: 1 }; } } };
+const missingV2: Pick<Mutations<{}>, 'addTodo'> = { addTodo: { async v1() { return { relatedTodo: null, matches: [], count: 1 }; } } };
 void actionBackend.createBackend;
-// @ts-expect-error All versioned Action handlers are required.
-const missingHandler: Handlers<{}> = { link: { async v1() { return { relatedProject: null }; } }, ping: { async v1() {} } };
+// @ts-expect-error All versioned Mutation handlers are required.
+const missingHandler: Mutations<{}> = { link: { async v1() { return { relatedProject: null }; } }, ping: { async v1() {} } };
 void [missingNullable, badPatch, badProject, bare, full, wrongModel, missingCount, badList, badComposite, fullComposite, wrongScalar, oldEnum, oldModel, oldOutput, badPing, badPingHandler, badRemoveHandler, missingV2, missingHandler];
 
 // @ts-expect-error enum-list output rejects a scalar
@@ -77,14 +114,18 @@ const oldStateListScalar: StateListV1HandlerOutput = { states: 'open' };
 void [oldStateListArchived, oldStateListScalar];
 
 // @ts-expect-error store maps name explicit Model outputs, not scalar outputs.
-client.actions.call.openTodo({ store: null }, { store: { count: false } });
+client.mutations.call.openTodo({ store: null }, { store: { count: false } });
 // @ts-expect-error store maps reject unknown output names.
-client.actions.openTodo({ store: null }, { store: { missing: false } });
+client.mutations.openTodo({ store: null }, { store: { missing: false } });
 // @ts-expect-error store map values are booleans.
-client.actions.call.openTodo({ store: null }, { store: { suggestions: 'no' } });
+client.mutations.call.openTodo({ store: null }, { store: { suggestions: 'no' } });
 // @ts-expect-error input-bound outputs are not store keys.
-client.actions.call.addTodo(input, { store: { todo: false } });
+client.mutations.call.addTodo(input, { store: { todo: false } });
 // @ts-expect-error Delete confirmations are not store keys.
-client.actions.call.deleteTodo({ todo: { id: 't' } }, { store: { todo: false } });
-// @ts-expect-error Actions without eligible outputs accept only a boolean store.
-client.actions.call.ping({}, { store: {} });
+client.mutations.call.deleteTodo({ todo: { id: 't' } }, { store: { todo: false } });
+// @ts-expect-error Operations without eligible outputs accept only a boolean store.
+client.mutations.call.ping({}, { store: {} });
+// @ts-expect-error Query store maps reject scalar outputs.
+client.queries.findTodos({ text: 'x', cursor: null }, { store: { nextCursor: false } });
+// @ts-expect-error Queued Query store maps reject unknown outputs.
+client.queries.enqueue.findTodos({ text: 'x', cursor: null }, { store: { missing: true } });

@@ -14,23 +14,28 @@ model Project {
  @@id(tenantId, id)
 }
 @version(2)
-action AddTodo(todo Todo.create, patch Todo.update<title>?, gone Todo.delete[], status Status?, tags String[]) {
+mutation AddTodo(todo Todo.create, patch Todo.update<title>?, gone Todo.delete[], status Status?, tags String[]) {
  relatedTodo Todo?
  matches Todo[]
  count Int
  state Status?
 }
-action Link(project Project.create) { relatedProject Project? }
-action Ping()
-action RemoveTodo(todo Todo.delete)
-action Search(query String?)
-action DeleteTodo(todo Todo.delete)
-action SendEmail(to String, subject String, body String)
-action GetTodos() { todos Todo[] }
-@version(2) action StateList() { states Status[] }
-action OpenTodo(store String?) {
+mutation Link(project Project.create) { relatedProject Project? }
+mutation Ping()
+mutation RemoveTodo(todo Todo.delete)
+mutation Search(query String?)
+mutation DeleteTodo(todo Todo.delete)
+mutation SendEmail(to String, subject String, body String)
+// GetTodos v1 is retained as a Mutation; v2 is the same read as a Query.
+@version(2) query GetTodos() { todos Todo[] }
+@version(2) mutation StateList() { states Status[] }
+mutation OpenTodo(store String?) {
  mainTodo Todo
  suggestions Todo[]
  related Todo?
  count Int
+}
+query FindTodos(text String, cursor String?) {
+ todos Todo[]
+ nextCursor String?
 }

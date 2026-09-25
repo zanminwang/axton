@@ -1,5 +1,5 @@
-/** A terminal Action error observed by the client. */
-export class ActionError extends Error {
+/** A terminal Mutation or Query error observed by the client. */
+export class CallError extends Error {
   readonly code: string;
   readonly execution: "rejected" | "unknown";
   override readonly cause: unknown;
@@ -9,28 +9,28 @@ export class ActionError extends Error {
     cause?: unknown,
   ) {
     super(code);
-    this.name = "ActionError";
+    this.name = "CallError";
     this.code = code;
     this.execution = execution;
     this.cause = cause;
   }
 }
 
-export type ActionStatus = "pending" | "succeeded" | "failed";
-export type ActionOutcome<T> =
-  { result: T; error: null } | { result: undefined; error: ActionError };
+export type CallStatus = "pending" | "succeeded" | "failed";
+export type CallOutcome<T> =
+  { result: T; error: null } | { result: undefined; error: CallError };
 /**
  * Invocation options, kept apart from business args. `store` selects which
  * explicit Model outputs also update local Models: omitted or `true` stores
  * all, `false` none, and a map overrides named outputs (unnamed ones stay
  * true). Results are the same either way.
  */
-export type ActionOptions<K extends string = string> = {
+export type CallOptions<K extends string = string> = {
   store?: boolean | Partial<Record<K, boolean>>;
 };
-export interface ActionCall<T> {
-  readonly status: ActionStatus;
-  wait(): Promise<ActionOutcome<T>>;
+export interface Call<T> {
+  readonly status: CallStatus;
+  wait(): Promise<CallOutcome<T>>;
 }
 
 type Completion = {
@@ -40,11 +40,11 @@ type Completion = {
     | { status: "failed"; code: string; execution: "rejected" | "unknown" };
 };
 
-class CallState<T> implements ActionCall<T> {
-  status: ActionStatus = "pending";
-  #outcome: ActionOutcome<T> | undefined;
-  #promise: Promise<ActionOutcome<T>>;
-  #resolve!: (value: ActionOutcome<T>) => void;
+class CallState<T> implements Call<T> {
+  status: CallStatus = "pending";
+  #outcome: CallOutcome<T> | undefined;
+  #promise: Promise<CallOutcome<T>>;
+  #resolve!: (value: CallOutcome<T>) => void;
   #activate: () => void;
   constructor(activate: () => void) {
     this.#activate = activate;
@@ -52,11 +52,11 @@ class CallState<T> implements ActionCall<T> {
       this.#resolve = resolve;
     });
   }
-  wait(): Promise<ActionOutcome<T>> {
+  wait(): Promise<CallOutcome<T>> {
     if (!this.#outcome) this.#activate();
     return this.#promise;
   }
-  settle(outcome: ActionOutcome<T>): void {
+  settle(outcome: CallOutcome<T>): void {
     if (this.#outcome) return;
     this.#outcome = outcome;
     this.status = outcome.error === null ? "succeeded" : "failed";
@@ -88,7 +88,7 @@ export class ActionRegistry {
     return this.#active.size;
   }
   assertSupported(): void {
-    if (!this.#weak) throw new ActionError("action.unsupported_runtime");
+    if (!this.#weak) throw new CallError("action.unsupported_runtime");
     if (this.#usesRuntimeWeak) {
       try {
         if (
@@ -97,11 +97,11 @@ export class ActionRegistry {
         )
           throw Error("WeakRef is unavailable");
       } catch (cause) {
-        throw new ActionError("action.unsupported_runtime", "unknown", cause);
+        throw new CallError("action.unsupported_runtime", "unknown", cause);
       }
     }
   }
-  register<T>(callId: string, decode: (value: unknown) => T): ActionCall<T> {
+  register<T>(callId: string, decode: (value: unknown) => T): Call<T> {
     this.assertSupported();
     this.#sweep();
     const state = new CallState<T>(() => {
@@ -110,7 +110,7 @@ export class ActionRegistry {
     if (this.#closed)
       state.settle({
         result: undefined,
-        error: new ActionError("client.closed"),
+        error: new CallError("client.closed"),
       });
     else
       this.#routes.set(callId, {
@@ -124,11 +124,11 @@ export class ActionRegistry {
     const route = this.#routes.get(completion.callId);
     const state = this.#active.get(completion.callId) ?? route?.ref.deref();
     if (!state) return;
-    let outcome: ActionOutcome<unknown>;
+    let outcome: CallOutcome<unknown>;
     if (completion.outcome.status === "failed") {
       outcome = {
         result: undefined,
-        error: new ActionError(
+        error: new CallError(
           completion.outcome.code,
           completion.outcome.execution,
         ),
@@ -142,7 +142,7 @@ export class ActionRegistry {
       } catch (cause) {
         outcome = {
           result: undefined,
-          error: new ActionError("action.observation_failed", "unknown", cause),
+          error: new CallError("action.observation_failed", "unknown", cause),
         };
       }
     }
@@ -157,7 +157,7 @@ export class ActionRegistry {
       const state = this.#active.get(id) ?? route.ref.deref();
       state?.settle({
         result: undefined,
-        error: new ActionError("client.closed"),
+        error: new CallError("client.closed"),
       });
     }
     this.#routes.clear();
@@ -170,8 +170,8 @@ export class ActionRegistry {
   }
 }
 
-export function actionError(error: unknown): ActionError {
-  if (error instanceof ActionError) return error;
+export function actionError(error: unknown): CallError {
+  if (error instanceof CallError) return error;
   const value = error as { code?: unknown; execution?: unknown } | null;
   const code =
     typeof value?.code === "string"
@@ -183,5 +183,5 @@ export function actionError(error: unknown): ActionError {
     value?.execution === "rejected" || code === "transaction_active"
       ? "rejected"
       : "unknown";
-  return new ActionError(code, execution, error);
+  return new CallError(code, execution, error);
 }

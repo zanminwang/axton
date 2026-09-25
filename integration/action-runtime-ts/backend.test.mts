@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  ActionRejected,
+  CallRejected,
   Moment,
   createBackend,
-  type ActionHandlerCall,
-  type Handlers,
+  type MutationHandlerCall,
+  type Mutations,
+  type Queries,
   type Loaders,
   type PutV1Input,
 } from "./backend.ts";
@@ -16,7 +17,7 @@ test("generated backend decodes Date values and keeps canonical Model references
   const second = "2026-01-02T00:00:00.000Z";
   const seen: unknown[] = [];
   type Tx = { rows: Map<string, Todo> };
-  const put = async ({ ctx, args }: ActionHandlerCall<Tx, PutV1Input>) => {
+  const put = async ({ ctx, args }: MutationHandlerCall<Tx, PutV1Input>) => {
     assert.equal(args.when.getUTCFullYear(), 2026);
     assert.equal(args.todo.at.getUTCFullYear(), 2026);
     assert.deepEqual(args.statuses, ["open", "closed"]);
@@ -36,7 +37,7 @@ test("generated backend decodes Date values and keeps canonical Model references
     ctx.publish({ channel: "todos", records: [args.todo] });
     return { echoed: new Date(args.when.getTime()), status: args.todo.status };
   };
-  const handlers: Handlers<Tx> = {
+  const mutations: Mutations<Tx> = {
     put: { v1: put, v2: put },
     async change({ args }) {
       return { echoed: args.at };
@@ -48,6 +49,13 @@ test("generated backend decodes Date values and keeps canonical Model references
     },
     async mark() {},
     async removeMoment() {},
+  };
+  const queries: Queries<Tx> = {
+    find: {
+      async v2() {
+        return { todo: null };
+      },
+    },
   };
   const loaders: Loaders<Tx> = {
     async todo({ ids, tx }) {
@@ -133,7 +141,8 @@ test("generated backend decodes Date values and keeps canonical Model references
       persistence: () => ({ call: async () => null }),
     },
     authenticate: () => "alice",
-    handlers,
+    mutations,
+    queries,
     loaders,
     native,
   });
@@ -159,5 +168,186 @@ test("generated backend decodes Date values and keeps canonical Model references
       id: "one",
     });
   }
-  assert.ok(ActionRejected.prototype instanceof Error);
+  assert.ok(CallRejected.prototype instanceof Error);
+});
+
+type Tx = { rows: Map<string, Todo> };
+/** A native stub that sends each request to the host and keeps its answer. */
+function nativeHost(requests: object[], answers: unknown[]) {
+  return {
+    validateConfig() {},
+    async processAction(
+      _config: string,
+      _owner: string,
+      _request: string,
+      callback: (request: string) => Promise<string>,
+    ) {
+      for (const request of requests)
+        answers.push(JSON.parse(await callback(JSON.stringify(request))));
+      return "{}";
+    },
+    async processPush() {
+      return "{}";
+    },
+    async processPull() {
+      return "{}";
+    },
+    async settleExternal() {
+      return "{}";
+    },
+    async negotiateLive() {
+      return "{}";
+    },
+    async pullLive() {
+      return "{}";
+    },
+    liveEvent() {
+      return "[]";
+    },
+    liveClose() {},
+  };
+}
+const database = {
+  transaction: async <R,>(body: (tx: Tx) => Promise<R>) =>
+    body({ rows: new Map() }),
+  persistence: () => ({ call: async () => null }),
+};
+const loaders: Loaders<Tx> = {
+  async todo({ ids }) {
+    return ids.map(() => null);
+  },
+  async moment({ ids }) {
+    return ids.map(() => null);
+  },
+};
+function mutationHandlers(): Mutations<Tx> {
+  const none = async () => {};
+  return {
+    put: {
+      v1: async ({ args }) => ({ echoed: args.when, status: "open" }),
+      v2: async ({ args }) => ({ echoed: args.when, status: "open" }),
+    },
+    change: async ({ args }) => ({ echoed: args.at }),
+    clear: none,
+    ping: none,
+    find: async () => ({ todo: null }),
+    mark: none,
+    removeMoment: none,
+  };
+}
+
+test("Query handlers receive no effect capabilities and settle without effects", async () => {
+  const seen: Record<string, unknown>[] = [];
+  const answers: unknown[] = [];
+  const at = "2026-01-01T00:00:00.000Z";
+  const call = (name: string, version: number) => ({
+    op: "handleAction",
+    name,
+    version,
+    owner: "alice",
+    callId: `${name}-${version}`,
+    ordinal: 1,
+    arguments: { at },
+  });
+  const backend = createBackend<Tx>({
+    database,
+    authenticate: () => "alice",
+    mutations: {
+      ...mutationHandlers(),
+      find: async ({ ctx, args }) => {
+        seen.push({ kind: "mutation", keys: Object.keys(ctx).sort() });
+        ctx.changes.add({ model: "Todo", identity: { id: "one" } });
+        assert.ok(args.at instanceof Date);
+        return { todo: { id: "one" } };
+      },
+    },
+    queries: {
+      find: {
+        async v2({ ctx, args }) {
+          seen.push({ kind: "query", keys: Object.keys(ctx).sort() });
+          assert.equal(ctx.userId, "alice");
+          assert.equal(ctx.callId, "Find-2");
+          assert.ok(args.at instanceof Date);
+          // @ts-expect-error a Query context has no changes
+          assert.equal(ctx.changes, undefined);
+          // @ts-expect-error a Query context has no publish
+          assert.equal(ctx.publish, undefined);
+          return { todo: { id: "one" } };
+        },
+      },
+    },
+    loaders,
+    native: nativeHost([call("Find", 1), call("Find", 2)], answers),
+  });
+  await backend.action("alice", "{}");
+  assert.deepEqual(seen, [
+    { kind: "mutation", keys: ["callId", "changes", "publish", "tx", "userId"] },
+    { kind: "query", keys: ["callId", "tx", "userId"] },
+  ]);
+  assert.deepEqual(answers, [
+    {
+      outputs: { todo: { id: "one" } },
+      changes: [{ model: "Todo", identity: { id: "one" } }],
+      publications: [],
+    },
+    { outputs: { todo: { id: "one" } }, changes: [], publications: [] },
+  ]);
+});
+
+test("registration is checked per kind at startup: missing, extra and wrong-kind", () => {
+  const start = (
+    options: Partial<Parameters<typeof createBackend<Tx>>[0]>,
+  ): unknown =>
+    createBackend<Tx>({
+      database,
+      authenticate: () => "alice",
+      mutations: mutationHandlers(),
+      queries: { find: { v2: async () => ({ todo: null }) } },
+      loaders,
+      native: nativeHost([], []),
+      ...options,
+    } as Parameters<typeof createBackend<Tx>>[0]);
+  start({});
+  const cases: [Partial<Parameters<typeof createBackend<Tx>>[0]>, RegExp][] = [
+    [{ queries: undefined }, /Missing query find for Find v2/],
+    [{ queries: {} as Queries<Tx> }, /Missing query find for Find v2/],
+    // A bare function is v1 shorthand; Find's only Query version is v2.
+    [
+      { queries: { find: async () => ({ todo: null }) } as unknown as Queries<Tx> },
+      /Query find must register v2 of Find; a function registers v1 only/,
+    ],
+    [
+      {
+        queries: {
+          find: { v2: async () => ({ todo: null }) },
+          ping: async () => {},
+        } as unknown as Queries<Tx>,
+      },
+      /queries\.ping: Ping retains no query version; register it under mutations/,
+    ],
+    [
+      {
+        mutations: {
+          ...mutationHandlers(),
+          search: async () => {},
+        } as unknown as Mutations<Tx>,
+      },
+      /Unknown mutation search: no retained mutation search/,
+    ],
+    [
+      {
+        mutations: {
+          ...mutationHandlers(),
+          find: { v1: async () => ({ todo: null }), v2: async () => ({ todo: null }) },
+        } as unknown as Mutations<Tx>,
+      },
+      /Unknown mutation find\.v2 for Find: retained versions are v1/,
+    ],
+    [
+      { handlers: { ping: async () => {} } } as never,
+      /Handler ping names Ping; register it under mutations/,
+    ],
+  ];
+  for (const [options, message] of cases)
+    assert.throws(() => start(options), message);
 });

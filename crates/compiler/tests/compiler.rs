@@ -10,12 +10,15 @@ fn generated_actions_bind_to_shared_runtime_and_backend() {
     let model = axton_compiler::typescript(&descriptor);
     let client = axton_compiler::client_typescript(&descriptor, "@axton/client");
     let backend = axton_compiler::backend_typescript(&descriptor, "@axton/server");
-    assert!(model.contains("import type { ActionCall, ActionOptions } from './client.ts'"));
-    assert!(client.contains("type ActionOutcome"));
-    assert!(client.contains("readonly actions:"));
+    assert!(model.contains("import type { Call, CallOptions } from './client.ts'"));
+    assert!(client.contains("type CallOutcome"));
+    assert!(client.contains("readonly mutations:"));
+    assert!(client.contains("readonly queries:"));
+    assert!(!client.contains("readonly actions:"), "{client}");
     assert!(model.contains("invokeAction"));
     assert!(backend.contains("export function createBackend"));
-    assert!(backend.contains("ActionContext<Tx>"));
+    assert!(backend.contains("MutationContext<Tx>"));
+    assert!(backend.contains("QueryContext<Tx>"));
 }
 
 #[test]
@@ -1024,16 +1027,17 @@ fn action_typescript_emits_flattened_operands_for_generated_client() {
     assert!(ts.contains("export interface AddTodoInput"), "{ts}");
     assert!(ts.contains("label: string | null;"), "{ts}");
     assert!(
-        ts.contains("import type { ActionCall, ActionOptions } from './client.ts'"),
+        ts.contains("import type { Call, CallOptions } from './client.ts'"),
         "{ts}"
     );
-    assert!(!ts.contains("ActionClientContract"), "{ts}");
+    assert!(!ts.contains("makeActions"), "{ts}");
+    // Mutations default to the durable route; `call` is direct.
     assert!(
-        ts.contains("addTodo: (args:AddTodoInput, options?:AddTodoOptions):Promise<ActionCall<AddTodoOutput>> => port.invokeAction('AddTodo',1,encodeAddTodoInput(args),decodeAddTodoOutput,options)"),
+        ts.contains("export function makeMutations(port:CallPort) { return {\n addTodo: (args:AddTodoInput, options?:AddTodoOptions):Promise<Call<AddTodoOutput>> => port.invokeAction('AddTodo',1,encodeAddTodoInput(args),decodeAddTodoOutput,options),\n call: {\n  addTodo: (args:AddTodoInput, options?:AddTodoOptions):Promise<AddTodoOutput> => port.invokeDirectAction('AddTodo',1,encodeAddTodoInput(args),decodeAddTodoOutput,options),\n }\n}; }"),
         "{ts}"
     );
     assert!(
-        ts.contains("addTodo: (args:AddTodoInput, options?:AddTodoOptions):Promise<AddTodoOutput> => port.invokeDirectAction('AddTodo',1,encodeAddTodoInput(args),decodeAddTodoOutput,options)"),
+        ts.contains("export function makeQueries(port:CallPort) { return {\n enqueue: {\n }\n}; }"),
         "{ts}"
     );
     assert!(!ts.contains("class GeneratedClient {"), "{ts}");
@@ -1059,12 +1063,18 @@ fn action_backend_emits_versioned_handler_identity_contracts_with_factory() {
     assert!(ts.contains("relatedTodo: TodoIdentity | null;"), "{ts}");
     assert!(
         ts.contains(
-            "v1(call: ActionHandlerCall<Tx, AddTodoV1Input>): Promise<AddTodoV1HandlerOutput>"
+            "v1(call: MutationHandlerCall<Tx, AddTodoV1Input>): Promise<AddTodoV1HandlerOutput>"
         ),
         "{ts}"
     );
     assert!(
-        ts.contains("v2(call: ActionHandlerCall<Tx, AddTodoInput>): Promise<AddTodoHandlerOutput>"),
+        ts.contains(
+            "v2(call: MutationHandlerCall<Tx, AddTodoInput>): Promise<AddTodoHandlerOutput>"
+        ),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("mutations: Mutations<Tx>; queries?: Queries<Tx>"),
         "{ts}"
     );
     assert!(ts.contains("export function createBackend<Tx>"), "{ts}");
@@ -1081,7 +1091,11 @@ fn mixed_action_and_legacy_backend_keeps_handler_context_in_scope() {
         "{ts}"
     );
     assert!(
-        ts.contains("new: { v1(call: ActionHandlerCall<Tx, NewInput>)"),
+        ts.contains("new: { v1(call: MutationHandlerCall<Tx, NewInput>)"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("handlers: Handlers<Tx>; mutations: Mutations<Tx>; queries?: Queries<Tx>"),
         "{ts}"
     );
     assert!(ts.contains("export function createBackend<Tx>"), "{ts}");
@@ -1089,24 +1103,39 @@ fn mixed_action_and_legacy_backend_keeps_handler_context_in_scope() {
 
 #[test]
 fn action_dart_emits_concrete_client_and_versioned_handler_contracts() {
-    let v = compile("model Todo { id String title String @@id(id) } mutation Search(query String?) { relatedTodo Todo? } mutation Ping()").unwrap();
+    let v = compile("model Todo { id String title String @@id(id) } query Search(query String?) { relatedTodo Todo? } mutation Ping()").unwrap();
     let dart = axton_compiler::dart(&v);
     for expected in [
-        "show RuntimeConnection, SyncServer, ActionCall, ActionOutcome, ActionSuccess, ActionFailure, ActionStatus, ActionError",
+        "show RuntimeConnection, SyncServer, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, CallStore",
         "required String? query",
         "class TodoIdentity",
         "required this.relatedTodo",
         "TodoIdentity? relatedTodo",
         "Todo? relatedTodo",
-        "late final Actions actions = Actions(client);",
-        "late final DirectCalls call = DirectCalls(client);",
-        "Future<ActionCall<SearchOutput>> search(",
-        "Future<SearchOutput> search(",
+        "late final Mutations mutations = Mutations(client);",
+        "late final Queries queries = Queries(client);",
+        "late final DirectMutations call = DirectMutations(client);",
+        "late final QueuedQueries enqueue = QueuedQueries(client);",
         "typedef PingOutput = void;",
+        "abstract interface class QuerySearchHandlers<Ctx> {\n Future<SearchHandlerOutput> v1(QueryHandlerCall<Ctx, SearchInput> call);",
+        "abstract interface class MutationPingHandlers<Ctx> {\n Future<PingHandlerOutput> v1(MutationHandlerCall<Ctx, PingInput> call);",
     ] {
         assert!(dart.contains(expected), "missing {expected}: {dart}");
     }
-    assert!(!dart.contains("ActionClientContract"));
+    // Each route fixes its return type: the Query is direct by default and
+    // durable under `enqueue`; the Mutation the other way round.
+    let class = |name: &str| {
+        let start = dart.find(&format!("\nclass {name} {{")).unwrap();
+        let end = dart[start + 1..].find("\n}\n").unwrap();
+        dart[start..start + 1 + end].to_string()
+    };
+    assert!(class("Queries").contains("Future<SearchOutput> search("));
+    assert!(class("QueuedQueries").contains("Future<Call<SearchOutput>> search("));
+    assert!(class("Mutations").contains("Future<Call<PingOutput>> ping("));
+    assert!(class("DirectMutations").contains("Future<PingOutput> ping("));
+    assert!(!class("Mutations").contains("search("));
+    assert!(!class("Queries").contains("ping("));
+    assert!(!dart.contains("class Actions"));
 }
 
 #[test]
@@ -1117,7 +1146,8 @@ fn model_only_dart_keeps_local_crud_without_action_symbols() {
         dart.contains("class NoteLiveModel extends NoteTxModel"),
         "{dart}"
     );
-    assert!(!dart.contains("late final Actions actions"), "{dart}");
+    assert!(!dart.contains("late final Mutations mutations"), "{dart}");
+    assert!(!dart.contains("late final Queries queries"), "{dart}");
 }
 
 #[test]
@@ -1125,8 +1155,8 @@ fn action_dart_binds_shared_runtime_and_retained_codecs() {
     let v = compile("enum Mood { calm loud } model Note { id String at DateTime mood Mood @@id(id) } mutation Save(note Note.create, changed Note.update<at>?, stamps DateTime[], when DateTime?) { saved Note? at DateTime moods Mood[] }").unwrap();
     let dart = axton_compiler::dart(&v);
     for expected in [
-        "show RuntimeConnection, SyncServer, ActionCall, ActionOutcome, ActionSuccess, ActionFailure, ActionStatus, ActionError",
-        "late final Actions actions = Actions(client)",
+        "show RuntimeConnection, SyncServer, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, CallStore",
+        "late final Mutations mutations = Mutations(client)",
         "client.invokeAction<SaveOutput>('Save', 1",
         "client.invokeDirectAction<SaveOutput>('Save', 1",
         "Duration directTimeout = const Duration(seconds: 30)",
@@ -1138,10 +1168,7 @@ fn action_dart_binds_shared_runtime_and_retained_codecs() {
     ] {
         assert!(dart.contains(expected), "missing {expected}: {dart}");
     }
-    assert!(
-        !dart.contains("abstract interface class ActionCall<T>"),
-        "{dart}"
-    );
+    assert!(!dart.contains("abstract interface class Call<T>"), "{dart}");
 }
 
 #[test]
@@ -1348,11 +1375,11 @@ fn generated_clients_expose_the_scope_facade() {
 
 #[test]
 fn action_store_options_name_only_explicit_model_outputs_in_both_languages() {
-    let v = compile("model Todo { id String title String @@id(id) } mutation AddTodo(todo Todo.create, gone Todo.delete[]) { related Todo? matches Todo[] count Int } mutation Ping() mutation Open(store String) { main Todo }").unwrap();
+    let v = compile("model Todo { id String title String @@id(id) } mutation AddTodo(todo Todo.create, gone Todo.delete[]) { related Todo? matches Todo[] count Int } mutation Ping() query Open(store String) { main Todo }").unwrap();
     let ts = axton_compiler::typescript(&v);
     // Input-bound, Delete-confirmation and scalar outputs are not keys.
     assert!(
-        ts.contains("export type AddTodoOptions = ActionOptions<'related'|'matches'>;"),
+        ts.contains("export type AddTodoOptions = CallOptions<'related'|'matches'>;"),
         "{ts}"
     );
     assert!(
@@ -1360,11 +1387,20 @@ fn action_store_options_name_only_explicit_model_outputs_in_both_languages() {
         "{ts}"
     );
     assert!(
-        ts.contains("export type OpenOptions = ActionOptions<'main'>;"),
+        ts.contains("export type OpenOptions = CallOptions<'main'>;"),
         "{ts}"
     );
     let client = axton_compiler::client_typescript(&v, "@axton/client");
-    assert!(client.contains("type ActionOptions"), "{client}");
+    assert!(client.contains("type CallOptions"), "{client}");
+    // Both routes of each kind take the same typed options.
+    assert!(
+        ts.contains("  open: (args:OpenInput, options?:OpenOptions):Promise<Call<OpenOutput>> => port.invokeAction('Open',1,"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains(" open: (args:OpenInput, options?:OpenOptions):Promise<OpenOutput> => port.invokeDirectAction('Open',1,"),
+        "{ts}"
+    );
     let dart = axton_compiler::dart(&v);
     assert!(
         dart.contains("const AddTodoStore.outputs({this.related, this.matches}) : _mode = 2;"),
@@ -1376,12 +1412,18 @@ fn action_store_options_name_only_explicit_model_outputs_in_both_languages() {
     );
     assert!(!dart.contains("PingStore.outputs"), "{dart}");
     assert!(
-        dart.contains("Future<ActionCall<PingOutput>> ping({PingStore? store})"),
+        dart.contains("Future<Call<PingOutput>> ping({PingStore? store})"),
         "{dart}"
     );
     // A business input named store keeps its name; the selector moves aside.
     assert!(
-        dart.contains("open({required String store, OpenStore? outputStore})"),
+        dart.contains("Future<OpenOutput> open({required String store, OpenStore? outputStore})"),
+        "{dart}"
+    );
+    assert!(
+        dart.contains(
+            "Future<Call<OpenOutput>> open({required String store, OpenStore? outputStore})"
+        ),
         "{dart}"
     );
     assert!(dart.contains("store: outputStore);"), "{dart}");
@@ -1430,7 +1472,11 @@ fn store_eligible_outputs_cannot_reuse_dart_selector_member_names() {
 fn generated_dart_reexports_action_store() {
     let v = compile("mutation Ping()").unwrap();
     let dart = axton_compiler::dart(&v);
-    assert!(dart.contains("ActionError, ActionStore,"), "{dart}");
+    assert!(dart.contains("CallError, CallStore,"), "{dart}");
+    assert!(
+        dart.contains("final class PingStore extends CallStore"),
+        "{dart}"
+    );
 }
 
 #[test]
@@ -1522,4 +1568,65 @@ fn operation_names_share_one_namespace_and_reserve_route_members() {
     compile("mutation Enqueue()").unwrap();
     let error = compile("query Call()").unwrap_err();
     assert!(error.contains("CallOptions"), "{error}");
+}
+
+#[test]
+fn a_kind_change_at_a_new_version_registers_each_version_under_its_own_kind() {
+    let v1 = compile("model Todo { id String @@id(id) } mutation Find(text String) { count Int }")
+        .unwrap();
+    let mut retained = compile(
+        "model Todo { id String @@id(id) } @version(2) query Find(text String) { count Int }",
+    )
+    .unwrap();
+    // Retain both versions the way the CLI does, from the operation history.
+    let history = axton_compiler::reconcile_action_history(&v1, None).unwrap();
+    let history = axton_compiler::reconcile_action_history(&retained, Some(&history)).unwrap();
+    let versions: Vec<serde_json::Value> = history["actions"]["Find"]
+        .as_object()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect();
+    retained["actions"] = serde_json::json!(versions);
+    retained["schema"]["actions"] = retained["actions"].clone();
+    let backend = axton_compiler::backend_typescript(&retained, "@axton/server");
+    let section = |name: &str| {
+        let start = backend
+            .find(&format!("export interface {name}<Tx> {{"))
+            .unwrap();
+        let end = backend[start..].find("\n}\n").unwrap();
+        backend[start..start + end].to_string()
+    };
+    assert_eq!(
+        section("Mutations"),
+        "export interface Mutations<Tx> {\n find: { v1(call: MutationHandlerCall<Tx, FindV1Input>): Promise<FindV1HandlerOutput> } | ((call: MutationHandlerCall<Tx, FindV1Input>) => Promise<FindV1HandlerOutput>);"
+    );
+    assert_eq!(
+        section("Queries"),
+        "export interface Queries<Tx> {\n find: { v2(call: QueryHandlerCall<Tx, FindInput>): Promise<FindHandlerOutput> };"
+    );
+    assert!(
+        backend.contains("mutations: Mutations<Tx>; queries: Queries<Tx>"),
+        "{backend}"
+    );
+    // Current clients expose the name only under its current kind.
+    let ts = axton_compiler::typescript(&retained);
+    assert!(
+        ts.contains("export function makeMutations(port:CallPort) { return {\n call: {\n }\n}; }"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains(" find: (args:FindInput, options?:FindOptions):Promise<FindOutput> => port.invokeDirectAction('Find',2,"),
+        "{ts}"
+    );
+    let dart = axton_compiler::dart(&retained);
+    assert!(
+        dart.contains("abstract interface class MutationFindHandlers<Ctx> {\n Future<FindV1HandlerOutput> v1(MutationHandlerCall<Ctx, FindV1Input> call);\n}"),
+        "{dart}"
+    );
+    assert!(
+        dart.contains("abstract interface class QueryFindHandlers<Ctx> {\n Future<FindHandlerOutput> v2(QueryHandlerCall<Ctx, FindInput> call);\n}"),
+        "{dart}"
+    );
+    axton_compiler::check_action_names(&retained).unwrap();
 }

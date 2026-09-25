@@ -6,6 +6,7 @@ model Note {
  label String?
  @@id(id)
 }
-action Echo(at DateTime, moods Mood[], maybe DateTime?) { result DateTime moods Mood[] maybe DateTime? }
-action Touch(note Note.create, changed Note.update<at>?) { stamp DateTime }
-action Ping()
+mutation Echo(at DateTime, moods Mood[], maybe DateTime?) { result DateTime moods Mood[] maybe DateTime? }
+mutation Touch(note Note.create, changed Note.update<at>?) { stamp DateTime }
+mutation Ping()
+query Now(at DateTime) { at DateTime }

@@ -14,6 +14,7 @@ The surface, grouped by purpose:
 | --- | --- |
 | Lifecycle | `open(store, schema)` on a store the caller opened; `open_at(path, schema, factory, discard_pending)` chooses the file behind `path` ([Reconciliation](storage/reconciliation.md)); `rebuild(discard_pending)` switches an incompatible database to a fresh file and returns a `RebuildReport` |
 | Writes | `transaction(\|tx\| …)` with local `direct`, `submit_action`, `set_channel`, nested `savepoint` and reads inside; legacy internal `enqueue` remains for retained fixtures |
+| Subscriptions | `ensure_subscription(scope)` registers durable intent and answers the stored `SubscriptionState` (a repeat writes nothing), `subscription_state(scope)`, `subscription_states`, `remove_subscription(scope, subscription_id)` removes only that identity, `initialize_subscriptions(expected, heads)` commits first boundaries ([client/subscriptions.rs](../../../../crates/client/src/subscriptions.rs)) |
 | Session API for hosts that hold a transaction open across calls | `begin_session`, `session(\|tx\| …)`, `session_savepoint`, `session_release`, `session_rollback_savepoint`, `commit_session`, `rollback_session` |
 | Reads on the last commit | `read`, `query`, `query_spec`, `related`, `referencing`, `read_sql` |
 | Sync | `freeze`, `acknowledge` (returns authority reports and transient Action completions; [Settlement](engine/settlement.md)), `prepare_action` and `apply_action_response` for direct calls, `downlink_request`, `apply_page` and `receive_downlink`, plus the `SyncCycle` and `ConnectionDriver` state machines |

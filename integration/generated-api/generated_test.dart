@@ -50,4 +50,39 @@ void main(){
    expect(await client.client.freeze(),isNotNull);
   }finally{await client.close();await temp.delete(recursive:true);}
  });
+ // The generated Scope facade ([#150](https://github.com/zanminwang/axton/issues/150)):
+ // one handle per registration, typed handle members, and the retained
+ // `channels` spelling on that same ledger path.
+ test('generated scopes facade answers with one handle per registration',()async{
+  final temp=await Directory.systemTemp.createTemp('generated-api-scopes-');
+  final client=await GeneratedClient.open(path:'${temp.path}/state.sqlite',libraryPath:Platform.environment['AXTON_DART_LIBRARY'] ?? '../../target/debug/libaxton_dart.dylib');
+  try{
+   final handles=await Future.wait([client.scopes.subscribe('project:123'),client.scopes.subscribe('project:123')]);
+   final Subscription a=handles.first;
+   expect(identical(a,handles.last),isTrue,reason:'concurrent calls obtain one cached handle');
+   expect(a.status.initialization,SubscriptionInitialization.pending);
+   await a.unsubscribe();
+   final c=await client.scopes.subscribe('project:123');
+   await a.unsubscribe();
+   expect(c.status.active,isTrue,reason:'an old handle cannot remove the registration that replaced it');
+   // The handle is the runtime's: its Scope, its immutable status and its
+   // observers are all named through the generated library.
+   final String scope=c.scope;
+   final SubscriptionStatus status=c.status;
+   expect(scope,'project:123');
+   expect(status.connection,SubscriptionConnection.offline);
+   final seen=<SubscriptionStatus>[];
+   final observer=c.watch().listen(seen.add);
+   await pumpEventQueue();
+   await observer.cancel();
+   expect(seen.map((s)=>s.connection),[SubscriptionConnection.offline],reason:'the current snapshot arrives first');
+   // The retained spelling registers through the same ledger: with no server it
+   // has durable intent and no boundary.
+   final Subscription retained=await client.channels.subscribe('project:456');
+   expect(retained.status.initialization,SubscriptionInitialization.pending);
+   await client.channels.unsubscribe('project:456');
+   expect(retained.status.active,isFalse);
+   await c.unsubscribe();
+  }finally{await client.close();await temp.delete(recursive:true);}
+ });
 }

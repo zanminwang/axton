@@ -1,5 +1,9 @@
 import type {Handlers,Loaders,EntryV1} from './backend.ts';
-import type {GeneratedClient} from './client.ts';
+import {strict as assert} from 'node:assert';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {GeneratedClient,type Subscription,type SubscriptionStatus} from './client.ts';
 import type {Transaction as RawTransaction} from '../../packages/client-js/index.mts';
 import {CreateEntry,EditEntry,RemoveEntries,decodeEntry,encodeEntry,EntryModel,EntryLiveModel,GeneratedTransaction,Mutate,type Entry,type ReadPort,type LivePort,type WritePort,type MutationName,type SyncState} from './generated.ts';
 const row:Entry={id:'123e4567-e89b-42d3-a456-426614174000',title:'hello',note:null,at:new Date('2026-01-01T00:00:00Z'),tags:['x'],status:'active'};
@@ -103,3 +107,37 @@ function misuse(app:GeneratedClient){
  void app.rebuild(true);
 }
 void misuse;
+// The generated Scope facade ([#150](https://github.com/zanminwang/axton/issues/150)):
+// one handle per registration, typed handle members, and the retained `channels`
+// spelling on that same ledger path.
+const scopeDirectory=await mkdtemp(join(tmpdir(),'generated-scopes-'));
+const client=await GeneratedClient.open({path:join(scopeDirectory,'state.sqlite')});
+try{
+ const [a,b]=await Promise.all([
+  client.scopes.subscribe("project:123"),
+  client.scopes.subscribe("project:123"),
+ ]);
+ assert.equal(a,b);
+ assert.equal(a.status.initialization,"pending");
+ await a.unsubscribe();
+ const c=await client.scopes.subscribe("project:123");
+ await a.unsubscribe();
+ assert.equal(c.status.active,true);
+ // The handle is the runtime's: its Scope, its immutable status, its observer
+ // cancellation and its removal are all named through the generated module.
+ const handle:Subscription=c;
+ const scope:string=handle.scope;
+ const status:SubscriptionStatus=handle.status;
+ const stopWatching:()=>void=handle.watch(snapshot=>void snapshot.connection);
+ stopWatching();
+ check(scope==='project:123'&&status.connection==='offline','typed handle members');
+ // The retained spelling is the same ledger path, not a second algorithm: with
+ // no server it registers durable intent that has no boundary yet.
+ const retained:Subscription=await client.channels.subscribe('project:456');
+ assert.equal(retained.status.initialization,'pending','channels registers through the same ledger');
+ assert.equal(await client.channels.subscribe('project:456'),retained,'and shares one handle per registration');
+ const removal:Promise<void>=client.channels.unsubscribe('project:456');
+ await removal;
+ assert.equal(retained.status.active,false);
+ await handle.unsubscribe();
+}finally{await client.close();await rm(scopeDirectory,{recursive:true,force:true});}

@@ -189,7 +189,34 @@ These examples use the [Action fixture](https://github.com/zanminwang/axton/blob
 
 TypeScript sets `connection.directTimeoutMs` in milliseconds (an integer from 1 to 2,147,483,647); Dart sets `directTimeout` on `open` or `connect` to a positive `Duration`. Both default to 30 seconds. See [server connection](runtime.md#server-connection) for option placement. Queued Actions use background retry instead of this direct timeout.
 
-The created `todo` result is the Loader snapshot for that Action invocation. A later Action in the same batch can change the batch-final authority, and a pending local edit can change what `client.models.todo.get(...)` shows. The result retains its own snapshot; applying server authority replays pending edits over the new base. Model creates/updates imply full Model results bound to the input identity; deletes confirm identities. A handler selects an explicit Model output by returning an identity object with every `@@id` field. Optional outputs can be null, lists preserve order and duplicates, and no outputs means void. Results held by live calls are kept in client memory; reopening preserves pending work and completion state, but does not restore a past business result to a new handle. The backend retains committed outcomes for replay without a TTL or automatic pruning. [#116](https://github.com/zanminwang/axton/issues/116) will define per-output ephemeral behavior.
+The created `todo` result is the Loader snapshot for that Action invocation. A later Action in the same batch can change the batch-final authority, and a pending local edit can change what `client.models.todo.get(...)` shows. The result retains its own snapshot; applying server authority replays pending edits over the new base. Model creates/updates imply full Model results bound to the input identity; deletes confirm identities. A handler selects an explicit Model output by returning an identity object with every `@@id` field. Optional outputs can be null, lists preserve order and duplicates, and no outputs means void. Results held by live calls are kept in client memory; reopening preserves pending work and completion state, but does not restore a past business result to a new handle. The backend retains committed outcomes for replay without a TTL or automatic pruning.
+
+### Storing Model results
+
+By default, Model records returned by an Action's explicit Model outputs also update the matching local Models. Pass `store` when calling to return results without storing them, for example search suggestions. `false` stores none of those outputs; a map names outputs, and unnamed ones stay stored. Both routes accept it and the result type is unchanged.
+
+=== "TypeScript"
+
+    ```typescript title="action-contract"
+    const suggestions = await client.actions.call.getTodos({}, { store: false });
+    const page = await client.actions.call.openTodo({ store: null }, { store: { suggestions: false } });
+    const call = await client.actions.getTodos({}, { store: false });
+    const outcome = await call.wait();
+    console.log(suggestions.todos, page.mainTodo, outcome.error);
+    ```
+
+=== "Flutter"
+
+    ```dart title="action-contract"
+    final suggestions = await client.actions.call.getTodos(store: const GetTodosStore.none());
+    final page = await client.actions.call.openTodo(
+      store: null,
+      outputStore: const OpenTodoStore.outputs(suggestions: false),
+    );
+    print([suggestions.todos, page.mainTodo]);
+    ```
+
+`store` only controls these output records. Records the Action writes (its Model operands and changes the handler reports) are always reconciled, a record also returned by a stored output is stored, and an already stored row is left unchanged by an unstored read. It does not make the call read-only or change backend persistence: the outcome is still saved for replay, and a retry keeps the original choice. A call ID replayed with a different `store` is rejected with `call.identity_conflict`. Output names `toWire`, `toString`, `hashCode`, `runtimeType` and `noSuchMethod` are reserved for Model outputs a handler selects, because they would collide with the Dart selector. In Dart, the selector parameter is `store` unless the Action has a business input named `store`, as `OpenTodo` does; it is then `outputStore`.
 
 The TypeScript/React Native Action observer requires a working `WeakRef`; a runtime without it rejects durable invocation with `ActionError` code `action.unsupported_runtime`. Dart uses `WeakReference`. SDKs keep active waits strongly until they settle, while otherwise allowing unobserved handles to be collected. Exceptions from a diagnostic `onError` callback after authority commits are reported through the runtime's uncaught-error channel (`reportError` or an asynchronous throw in JavaScript; the current Zone in Dart). They do not replace the Action result, retry the handler or become transport errors.
 

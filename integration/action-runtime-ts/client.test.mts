@@ -221,3 +221,46 @@ test("generated Actions resolve through the native pump and direct transport whi
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("generated Actions forward store options beside encoded args", async () => {
+  const seen: { name: string; args: unknown; options: unknown }[] = [];
+  const actions = makeActions({
+    async invokeAction(
+      name: string,
+      _version: number,
+      args: object,
+      decode: (value: unknown) => unknown,
+      options?: unknown,
+    ) {
+      seen.push({ name, args, options });
+      return {
+        status: "succeeded" as const,
+        async wait() {
+          return { result: decode(null), error: null };
+        },
+      };
+    },
+    async invokeDirectAction(
+      name: string,
+      _version: number,
+      args: object,
+      decode: (value: unknown) => unknown,
+      options?: unknown,
+    ) {
+      seen.push({ name, args, options });
+      return decode({ todo: null });
+    },
+  });
+  const at = new Date("2026-01-01T00:00:00.000Z");
+  await actions.ping({}, { store: false });
+  const found = await actions.call.find({ at }, { store: { todo: false } });
+  assert.equal(found.todo, null);
+  await actions.find({ at });
+  assert.deepEqual(seen[0], { name: "Ping", args: {}, options: { store: false } });
+  assert.deepEqual(seen[1], {
+    name: "Find",
+    args: { at: at.toISOString() },
+    options: { store: { todo: false } },
+  });
+  assert.equal(seen[2]?.options, undefined);
+});

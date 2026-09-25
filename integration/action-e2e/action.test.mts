@@ -140,6 +140,77 @@ test("direct result retains Loader snapshot while independent durable optimism r
   } finally { await client?.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
+test("store selects which Search outputs update local Models on both routes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "axton-action-store-"));
+  let client: GeneratedClient | undefined;
+  const local = (id: string) => client!.models.todo.get({ id });
+  const localStamp = async (id: string) =>
+    (await client!.readSql("SELECT stamp FROM axton_record WHERE model='Todo' AND identity LIKE ?", [`%${id}%`]))[0]?.stamp ?? null;
+  const serverStamps = async (id: string) =>
+    (await fixture.pool.query("SELECT stamp FROM axton_record WHERE model='Todo' AND identity_key LIKE $1", [`%${id}%`])).rows.length;
+  try {
+    await fixture.pool.query("INSERT INTO action_e2e_todo(id,title) VALUES('store-a','storeq a'),('store-b','storeq b')");
+    client = await GeneratedClient.open({ path: join(directory, "client.sqlite"), server: server() });
+    let notifications = 0;
+    const stop = client.models.todo.watch({}, () => { notifications++; });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const settled = notifications;
+
+    // Direct store:false returns full Loader snapshots and stores nothing.
+    const unstored = await client.actions.call.searchTodos({ query: "storeq" }, { store: false });
+    assert.deepEqual(unstored.todos.map((todo) => todo.title), ["storeq a", "storeq b"]);
+    assert.equal(unstored.first?.title, "storeq a");
+    assert.equal(await local("store-a"), null);
+    assert.equal(await localStamp("store-a"), null);
+    assert.equal(await serverStamps("store-a"), 0, "no output-only stamp allocation");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(notifications, settled, "no Model notification for a disabled-only read");
+
+    // Mixed: first is stored, a record only in todos is not.
+    const mixed = await client.actions.call.searchTodos({ query: "storeq" }, { store: { todos: false } });
+    assert.equal(mixed.todos.length, 2);
+    assert.equal((await local("store-a"))?.title, "storeq a", "enabled overlapping output stores its record");
+    assert.equal(await local("store-b"), null, "disabled-only record is not stored");
+    const stampA = await localStamp("store-a");
+    assert.ok(stampA);
+
+    // A cached row stays unchanged when a disabled read returns newer content.
+    // Another writer changes the record and advances its stamp.
+    await fixture.pool.query("UPDATE action_e2e_todo SET title='storeq a2' WHERE id='store-a'");
+    await fixture.pool.query("UPDATE axton_record SET stamp=stamp+1 WHERE model='Todo' AND identity_key LIKE '%store-a%'");
+    const newer = await client.actions.call.searchTodos({ query: "storeq" }, { store: false });
+    assert.equal(newer.first?.title, "storeq a2", "result is this invocation's Loader snapshot");
+    assert.equal((await local("store-a"))?.title, "storeq a", "cached row unchanged");
+    assert.equal(await localStamp("store-a"), stampA);
+
+    // Durable store:false behaves the same, through the queue and receipt.
+    const durable = await client.actions.searchTodos({ query: "storeq" }, { store: false });
+    const outcome = await durable.wait();
+    assert.equal(outcome.error, null);
+    assert.equal(outcome.result!.todos[1]?.title, "storeq b");
+    assert.equal(await local("store-b"), null);
+    assert.equal((await local("store-a"))?.title, "storeq a");
+    // The default stores every eligible output.
+    const stored = await client.actions.searchTodos({ query: "storeq" });
+    assert.equal((await stored.wait()).error, null);
+    assert.equal((await local("store-a"))?.title, "storeq a2");
+    assert.equal((await local("store-b"))?.title, "storeq b");
+
+    // Required mutation reconciliation is never disabled.
+    await client.connection!.pause();
+    const edit = await client.actions.updateTodo({ todo: { id: "store-a", title: "  edited  " } }, { store: false });
+    assert.equal((await local("store-a"))?.title, "  edited  ", "optimistic edit");
+    const snapshot = await client.actions.call.searchTodos({ query: "storeq" }, { store: false });
+    assert.equal(snapshot.first?.title, "storeq a2", "snapshot A while pending edit B stays local");
+    assert.equal((await local("store-a"))?.title, "  edited  ");
+    await client.connection!.resume();
+    assert.equal((await edit.wait()).error, null);
+    assert.equal((await local("store-a"))?.title, "edited", "required authority reconciled the write");
+    assert.equal(snapshot.first?.title, "storeq a2", "returned snapshot does not change later");
+    stop();
+  } finally { await client?.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
 test("committed response loss replays frozen intent and stored result after a channel page arrives first", async () => {
   const directory = await mkdtemp(join(tmpdir(), "axton-action-replay-"));
   const path = join(directory, "client.sqlite");

@@ -16,7 +16,7 @@ Parsing and validation: [compiler/parse.rs](../../../../crates/compiler/src/pars
 
 ## 9. Architecture Decisions
 
-Actions do not define a separate persistence or sync engine. The durable route derives optimistic Model operations from the declared operands and stores canonical args under the original Action version and call ID. The direct route skips local queueing and optimism. Both share backend execution and Loader result assembly. Per-output ephemeral behavior remains [#116](https://github.com/zanminwang/axton/issues/116); tool behavior remains [#143](https://github.com/zanminwang/axton/issues/143).
+Actions do not define a separate persistence or sync engine. The durable route derives optimistic Model operations from the declared operands and stores canonical args under the original Action version and call ID. The direct route skips local queueing and optimism. Both share backend execution and Loader result assembly. Whether explicit Model outputs also update local Models is chosen per call with the `store` option ([protocol](../protocol/actions.md#store-policy)), not declared in the schema: it adds no descriptor or history field and never requires a new Action version. Tool behavior remains [#143](https://github.com/zanminwang/axton/issues/143).
 
 ## 10. Quality Requirements
 

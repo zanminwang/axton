@@ -94,6 +94,82 @@ void main() {
     expect(call.status, ActionStatus.succeeded);
   });
 
+  test('store selector travels beside args on both routes', () async {
+    await expectLater(
+      client.invokeAction<void>(
+        'Ping',
+        1,
+        {},
+        (_) {},
+        store: const _Store({'missing': false}),
+      ),
+      throwsA(isA<ActionError>()),
+    );
+    expect(await client.freeze(), isNull, reason: 'nothing was enqueued');
+    await client.invokeAction<void>(
+      'Ping',
+      1,
+      {},
+      (_) {},
+      store: const _Store(false),
+    );
+    await client.invokeAction<void>(
+      'Ping',
+      1,
+      {},
+      (_) {},
+      store: const _Store(null),
+    );
+    final frozen = jsonDecode((await client.freeze())!) as Map;
+    final mutations = (frozen['mutations'] as List).cast<Map>();
+    expect(mutations[0]['store'], false);
+    expect(mutations[0]['args'], isEmpty);
+    expect(mutations[1].containsKey('store'), isFalse);
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final bodies = <Map>[];
+    final served = server.listen((request) async {
+      if (request.uri.path != '/sync/actions') {
+        request.response.statusCode = 404;
+        await request.response.close();
+        return;
+      }
+      final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+      bodies.add(body);
+      request.response.write(
+        jsonEncode({
+          'completion': {
+            'callId': (body['call'] as Map)['callId'],
+            'outcome': {'status': 'succeeded', 'result': null},
+          },
+          'records': [],
+        }),
+      );
+      await request.response.close();
+    });
+    try {
+      final connection = await client.connect(
+        SyncServer(url: 'http://127.0.0.1:${server.port}', token: () => 'a'),
+      );
+      try {
+        await client.invokeDirectAction<void>(
+          'Ping',
+          1,
+          {},
+          (_) {},
+          store: const _Store(false),
+        );
+      } finally {
+        await connection.close();
+      }
+      final direct = bodies.single;
+      expect((direct['call'] as Map)['store'], false);
+      expect((direct['call'] as Map)['args'], isEmpty);
+    } finally {
+      await served.cancel();
+      await server.close(force: true);
+    }
+  });
+
   test('close settles a handle even without a prior wait', () async {
     final call = await client.invokeAction<void>('Ping', 1, {}, (_) {});
     await client.close();
@@ -689,4 +765,11 @@ final class _TestWeak implements ActionWeakState {
   _TestWeak(this.value);
   @override
   Object? get target => value;
+}
+
+final class _Store extends ActionStore {
+  const _Store(this.wire);
+  final Object? wire;
+  @override
+  Object? toWire() => wire;
 }

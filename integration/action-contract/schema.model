@@ -28,3 +28,9 @@ action DeleteTodo(todo Todo.delete)
 action SendEmail(to String, subject String, body String)
 action GetTodos() { todos Todo[] }
 @version(2) action StateList() { states Status[] }
+action OpenTodo(store String?) {
+ mainTodo Todo
+ suggestions Todo[]
+ related Todo?
+ count Int
+}

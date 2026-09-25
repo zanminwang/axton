@@ -35,6 +35,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("axton_mutation", "diverged", "INTEGER NOT NULL DEFAULT 0"),
     ("axton_mutation", "call_id", "TEXT"),
     ("axton_mutation", "args", "TEXT"),
+    ("axton_mutation", "store", "TEXT"),
     ("axton_client", "push_results", "TEXT"),
 ];
 
@@ -83,7 +84,7 @@ CREATE TABLE IF NOT EXISTS axton_subscription (
 );
 CREATE TABLE IF NOT EXISTS axton_mutation (
   ordinal INTEGER PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL, push INTEGER,
-  diverged INTEGER NOT NULL DEFAULT 0, call_id TEXT UNIQUE, args TEXT,
+  diverged INTEGER NOT NULL DEFAULT 0, call_id TEXT UNIQUE, args TEXT, store TEXT,
   CHECK ((call_id IS NULL AND args IS NULL) OR (call_id IS NOT NULL AND args IS NOT NULL))
 );
 CREATE TABLE IF NOT EXISTS axton_mutation_operation (

@@ -31,6 +31,10 @@ expected=(
   'undefined_enum_constant:44'
   'argument_type_not_assignable:46'
   'undefined_enum_constant:47'
+  'const_with_undefined_constructor:50'
+  'argument_type_not_assignable:51'
+  'undefined_named_parameter:52'
+  'argument_type_not_assignable:53'
 )
 failed=0
 for pair in "${expected[@]}"; do

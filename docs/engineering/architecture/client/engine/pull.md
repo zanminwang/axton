@@ -54,6 +54,6 @@ Executed 2026-09-16: `cargo test -p axton-client -p axton-sqlite -p axton-sim --
 
 **Accepted limitation.** The subscription epoch and the issued-pull memory live in the process. A page for a pull that was not issued through the client is judged by the cursor gate alone.
 
-**Accepted limitation.** A record whose change was skipped or could not be read stays as it was until it is delivered again (a later publication, or an explicit fetch, [#116](https://github.com/zanminwang/axton/issues/116)); nothing retries it on its own.
+**Accepted limitation.** A record whose change was skipped or could not be read stays as it was until it is delivered again (a later publication, or an Action whose stored Model output returns it); nothing retries it on its own.
 
 **Accepted limitation.** Stamp rows are never reclaimed and retained content is never evicted ([#61](https://github.com/zanminwang/axton/issues/61)). Applying a large page holds one write transaction for its duration; the threading model that keeps that off the host thread is [#134](https://github.com/zanminwang/axton/issues/134).

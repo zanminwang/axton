@@ -209,6 +209,16 @@ void main() {
     },
   );
 
+  test('generated store selector is persisted beside durable args', () async {
+    await client.actions.ping(store: const PingStore.none());
+    await client.actions.ping(store: const PingStore.all());
+    final frozen = jsonDecode((await client.client.freeze())!) as Map;
+    final mutations = (frozen['mutations'] as List).cast<Map>();
+    expect(mutations[0]['store'], false);
+    expect(mutations[0]['args'], isEmpty);
+    expect(mutations[1].containsKey('store'), isFalse);
+  });
+
   test('generated open forwards the direct timeout', () async {
     await expectLater(
       GeneratedClient.open(

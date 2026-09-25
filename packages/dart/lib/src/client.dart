@@ -348,8 +348,9 @@ class Client implements WritePort, MutatePort {
     String name,
     int version,
     Map<String, dynamic> args,
-    T Function(dynamic) decode,
-  ) async {
+    T Function(dynamic) decode, {
+    ActionStore? store,
+  }) async {
     ActionCall<T>? call;
     try {
       await submitAction(
@@ -359,6 +360,7 @@ class Client implements WritePort, MutatePort {
         onCommitted: (callId, _) {
           call = _actionObservers.register(callId, decode);
         },
+        store: store,
       );
     } catch (error) {
       throw _publicActionError(error);
@@ -370,11 +372,12 @@ class Client implements WritePort, MutatePort {
     String name,
     int version,
     Map<String, dynamic> args,
-    T Function(dynamic) decode,
-  ) async {
+    T Function(dynamic) decode, {
+    ActionStore? store,
+  }) async {
     late final Map<String, dynamic> applied;
     try {
-      applied = await callAction(name, version, args);
+      applied = await callAction(name, version, args, store: store);
     } catch (error) {
       throw _publicActionError(error);
     }
@@ -422,7 +425,9 @@ class Client implements WritePort, MutatePort {
     int version,
     Map<String, dynamic> args, {
     void Function(String callId, int ordinal)? onCommitted,
+    ActionStore? store,
   }) {
+    final wire = store?.toWire();
     if (_activeTxToken != null &&
         identical(Zone.current[_txZoneKey], _activeTxToken))
       return Future.error(StateError('transaction_active'));
@@ -433,6 +438,7 @@ class Client implements WritePort, MutatePort {
                 'name': name,
                 'version': version,
                 'args': args,
+                if (wire != null) 'store': wire,
               }))
               as Map<String, dynamic>;
       onCommitted?.call(
@@ -447,8 +453,10 @@ class Client implements WritePort, MutatePort {
   Future<Map<String, dynamic>> callAction(
     String name,
     int version,
-    Map<String, dynamic> args,
-  ) async {
+    Map<String, dynamic> args, {
+    ActionStore? store,
+  }) async {
+    final wire = store?.toWire();
     if (_activeTxToken != null &&
         identical(Zone.current[_txZoneKey], _activeTxToken))
       throw StateError('transaction_active');
@@ -462,6 +470,7 @@ class Client implements WritePort, MutatePort {
                 'name': name,
                 'version': version,
                 'args': args,
+                if (wire != null) 'store': wire,
               }),
             ))
             as Map<String, dynamic>;

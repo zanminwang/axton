@@ -27,6 +27,17 @@ final class ActionFailure<T> extends ActionOutcome<T> {
   const ActionFailure(this.error);
 }
 
+/// Base of the generated per-Action `store` selectors. A selector chooses
+/// which explicit Model outputs also update local Models; results are the
+/// same either way.
+abstract class ActionStore {
+  const ActionStore();
+
+  /// The wire form beside business args: null for the default (store all),
+  /// false for none, or a map of output names to booleans.
+  Object? toWire();
+}
+
 abstract interface class ActionCall<T> {
   ActionStatus get status;
   Future<ActionOutcome<T>> wait();

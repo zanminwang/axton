@@ -845,3 +845,28 @@ fn closing_a_client_keeps_the_subscriptions_unsubscribe_removes() {
         "an unsubscribe is durable"
     );
 }
+
+#[test]
+fn action_store_option_travels_beside_args_on_both_routes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let schema = json!({"enums":[],"models":[],"actions":[{"name":"Ping","version":1,"inputs":[{"kind":"value","name":"store","type":{"kind":"scalar","name":"string"},"nullable":false}],"outputs":[]}]});
+    let id = host
+        .call(json!({"op":"open","path":dir.path().join("db"),"schema":schema}))
+        .unwrap()["value"]["handle"]
+        .clone();
+    let prepared = host.call(json!({"op":"prepareAction","handle":id,"name":"Ping","version":1,"args":{"store":"biz"},"store":false})).unwrap()["value"].clone();
+    let body: Value = serde_json::from_str(prepared["body"].as_str().unwrap()).unwrap();
+    assert_eq!(body["call"]["store"], false);
+    assert_eq!(body["call"]["args"], json!({"store":"biz"}));
+    for bad in [json!({"missing":false}), json!("no")] {
+        assert!(host.call(json!({"op":"submitAction","handle":id,"name":"Ping","version":1,"args":{"store":"biz"},"store":bad})).is_err());
+        assert!(host.call(json!({"op":"prepareAction","handle":id,"name":"Ping","version":1,"args":{"store":"biz"},"store":bad})).is_err());
+    }
+    host.call(json!({"op":"submitAction","handle":id,"name":"Ping","version":1,"args":{"store":"biz"},"store":false}))
+        .unwrap();
+    let frozen = host.call(json!({"op":"freeze","handle":id})).unwrap()["value"].clone();
+    let frozen: Value = serde_json::from_str(frozen.as_str().unwrap()).unwrap();
+    assert_eq!(frozen["mutations"][0]["store"], false);
+    assert_eq!(frozen["mutations"][0]["args"], json!({"store":"biz"}));
+}

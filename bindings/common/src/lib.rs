@@ -165,9 +165,13 @@ impl RuntimeHost {
             "submitAction" => {
                 let name = text(&request, "name")?;
                 let version = read_counter(&request["version"], true)?;
-                let submitted = e
-                    .client
-                    .submit_action(name, version, request["args"].clone())?;
+                let options = action_options(&request)?;
+                let submitted = e.client.submit_action_with_options(
+                    name,
+                    version,
+                    request["args"].clone(),
+                    options,
+                )?;
                 json!({"callId":submitted.call_id,"ordinal":submitted.ordinal})
             }
             "direct" => {
@@ -266,10 +270,11 @@ impl RuntimeHost {
                         None => Value::Null,
                     },
                     "prepareAction" => {
-                        let prepared = e.client.prepare_action(
+                        let prepared = e.client.prepare_action_with_options(
                             text(&request, "name")?,
                             read_counter(&request["version"], true)?,
                             request["args"].clone(),
+                            action_options(&request)?,
                         )?;
                         json!({"callId":prepared.call.call_id,"body":String::from_utf8(prepared.encode()?).map_err(|_|invalid("utf8"))?})
                     }
@@ -389,4 +394,14 @@ fn text<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
     v[key]
         .as_str()
         .ok_or_else(|| invalid(format!("{key} must be string")))
+}
+/// Invocation options sent beside, never inside, an Action's business args.
+/// An absent `store` is the default policy.
+fn action_options(request: &Value) -> Result<ActionCallOptions> {
+    Ok(ActionCallOptions {
+        store: match request.get("store") {
+            None => ActionStore::All,
+            Some(store) => ActionStore::from_wire(store)?,
+        },
+    })
 }

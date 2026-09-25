@@ -78,8 +78,13 @@ import {
   ActionError,
   actionError,
   type ActionCall,
+  type ActionOptions,
 } from "./actions.mts";
 
+/** The native command field for an Action's store option, beside its args. */
+function storeOption(options?: ActionOptions): { store?: unknown } {
+  return options?.store === undefined ? {} : { store: options.store };
+}
 /** Report an application callback's failure without changing what was committed. */
 function reportActionCallbackError(error: unknown): void {
   if (typeof globalThis.reportError === "function") {
@@ -265,13 +270,20 @@ export function createClient<
       version: number,
       args: object,
       decode: (value: unknown) => T,
+      options?: ActionOptions,
     ): Promise<ActionCall<T>> {
       this.#actions.assertSupported();
       let call: ActionCall<T> | undefined;
       try {
-        await this.submitAction(name, version, args, (callId) => {
-          call = this.#actions.register(callId, decode);
-        });
+        await this.submitAction(
+          name,
+          version,
+          args,
+          (callId) => {
+            call = this.#actions.register(callId, decode);
+          },
+          options,
+        );
       } catch (error) {
         throw actionError(error);
       }
@@ -283,6 +295,7 @@ export function createClient<
       version: number,
       args: object,
       decode: (value: unknown) => T,
+      options?: ActionOptions,
     ): Promise<T> {
       let applied: {
         completions: {
@@ -295,7 +308,7 @@ export function createClient<
         }[];
       };
       try {
-        applied = await this.callAction(name, version, args);
+        applied = await this.callAction(name, version, args, options);
       } catch (error) {
         throw actionError(error);
       }
@@ -318,6 +331,7 @@ export function createClient<
       version: number,
       args: object,
       onCommitted?: (callId: string, ordinal: number) => void,
+      options?: ActionOptions,
     ): Promise<{ callId: string; ordinal: number }> {
       if (this.#activePublicTx?.inCallback())
         return Promise.reject(Error("transaction_active"));
@@ -327,6 +341,7 @@ export function createClient<
           name,
           version,
           args,
+          ...storeOption(options),
         })) as { callId: string; ordinal: number };
         onCommitted?.(submitted.callId, submitted.ordinal);
         this.#events.emit("work");
@@ -349,12 +364,23 @@ export function createClient<
           }
     }
     /** Direct network work never occupies the local exclusive queue. */
-    async callAction(name: string, version: number, args: object) {
+    async callAction(
+      name: string,
+      version: number,
+      args: object,
+      options?: ActionOptions,
+    ) {
       if (this.#activePublicTx?.inCallback()) throw Error("transaction_active");
       const direct = this.#direct;
       if (!direct) throw directFailure("action.unavailable");
       const prepared = (await this.#exclusive(() =>
-        this.#send({ op: "prepareAction", name, version, args }),
+        this.#send({
+          op: "prepareAction",
+          name,
+          version,
+          args,
+          ...storeOption(options),
+        }),
       )) as { callId: string; body: string };
       let response: string;
       try {

@@ -41,6 +41,10 @@ pub mod code {
     /// The handler threw an error that is not a business rejection; the error
     /// reached `onError`. Rejects only that mutation.
     pub const HANDLER_FAILED: &str = "handler.failed";
+    /// A Query handler settled with business changes or publications, which
+    /// its contract forbids. Rejects only that call; its savepoint rolls back
+    /// before any stamp, readback or publication.
+    pub const QUERY_EFFECTS_FORBIDDEN: &str = "query.effects_forbidden";
     /// A loader threw an error that is not a business rejection; the error
     /// reached `onError`. Rejects only the mutation it was reading back for.
     pub const LOADER_FAILED: &str = "loader.failed";

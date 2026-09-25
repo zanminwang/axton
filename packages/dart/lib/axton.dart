@@ -8,6 +8,7 @@ export 'src/actions.dart'
         ActionSuccess,
         ActionFailure,
         ActionStatus,
+        ActionStore,
         ActionError;
 export 'src/port.dart';
 export 'src/sync_state.dart';

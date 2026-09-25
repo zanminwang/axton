@@ -2,7 +2,9 @@
 use crate::engine::{Engine, as_u64};
 use crate::store::ClientStore;
 use crate::{Mutation, Operation, OperationKind};
-use axton_core::{ModelReadDescriptor, RecordKey, Rejection, Result, canonical_json, invalid};
+use axton_core::{
+    ActionStore, ModelReadDescriptor, RecordKey, Rejection, Result, canonical_json, invalid,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -126,15 +128,24 @@ impl<S: ClientStore> Engine<'_, S> {
     }
     pub fn insert_mutation(&mut self, ordinal: u64, mutation: &Mutation) -> Result<()> {
         let args = mutation.args.as_ref().map(canonical_json).transpose()?;
+        // NULL is the default (all) policy, including for rows written
+        // before the column existed.
+        let store = mutation
+            .store
+            .wire()
+            .as_ref()
+            .map(canonical_json)
+            .transpose()?;
         self.exec(
             "axton_mutation",
-            "INSERT INTO axton_mutation (ordinal, name, version, push, call_id, args) VALUES (?,?,?,NULL,?,?)",
+            "INSERT INTO axton_mutation (ordinal, name, version, push, call_id, args, store) VALUES (?,?,?,NULL,?,?,?)",
             &[
                 json!(ordinal),
                 json!(mutation.name),
                 json!(mutation.version),
                 mutation.call_id.as_ref().map_or(Value::Null, |v| json!(v)),
                 args.map_or(Value::Null, Value::String),
+                store.map_or(Value::Null, Value::String),
             ],
         )?;
         let mut position = 0;
@@ -185,7 +196,7 @@ impl<S: ClientStore> Engine<'_, S> {
     fn queued_where(&mut self, filter: &str, params: &[Value]) -> Result<Vec<Queued>> {
         let mutations = self.rows(
             &format!(
-                "SELECT ordinal, name, version, push, diverged, call_id, args FROM axton_mutation {filter} ORDER BY ordinal"
+                "SELECT ordinal, name, version, push, diverged, call_id, args, store FROM axton_mutation {filter} ORDER BY ordinal"
             ),
             params,
         )?;
@@ -212,6 +223,10 @@ impl<S: ClientStore> Engine<'_, S> {
             mutation.version = as_u64(&row[2])?;
             mutation.call_id = row[5].as_str().map(str::to_owned);
             mutation.args = row[6].as_str().map(serde_json::from_str).transpose()?;
+            mutation.store = match row[7].as_str() {
+                Some(text) => ActionStore::from_wire(&serde_json::from_str(text)?)?,
+                None => ActionStore::All,
+            };
             for op in ops.get(&ordinal).into_iter().flatten() {
                 match op.kind {
                     OpKind::Wire => mutation.operations.push(op.op.clone()),

@@ -673,3 +673,89 @@ test("close racing a committed submit still yields a terminal handle", async () 
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("the store option travels beside args on both routes and is validated before submission", async () => {
+  const binding = createRequire(import.meta.url)(
+    "../../../bindings/node/axton-node.node",
+  );
+  const directory = await mkdtemp(join(tmpdir(), "axton-action-store-"));
+  const schema = {
+    enums: [],
+    models: [],
+    actions: [
+      {
+        name: "Ping",
+        version: 1,
+        inputs: [
+          {
+            kind: "value",
+            name: "store",
+            type: { kind: "scalar", name: "string" },
+            nullable: false,
+          },
+        ],
+        outputs: [],
+      },
+    ],
+  };
+  const sent = [];
+  const native = {
+    clientCall(request) {
+      const parsed = JSON.parse(request);
+      if (parsed.op === "submitAction" || parsed.op === "prepareAction")
+        sent.push(parsed);
+      return binding.clientCall(request);
+    },
+  };
+  const bodies = [];
+  const StoreClient = createClient(native, Transaction, () => ({
+    open() {},
+    push: async (kind, bodyText) => {
+      if (kind !== "action") throw Error(`unexpected ${kind}`);
+      const body = JSON.parse(bodyText);
+      bodies.push(body);
+      return JSON.stringify({
+        completion: {
+          callId: body.call.callId,
+          outcome: { status: "succeeded", result: null },
+        },
+        records: [],
+      });
+    },
+  }));
+  const client = await StoreClient.open({ path: join(directory, "db"), schema });
+  try {
+    await assert.rejects(
+      client.invokeAction("Ping", 1, { store: "biz" }, () => undefined, {
+        store: { missing: false },
+      }),
+      (error) => error instanceof ActionError,
+    );
+    assert.equal((await client.syncState()).pending, 0);
+    await client.invokeAction("Ping", 1, { store: "biz" }, () => undefined, {
+      store: false,
+    });
+    await client.invokeAction("Ping", 1, { store: "plain" }, () => undefined);
+    assert.equal((await client.syncState()).pending, 2);
+    assert.deepEqual(sent[1].args, { store: "biz" });
+    assert.equal(sent[1].store, false);
+    assert.equal("store" in sent[2], false);
+    const connection = await client.connect({
+      url: "http://unused",
+      token: "token",
+    });
+    await client.invokeDirectAction(
+      "Ping",
+      1,
+      { store: "biz" },
+      () => undefined,
+      { store: false },
+    );
+    assert.equal(bodies[0].call.store, false);
+    assert.deepEqual(bodies[0].call.args, { store: "biz" });
+    await connection.close();
+  } finally {
+    await client.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

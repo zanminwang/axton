@@ -293,3 +293,48 @@ test('read-only identity holds its stamp lock through Loader read and commit', a
     await pool.end();
   }
 });
+
+test('store policy is part of the saved call identity and replays without Loader work', async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const database = pg(pool);
+  const schema = { enums: [], models: config.schema.models, resultModels: config.schema.resultModels, actions: [
+    { name: 'Find', version: 1, inputs: [], outputs: [{ name: 'todo', kind: 'model', model: 'Todo', modelReadVersion: 1, cardinality: 'single', source: 'handlerIdentity', handlerType: { kind: 'identity', model: 'Todo', fields: [{ name: 'id', type: { kind: 'scalar', name: 'string' } }] } }] },
+  ] };
+  let found = 0, read = 0;
+  const app = createBackend({ config: { schema, mutations: [], loaders: ['Todo'] }, native, database, authenticate: () => 'alice',
+    handlers: { async find() { found++; return { todo: { id: 'store-a' } }; } },
+    loaders: { async todo({ tx, ids }) { read++; return Promise.all(ids.map(async ({ id }) => (await database.driver.query(tx, 'SELECT id,title FROM action_todo WHERE id=$1', [id]))[0] ?? null)); } } });
+  const batch = (clientId, calls) => JSON.stringify({ clientId, batchSequence: 1, models: { Todo: 1 }, mutations: calls.map((call, index) => ({ ordinal: index + 1, name: 'Find', version: 1, args: {}, ...call })) });
+  const stamps = async () => (await db.$queryRawUnsafe("SELECT stamp FROM axton_record WHERE model='Todo' AND identity_key=$1", '{"id":"store-a"}')).length;
+  const callId = '01890f47-1234-7123-8123-1234567890f0';
+  try {
+    await db.$executeRawUnsafe("INSERT INTO action_todo(id,title) VALUES('store-a','SA')");
+    const first = JSON.parse(await app.push('alice', batch('store-first', [{ callId, store: false }])));
+    assert.equal(first.completions[0].outcome.result.todo.title, 'SA', 'the Loader snapshot is returned');
+    assert.deepEqual(first.records, [], 'no output-only authority');
+    assert.equal(await stamps(), 0, 'no output-only stamp allocation');
+    const [saved] = await db.$queryRawUnsafe('SELECT request FROM axton_call WHERE call_id=$1', callId);
+    assert.equal(JSON.parse(saved.request).store, false, 'the policy is part of the saved identity');
+    await db.$executeRawUnsafe("UPDATE action_todo SET title='SA2' WHERE id='store-a'");
+    const handled = found, loaded = read;
+    const replay = JSON.parse(await app.push('alice', batch('store-replay', [{ callId, store: false }])));
+    assert.deepEqual(replay.completions, first.completions, 'lost response replays the saved result');
+    assert.deepEqual(replay.records, first.records);
+    for (const store of [undefined, true, { todo: false }]) {
+      const conflict = JSON.parse(await app.push('alice', batch(`store-conflict-${JSON.stringify(store)}`, [{ callId, ...(store === undefined ? {} : { store }) }])));
+      assert.equal(conflict.completions[0].outcome.code, 'call.identity_conflict');
+    }
+    assert.equal(found, handled, 'Handler was not rerun');
+    assert.equal(read, loaded, 'Loader was not rerun');
+    const mixed = JSON.parse(await app.push('alice', batch('store-mixed', [
+      { callId: '01890f47-1234-7123-8123-1234567890f1', store: { nope: false } },
+      { callId: '01890f47-1234-7123-8123-1234567890f2', store: { todo: true } },
+    ])));
+    assert.deepEqual(mixed.rejections, [{ ordinal: 1, code: 'action.invalid' }], 'an invalid key rejects only its own call');
+    assert.equal(mixed.completions[1].outcome.result.todo.title, 'SA2');
+    assert.deepEqual(mixed.records.map(record => [record.identity.id, record.state.title]), [['store-a', 'SA2']], 'enabled output stores its authority');
+    assert.equal(await stamps(), 1);
+  } finally {
+    await pool.end();
+  }
+});

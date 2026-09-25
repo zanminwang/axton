@@ -600,6 +600,107 @@
         "enums": [],
         "models": []
       },
+      "inputs": [
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "list": false,
+          "name": "store",
+          "nullable": true,
+          "required": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "name": "OpenTodo",
+      "outputEnums": [],
+      "outputs": [
+        {
+          "cardinality": "single",
+          "handlerType": {
+            "fields": [
+              {
+                "name": "id",
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "kind": "identity",
+            "model": "Todo"
+          },
+          "kind": "model",
+          "model": "Todo",
+          "modelReadVersion": 2,
+          "name": "mainTodo",
+          "source": "handlerIdentity"
+        },
+        {
+          "cardinality": "list",
+          "handlerType": {
+            "fields": [
+              {
+                "name": "id",
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "kind": "identity",
+            "model": "Todo"
+          },
+          "kind": "model",
+          "model": "Todo",
+          "modelReadVersion": 2,
+          "name": "suggestions",
+          "source": "handlerIdentity"
+        },
+        {
+          "cardinality": "optional",
+          "handlerType": {
+            "fields": [
+              {
+                "name": "id",
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "kind": "identity",
+            "model": "Todo"
+          },
+          "kind": "model",
+          "model": "Todo",
+          "modelReadVersion": 2,
+          "name": "related",
+          "source": "handlerIdentity"
+        },
+        {
+          "cardinality": "single",
+          "kind": "value",
+          "name": "count",
+          "source": "handlerValue",
+          "type": {
+            "kind": "scalar",
+            "name": "int"
+          }
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 1
+    },
+    {
+      "input": {
+        "enums": [],
+        "models": []
+      },
       "inputs": [],
       "name": "Ping",
       "outputEnums": [],
@@ -1533,6 +1634,107 @@
             "modelReadVersion": 1,
             "name": "relatedProject",
             "source": "handlerIdentity"
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      },
+      {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "store",
+            "nullable": true,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "name": "OpenTodo",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 2,
+            "name": "mainTodo",
+            "source": "handlerIdentity"
+          },
+          {
+            "cardinality": "list",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 2,
+            "name": "suggestions",
+            "source": "handlerIdentity"
+          },
+          {
+            "cardinality": "optional",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 2,
+            "name": "related",
+            "source": "handlerIdentity"
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "count",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "int"
+            }
           }
         ],
         "prerequisites": [],

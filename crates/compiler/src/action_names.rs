@@ -41,6 +41,22 @@ fn position(declarations: Option<&Declarations>, owner: &str) -> Option<Pos> {
         .map(|a| a.pos)
 }
 
+/// Members of the generated Dart `{Name}Store` selector (and `Object`).
+const STORE_SELECTOR_MEMBERS: &[&str] = &[
+    "toWire",
+    "toString",
+    "hashCode",
+    "runtimeType",
+    "noSuchMethod",
+];
+
+/// Whether an emitted output descriptor may be named by a call's `store`
+/// map: the single rule is [`axton_core::store_eligible`].
+pub(crate) fn store_eligible(output: &Value) -> bool {
+    serde_json::from_value::<axton_core::ActionOutputDescriptor>(output.clone())
+        .is_ok_and(|descriptor| axton_core::store_eligible(&descriptor))
+}
+
 /// Called once for current declarations and again after retained histories are reconciled.
 /// The second call checks names that only exist in older Action/Model versions.
 pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Result<(), String> {
@@ -111,6 +127,8 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
     }
     for helper in [
         "ActionContext",
+        "ActionOptions",
+        "ActionStore",
         "ActionPort",
         "ActionRejected",
         "Actions",
@@ -168,6 +186,29 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
     }
     for &n in latest.keys() {
         add(format!("Action{n}Handlers"), format!("Action {n} handlers"))?;
+        add(format!("{n}Options"), format!("Action {n} options"))?;
+        add(format!("{n}Store"), format!("Action {n} store selector"))?;
+    }
+    // Store-eligible outputs become fields of the generated Dart selector,
+    // so they cannot reuse the names of its inherited or declared members.
+    for action in actions {
+        let n = name(action);
+        if action["version"].as_u64() != Some(latest[n]) {
+            continue;
+        }
+        for output in values(action, "outputs") {
+            let output_name = name(output);
+            if store_eligible(output) && STORE_SELECTOR_MEMBERS.contains(&output_name) {
+                let owner = format!("Action {n}");
+                let message = format!(
+                    "Action {n} output {output_name} is reserved: it would collide with a member of the generated {n}Store selector"
+                );
+                return Err(match position(declarations, &owner) {
+                    Some(pos) => format!("{}:{}: {message}", pos.line, pos.col),
+                    None => format!("Action history: {message}"),
+                });
+            }
+        }
     }
     for action in actions {
         let n = name(action);

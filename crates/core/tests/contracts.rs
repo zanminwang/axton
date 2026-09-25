@@ -1047,3 +1047,219 @@ fn pull_and_subscribe_declare_the_read_contracts_and_refuse_a_missing_or_bad_dec
     let empty = std::collections::BTreeMap::new();
     assert!(SubscribeRequest::new(vec!["a".into()], empty).is_err());
 }
+
+/// An Action with a business input named `store`, two explicit Model outputs,
+/// a scalar output, an input-bound output and a Delete confirmation.
+fn store_schema() -> Schema {
+    let identity = json!({"kind":"identity","model":"Todo","fields":[{"name":"id","type":{"kind":"scalar","name":"uuid"}}]});
+    Schema::from_value(json!({
+        "enums":[],
+        "models":[{"name":"Todo","version":1,"identity":["id"],"fields":[
+            {"name":"id","type":{"kind":"scalar","name":"uuid"},"nullable":false},
+            {"name":"title","type":{"kind":"scalar","name":"string"},"nullable":false}]}],
+        "resultModels":[{"name":"Todo","version":1,"identity":["id"],"fields":[
+            {"name":"id","type":{"kind":"scalar","name":"uuid"},"nullable":false},
+            {"name":"title","type":{"kind":"scalar","name":"string"},"nullable":false}],"enums":[]}],
+        "actions":[
+            {"name":"Open","version":1,"inputs":[
+                {"kind":"value","name":"store","type":{"kind":"scalar","name":"string"},"nullable":false,"list":false},
+                {"kind":"model","name":"todo","model":"Todo","operation":"update","cardinality":"single"},
+                {"kind":"model","name":"gone","model":"Todo","operation":"delete","cardinality":"optional"}],
+             "outputs":[
+                {"name":"mainTodo","kind":"model","model":"Todo","modelReadVersion":1,"cardinality":"single","source":"handlerIdentity","handlerType":identity},
+                {"name":"suggestions","kind":"model","model":"Todo","modelReadVersion":1,"cardinality":"list","source":"handlerIdentity","handlerType":identity},
+                {"name":"note","kind":"value","type":{"kind":"scalar","name":"string"},"cardinality":"single","source":"handlerValue"},
+                {"name":"todo","kind":"model","model":"Todo","modelReadVersion":1,"cardinality":"single","source":{"inputIdentity":"todo"}},
+                {"name":"gone","kind":"deleteIdentity","model":"Todo","cardinality":"optional","source":{"inputIdentity":"gone"}}]},
+            {"name":"Send","version":1,"inputs":[],"outputs":[]}
+        ]
+    }))
+    .unwrap()
+}
+
+fn store_intent(store: Option<Value>) -> Value {
+    let mut call = json!({"callId":ID,"name":"Open","version":1,
+        "args":{"store":"business","todo":{"id":ID,"title":"B"}}});
+    if let Some(store) = store {
+        call["store"] = store;
+    }
+    call
+}
+
+#[test]
+fn action_store_policy_decodes_bool_or_output_map_and_serializes_canonically() {
+    let decode = |store: Option<Value>| -> ActionIntent {
+        serde_json::from_value(store_intent(store)).unwrap()
+    };
+    let omitted = decode(None);
+    assert_eq!(omitted.store, ActionStore::All);
+    assert!(
+        serde_json::to_value(&omitted)
+            .unwrap()
+            .get("store")
+            .is_none()
+    );
+    let enabled = decode(Some(json!(true)));
+    assert_eq!(enabled.store, ActionStore::All);
+    assert!(
+        serde_json::to_value(&enabled)
+            .unwrap()
+            .get("store")
+            .is_none()
+    );
+    assert_eq!(decode(Some(json!({}))).store, ActionStore::All);
+    let disabled = decode(Some(json!(false)));
+    assert_eq!(disabled.store, ActionStore::None);
+    assert_eq!(
+        serde_json::to_value(&disabled).unwrap()["store"],
+        json!(false)
+    );
+    let map = decode(Some(json!({"suggestions":false,"mainTodo":true})));
+    assert_eq!(
+        canonical_json(&serde_json::to_value(&map).unwrap()["store"]).unwrap(),
+        r#"{"mainTodo":true,"suggestions":false}"#
+    );
+    assert!(map.store.selects("mainTodo"));
+    assert!(!map.store.selects("suggestions"));
+    assert!(
+        decode(Some(json!({"suggestions":false})))
+            .store
+            .selects("mainTodo")
+    );
+    assert!(!disabled.store.selects("mainTodo"));
+    assert!(omitted.store.selects("mainTodo"));
+    // The policy stays outside business args, including an input named store.
+    assert_eq!(map.args["store"], "business");
+    for bad in [
+        json!(null),
+        json!("false"),
+        json!(0),
+        json!([]),
+        json!({"mainTodo":"no"}),
+        json!({"mainTodo":null}),
+    ] {
+        assert!(
+            serde_json::from_value::<ActionIntent>(store_intent(Some(bad.clone()))).is_err(),
+            "{bad}"
+        );
+        let mut mutation = store_intent(Some(bad.clone()));
+        mutation["ordinal"] = json!(1);
+        let push =
+            json!({"clientId":"device","batchSequence":1,"models":{},"mutations":[mutation]});
+        assert!(
+            PushRequest::decode_action_envelope(push.to_string().as_bytes()).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn action_store_keys_name_only_explicit_model_outputs() {
+    let schema = store_schema();
+    let open = schema.action("Open", 1).unwrap();
+    for good in [
+        json!(true),
+        json!(false),
+        json!({"suggestions":false}),
+        json!({"mainTodo":true,"suggestions":false}),
+    ] {
+        let intent: ActionIntent =
+            serde_json::from_value(store_intent(Some(good.clone()))).unwrap();
+        intent
+            .store
+            .validate(open)
+            .unwrap_or_else(|e| panic!("{good}: {e}"));
+        let normalized = intent.normalize(&schema).unwrap();
+        assert_eq!(normalized.args["store"], "business");
+    }
+    // Unknown, scalar, input-bound and Delete-confirmation keys are refused,
+    // even when their value is true.
+    for key in ["missing", "note", "todo", "gone", "store"] {
+        for value in [true, false] {
+            let intent: ActionIntent =
+                serde_json::from_value(store_intent(Some(json!({key: value})))).unwrap();
+            assert!(intent.store.validate(open).is_err(), "{key}");
+            assert!(intent.normalize(&schema).is_err(), "{key}");
+        }
+    }
+    // Boolean policy is accepted on an Action without eligible outputs.
+    let send = schema.action("Send", 1).unwrap();
+    ActionStore::None.validate(send).unwrap();
+    assert!(
+        ActionStore::Outputs([("x".to_string(), false)].into())
+            .validate(send)
+            .is_err()
+    );
+    let eligible: Vec<&str> = open
+        .outputs
+        .iter()
+        .filter(|output| store_eligible(output))
+        .map(|output| output.name.as_str())
+        .collect();
+    assert_eq!(eligible, ["mainTodo", "suggestions"]);
+}
+
+#[test]
+fn direct_action_request_carries_store_outside_args_and_response_decodes() {
+    let schema = store_schema();
+    let wire = json!({"call":store_intent(Some(json!({"suggestions":false}))),"models":{"Todo":1}});
+    let request = DirectActionRequest::decode(wire.to_string().as_bytes(), &schema).unwrap();
+    assert_eq!(
+        request.call.store,
+        ActionStore::Outputs([("suggestions".to_string(), false)].into())
+    );
+    let encoded: Value = serde_json::from_slice(&request.encode().unwrap()).unwrap();
+    assert_eq!(encoded["call"]["store"], json!({"suggestions":false}));
+    assert_eq!(encoded["call"]["args"]["store"], "business");
+    let reopened = DirectActionRequest::decode(&request.encode().unwrap(), &schema).unwrap();
+    assert_eq!(reopened.call.store, request.call.store);
+    let bad = json!({"call":store_intent(Some(json!({"note":false}))),"models":{"Todo":1}});
+    assert!(DirectActionRequest::decode(bad.to_string().as_bytes(), &schema).is_err());
+    // Structural ingress keeps a semantically invalid key for per-call rejection.
+    assert!(DirectActionRequest::decode_envelope(bad.to_string().as_bytes()).is_ok());
+    let id = ID.to_lowercase();
+    let todo = json!({"id":id,"title":"A"});
+    let response = json!({"completion":{"callId":id,"outcome":{"status":"succeeded","result":{
+        "mainTodo":todo,"suggestions":[todo],"note":"n","todo":todo,"gone":null}}},"records":[]});
+    let decoded =
+        DirectActionResponse::decode(response.to_string().as_bytes(), &request, &schema).unwrap();
+    assert_eq!(decoded.completion.call_id, id);
+}
+
+#[test]
+fn action_store_canonical_form_drops_explicit_true_after_validation() {
+    let schema = store_schema();
+    let open = schema.action("Open", 1).unwrap();
+    let outputs = |pairs: &[(&str, bool)]| {
+        ActionStore::Outputs(pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect())
+    };
+    assert_eq!(outputs(&[("mainTodo", true)]).canonical(), ActionStore::All);
+    assert_eq!(
+        outputs(&[("mainTodo", true), ("suggestions", false)]).canonical(),
+        outputs(&[("suggestions", false)])
+    );
+    assert_eq!(ActionStore::None.canonical(), ActionStore::None);
+    // Validation sees the explicit map, so an unknown true key is refused.
+    assert!(outputs(&[("missing", true)]).validate(open).is_err());
+    let intent: ActionIntent = serde_json::from_value(store_intent(Some(
+        json!({"mainTodo":true,"suggestions":false}),
+    )))
+    .unwrap();
+    let normalized = intent.normalize(&schema).unwrap();
+    assert_eq!(
+        serde_json::to_value(&normalized).unwrap()["store"],
+        json!({"suggestions":false})
+    );
+    let all_true: ActionIntent =
+        serde_json::from_value(store_intent(Some(json!({"mainTodo":true})))).unwrap();
+    let normalized = all_true.normalize(&schema).unwrap();
+    assert!(
+        serde_json::to_value(&normalized)
+            .unwrap()
+            .get("store")
+            .is_none()
+    );
+    let unknown: ActionIntent =
+        serde_json::from_value(store_intent(Some(json!({"missing":true})))).unwrap();
+    assert!(unknown.normalize(&schema).is_err());
+}

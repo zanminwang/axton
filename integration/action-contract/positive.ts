@@ -1,5 +1,5 @@
 import type { ActionCall, ActionOutcome, GeneratedClient } from './client.ts';
-import type { AddTodoInput, AddTodoOutput, TodoCreate, TodoUpdate, TodoDelete, TodoIdentity, ProjectIdentity, PingOutput } from './generated.ts';
+import type { OpenTodoOutput, AddTodoInput, AddTodoOutput, TodoCreate, TodoUpdate, TodoDelete, TodoIdentity, ProjectIdentity, PingOutput } from './generated.ts';
 import type { AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, PingHandlerOutput, RemoveTodoHandlerOutput, Handlers, Loaders, StateListHandlerOutput, StateListV1HandlerOutput } from './backend.ts';
 
 const created: TodoCreate = { id: 't', title: 'Task', state: 'open', note: null };
@@ -46,7 +46,18 @@ async function clientContract(client: GeneratedClient) {
   await client.actions.sendEmail({ to: 'team@example.test', subject: 'Todo', body: 'Created' });
   const selected = await client.actions.call.getTodos({});
   const rows: readonly { id: string }[] = selected.todos;
-  void [status, final, removedId, noOutput, rows];
+  // store is an invocation option beside args; results keep their types.
+  const opened: OpenTodoOutput = await client.actions.call.openTodo({ store: 'business' }, { store: false });
+  const suggestion: string | undefined = opened.suggestions[0]?.title;
+  await client.actions.call.openTodo({ store: null }, { store: { suggestions: false } });
+  await client.actions.call.openTodo({ store: null }, { store: { mainTodo: true, related: false } });
+  const openCall: ActionCall<OpenTodoOutput> = await client.actions.openTodo({ store: null }, { store: true });
+  const openOutcome: ActionOutcome<OpenTodoOutput> = await openCall.wait();
+  await client.actions.addTodo(input, { store: { matches: false } });
+  await client.actions.call.getTodos({}, {});
+  await client.actions.call.ping({}, { store: false });
+  await client.actions.deleteTodo({ todo: deletion }, { store: true });
+  void [status, final, removedId, noOutput, rows, suggestion, openOutcome];
 }
 
 type Tx = { db: unknown };
@@ -57,6 +68,7 @@ const handlers: Handlers<Tx> = {
   link: { async v1({ args }) { return { relatedProject: { tenantId: args.project.tenantId, id: args.project.id } }; } },
   ping: { async v1({ ctx, args }) { void ctx.tx.db; void args; } },
   removeTodo: { async v1({ args }) { void args.todo.id; } },
+  openTodo: { async v1({ args }) { void args.store; return { mainTodo: { id: 't' }, suggestions: [], related: null, count: 0 }; } },
   search: { async v1({ args }) { void args.query; } },
   deleteTodo: { async v1({ args }) { void args.todo.id; } },
   sendEmail: { async v1({ args }) { void args.to; void args.subject; void args.body; } },

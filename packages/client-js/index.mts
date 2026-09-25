@@ -6,6 +6,7 @@ export { Transaction, type QuerySpec } from "./transaction.mts";
 export {
   ActionError,
   type ActionCall,
+  type ActionOptions,
   type ActionOutcome,
   type ActionStatus,
 } from "./actions.mts";

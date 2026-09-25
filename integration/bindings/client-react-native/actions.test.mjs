@@ -172,6 +172,16 @@ test("generated Action and Model bindings run through the mobile host adapter", 
     const call = await makeActions(client).ping({});
     await client.drop(1);
     assert.equal((await call.wait()).error?.code, "dropped");
+    const at = new Date("2026-01-01T00:00:00Z");
+    await makeActions(client).find({ at }, { store: { todo: false } });
+    await makeActions(client).find({ at }, { store: false });
+    const stored = await client.readSql(
+      "SELECT store FROM axton_mutation ORDER BY ordinal",
+    );
+    assert.deepEqual(
+      stored.map((row) => row.store),
+      ['{"todo":false}', "false"],
+    );
   } finally {
     await client.close();
     await rm(directory, { recursive: true, force: true });

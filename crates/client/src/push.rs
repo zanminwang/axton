@@ -33,7 +33,13 @@ impl<S: ClientStore> Engine<'_, S> {
         let acts: Vec<Value> = mutations
             .iter()
             .map(|q| match (&q.mutation.call_id, &q.mutation.args) {
-                (Some(call_id), Some(args)) => json!({"ordinal":q.ordinal,"callId":call_id,"name":q.mutation.name,"version":q.mutation.version,"args":args}),
+                (Some(call_id), Some(args)) => {
+                    let mut call = json!({"ordinal":q.ordinal,"callId":call_id,"name":q.mutation.name,"version":q.mutation.version,"args":args});
+                    if let Some(store) = q.mutation.store.wire() {
+                        call["store"] = store;
+                    }
+                    call
+                }
                 _ => json!({"ordinal":q.ordinal,"name":q.mutation.name,"version":q.mutation.version,"operations":q.mutation.operations}),
             })
             .collect();

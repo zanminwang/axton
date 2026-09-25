@@ -579,3 +579,111 @@ test('a load interrupted by closing the client resumes on the next one without a
  });
 });
 
+// D7 explicitly: a live read failure is reported for that record, the cursor
+// still advances, and the load completing does not rewrite it as success.
+test('a live read failure stays visible and reported when the load completes', { timeout: 120000 }, async () => {
+ await scenario(async ctx => {
+  const SCOPE = 'bootstrap:live-failure';
+  const { app } = ctx;
+  const history = await app.publishMany(4, { channel: SCOPE, prefix: 'readable' });
+  const client = await ctx.open('reader');
+  const subscription = await client.scopes.subscribe(SCOPE);
+  await wait(() => subscription.status.initialization === 'ready', 'the committed origin');
+  const S = (await ledger(client, SCOPE)).starting_cursor;
+  assert.equal(S, 4);
+
+  // One identity the Loader refuses, published after the origin: its live page
+  // reports it and the cursor still moves (D7).
+  app.failLoads('unreadable');
+  await app.publishOne('unreadable', 'never delivered', [SCOPE]);
+  await app.publishOne('readable-after', 'delivered beside the failure', [SCOPE]);
+  await wait(
+   () => ctx.reports.some(report => report.kind === 'readFailed' && report.identity.id === 'unreadable'),
+   'the reported read failure',
+  );
+  const failure = ctx.reports.find(report => report.identity.id === 'unreadable');
+  assert.equal(failure.code, 'loader.failed');
+  await wait(async () => (await ledger(client, SCOPE)).cursor >= 6, 'the cursor advanced past the failure');
+  assert.equal(await client.models.entry.get({ id: 'unreadable' }), null, 'a failed read is not authority');
+  assert.equal((await client.models.entry.get({ id: 'readable-after' })).text, 'delivered beside the failure', 'unrelated reads proceeded');
+
+  // The run completes: the interval and the barrier were processed. That is
+  // not a claim that this record loaded successfully.
+  await subscription.bootstrap();
+  assert.deepEqual({ ...subscription.status.bootstrap }, { phase: 'complete', error: null });
+  assert.equal(await client.models.entry.get({ id: 'unreadable' }), null, 'completion did not invent authority for the failed read');
+  assert.equal(
+   ctx.reports.filter(report => report.identity.id === 'unreadable').length,
+   1,
+   'the failure was reported once and nothing withdrew it',
+  );
+  await assertLoaded(client, history);
+
+  // It is corrected the next time it is delivered, as D7 requires.
+  app.allowLoads('unreadable');
+  await app.republish(['unreadable'], SCOPE);
+  await wait(async () => (await client.models.entry.get({ id: 'unreadable' }))?.text === 'never delivered', 'the corrected record');
+ });
+});
+
+// D7/D8 on a historical page: successful authority of that page stays, the
+// interval does not advance, the call rejects with the stored failure, and an
+// explicit retry revisits the same page (spec section 5).
+test('a failed historical page rejects the run, keeps its other records, and retries the same interval', { timeout: 120000 }, async () => {
+ await scenario(async ctx => {
+  const SCOPE = 'bootstrap:page-failure';
+  const { app, net } = ctx;
+  const history = await app.publishMany(6, { channel: SCOPE, prefix: 'page' });
+  const client = await ctx.open('reader');
+  const subscription = await client.scopes.subscribe(SCOPE);
+  const observed = phases(subscription);
+  await wait(() => subscription.status.initialization === 'ready', 'the committed origin');
+  const S = (await ledger(client, SCOPE)).starting_cursor;
+  assert.equal(S, 6);
+
+  app.failLoads('page-3');
+  const rejected = await subscription.bootstrap().then(() => null, error => error);
+  assert.equal(rejected?.code, 'bootstrap.records_failed', 'the background caller was rejected');
+  assert.match(rejected.message, /could not be applied/);
+  assert.deepEqual(
+   { ...subscription.status.bootstrap },
+   { phase: 'failed', error: { code: 'bootstrap.records_failed', message: rejected.message } },
+   'status observers receive the stored failure',
+  );
+  assert.ok(
+   ctx.reports.some(report => report.kind === 'readFailed' && report.identity.id === 'page-3' && report.code === 'loader.failed'),
+   'the record failure is the application\'s too',
+  );
+
+  // The page's successful authority stayed; the continuation marker did not move.
+  await assertLoaded(client, history.filter(id => id !== 'page-3'));
+  assert.equal(await client.models.entry.get({ id: 'page-3' }), null, 'a failed read is not a deletion');
+  const failed = await ledger(client, SCOPE);
+  assert.equal(failed.bootstrap_cursor, 0, 'the interval did not advance');
+  assert.equal(failed.bootstrap_barrier, null);
+  assert.equal(failed.bootstrap_run, 1);
+  assert.equal(failed.starting_cursor, S, 'the origin is untouched');
+
+  // An explicit retry is a new run over the same, unchanged progress.
+  const issued = net.loads.length;
+  const again = await subscription.bootstrap().then(() => null, error => error);
+  assert.equal(again?.code, 'bootstrap.records_failed');
+  assert.deepEqual(net.loads.slice(issued).map(load => [load.after, load.until]), [[0, S]], 'the retry re-requested the same page');
+  assert.equal((await ledger(client, SCOPE)).bootstrap_run, 2, 'the retry is another run');
+  assert.equal((await ledger(client, SCOPE)).bootstrap_cursor, 0);
+
+  // With the read repaired the same page completes; what had already applied is idempotent.
+  app.allowLoads('page-3');
+  await subscription.bootstrap();
+  assert.deepEqual({ ...subscription.status.bootstrap }, { phase: 'complete', error: null });
+  // A failure and its explicit retry are the one place the public phase moves
+  // back: within a run it never does, but a retry is another run.
+  assert.deepEqual(observed.seen, ['not-requested', 'loading', 'failed', 'loading', 'failed', 'loading', 'complete']);
+  observed.stop();
+  await assertLoaded(client, history);
+  const done = await ledger(client, SCOPE);
+  assert.equal(done.bootstrap_cursor, S);
+  assert.equal(done.bootstrap_error, null);
+  assert.equal(done.bootstrap_run, 3);
+ });
+});

@@ -213,6 +213,19 @@ impl RuntimeHost {
                         Some(state) => serde_json::to_value(state)?,
                         None => Value::Null,
                     },
+                    // The durable load of a Scope's history, registered and read
+                    // by identity like the rest. Registration is a local write
+                    // that needs no connection; the lane picks the work up on
+                    // the wake that follows the commit
+                    // ([#151](https://github.com/zanminwang/axton/issues/151)).
+                    "scopeBootstrap" => serde_json::to_value(e.client.request_bootstrap(
+                        text(&request, "scope")?,
+                        read_counter(&request["subscriptionId"], true)?,
+                    )?)?,
+                    "scopeBootstrapState" => serde_json::to_value(e.client.bootstrap_state(
+                        text(&request, "scope")?,
+                        read_counter(&request["subscriptionId"], true)?,
+                    )?)?,
                     "scopeUnsubscribe" => {
                         let scope = text(&request, "scope")?.to_string();
                         let subscription_id = read_counter(&request["subscriptionId"], true)?;

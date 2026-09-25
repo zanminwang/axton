@@ -36,7 +36,7 @@ pub fn established(scopes: &[&str]) -> DownlinkAction {
 }
 pub fn request(action: &DownlinkAction) -> (u64, PullRequest) {
     match action {
-        DownlinkAction::Request { request, body } => {
+        DownlinkAction::Request { request, body, .. } => {
             (*request, PullRequest::decode(body.as_bytes()).unwrap())
         }
         other => panic!("expected a request, got {other:?}"),

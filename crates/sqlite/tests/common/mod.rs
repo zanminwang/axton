@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 //! Helpers shared by every client-facing integration test in this crate.
 mod lane;
+#[allow(unused_imports)]
 pub use lane::*;
 
 use axton_client::*;

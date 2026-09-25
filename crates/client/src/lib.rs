@@ -25,6 +25,7 @@ pub use actions::{ActionCallOptions, SubmittedCall};
 pub use axton_core::*;
 pub use bootstrap::{
     BootstrapApply, BootstrapError, BootstrapPhase, BootstrapRecordFailure, BootstrapState,
+    BootstrapTask, PROTOCOL_INVALID, RECORDS_FAILED, REQUEST_REJECTED,
 };
 pub use connection::*;
 pub use downlink_worker::*;

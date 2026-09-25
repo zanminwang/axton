@@ -601,7 +601,8 @@ fn an_http_failure_retries_the_session_and_a_stale_failure_is_ignored() {
     assert_eq!(
         lane.send(DownlinkEvent::Failed {
             request: id + 1,
-            reason: Some("timeout".into())
+            reason: Some("timeout".into()),
+            status: None
         }),
         vec![],
         "a failure of another request is not this session's"
@@ -609,6 +610,7 @@ fn an_http_failure_retries_the_session_and_a_stale_failure_is_ignored() {
     let failed = lane.send(DownlinkEvent::Failed {
         request: id,
         reason: Some("live failed: 503".into()),
+        status: Some(503),
     });
     assert_eq!(
         failed[0],

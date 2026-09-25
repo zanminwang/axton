@@ -133,6 +133,15 @@ impl<S: ClientStore> Engine<'_, S> {
     /// subscription has no origin yet has no interval to scan: it is registered
     /// work, not schedulable work.
     pub(crate) fn bootstrap_tasks(&mut self) -> Result<Vec<BootstrapState>> {
+        Ok(self
+            .bootstrap_task_rows()?
+            .into_iter()
+            .map(|row| row.state)
+            .collect())
+    }
+    /// The same runs with the subscription half beside them: the scheduler
+    /// needs S, which lives in the #150 columns, to bound the next page.
+    pub(crate) fn bootstrap_task_rows(&mut self) -> Result<Vec<Loaded>> {
         let rows = self.rows(
             &format!(
                 "SELECT {COLUMNS} FROM axton_subscription \
@@ -141,10 +150,7 @@ impl<S: ClientStore> Engine<'_, S> {
             ),
             &[],
         )?;
-        rows.rows
-            .iter()
-            .map(|r| decode(r).map(|row| row.state))
-            .collect()
+        rows.rows.iter().map(|r| decode(r)).collect()
     }
     /// The named Scopes whose fixed barrier ordinary delivery has reached: the
     /// runs a settlement would actually complete. Read on the committed reader

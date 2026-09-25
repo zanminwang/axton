@@ -14,12 +14,18 @@
 use crate::bootstrap_ledger::Loaded;
 use crate::store::ClientStore;
 use crate::{ApplyReport, Client, Report, ReportKind};
-use axton_core::{BootstrapPage, Result, invalid};
+use axton_core::{BootstrapPage, BootstrapRequest, Result, invalid};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The stable code a page whose records could not all be applied fails with.
 pub const RECORDS_FAILED: &str = "bootstrap.records_failed";
+/// The stable code a response that is not a page of the requested interval
+/// fails with: an envelope neither side can attribute to a record.
+pub const PROTOCOL_INVALID: &str = "bootstrap.protocol_invalid";
+/// The stable code a request the server definitively refused fails with. A
+/// transport failure is not this: it keeps the run and is retried.
+pub const REQUEST_REJECTED: &str = "bootstrap.request_rejected";
 /// At most this many record summaries are kept in a stored failure.
 pub const MAX_FAILURES: usize = 50;
 /// A stored failure message is cut to this many UTF-8 bytes.
@@ -73,6 +79,11 @@ impl BootstrapPhase {
     /// settle.
     pub(crate) fn active(self) -> bool {
         matches!(self, Self::Requested | Self::Loading | Self::CatchingUp)
+    }
+    /// Whether a page may be asked for. A run that is catching up has none to
+    /// ask for: it waits for ordinary delivery to reach its barrier.
+    pub(crate) fn schedulable(self) -> bool {
+        matches!(self, Self::Requested | Self::Loading)
     }
 }
 
@@ -228,7 +239,63 @@ impl BootstrapApply {
     }
 }
 
+/// One schedulable run and the origin that bounds it: what the scheduler needs
+/// to ask for the next page without a second read. S lives in the #150 half of
+/// the row, so both halves are read in the one transaction that picked the task.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BootstrapTask {
+    pub state: BootstrapState,
+    /// S, the subscription origin every page of this run is bounded by.
+    pub origin: u64,
+}
+impl BootstrapTask {
+    /// The page this run asks for next: `(B, S]` with the client's declared
+    /// read contracts, as [`PullRequest`](axton_core::PullRequest) carries them.
+    pub fn request(&self, models: std::collections::BTreeMap<String, u64>) -> BootstrapRequest {
+        BootstrapRequest {
+            channel: self.state.scope.clone(),
+            models,
+            after: self.state.cursor,
+            until: self.origin,
+        }
+    }
+}
+
 impl<S: ClientStore> Client<S> {
+    /// The next run to ask a page for, rotating: the first schedulable task in
+    /// Scope order after `rotation`, or the first of all when that was the last
+    /// one. One committed read, so the transaction is closed before the request
+    /// leaves; a run that is catching up waits for delivery and is skipped.
+    pub fn bootstrap_schedule(&mut self, rotation: Option<&str>) -> Result<Option<BootstrapTask>> {
+        self.view(|e| {
+            let tasks: Vec<BootstrapTask> = e
+                .bootstrap_task_rows()?
+                .into_iter()
+                .filter(|row| row.state.state.schedulable())
+                .filter_map(|row| {
+                    Some(BootstrapTask {
+                        origin: row.subscription.starting_cursor?,
+                        state: row.state,
+                    })
+                })
+                .collect();
+            let after = rotation
+                .and_then(|last| tasks.iter().find(|t| t.state.scope.as_str() > last))
+                .or_else(|| tasks.first());
+            Ok(after.cloned())
+        })
+    }
+    /// Every run waiting for its barrier, in Scope order: what a reopen
+    /// re-evaluates before it issues any request.
+    pub fn bootstrap_barriers(&mut self) -> Result<Vec<String>> {
+        self.view(|e| {
+            Ok(e.bootstrap_tasks()?
+                .into_iter()
+                .filter(|state| state.state == BootstrapPhase::CatchingUp)
+                .map(|state| state.scope)
+                .collect())
+        })
+    }
     /// Register a durable load of everything published to `scope` before its
     /// origin, and answer with the stored state the call attached to.
     ///

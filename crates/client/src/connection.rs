@@ -39,6 +39,20 @@ impl ConnectionDriver {
     pub fn wake(&mut self) {
         self.dirty = true;
     }
+    /// Whether the lane may do work at all: started and not paused. Work that
+    /// rides on the lane without riding on its socket - a Bootstrap page
+    /// ([Downlink worker](../../../docs/engineering/architecture/client/connection/controller/downlink-worker.md))
+    /// - is scheduled only while this holds.
+    pub fn active(&self) -> bool {
+        self.running && !self.paused
+    }
+    /// How long to wait before the attempt after `attempt` failed ones: 250 ms
+    /// doubling per attempt, capped at 30 s, with ±20 % jitter from host
+    /// entropy. One policy, so every retry on the lane is bounded the same way.
+    pub fn backoff(attempt: u32, entropy: u64) -> u64 {
+        let base = 250u64.saturating_mul(1u64 << attempt.min(7)).min(30_000);
+        base * (800 + entropy % 401) / 1000
+    }
     pub fn next(&mut self, now: u64) -> ConnectionAction {
         if !self.running || self.paused || self.in_flight || !self.dirty {
             return ConnectionAction::Idle;
@@ -61,11 +75,9 @@ impl ConnectionDriver {
             self.attempt = 0;
             self.due = now;
         } else {
-            let base = 250u64
-                .saturating_mul(1u64 << self.attempt.min(7))
-                .min(30_000);
+            let delay = Self::backoff(self.attempt, entropy);
             self.attempt = self.attempt.saturating_add(1);
-            self.due = now.saturating_add(base * (800 + entropy % 401) / 1000);
+            self.due = now.saturating_add(delay);
             self.dirty = true;
         }
     }

@@ -115,8 +115,8 @@ fn d2_delayed_page_from_another_channel_cannot_regress_newer_content() {
     sim.apply(Action::Deliver).unwrap(); // a's page, stale content at stamp 1
     assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("new"));
     assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 2);
-    assert_eq!(sim.client(0).cursor("a").unwrap(), 1);
-    assert_eq!(sim.client(0).cursor("b").unwrap(), 1);
+    assert_eq!(sim.client(0).cursor("a").unwrap(), Some(1));
+    assert_eq!(sim.client(0).cursor("b").unwrap(), Some(1));
     assert_eq!(sim.conflicts, 0);
     sim.check().unwrap();
 }
@@ -142,8 +142,8 @@ fn d3_one_change_is_one_stamp_on_every_channel() {
     sim.settle();
     assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("y"));
     assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 2);
-    assert_eq!(sim.client(0).cursor("a").unwrap(), 2);
-    assert_eq!(sim.client(0).cursor("b").unwrap(), 1);
+    assert_eq!(sim.client(0).cursor("a").unwrap(), Some(2));
+    assert_eq!(sim.client(0).cursor("b").unwrap(), Some(1));
     assert_eq!(sim.conflicts, 0);
     sim.check().unwrap();
 }
@@ -158,7 +158,7 @@ fn d4_move_between_channels_and_back() {
     sim.host.set_membership(&entry_key("e1"), &["a"]);
     change(&mut sim, "Entry:e1", Some("in a"), &["a"]); // stamp 1
     sim.settle();
-    assert_eq!(sim.client(0).cursor("a").unwrap(), 1);
+    assert_eq!(sim.client(0).cursor("a").unwrap(), Some(1));
     // Move to b: b is told at stamp 1, a is told nothing.
     move_to(&mut sim, "Entry:e1", &["b"]);
     assert_eq!(
@@ -171,17 +171,21 @@ fn d4_move_between_channels_and_back() {
     sim.settle();
     assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("in a"));
     assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 1);
-    assert_eq!(sim.client(0).cursor("b").unwrap(), 1);
+    assert_eq!(sim.client(0).cursor("b").unwrap(), Some(1));
     change(&mut sim, "Entry:e1", Some("in b"), &["b"]); // stamp 2
     sim.settle();
     assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("in b"));
-    assert_eq!(sim.client(0).cursor("a").unwrap(), 1, "a heard nothing");
+    assert_eq!(
+        sim.client(0).cursor("a").unwrap(),
+        Some(1),
+        "a heard nothing"
+    );
     // Move back to a: a is told at stamp 2.
     move_to(&mut sim, "Entry:e1", &["a"]);
     assert_eq!(sim.host.stamp(&entry_key("e1")), 2);
     sim.settle();
     assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("in b"));
-    assert_eq!(sim.client(0).cursor("a").unwrap(), 2);
+    assert_eq!(sim.client(0).cursor("a").unwrap(), Some(2));
     change(&mut sim, "Entry:e1", Some("back in a"), &["a"]); // stamp 3
     sim.settle();
     assert_eq!(
@@ -220,14 +224,14 @@ fn d5_delete_across_channels_outranks_a_delayed_upsert_and_keeps_its_stamp() {
     assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 3);
     // b's page was one pull for both channels, so a's own delivery of the
     // delete came with it; the earlier page is now covered on every channel.
-    assert_eq!(sim.client(0).cursor("a").unwrap(), 3);
+    assert_eq!(sim.client(0).cursor("a").unwrap(), Some(3));
     sim.apply(Action::Deliver).unwrap(); // a's page: v2 at stamp 2, older and covered
     assert_eq!(
         sim.read_text(0, &entry_key("e1")),
         None,
         "stale content cannot resurrect a deleted record"
     );
-    assert_eq!(sim.client(0).cursor("a").unwrap(), 3);
+    assert_eq!(sim.client(0).cursor("a").unwrap(), Some(3));
     assert_eq!(
         stamp_rows(&mut sim, 0).len(),
         1,
@@ -236,7 +240,7 @@ fn d5_delete_across_channels_outranks_a_delayed_upsert_and_keeps_its_stamp() {
     pull(&mut sim, 0, "a"); // nothing new on either channel
     sim.drain();
     assert_eq!(sim.read_text(0, &entry_key("e1")), None);
-    assert_eq!(sim.client(0).cursor("a").unwrap(), 3);
+    assert_eq!(sim.client(0).cursor("a").unwrap(), Some(3));
     assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 3);
     assert_eq!(stamp_rows(&mut sim, 0).len(), 1);
     assert_eq!(sim.conflicts, 0);
@@ -330,7 +334,7 @@ fn d4_parent_and_child_move_channels_together_without_deletes() {
         sim.read_text(0, &comment_key("c1")).as_deref(),
         Some("comment in a")
     );
-    assert_eq!(sim.client(0).cursor("b").unwrap(), 2);
+    assert_eq!(sim.client(0).cursor("b").unwrap(), Some(2));
     change(&mut sim, "Entry:e1", Some("entry in b"), &["b"]);
     change(&mut sim, "Comment:c1", Some("comment in b"), &["b"]);
     sim.settle();

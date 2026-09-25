@@ -281,7 +281,11 @@ fn unsubscribe_retains_records_and_restarts_from_zero() {
     c.apply_page(other).unwrap();
     c.transaction(|tx| tx.set_channel("a".into(), false))
         .unwrap();
-    assert_eq!(c.cursor("a").unwrap(), 0);
+    assert_eq!(
+        c.cursor("a").unwrap(),
+        None,
+        "an unsubscribed channel has no delivery position"
+    );
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
     let only_a = schema()
         .record_key("Entry", &json!({"id":"only-a"}))
@@ -294,7 +298,7 @@ fn unsubscribe_retains_records_and_restarts_from_zero() {
     assert_eq!(table_count(&mut c, "axton_record"), 2);
     assert_eq!(c.record_stamp(&only_a).unwrap(), 2);
     subscribe(&mut c, "a");
-    assert_eq!(c.cursor("a").unwrap(), 0, "resubscribing starts over");
+    assert_eq!(c.cursor("a").unwrap(), Some(0), "resubscribing starts over");
 }
 
 /// L3: a host transaction cannot commit with a savepoint still open; the refusal

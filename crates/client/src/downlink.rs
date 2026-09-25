@@ -31,10 +31,10 @@ impl<S: ClientStore> Client<S> {
     pub(crate) fn moving_channels(&mut self, page: &PullPage) -> Result<BTreeMap<String, u64>> {
         let mut moving = BTreeMap::new();
         for (channel, range) in &page.cursors {
-            // A subscription row exists iff the client is subscribed. Applying a
-            // page for any other channel would insert one through `set_cursor`, so
-            // that channel's part - a pull still in flight when the unsubscribe
-            // committed - is ignored.
+            // Only an initialized subscription has a position a page can move.
+            // A channel this client unsubscribed, or one still waiting for its
+            // first boundary, contributes nothing: that part of the page - a
+            // pull still in flight when the unsubscribe committed - is ignored.
             let Some(current) = self.view(|e| e.cursor(channel))? else {
                 continue;
             };
@@ -61,7 +61,9 @@ impl<S: ClientStore> Client<S> {
         self.write(|e| {
             for (channel, range) in &page.cursors {
                 if let Some(to) = moving.get(channel) {
-                    let current = e.cursor(channel)?.unwrap_or(0);
+                    let current = e
+                        .cursor(channel)?
+                        .ok_or_else(|| invalid("cursor moved during page application"))?;
                     if current != range.from && current >= *to {
                         return Err(invalid("cursor moved during page application"));
                     }
@@ -71,7 +73,7 @@ impl<S: ClientStore> Client<S> {
             // in the page once and lands once.
             let mut report = e.apply_records(&page.changes)?;
             for (channel, to) in &moving {
-                e.set_cursor(channel, *to)?;
+                e.advance_cursor(channel, *to)?;
             }
             report.cursors = moving.clone();
             Ok(report)

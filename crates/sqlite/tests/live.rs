@@ -107,8 +107,12 @@ impl Lane {
             body: text(page),
         })
     }
+    /// Every channel a live test drives is subscribed and initialized.
     fn cursor(&mut self, channel: &str) -> u64 {
-        self.client.cursor(channel).unwrap()
+        self.client
+            .cursor(channel)
+            .unwrap()
+            .expect("an initialized subscription")
     }
     fn set(&mut self, channel: &str, subscribed: bool) {
         self.client

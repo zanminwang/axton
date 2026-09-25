@@ -26,7 +26,7 @@ pub const LEGACY_TABLES: &[&str] = &["axton_claim", "axton_push_checkpoint"];
 /// `axton_client` columns this layout requires beyond the original ones. A
 /// database created before they existed holds pending work under the old
 /// contract; it is rebuilt beside, never converted or wiped.
-const CLIENT_COLUMNS: &[&str] = &["last_completed_push", "push_models"];
+const CLIENT_COLUMNS: &[&str] = &["last_completed_push", "push_models", "next_subscription"];
 /// Framework columns added after a layout shipped, with their definitions.
 /// A database without one gets it in place: its queue stays sendable.
 /// `diverged` marks a queued mutation whose replay failed over new authority
@@ -65,14 +65,21 @@ CREATE TABLE IF NOT EXISTS axton_client (
   generation   INTEGER NOT NULL,
   last_completed_push INTEGER NOT NULL DEFAULT 0,
   push_models  TEXT,
-  push_results TEXT
+  push_results TEXT,
+  next_subscription INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS axton_record (
   model TEXT NOT NULL, identity TEXT NOT NULL, stamp INTEGER NOT NULL,
   PRIMARY KEY (model, identity)
 );
 CREATE TABLE IF NOT EXISTS axton_subscription (
-  channel TEXT PRIMARY KEY, cursor INTEGER NOT NULL
+  channel          TEXT PRIMARY KEY,
+  subscription_id  INTEGER NOT NULL UNIQUE,
+  starting_cursor  INTEGER,
+  cursor           INTEGER,
+  CHECK ((starting_cursor IS NULL AND cursor IS NULL) OR
+         (starting_cursor IS NOT NULL AND cursor IS NOT NULL AND
+          starting_cursor >= 0 AND cursor >= starting_cursor))
 );
 CREATE TABLE IF NOT EXISTS axton_mutation (
   ordinal INTEGER PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL, push INTEGER,

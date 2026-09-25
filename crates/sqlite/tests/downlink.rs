@@ -37,8 +37,8 @@ fn cross_channel_delete_applies_by_stamp_and_retains_the_stamp() {
         1,
         "the stamp is retained after every channel confirmed the delete"
     );
-    assert_eq!(c.cursor("a").unwrap(), 2);
-    assert_eq!(c.cursor("b").unwrap(), 2);
+    assert_eq!(c.cursor("a").unwrap(), Some(2));
+    assert_eq!(c.cursor("b").unwrap(), Some(2));
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn older_stamp_cannot_regress_newer_authority_but_advances_the_cursor() {
     );
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "NEW");
     assert_eq!(c.record_stamp(&key()).unwrap(), 11);
-    assert_eq!(c.cursor("a").unwrap(), 1);
+    assert_eq!(c.cursor("a").unwrap(), Some(1));
     let old_delete = c.apply_page(stamped("a", 1, 2, 9, None)).unwrap();
     assert_eq!(old_delete.applied, 0);
     assert!(old_delete.reports.is_empty());
@@ -65,7 +65,7 @@ fn older_stamp_cannot_regress_newer_authority_but_advances_the_cursor() {
         "NEW",
         "an old tombstone cannot delete newer content"
     );
-    assert_eq!(c.cursor("a").unwrap(), 2);
+    assert_eq!(c.cursor("a").unwrap(), Some(2));
 }
 
 #[test]
@@ -82,7 +82,11 @@ fn equal_stamp_is_idempotent_or_a_diagnostic() {
     assert_eq!(conflict.reports[0].stamp, 5);
     assert_eq!(conflict.reports[0].model, "Entry");
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "X");
-    assert_eq!(c.cursor("b").unwrap(), 2, "the channel is not stalled");
+    assert_eq!(
+        c.cursor("b").unwrap(),
+        Some(2),
+        "the channel is not stalled"
+    );
 }
 
 #[test]
@@ -126,7 +130,7 @@ fn a_change_the_schema_refuses_is_reported_and_the_cursor_still_advances() {
         report.reports[0]
     );
     assert_eq!(report.cursors, BTreeMap::from([("book".to_string(), 2)]));
-    assert_eq!(c.cursor("book").unwrap(), 2);
+    assert_eq!(c.cursor("book").unwrap(), Some(2));
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
     assert_eq!(
         c.record_stamp(&key()).unwrap(),
@@ -302,11 +306,11 @@ fn cursor_and_stamp_are_independent() {
     subscribe(&mut c, "a");
     c.apply_page(stamped("a", 0, 100, 2, Some("low stamp, high cursor")))
         .unwrap();
-    assert_eq!(c.cursor("a").unwrap(), 100);
+    assert_eq!(c.cursor("a").unwrap(), Some(100));
     assert_eq!(c.record_stamp(&key()).unwrap(), 2);
     c.apply_page(stamped("a", 100, 101, 900, Some("high stamp")))
         .unwrap();
-    assert_eq!(c.cursor("a").unwrap(), 101);
+    assert_eq!(c.cursor("a").unwrap(), Some(101));
     assert_eq!(c.record_stamp(&key()).unwrap(), 900);
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "high stamp");
     // A receipt never moves a cursor.
@@ -314,7 +318,7 @@ fn cursor_and_stamp_are_independent() {
     c.freeze().unwrap().unwrap();
     let r = receipt(&mut c, 1, vec![authority(Some("B"), 901)]);
     c.acknowledge(1, r).unwrap();
-    assert_eq!(c.cursor("a").unwrap(), 101);
+    assert_eq!(c.cursor("a").unwrap(), Some(101));
 }
 
 /// A2: a page answering a pull issued before the channel was unsubscribed and
@@ -332,14 +336,14 @@ fn page_from_a_previous_subscription_is_stale_not_a_gap() {
         .unwrap();
     c.transaction(|tx| tx.set_channel("a".into(), true))
         .unwrap();
-    assert_eq!(c.cursor("a").unwrap(), 0);
+    assert_eq!(c.cursor("a").unwrap(), Some(0));
 
     // apply_page: the answer to the old request is dropped, the cursor stays at 0
     // and the retained row is untouched.
     let report = c.apply_page(page("a", 1, 2, Some("B"))).unwrap();
     assert!(report.stale, "{report:?}");
     assert_eq!(report.applied, 0);
-    assert_eq!(c.cursor("a").unwrap(), 0);
+    assert_eq!(c.cursor("a").unwrap(), Some(0));
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
     // The same page with no request behind it is a genuine gap for direct callers.
     assert!(c.apply_page(page("a", 1, 2, Some("B"))).is_err());
@@ -360,7 +364,7 @@ fn page_from_a_previous_subscription_is_stale_not_a_gap() {
         .receive_downlink(page("a", 2, 3, Some("C")), Some(request))
         .unwrap();
     assert_eq!(progress.disposition, "covered");
-    assert_eq!(c.cursor("a").unwrap(), 0);
+    assert_eq!(c.cursor("a").unwrap(), Some(0));
     // The SDK's late-catch-up shape: the old request is still outstanding when the
     // new subscription issues its own request from the same cursor; the fresh
     // answer applies, and the obsolete answer is then dropped.
@@ -410,7 +414,7 @@ fn page_from_a_previous_subscription_is_stale_not_a_gap() {
         .unwrap();
     assert_eq!(
         c.cursor("a").unwrap(),
-        0,
+        Some(0),
         "the stale answer did not move the cursor"
     );
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "fresh");
@@ -449,7 +453,7 @@ fn older_subscription_response_cannot_discard_a_fresh_response() {
         .receive_downlink(stamped("a", 0, 2, 2, Some("fresh")), Some(fresh))
         .unwrap();
     assert_eq!(fresh_progress.disposition, "applied");
-    assert_eq!(c.cursor("a").unwrap(), 2);
+    assert_eq!(c.cursor("a").unwrap(), Some(2));
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "fresh");
 }
 
@@ -480,7 +484,10 @@ fn a_page_moves_every_channel_it_names_and_a_shared_record_lands_once() {
         report.cursors,
         BTreeMap::from([("a".to_string(), 2), ("b".to_string(), 1)])
     );
-    assert_eq!((c.cursor("a").unwrap(), c.cursor("b").unwrap()), (2, 1));
+    assert_eq!(
+        (c.cursor("a").unwrap(), c.cursor("b").unwrap()),
+        (Some(2), Some(1))
+    );
     assert_eq!(read(&mut c, "e").unwrap()["text"], "shared");
     assert_eq!(c.record_stamp(&key()).unwrap(), 3);
     assert_eq!(read(&mut c, "only-a").unwrap()["text"], "A");
@@ -512,7 +519,10 @@ fn channels_are_gated_one_by_one_and_a_gap_holds_the_whole_page() {
         vec![entry("e", 3, "C")],
     ));
     assert!(gap.is_err(), "{gap:?}");
-    assert_eq!((c.cursor("a").unwrap(), c.cursor("b").unwrap()), (5, 2));
+    assert_eq!(
+        (c.cursor("a").unwrap(), c.cursor("b").unwrap()),
+        (Some(5), Some(2))
+    );
     assert_eq!(read(&mut c, "e").unwrap()["text"], "B");
     // Everything covered: stale, nothing written.
     let covered = c
@@ -572,7 +582,7 @@ fn an_error_change_keeps_local_content_and_stamp_and_is_reported() {
     );
     assert_eq!(c.record_stamp(&key()).unwrap(), 1, "the stamp is kept");
     assert_eq!(read(&mut c, "other").unwrap()["text"], "O");
-    assert_eq!(c.cursor("a").unwrap(), 3);
+    assert_eq!(c.cursor("a").unwrap(), Some(3));
     // A later delivery of the record corrects it on its own stamp.
     c.apply_page(multi(&[("a", 3, 4, 4)], vec![entry("e", 5, "fixed")]))
         .unwrap();
@@ -614,7 +624,7 @@ fn a_conflict_is_reported_through_receive_downlink() {
     assert_eq!(progress.disposition, "recover");
     assert_eq!(progress.gaps, vec!["b".to_string()]);
     assert_eq!(progress.continues, vec!["a".to_string()]);
-    assert_eq!(c.cursor("a").unwrap(), 2);
+    assert_eq!(c.cursor("a").unwrap(), Some(2));
     assert_eq!(read(&mut c, "e").unwrap()["text"], "X");
 }
 
@@ -658,5 +668,5 @@ fn a_record_that_violates_a_local_constraint_is_skipped_alone() {
     assert!(c.read(&c2).unwrap().is_none());
     assert_eq!(c.record_stamp(&c2).unwrap(), 0, "no stamp without content");
     assert_eq!(c.query("Comment", &json!({})).unwrap().len(), 2);
-    assert_eq!(c.cursor("lib").unwrap(), 3);
+    assert_eq!(c.cursor("lib").unwrap(), Some(3));
 }

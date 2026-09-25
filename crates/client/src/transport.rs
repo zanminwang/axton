@@ -178,7 +178,11 @@ impl<S: ClientStore> Client<S> {
             if !subscribed.contains(channel) {
                 continue;
             }
-            let cursor = self.cursor(channel)?;
+            // An uninitialized subscription has no position to compare: its
+            // first boundary is not committed, so this page moves nothing.
+            let Some(cursor) = self.cursor(channel)? else {
+                continue;
+            };
             if range.to <= cursor {
                 continue;
             }

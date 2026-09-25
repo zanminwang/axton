@@ -13,7 +13,7 @@ Pages come from two paths and go through one gate:
 | HTTP catch-up or WebSocket frame, via the live session | `receive_downlink(page, request?)` | `DownlinkProgress {disposition: covered/recover/applied, gaps, continues, report}` |
 | Direct callers (tests, simulation) | `apply_page(page)` | `ApplyReport {applied, stale, cursors, reports}` |
 
-`downlink_request()` builds the one request for every subscribed channel (`None` when nothing is subscribed). Pull owns the ledger: `axton_subscription` (channel → cursor) and `axton_record` (the stamp last applied per record, retained across deletion and unsubscription). It writes records through the authority applier shared with [Settlement](settlement.md); the only queue state it touches is the *diverged* mark on a mutation whose replay failed.
+`downlink_request()` builds the one request for every initialized subscription (`None` when none is). Pull owns the ledger: `axton_subscription` (channel → subscription identity, starting cursor, cursor; both cursors null until a first delivery boundary is committed, so a subscription without one asks for nothing) and `axton_record` (the stamp last applied per record, retained across deletion and unsubscription). It writes records through the authority applier shared with [Settlement](settlement.md); the only queue state it touches is the *diverged* mark on a mutation whose replay failed.
 
 ## 5. Building Block View
 

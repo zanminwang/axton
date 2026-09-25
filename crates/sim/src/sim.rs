@@ -849,7 +849,7 @@ mod tests {
         sim.apply(Action::Deliver).unwrap(); // pull reaches server, page queued
         sim.apply(Action::Deliver).unwrap(); // page reaches client: same stamp, no rewrite
         assert_eq!(sim.client(0).pending_count().unwrap(), 0);
-        assert_eq!(sim.client(0).cursor("a").unwrap(), 1);
+        assert_eq!(sim.client(0).cursor("a").unwrap(), Some(1));
         assert_eq!(sim.read_text(0, &entry_key("e1")), Some("hi".into()));
         assert_eq!(sim.conflicts, 0);
         assert_eq!(sim.trace.len(), 8);

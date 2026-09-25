@@ -271,7 +271,8 @@ impl LiveSession {
                 // Any channel behind: one pull from the durable cursors first.
                 let mut behind = false;
                 for (channel, head) in &ack.cursors {
-                    if *head > client.cursor(channel)? {
+                    // An uninitialized subscription has no cursor to be behind.
+                    if client.cursor(channel)?.is_some_and(|cursor| *head > cursor) {
                         behind = true;
                     }
                 }

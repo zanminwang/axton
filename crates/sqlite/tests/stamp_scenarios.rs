@@ -28,8 +28,8 @@ fn delayed_page_from_another_channel_cannot_regress_newer_content() {
         "but the page still moves the channel"
     );
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "new");
-    assert_eq!(c.cursor("a").unwrap(), 10);
-    assert_eq!(c.cursor("b").unwrap(), 5);
+    assert_eq!(c.cursor("a").unwrap(), Some(10));
+    assert_eq!(c.cursor("b").unwrap(), Some(5));
     assert_eq!(c.record_stamp(&key()).unwrap(), 8);
     // A catches up with the same change at the same stamp: nothing to change.
     c.apply_page(stamped("a", 10, 11, 8, Some("new"))).unwrap();
@@ -70,7 +70,7 @@ fn delete_keeps_its_stamp_so_stale_content_cannot_resurrect_the_record() {
     // A's copy of the delete is the same version: nothing changes, the cursor moves.
     c.apply_page(stamped("a", 2, 3, 4, None)).unwrap();
     assert!(c.read(&key()).unwrap().is_none());
-    assert_eq!(c.cursor("a").unwrap(), 3);
+    assert_eq!(c.cursor("a").unwrap(), Some(3));
     assert_eq!(
         table_count(&mut c, "axton_record"),
         1,

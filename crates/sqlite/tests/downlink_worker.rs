@@ -4,220 +4,8 @@
 //! state; pages are applied by the bounded pump (`next`).
 mod common;
 use axton_client::*;
-use axton_sqlite::SqliteStore;
 use common::*;
 use serde_json::{Value, json};
-
-fn text(page: &PullPage) -> String {
-    String::from_utf8(page.encode().unwrap()).unwrap()
-}
-/// The acknowledgement: every channel at its current head.
-fn ack(heads: &[(&str, u64)]) -> String {
-    let ack =
-        SubscriptionAck::new(heads.iter().map(|(c, h)| (c.to_string(), *h)).collect()).unwrap();
-    String::from_utf8(ack.encode().unwrap()).unwrap()
-}
-/// What an applied page answers: the push lane wakes and the Scopes whose
-/// cursors the commit moved.
-fn applied(scopes: &[&str]) -> Vec<DownlinkAction> {
-    vec![
-        DownlinkAction::Wake { lane: "push" },
-        DownlinkAction::Changed {
-            scopes: scopes.iter().map(|s| s.to_string()).collect(),
-        },
-    ]
-}
-/// The handshake's own action: delivery is established for these Scopes,
-/// whether or not the acknowledgement committed a boundary for any of them.
-fn established(scopes: &[&str]) -> DownlinkAction {
-    DownlinkAction::Acknowledged {
-        scopes: scopes.iter().map(|s| s.to_string()).collect(),
-    }
-}
-fn request(action: &DownlinkAction) -> (u64, PullRequest) {
-    match action {
-        DownlinkAction::Request { request, body } => {
-            (*request, PullRequest::decode(body.as_bytes()).unwrap())
-        }
-        other => panic!("expected a request, got {other:?}"),
-    }
-}
-fn cursors(request: &PullRequest) -> Vec<(&str, u64)> {
-    request
-        .cursors
-        .iter()
-        .map(|(c, n)| (c.as_str(), *n))
-        .collect()
-}
-fn open(action: &DownlinkAction) -> (u64, SubscribeRequest) {
-    match action {
-        DownlinkAction::Open { epoch, subscribe } => (
-            *epoch,
-            SubscribeRequest::decode(subscribe.as_bytes()).unwrap(),
-        ),
-        other => panic!("expected an open, got {other:?}"),
-    }
-}
-fn wait(action: &DownlinkAction) -> u64 {
-    match action {
-        DownlinkAction::Wait { millis } => *millis,
-        other => panic!("expected a wait, got {other:?}"),
-    }
-}
-fn waiting(action: &DownlinkAction) -> bool {
-    matches!(action, DownlinkAction::Wait { .. })
-}
-fn reports(action: &DownlinkAction) -> &[Report] {
-    match action {
-        DownlinkAction::Report { reports } => reports,
-        other => panic!("expected reports, got {other:?}"),
-    }
-}
-/// The first two actions of an applied page: the push wake and the commit.
-fn committed(actions: &[DownlinkAction], scopes: &[&str]) {
-    assert_eq!(&actions[..2], &applied(scopes)[..]);
-}
-fn empty(channel: &str, at: u64) -> PullPage {
-    multi(&[(channel, at, at, at)], vec![])
-}
-/// A full page of `channel` from `from`: fifty records, the channel continues.
-fn full(channel: &str, from: u64) -> PullPage {
-    let to = from + limits::PULL_CHANGES as u64;
-    multi(
-        &[(channel, from, to, to + 1)],
-        (1..=limits::PULL_CHANGES as u64)
-            .map(|i| AuthorityRecord {
-                model: "Entry".into(),
-                identity: json!({"id":format!("{i}")}),
-                stamp: from + i,
-                state: json!({"text":"bulk","note":null}),
-                error: None,
-            })
-            .collect(),
-    )
-}
-
-struct Lane {
-    client: Client<SqliteStore>,
-    worker: DownlinkWorker,
-    now: u64,
-}
-impl Lane {
-    fn new(dir: &std::path::Path) -> Self {
-        Self::of(common::open(&dir.join("db")))
-    }
-    /// A replica rebuilt from the layout this issue replaced: `a` and `b` carry
-    /// over as Scope names with fresh identities and no delivery boundary, and
-    /// their old cursors stay in the file that was left behind
-    /// ([rebuild](rebuild.rs)).
-    fn rebuilt(dir: &std::path::Path) -> Self {
-        let path = dir.join("db");
-        let mut store = SqliteStore::open(&path).unwrap();
-        store
-            .execute_batch(
-                "CREATE TABLE axton_client (client_id TEXT PRIMARY KEY, next_ordinal INTEGER NOT NULL, next_push INTEGER NOT NULL, generation INTEGER NOT NULL, last_completed_push INTEGER NOT NULL DEFAULT 0, push_models TEXT, push_results TEXT);
-                 CREATE TABLE axton_subscription (channel TEXT PRIMARY KEY, cursor INTEGER NOT NULL);
-                 INSERT INTO axton_client (client_id, next_ordinal, next_push, generation) VALUES ('old', 1, 1, 1);
-                 INSERT INTO axton_subscription VALUES ('a', 9);
-                 INSERT INTO axton_subscription VALUES ('b', 4);",
-            )
-            .unwrap();
-        drop(store);
-        let factory: StoreFactory<SqliteStore> = Box::new(|p| SqliteStore::open(p));
-        let client = Client::open_at(&path, schema(), factory, false).unwrap();
-        assert!(client.schema_state().rebuilt);
-        Self::of(client)
-    }
-    fn of(mut client: Client<SqliteStore>) -> Self {
-        seed(&mut client, "local");
-        Self {
-            client,
-            worker: DownlinkWorker::default(),
-            now: 1_000,
-        }
-    }
-    /// One enqueue: typed state only. It answers with no actions, so nothing
-    /// the host does depends on a callback's return.
-    fn enqueue(&mut self, event: DownlinkEvent) {
-        assert_eq!(
-            self.worker
-                .handle(&mut self.client, event, self.now, 500)
-                .unwrap(),
-            vec![],
-            "an enqueue decides nothing: the pump answers"
-        );
-    }
-    /// One bounded pump: at most one page application.
-    fn pump(&mut self) -> Vec<DownlinkAction> {
-        self.worker
-            .handle(&mut self.client, DownlinkEvent::Next, self.now, 500)
-            .unwrap()
-    }
-    /// The host loop: pump until the worker waits or has nothing left, in order.
-    fn drain(&mut self) -> Vec<DownlinkAction> {
-        let mut actions = vec![];
-        for _ in 0..=QUEUED_FRAMES + 2 {
-            let pumped = self.pump();
-            let stop = pumped.is_empty() || pumped.iter().any(waiting);
-            actions.extend(pumped);
-            if stop {
-                return actions;
-            }
-        }
-        panic!("the pump never went idle: {actions:?}")
-    }
-    /// Enqueue one event and run the host loop over its consequences.
-    fn send(&mut self, event: DownlinkEvent) -> Vec<DownlinkAction> {
-        self.enqueue(event);
-        self.drain()
-    }
-    fn message(&mut self, epoch: u64, body: String) -> Vec<DownlinkAction> {
-        self.send(DownlinkEvent::Message { epoch, body })
-    }
-    fn frame(&mut self, epoch: u64, page: &PullPage) -> Vec<DownlinkAction> {
-        self.message(epoch, text(page))
-    }
-    fn response(&mut self, request: u64, page: &PullPage) -> Vec<DownlinkAction> {
-        self.send(DownlinkEvent::Response {
-            request,
-            body: text(page),
-        })
-    }
-    /// How far `channel` committed delivery; `None` while it waits for its
-    /// first boundary.
-    fn cursor(&mut self, channel: &str) -> Option<u64> {
-        self.client.cursor(channel).unwrap()
-    }
-    fn set(&mut self, channel: &str, subscribed: bool) {
-        self.client
-            .transaction(|tx| tx.set_channel(channel.into(), subscribed))
-            .unwrap();
-    }
-    /// A subscription an earlier session left at `cursor`: registered, and its
-    /// first boundary already committed there, as that session's
-    /// acknowledgement did. Every session this lane then opens negotiates
-    /// against durable progress instead of initializing.
-    fn saved(&mut self, channel: &str, cursor: u64) {
-        self.set(channel, true);
-        acknowledge(&mut self.client, &[(channel, cursor)]);
-        assert_eq!(self.cursor(channel), Some(cursor));
-    }
-    fn text(&mut self) -> Value {
-        self.client.read(&key()).unwrap().unwrap()["text"].clone()
-    }
-    /// Subscribe `channel`, start the lane and acknowledge at `head`: the
-    /// epoch of the socket and what the acknowledgement asked for. A channel
-    /// with no committed boundary initializes at `head`; one [`Lane::saved`]
-    /// left behind catches up to it.
-    fn streaming(&mut self, channel: &str, head: u64) -> (u64, Vec<DownlinkAction>) {
-        self.set(channel, true);
-        let actions = self.send(DownlinkEvent::Start);
-        let (epoch, subscribe) = open(&actions[0]);
-        assert_eq!(subscribe.channels, [channel]);
-        let acknowledged = self.message(epoch, ack(&[(channel, head)]));
-        (epoch, acknowledged)
-    }
-}
 
 /// The behaviour change of [#150](https://github.com/zanminwang/axton/issues/150):
 /// a fresh subscription's first delivery boundary is the head its first
@@ -234,7 +22,7 @@ fn a_fresh_subscription_initializes_at_the_acknowledged_head_and_loads_no_histor
         "a registration has no delivery position until a head is acknowledged"
     );
     let actions = lane.send(DownlinkEvent::Start);
-    let (epoch, subscribe) = open(&actions[0]);
+    let (epoch, subscribe) = opened(&actions[0]);
     assert_eq!(
         subscribe.channels,
         ["a"],
@@ -359,7 +147,7 @@ fn a_head_below_the_committed_cursor_is_a_fault_that_rewinds_nothing() {
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 120);
     lane.set("b", true);
-    let (epoch, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let (epoch, _) = opened(&lane.send(DownlinkEvent::Start)[0]);
     let actions = lane.message(epoch, ack(&[("a", 100), ("b", 7)]));
     let DownlinkAction::Close {
         epoch: closed,
@@ -401,7 +189,7 @@ fn the_handshake_announces_the_acknowledged_set_and_a_refused_one_announces_noth
     // The socket drops and the next session announces its own handshake again.
     let actions = lane.send(DownlinkEvent::Closed { epoch });
     lane.now += wait(&actions[1]);
-    let (next, _) = open(&lane.drain()[0]);
+    let (next, _) = opened(&lane.drain()[0]);
     assert_eq!(
         lane.message(next, ack(&[("a", 5)])),
         vec![established(&["a"])]
@@ -410,7 +198,7 @@ fn the_handshake_announces_the_acknowledged_set_and_a_refused_one_announces_noth
     // and nothing of it is announced.
     let actions = lane.send(DownlinkEvent::Closed { epoch: next });
     lane.now += wait(&actions[1]);
-    let (refused, _) = open(&lane.drain()[0]);
+    let (refused, _) = opened(&lane.drain()[0]);
     let actions = lane.message(refused, ack(&[("a", 5), ("z", 1)]));
     assert!(
         matches!(
@@ -488,7 +276,7 @@ fn a_mixed_set_catches_up_one_scope_initializes_another_and_never_asks_for_a_thi
     lane.saved("a", 80);
     lane.set("b", true);
     let actions = lane.send(DownlinkEvent::Start);
-    let (epoch, subscribe) = open(&actions[0]);
+    let (epoch, subscribe) = opened(&actions[0]);
     assert_eq!(
         subscribe.channels,
         ["a", "b"],
@@ -555,7 +343,7 @@ fn an_uninitialized_subscription_produces_no_request_in_either_lane() {
         "a delta request with no initialized subscription is no work"
     );
     let actions = lane.send(DownlinkEvent::Start);
-    let (epoch, _) = open(&actions[0]);
+    let (epoch, _) = opened(&actions[0]);
     assert_eq!(
         actions.len(),
         1,
@@ -617,7 +405,7 @@ fn a_rolled_back_registration_reaches_no_session() {
         "nothing subscribed: the lane stays idle"
     );
     lane.set("b", true);
-    let (_, subscribe) = open(&lane.send(DownlinkEvent::Wake)[0]);
+    let (_, subscribe) = opened(&lane.send(DownlinkEvent::Wake)[0]);
     assert_eq!(
         subscribe.channels,
         ["b"],
@@ -635,7 +423,7 @@ fn scopes_carried_through_a_rebuild_initialize_at_the_next_acknowledged_head() {
     let mut lane = Lane::rebuilt(dir.path());
     assert_eq!((lane.cursor("a"), lane.cursor("b")), (None, None));
     let actions = lane.send(DownlinkEvent::Start);
-    let (epoch, subscribe) = open(&actions[0]);
+    let (epoch, subscribe) = opened(&actions[0]);
     assert_eq!(
         subscribe.channels,
         ["a", "b"],
@@ -665,7 +453,7 @@ fn an_enqueued_page_commits_nothing_until_the_pump_applies_it() {
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 0);
     let actions = lane.send(DownlinkEvent::Start);
-    let (epoch, _) = open(&actions[0]);
+    let (epoch, _) = opened(&actions[0]);
     lane.enqueue(DownlinkEvent::Message {
         epoch,
         body: ack(&[("a", 0)]),
@@ -730,7 +518,7 @@ fn the_worker_outlives_the_socket_it_was_streaming_on() {
     );
     lane.now += wait(&closed[1]);
     let actions = lane.drain();
-    let (second, subscribe) = open(&actions[0]);
+    let (second, subscribe) = opened(&actions[0]);
     assert!(second > first, "a new socket, a new epoch");
     assert_eq!(subscribe.channels, ["a"]);
     let actions = lane.message(second, ack(&[("a", 2)]));
@@ -846,7 +634,7 @@ fn a_session_subscribes_pulls_only_when_behind_and_then_streams() {
     );
     lane.saved("a", 0);
     let actions = lane.send(DownlinkEvent::Wake);
-    let (epoch, subscribe) = open(&actions[0]);
+    let (epoch, subscribe) = opened(&actions[0]);
     assert_eq!(subscribe.channels, ["a"]);
     assert_eq!(actions.len(), 1);
     // A streamed page before the acknowledgement is a protocol violation.
@@ -862,7 +650,7 @@ fn a_session_subscribes_pulls_only_when_behind_and_then_streams() {
     assert!((200..=300).contains(&backoff), "{backoff}");
     lane.now += backoff;
     let actions = lane.drain();
-    let (epoch, _) = open(&actions[0]);
+    let (epoch, _) = opened(&actions[0]);
     assert_eq!(epoch, 2, "each session has its own epoch");
     // The head is beyond the durable cursor: one pull from the cursor.
     let actions = lane.message(epoch, ack(&[("a", 4)]));
@@ -921,7 +709,7 @@ fn heads_equal_to_the_cursors_mean_no_catch_up_at_all() {
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 3);
     lane.saved("b", 2);
-    let (epoch, subscribe) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let (epoch, subscribe) = opened(&lane.send(DownlinkEvent::Start)[0]);
     assert_eq!(subscribe.channels, ["a", "b"]);
     assert_eq!(
         lane.message(epoch, ack(&[("a", 3), ("b", 2)])),
@@ -945,7 +733,7 @@ fn one_pull_covers_every_channel_and_continues_while_any_channel_is_full() {
     lane.saved("b", 0);
     lane.saved("a", 0);
     let actions = lane.send(DownlinkEvent::Start);
-    let (epoch, subscribe) = open(&actions[0]);
+    let (epoch, subscribe) = opened(&actions[0]);
     assert_eq!(
         subscribe.channels,
         ["a", "b"],
@@ -990,7 +778,7 @@ fn overflow_discards_the_queue_and_recovers_every_channel_after_the_request_in_f
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 0);
     lane.saved("b", 0);
-    let (epoch, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let (epoch, _) = opened(&lane.send(DownlinkEvent::Start)[0]);
     let actions = lane.message(epoch, ack(&[("a", 1), ("b", 0)]));
     let (id, _) = request(&actions[0]);
     assert_eq!(lane.frame(epoch, &page("a", 1, 2, Some("queued"))), vec![]);
@@ -1038,7 +826,7 @@ fn the_frame_queue_is_bounded_and_overflows_into_recovery() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 0);
-    let (epoch, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let (epoch, _) = opened(&lane.send(DownlinkEvent::Start)[0]);
     assert_eq!(
         lane.message(epoch, ack(&[("a", 0)])),
         vec![established(&["a"])]
@@ -1075,7 +863,7 @@ fn reports_reach_the_host_as_actions() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 0);
-    let (epoch, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let (epoch, _) = opened(&lane.send(DownlinkEvent::Start)[0]);
     lane.message(epoch, ack(&[("a", 0)]));
     lane.frame(epoch, &page("a", 0, 1, Some("A")));
     let failed = AuthorityRecord {
@@ -1113,7 +901,7 @@ fn a_subscription_change_ends_the_session_and_the_next_one_uses_the_new_set() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 0);
-    let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let (first, _) = opened(&lane.send(DownlinkEvent::Start)[0]);
     let actions = lane.message(first, ack(&[("a", 3)]));
     let (id, pending) = request(&actions[0]);
     lane.set("b", true);
@@ -1127,7 +915,7 @@ fn a_subscription_change_ends_the_session_and_the_next_one_uses_the_new_set() {
             reason: None
         }
     );
-    let (second, subscribe) = open(&actions[1]);
+    let (second, subscribe) = opened(&actions[1]);
     assert_eq!(subscribe.channels, ["a", "b"]);
     assert_eq!(actions.len(), 2);
     // The old session's late answers and frames are ignored.
@@ -1160,7 +948,7 @@ fn a_dropped_socket_reconnects_with_backoff_and_resubscribes() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 0);
-    let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let (first, _) = opened(&lane.send(DownlinkEvent::Start)[0]);
     let actions = lane.message(first, ack(&[("a", 3)]));
     let (id, _) = request(&actions[0]);
     lane.response(id, &page("a", 0, 3, Some("before")));
@@ -1178,7 +966,7 @@ fn a_dropped_socket_reconnects_with_backoff_and_resubscribes() {
     assert_eq!(lane.drain(), vec![DownlinkAction::Wait { millis: backoff }]);
     lane.now += backoff;
     let actions = lane.drain();
-    let (second, subscribe) = open(&actions[0]);
+    let (second, subscribe) = opened(&actions[0]);
     assert_eq!(
         subscribe.channels,
         ["a"],
@@ -1215,7 +1003,7 @@ fn protocol_violations_close_with_a_reason_and_retry() {
             "invalid live page: page moves backwards",
         ),
     ] {
-        let (epoch, _) = open(&actions[0]);
+        let (epoch, _) = opened(&actions[0]);
         let closed = lane.message(epoch, frame);
         assert_eq!(
             closed[0],
@@ -1227,7 +1015,7 @@ fn protocol_violations_close_with_a_reason_and_retry() {
         lane.now += wait(&closed[1]);
         actions = lane.drain();
     }
-    let (epoch, _) = open(&actions[0]);
+    let (epoch, _) = opened(&actions[0]);
     let actions = lane.message(epoch, ack(&[("a", 1)]));
     request(&actions[0]);
     let actions = lane.message(epoch, ack(&[("a", 1)]));
@@ -1241,7 +1029,7 @@ fn protocol_violations_close_with_a_reason_and_retry() {
     );
     lane.now += wait(&actions[1]);
     // A catch-up answer that does not answer the request ends the session too.
-    let (epoch, _) = open(&lane.drain()[0]);
+    let (epoch, _) = opened(&lane.drain()[0]);
     let actions = lane.message(epoch, ack(&[("a", 1)]));
     let (id, _) = request(&actions[0]);
     let actions = lane.response(id, &empty("other", 0));
@@ -1259,7 +1047,7 @@ fn pause_ends_the_session_without_backoff_resume_reopens_and_stop_is_final() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 0);
-    let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let (first, _) = opened(&lane.send(DownlinkEvent::Start)[0]);
     lane.message(first, ack(&[("a", 0)]));
     assert_eq!(
         lane.send(DownlinkEvent::Pause),
@@ -1275,7 +1063,7 @@ fn pause_ends_the_session_without_backoff_resume_reopens_and_stop_is_final() {
     );
     assert_eq!(lane.send(DownlinkEvent::Closed { epoch: first }), vec![]);
     let actions = lane.send(DownlinkEvent::Resume);
-    let (second, _) = open(&actions[0]);
+    let (second, _) = opened(&actions[0]);
     assert!(second > first);
     assert_eq!(
         lane.send(DownlinkEvent::Stop),
@@ -1299,7 +1087,7 @@ fn a_recreated_subscription_starts_over_at_the_next_acknowledged_head() {
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 0);
     let before = lane.client.subscription_state("a").unwrap().unwrap();
-    let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let (first, _) = opened(&lane.send(DownlinkEvent::Start)[0]);
     let actions = lane.message(first, ack(&[("a", 9)]));
     let (id, issued) = request(&actions[0]);
     // Unsubscribe and resubscribe while the request is in flight.
@@ -1313,7 +1101,7 @@ fn a_recreated_subscription_starts_over_at_the_next_acknowledged_head() {
             reason: None
         }
     );
-    let (second, _) = open(&actions[1]);
+    let (second, _) = opened(&actions[1]);
     let after = lane.client.subscription_state("a").unwrap().unwrap();
     assert_ne!(after.subscription_id, before.subscription_id);
     assert_eq!(
@@ -1352,12 +1140,12 @@ fn every_event_of_a_replaced_socket_is_fenced_by_its_epoch() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 0);
-    let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let (first, _) = opened(&lane.send(DownlinkEvent::Start)[0]);
     let acknowledged = lane.message(first, ack(&[("a", 1)]));
     let (stale_id, _) = request(&acknowledged[0]);
     let actions = lane.send(DownlinkEvent::Closed { epoch: first });
     lane.now += wait(&actions[1]);
-    let (second, _) = open(&lane.drain()[0]);
+    let (second, _) = opened(&lane.drain()[0]);
     assert!(second > first, "a new socket, a new epoch");
     assert_eq!(
         lane.message(second, ack(&[("a", 0)])),
@@ -1400,7 +1188,7 @@ fn an_applied_page_leaves_the_push_lane_and_its_frozen_request_alone() {
         .unwrap()
         .expect("a frozen batch");
     assert_eq!(push.kind, "push");
-    let (epoch, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let (epoch, _) = opened(&lane.send(DownlinkEvent::Start)[0]);
     let actions = lane.message(epoch, ack(&[("a", 1)]));
     let (id, _) = request(&actions[0]);
     assert_eq!(
@@ -1429,7 +1217,7 @@ fn a_restarted_lane_does_not_close_the_socket_of_the_lane_it_replaced() {
     // The lane closed without pumping its stop, as a host that closes does.
     lane.enqueue(DownlinkEvent::Stop);
     let actions = lane.send(DownlinkEvent::Start);
-    let (second, subscribe) = open(&actions[0]);
+    let (second, subscribe) = opened(&actions[0]);
     assert!(second > first, "the next lane opens its own socket");
     assert_eq!(subscribe.channels, ["a"]);
     assert_eq!(
@@ -1455,7 +1243,7 @@ fn a_socket_the_subscription_change_abandoned_reconnects_without_backoff() {
             reason: None
         }
     );
-    let (second, subscribe) = open(&actions[1]);
+    let (second, subscribe) = opened(&actions[1]);
     assert!(second > first);
     assert_eq!(subscribe.channels, ["a", "b"]);
     assert_eq!(
@@ -1480,7 +1268,7 @@ fn a_commit_pair_replaces_the_session_with_a_catch_up_still_in_flight() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 0);
-    let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let (first, _) = opened(&lane.send(DownlinkEvent::Start)[0]);
     let acknowledged = lane.message(first, ack(&[("a", 1)]));
     let (held, _) = request(&acknowledged[0]);
     lane.set("a", false);
@@ -1494,7 +1282,7 @@ fn a_commit_pair_replaces_the_session_with_a_catch_up_still_in_flight() {
         },
         "the session the commits invalidated ends"
     );
-    let (second, subscribe) = open(&actions[1]);
+    let (second, subscribe) = opened(&actions[1]);
     assert!(second > first);
     assert_eq!(subscribe.channels, ["a"]);
     assert_eq!(
@@ -1532,7 +1320,7 @@ fn a_lane_left_with_no_scope_opens_the_next_session_on_the_recreating_commit() {
     let dir = tempfile::tempdir().unwrap();
     let mut lane = Lane::new(dir.path());
     lane.saved("a", 0);
-    let (first, _) = open(&lane.send(DownlinkEvent::Start)[0]);
+    let (first, _) = opened(&lane.send(DownlinkEvent::Start)[0]);
     let acknowledged = lane.message(first, ack(&[("a", 1)]));
     let (held, _) = request(&acknowledged[0]);
     lane.set("a", false);
@@ -1547,7 +1335,7 @@ fn a_lane_left_with_no_scope_opens_the_next_session_on_the_recreating_commit() {
     assert_eq!(lane.pump(), vec![], "an unsubscribed lane waits, idle");
     lane.set("a", true);
     let actions = lane.send(DownlinkEvent::Wake);
-    let (second, subscribe) = open(&actions[0]);
+    let (second, subscribe) = opened(&actions[0]);
     assert!(second > first);
     assert_eq!(subscribe.channels, ["a"]);
     assert_eq!(actions.len(), 1, "no backoff on the way back");

@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 //! Helpers shared by every client-facing integration test in this crate.
+mod lane;
+pub use lane::*;
+
 use axton_client::*;
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};

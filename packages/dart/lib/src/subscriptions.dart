@@ -134,6 +134,11 @@ class _Lane {
   /// The epoch of the open socket session, if one is open.
   int? session;
   int outstanding = 0;
+
+  /// The Scopes the open session's handshake covered. A removal drops its
+  /// Scope, because the acknowledgement belonged to the registration that
+  /// went: a registration created after it has never been acknowledged and is
+  /// `connecting` until a session subscribes it.
   final acknowledged = <String>{};
 }
 
@@ -194,8 +199,9 @@ class Subscription {
   }
 
   /// The committed state of this identity; another identity's state is not
-  /// this handle's.
+  /// this handle's, and a closed handle takes none.
   void _apply(SubscriptionState? state) {
+    if (_closed) return;
     if (state == null || state.subscriptionId != subscriptionId) return;
     _initialization = state.startingCursor == null
         ? SubscriptionInitialization.pending
@@ -212,12 +218,12 @@ class Subscription {
       _stopped = true;
     }
     _refresh();
-    if (!removed) {
-      for (final sink in _sinks.toList()) {
-        sink.close();
-      }
-      _sinks.clear();
+    // A closed handle has no changes left: its streams end after that last
+    // snapshot, whether it was unsubscribed or stopped with its client.
+    for (final sink in _sinks.toList()) {
+      sink.close();
     }
+    _sinks.clear();
   }
 
   /// The current snapshot, then every change. Dart's stream convention
@@ -290,6 +296,7 @@ class Subscriptions {
         handle._close(removed: true);
       }
     }
+    _forget(scope);
     _commands.committed();
   }
 
@@ -297,7 +304,16 @@ class Subscriptions {
     final removed = await _commands.remove(scope, subscriptionId);
     final handle = _handles.remove(subscriptionId);
     handle?._close(removed: true);
+    _forget(scope);
     if (removed) _commands.committed();
+  }
+
+  /// The open session's handshake covered the registration that just went, not
+  /// the one a later subscribe creates: forget the Scope, so a recreated
+  /// subscription is `connecting` until a session of its own acknowledges it.
+  void _forget(String scope) {
+    _lane.acknowledged.remove(scope);
+    _publish();
   }
 
   /// The lane is running for this client: until then, and once it closes,

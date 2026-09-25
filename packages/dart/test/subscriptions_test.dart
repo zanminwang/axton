@@ -173,7 +173,11 @@ void main() {
       try {
         final subscription = await client.subscribe('scope');
         final seen = <SubscriptionStatus>[];
-        final observer = subscription.watch().listen(seen.add);
+        final done = Completer<void>();
+        final observer = subscription.watch().listen(
+          seen.add,
+          onDone: done.complete,
+        );
         await pumpEventQueue();
         expect(seen.map((s) => s.connection), [SubscriptionConnection.offline]);
         await subscription.unsubscribe();
@@ -182,6 +186,11 @@ void main() {
           [true, SubscriptionConnection.offline],
           [false, SubscriptionConnection.stopped],
         ]);
+        await done.future.timeout(
+          const Duration(seconds: 1),
+          onTimeout: () =>
+              throw StateError('the stream of a closed handle ends'),
+        );
         await observer.cancel();
         final replacement = await client.subscribe('scope');
         expect(identical(replacement, subscription), isFalse);
@@ -357,6 +366,52 @@ void main() {
       await network.close();
     }
   });
+
+  test(
+    'a recreated subscription is connecting until its own handshake acknowledges it',
+    () async {
+      final fixture = await Fixture.open();
+      final client = fixture.client;
+      final network = await FakeServer.start();
+      try {
+        final first = await client.subscribe('scope');
+        final connection = await client.connect(network.config);
+        await until(
+          () async =>
+              first.status.connection == SubscriptionConnection.live &&
+              first.status.initialization == SubscriptionInitialization.ready,
+          'a live subscription',
+        );
+        await first.unsubscribe();
+        final second = await client.subscribe('scope');
+        expect(identical(second, first), isFalse);
+        expect(
+          second.status,
+          const SubscriptionStatus(
+            active: true,
+            initialization: SubscriptionInitialization.pending,
+            connection: SubscriptionConnection.connecting,
+          ),
+          reason:
+              'the open session never subscribed this registration: it is not live',
+        );
+        // The worker replaces the socket for the new membership; that handshake
+        // is this subscription's own.
+        await until(() async => network.handshakes.length >= 2, 'a new socket');
+        await until(
+          () async =>
+              second.status.connection == SubscriptionConnection.live &&
+              second.status.initialization == SubscriptionInitialization.ready,
+          'the new subscription goes live on its own acknowledgement',
+        );
+        expect(first.status.connection, SubscriptionConnection.stopped);
+        await connection.close();
+      } finally {
+        await fixture.close();
+        await network.close();
+      }
+    },
+  );
 
   test(
     'unsubscribe removes one registration; an old handle cannot remove its replacement',

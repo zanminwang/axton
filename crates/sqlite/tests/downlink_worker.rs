@@ -330,9 +330,14 @@ fn a_reconnect_catches_up_from_the_saved_cursor_instead_of_the_new_head() {
     let (id, pull) = request(&acknowledged[0]);
     assert_eq!(cursors(&pull), vec![("a", 100)]);
     assert_eq!(
-        acknowledged,
-        vec![acknowledged[0].clone(), established(&["a"])],
-        "the catch-up and the handshake: nothing was initialized, so nothing is announced as committed"
+        acknowledged.len(),
+        2,
+        "the catch-up and the handshake, nothing else: {acknowledged:?}"
+    );
+    assert_eq!(
+        acknowledged[1],
+        established(&["a"]),
+        "nothing was initialized, so nothing is announced as committed"
     );
     assert_eq!(
         lane.response(id, &page("a", 100, 120, Some("the gap"))),

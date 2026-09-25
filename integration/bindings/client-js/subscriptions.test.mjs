@@ -139,6 +139,29 @@ test('status follows the committed boundary and the lane: offline, connecting, c
  } finally { await fixture.close();await network.close(); }
 });
 
+test('a recreated subscription is connecting until its own handshake acknowledges it', async()=>{
+ const fixture=await openClient();const {client}=fixture;
+ const network=await fakeServer({scope:0});
+ try {
+  const first=await client.subscribe('scope');
+  const connection=await client.connect(network.config);
+  await until(()=>first.status.connection==='live'&&first.status.initialization==='ready','a live subscription');
+  await first.unsubscribe();
+  const second=await client.subscribe('scope');
+  assert.notEqual(second,first,'a new registration is a new handle');
+  assert.deepEqual({...second.status},{active:true,initialization:'pending',connection:'connecting'},
+   'the open session never subscribed this registration: it is not live and has no boundary');
+  // The worker replaces the socket for the new membership; that handshake is
+  // this subscription's own.
+  await until(()=>network.handshakes.length>=2,'the socket the new membership needs');
+  await until(()=>second.status.connection==='live'&&second.status.initialization==='ready',
+   'the new subscription goes live on its own acknowledgement');
+  assert.deepEqual({...first.status},{active:false,initialization:'ready',connection:'stopped'},
+   'the handle it replaced stays stopped');
+  await connection.close();
+ } finally { await fixture.close();await network.close(); }
+});
+
 test('unsubscribe removes one registration; an old handle cannot remove its replacement', async()=>{
  const fixture=await openClient();const {client}=fixture;
  try {

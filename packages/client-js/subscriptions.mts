@@ -69,6 +69,12 @@ type Lane = {
   /** The epoch of the open socket session, if one is open. */
   session: number | undefined;
   outstanding: number;
+  /**
+   * The Scopes the open session's handshake covered. A removal drops its Scope,
+   * because the acknowledgement belonged to the registration that went: a
+   * registration created after it has never been acknowledged and is
+   * `connecting` until a session subscribes it.
+   */
   acknowledged: Set<string>;
 };
 
@@ -137,6 +143,8 @@ class Handle implements Subscription {
       return;
     this.#snapshot = next;
     this.#deliver(next);
+    // A closed handle has no changes left after that last snapshot.
+    if (this.closed) this.#listeners.clear();
   }
   #deliver(status: SubscriptionStatus): void {
     for (const listener of [...this.#listeners])
@@ -146,8 +154,9 @@ class Handle implements Subscription {
         this.#report(error);
       }
   }
-  /** The committed state of this identity; another identity's state is not this handle's. */
+  /** The committed state of this identity; another identity's state is not this handle's, and a closed handle takes none. */
   apply(state: SubscriptionState | null): void {
+    if (this.closed) return;
     if (!state || state.subscriptionId !== this.subscriptionId) return;
     this.#initialization = state.startingCursor === null ? "pending" : "ready";
     this.refresh();
@@ -158,7 +167,7 @@ class Handle implements Subscription {
     if (reason === "removed") this.#removed = true;
     else this.#stopped = true;
     this.refresh();
-    if (reason === "stopped") this.#listeners.clear();
+    this.#listeners.clear();
   }
   watch(listener: (status: SubscriptionStatus) => void): () => void {
     // A closed handle has no changes left: it delivers its stopped snapshot and
@@ -246,6 +255,7 @@ export class Subscriptions {
         this.#handles.delete(handle.subscriptionId);
         handle.close("removed");
       }
+    this.#forget(scope);
     this.#commands.committed();
   }
   async #removeIdentity(scope: string, subscriptionId: number): Promise<void> {
@@ -255,7 +265,17 @@ export class Subscriptions {
       this.#handles.delete(subscriptionId);
       handle.close("removed");
     }
+    this.#forget(scope);
     if (removed) this.#commands.committed();
+  }
+  /**
+   * The open session's handshake covered the registration that just went, not
+   * the one a later subscribe creates: forget the Scope, so a recreated
+   * subscription is `connecting` until a session of its own acknowledges it.
+   */
+  #forget(scope: string): void {
+    this.#lane.acknowledged.delete(scope);
+    this.#publish();
   }
   /** The lane is running for this client: until then, and once it closes, every subscription is offline. */
   attach(): void {

@@ -1,8 +1,10 @@
-# Mutations
+# Slot mutations
 
 ## 1. Introduction and Goals
 
-A mutation is a named, server-visible write. The schema fixes the shape of its operations so both runtimes decode it identically, and gives it a version so that mutations queued under an older schema keep executing after the schema moves on. Without the version, a client that was offline during a deploy would push operations the server can no longer interpret.
+This page covers the low-level `mutation Name { slots }` block, which carries the retained queue and replay machinery and remains for fixtures and descriptors. Applications declare backend operations as `mutation Name(...)` or `query Name(...)` ([Mutations and Queries](actions.md)); the parser tells the two apart by the token after the name.
+
+A slot mutation is a named, server-visible write. The schema fixes the shape of its operations so both runtimes decode it identically, and gives it a version so that mutations queued under an older schema keep executing after the schema moves on. Without the version, a client that was offline during a deploy would push operations the server can no longer interpret.
 
 ## 3. Context and Scope
 

@@ -1,21 +1,21 @@
 # TypeScript backend SDK
 
-This TypeScript SDK embeds the shared Rust server runtime in your Node application. Business Handlers and Loaders are implemented in TypeScript, against the `Handlers`/`Loaders` interfaces the compiler generates from your `.model` file.
+This TypeScript SDK embeds the shared Rust server runtime in your Node application. Business Handlers and Loaders are implemented in TypeScript, against the `Mutations`, `Queries` and `Loaders` interfaces the compiler generates from your `.model` file.
 
 `index.mts` runs on Node with TypeScript support (Node 22.18+), or can be compiled with TypeScript. Build the local native module with `node bindings/node/build.mjs`. Supply an injected `native` implementation when packaging the native artifact elsewhere.
 
-Given a schema with `Todo` and `AddTodo`, the compiler emits `generated/backend.ts`, which already binds the schema. Your application implements the generated `Handlers<Tx>` and `Loaders<Tx>` contracts:
+Given a schema with `Todo`, a Mutation `AddTodo` and a Query `FindTodos`, the compiler emits `generated/backend.ts`, which already binds the schema. Your application implements the generated `Mutations<Tx>`, `Queries<Tx>` and `Loaders<Tx>` contracts:
 
-```ts
+```ts title="action-contract"
 import { createBackend, devAuth } from './generated/backend.ts';
-import { prisma } from '../../packages/postgres/index.mts';
-import { handlers } from './handlers.ts';
+import { mutations, queries } from './handlers.ts';
 import { loaders } from './loaders.ts';
 
-const backend = createBackend<Prisma.TransactionClient>({
-  database: prisma(db), // db is the application's Prisma client
+const backend = createBackend<Tx>({
+  database, // a shim such as prisma(db); Tx is its transaction type
   authenticate: devAuth(),
-  handlers,
+  mutations,
+  queries,
   loaders,
 });
 const server = await backend.listen({ port: 4242 });
@@ -24,15 +24,15 @@ console.log(server.url);
 
 The generated `createBackend` needs no `config` option: the schema is already bound. The runtime's own `createBackend` (`packages/server/index.mts`) still takes `config` explicitly, for callers that build the schema themselves.
 
-`handlers` and `loaders` are application modules typed against the generated interfaces. The application enforces write and read permissions. Authorization, unique constraints, child deletion and client identity are the application's responsibility ([What your backend owns](api.md#what-your-backend-owns)).
+`mutations`, `queries` and `loaders` are application modules typed against the generated interfaces; a schema without Queries omits `queries`, and one without Mutations omits `mutations`. The application enforces write and read permissions. Authorization, unique constraints, child deletion and client identity are the application's responsibility ([What your backend owns](api.md#what-your-backend-owns)).
 
 ## Call objects
 
-An Action Handler receives `{ctx, args}`. `args` is typed from the retained Action input; `ctx` supplies the application's `tx`, authenticated `userId`, stable `callId`, `changes` and `publish`. The Handler returns explicit outputs; Model outputs are identities resolved by a Loader. A Loader receives `{ids, tx, userId}` and returns one record or null per identity. It is never told a channel.
+A Mutation or Query Handler receives `{ctx, args}`. `args` is typed from the retained input of that version; `ctx` supplies the application's `tx`, authenticated `userId` and stable `callId`, and a Mutation's also has `changes` and `publish`. The Handler returns explicit outputs; Model outputs are identities resolved by a Loader. A Query must not change business state; the framework refuses Query effects it can see but cannot inspect your SQL ([Handlers](api.md#handlers)). A Loader receives `{ids, tx, userId}` and returns one record or null per identity. It is never told a channel.
 
 ## changes and publish
 
-`ctx.changes` is the set of records an Action changed. It starts with the inferred Model operands; `ctx.changes.add(record)` (an operand or a generated Model reference such as `Todo({ id })`) reports an additional record. On durable delivery, the framework allocates a **stamp** for each changed record and reads the batch-final content back through Loaders for the receipt. The Action's own result snapshot is resolved separately at its invocation.
+In a Mutation, `ctx.changes` is the set of records the call changed. It starts with the inferred Model operands; `ctx.changes.add(record)` (an operand or a generated Model reference such as `Todo({ id })`) reports an additional record. On durable delivery, the framework allocates a **stamp** for each changed record and reads the batch-final content back through Loaders for the receipt. The call's own result snapshot is resolved separately at its invocation.
 
 `ctx.publish({ channel })` distributes the final change set on a non-empty channel; `ctx.publish({ channel, records })` distributes exactly those records, and `[]` distributes nothing. Publishing is optional and may be called several times; it allocates channel cursors and carries records' stamps, never a new stamp. A record published without being changed keeps its current stamp.
 
@@ -50,7 +50,7 @@ Publish to every channel that provides a record whenever that record changes, in
 
 ## Background jobs
 
-Outside a Handler there is no readback and no receipt, so a change must be published to reach clients. Use `backend.transaction`; its body gets the same `changes` and `publish` as a Handler, the framework stamps and publishes what it collected inside the same transaction as your writes, and wakes live subscribers after commit:
+Outside a Handler there is no readback and no receipt, so a change must be published to reach clients. Use `backend.transaction`; its body gets the same `changes` and `publish` as a Mutation Handler, the framework stamps and publishes what it collected inside the same transaction as your writes, and wakes live subscribers after commit:
 
 ```ts
 await backend.transaction(async ({ tx, changes, publish }) => {
@@ -66,9 +66,9 @@ See [background writes](api.md#background-writes).
 
 The outer transaction belongs to the application. Persistence, Handler, and Loader callbacks all receive that same transaction. The runner must provide a coherent snapshot (Repeatable Read or stronger), roll back on rejected promises, and retry serialization conflicts. Every shim of [`@axton/postgres`](database.md) supplies this contract.
 
-## Action results
+## Call results
 
-A successful Handler returns the explicit outputs declared by its Action; an Action with no explicit outputs may return nothing. AXTON resolves Model outputs through the versioned Loader at that invocation. A later Action in the batch may change the same record before batch-final authority is read, so the call result snapshot can differ from the receipt's record content. `ActionRejected` or a registered `translateRejection` code rolls back that call's savepoint; ordinary Handler/Loader exceptions become `handler.failed` / `loader.failed` and reach `onError`. Retryable database errors retry the transaction, and persistence faults abort it. Durable calls expose final outcomes through `ActionCall.wait()`; direct calls return a final result or throw `ActionError`. See [handlers](api.md#handlers) and [client Actions](../frontend/client-api.md#actions).
+A successful Handler returns the explicit outputs declared by its Mutation or Query; an operation with no explicit outputs may return nothing. AXTON resolves Model outputs through the versioned Loader at that invocation. A later call in the batch may change the same record before batch-final authority is read, so the call result snapshot can differ from the receipt's record content. `CallRejected` or a registered `translateRejection` code rolls back that call's savepoint; ordinary Handler/Loader exceptions become `handler.failed` / `loader.failed` and reach `onError`. Retryable database errors retry the transaction, and persistence faults abort it. Durable calls expose final outcomes through `Call.wait()`; direct calls return a final result or throw `CallError`. See [handlers](api.md#handlers) and [client Mutations and Queries](../frontend/client-api.md#mutations-and-queries).
 
 ## Loaders and Pull
 

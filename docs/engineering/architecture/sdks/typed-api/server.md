@@ -2,18 +2,19 @@
 
 ## 1. Introduction and Goals
 
-A backend author writes retained Action handlers and versioned Model Loaders against their own database transaction. The server typed API gives handlers `{ctx, args}` with trusted transaction context and decoded caller input, plus typed explicit outputs. The Rust engine decides execution, resolves Model outputs through Loaders, and distributes changed records.
+A backend author writes retained Mutation and Query handlers and versioned Model Loaders against their own database transaction. The server typed API gives handlers `{ctx, args}` with trusted transaction context and decoded caller input, plus typed explicit outputs. The Rust engine decides execution, resolves Model outputs through Loaders, and distributes changed records.
 
 ## 3. Context and Scope
 
-`createBackend({database, authenticate, handlers, loaders, loaderHooks?, translateRejection?, onError?})` returns `{listen, transaction, …}`. Generated `backend.ts` supplies `Handlers<Tx>`, `Loaders<Tx>`, `ActionContext<Tx>` and `ActionRejected`; missing or misnamed handlers are type errors. It binds the compiled config to `createBackend` ([Compiler / Generate](../../compiler/generate.md)).
+`createBackend({database, authenticate, mutations?, queries?, handlers?, loaders, loaderHooks?, translateRejection?, onError?})` returns `{listen, transaction, …}`. Generated `backend.ts` supplies `Mutations<Tx>`, `Queries<Tx>`, `Loaders<Tx>`, `MutationContext<Tx>`, `QueryContext<Tx>` and `CallRejected`, plus `Handlers<Tx>` for legacy [slot mutations](../../schema/mutations.md); missing or misnamed handlers are type errors. Its `Options<Tx>` requires each of `mutations`, `queries` and `handlers` only when that group retains a contract. It binds the compiled config to `createBackend` ([Compiler / Generate](../../compiler/generate.md)).
 
 | Piece | Shape |
 | --- | --- |
-| Action handler | `({ctx, args}: ActionHandlerCall<Tx, Args>) => Promise<Outputs>`; `ctx` has `tx`, `userId`, `callId`, `changes`, `publish` |
+| Mutation handler | `({ctx, args}: MutationHandlerCall<Tx, Args>) => Promise<Outputs>`; `MutationContext` has `tx`, `userId`, `callId`, `changes`, `publish` |
+| Query handler | `({ctx, args}: QueryHandlerCall<Tx, Args>) => Promise<Outputs>`; `QueryContext` has only `tx`, `userId`, `callId`, in the types and at runtime ([enforcement and its limit](../../schema/actions.md#8-crosscutting-concepts)) |
 | Change set | `changes.records` (the records the uploaded operations target) and `changes.add(record)` for a record the handler changed beyond them; every member is stamped, read back and returned in the receipt |
 | Loader | `({ids, tx, userId}: LoaderCall) => Promise<(Row \| null)[]>`, aligned with `ids`; one per retained model version, `Row` being that version's record type; no channel |
-| Rejecting one Action or refusing a read | throw `ActionRejected(code)`, or throw anything `translateRejection` maps to a code; during Action execution this rejects the call, in a pull it reports the affected record |
+| Rejecting one call or refusing a read | throw `CallRejected(code)` (the same class as the legacy `MutationRejected`), or throw anything `translateRejection` maps to a code; during a call this rejects the call, in a pull it reports the affected record |
 | Publishing | `publish({channel})` or `publish({channel, records})` (`PublishArgs`) inside a handler; outside one, `backend.transaction(async ({tx, changes, publish}) => …)` hands the body the same `changes` and `publish` and settles them when it returns ([Publish](../../server/engine/publish.md)) |
 | Serving | `backend.listen({port, host?})` → `{url, close}` |
 | Development auth | `devAuth()` treats the bearer token as the user id; documented as development only |
@@ -26,14 +27,17 @@ Code: [server/index.mts](../../../../../packages/server/index.mts); generated si
 
 ## 9. Architecture Decisions
 
-**Handler and Loader registration by version ([#91](https://github.com/zanminwang/axton/issues/91)).** Group versions under the Action or Model name. For a v1-only contract, a function is shorthand for `{v1: implementation}`. Once multiple versions are retained, register each explicitly:
+**Handler and Loader registration by version ([#91](https://github.com/zanminwang/axton/issues/91)).** Group versions under the operation or Model name. For a v1-only contract, a function is shorthand for `{v1: implementation}`. Once multiple versions are retained, register each explicitly:
 
 ```ts
-handlers: {
+mutations: {
   addTodo: {
     v1: handleOriginalAddTodo,
     v2: handleNewAddTodo,
   },
+},
+queries: {
+  searchTodos: handleSearchTodos,
 },
 loaders: {
   todo: {
@@ -43,11 +47,11 @@ loaders: {
 }
 ```
 
-Handlers receive generated Action input types for their version and return typed explicit outputs. Loaders return record types for an independent [Model read version](../../schema/models.md#9-architecture-decisions). Registration keys use `v1`, `v2`; wire versions remain numbers. Shorthand always means v1, never the latest version. Client calls use the Action version embedded in their generated method.
+Handlers receive generated input types for their version and return typed explicit outputs. Loaders return record types for an independent [Model read version](../../schema/models.md#9-architecture-decisions). Registration keys use `v1`, `v2`; wire versions remain numbers. Shorthand always means v1, never the latest version. Client calls use the operation version embedded in their generated method.
 
-Generated `Handlers<Tx>` holds one key per Action, `lowerFirst(name)`, with a `v<n>` member for every retained version; v1-only Actions also accept a bare function. The runtime refuses missing, unknown or non-function registrations at startup. Dispatch is keyed by name and version, so a request never falls back to another version.
+**Registration by kind ([#157](https://github.com/zanminwang/axton/issues/157)).** Generated `Mutations<Tx>` and `Queries<Tx>` hold one key per operation, `lowerFirst(name)`, with a `v<n>` member for every retained version of that kind; v1-only operations also accept a bare function. Grouping follows each retained version's own kind, so a name that retains Mutation v1 and Query v2 registers v1 under `mutations` and v2 under `queries`, while the client exposes it only under its current kind. Legacy slot mutations stay on `handlers`. The runtime refuses missing, unknown, wrong-kind (including an operation registered under `handlers`) or non-function registrations at startup. Dispatch is keyed by name and version, so a request never falls back to another version.
 
-Generated `Loaders<Tx>` holds one key per Model and a `v<n>` member per retained read version, each returning that version's record type. The current shape uses `Todo`; an older retained shape uses `TodoV1`. A Model retaining only v1 also accepts a bare function. The engine names the Loader version for each Action output separately from the client's current authority version; a pull uses the client's declared version ([Server / Engine / Pull](../../server/engine/pull.md#6-runtime-view)).
+Generated `Loaders<Tx>` holds one key per Model and a `v<n>` member per retained read version, each returning that version's record type. The current shape uses `Todo`; an older retained shape uses `TodoV1`. A Model retaining only v1 also accepts a bare function. The engine names the Loader version for each operation output separately from the client's current authority version; a pull uses the client's declared version ([Server / Engine / Pull](../../server/engine/pull.md#6-runtime-view)).
 
 ## 10. Quality Requirements
 
@@ -55,12 +59,13 @@ Generated `Loaders<Tx>` holds one key per Model and a `v<n>` member per retained
 - **Registration names every retained version; a bare function registers v1 only.** Evidence: `handler registration names every retained version and a function means v1 only`.
 - **A version reaches only its own handler, whichever way v1 was registered.** Evidence: `a version dispatches only to its own handler and a function registers v1`.
 - **Decoded Model operands can be passed to `changes.add` and `publish` directly.** Evidence: [generated backend test](../../../../../integration/action-runtime-ts/backend.test.mts).
-- **Action handlers return explicit outputs and Model identity objects while the framework resolves Model snapshots through a Loader.** Evidence: [Action execution tests](../../../../../crates/server/tests/actions.rs) and [generated backend test](../../../../../integration/action-runtime-ts/backend.test.mts).
-- **Generated handlers group retained Action versions and share one `Tx` with Loaders.** Evidence: [Action contract fixture](../../../../../integration/action-contract/backend.ts) and [generated backend test](../../../../../integration/action-runtime-ts/backend.test.mts).
+- **Handlers of both kinds return explicit outputs and Model identity objects while the framework resolves Model snapshots through a Loader.** Evidence: [Action execution tests](../../../../../crates/server/tests/actions.rs) and [generated backend test](../../../../../integration/action-runtime-ts/backend.test.mts).
+- **Generated maps group retained versions by kind and share one `Tx` with Loaders.** Evidence: [operation contract fixture](../../../../../integration/action-contract/backend.ts), [compiler tests](../../../../../crates/compiler/tests/compiler.rs) `a_kind_change_at_a_new_version_registers_each_version_under_its_own_kind` and [generated backend test](../../../../../integration/action-runtime-ts/backend.test.mts).
+- **Registration is checked per kind at startup, and a Query handler receives no effect capabilities and settles without effects.** Evidence: [backend.test.mts](../../../../../integration/action-runtime-ts/backend.test.mts) `registration is checked per kind at startup: missing, extra and wrong-kind`, `Query handlers receive no effect capabilities and settle without effects`.
 - **Loader registration names every retained model version, a bare function registers v1 only, and a pull reaches only the served version's loader.** Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `loader registration names every retained model version and a function means v1 only`, `a pull reaches the loader of the declared model version and normalizes rows with that contract`; [compiler/tests/compiler.rs](../../../../../crates/compiler/tests/compiler.rs) `backend_emitter_groups_loader_versions_under_the_model_name`; the `@ts-expect-error` loader negatives (bare function, missing and unknown versions, a value outside the v1 contract) in [test.ts](../../../../../integration/generated-api/test.ts).
 
-The earlier legacy mutation evidence in the runtime tests remains useful for unchanged lower-level savepoint and Loader rules. Task 7 integration verifies the Action API separately.
+The earlier legacy mutation evidence in the runtime tests remains useful for unchanged lower-level savepoint and Loader rules; the operation API is verified by the fixtures above.
 
 ## 11. Risks and Technical Debt
 
-**Accepted limitation.** The backend runtime exists for TypeScript only; the compiler emits no server signatures for other languages.
+**Accepted limitation.** The backend runtime exists for TypeScript only. Generated Dart carries `Mutation{Name}Handlers` and `Query{Name}Handlers` contract interfaces, but no Dart backend runs them.

@@ -666,9 +666,7 @@ impl DownlinkWorker {
                     // Offline or interrupted: the run is untouched and the same
                     // page is asked for again once the backoff has passed.
                     let millis = self.loading.defer(now, entropy);
-                    if self.driver.active() {
-                        actions.push(DownlinkAction::Wait { millis });
-                    }
+                    self.sleep(millis, actions);
                     return Ok(false);
                 }
                 self.loading.answered(now);
@@ -761,6 +759,16 @@ impl DownlinkWorker {
         Ok(true)
     }
 
+    /// Ask the host to sleep until the next page is due - but only when this
+    /// pump gave it nothing else to do, so a deferred load never holds back
+    /// work the host would otherwise pump for at once. A paused lane sleeps on
+    /// nothing: `resume` clears the deferral.
+    fn sleep(&self, millis: u64, actions: &mut Vec<DownlinkAction>) {
+        if self.driver.active() && actions.is_empty() {
+            actions.push(DownlinkAction::Wait { millis });
+        }
+    }
+
     /// Ask for one historical page when none is in flight: the next run in the
     /// rotation, from the progress it committed, bounded by its own origin. The
     /// read that picks it is closed before the action leaves, so no transaction
@@ -777,9 +785,7 @@ impl DownlinkWorker {
             return Ok(());
         }
         if self.loading.due > now {
-            actions.push(DownlinkAction::Wait {
-                millis: self.loading.due - now,
-            });
+            self.sleep(self.loading.due - now, actions);
             return Ok(());
         }
         let Some(task) = client.bootstrap_schedule(self.loading.rotation.as_deref())? else {

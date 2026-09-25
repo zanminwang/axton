@@ -620,3 +620,49 @@ fn one_pump_commits_once_when_delivery_and_a_load_are_both_queued() {
     assert_eq!(announced(&second[0]).cursor, 100);
     assert_eq!(lane.cursor("a"), Some(120), "delivery is where it was");
 }
+
+/// A deferred load never holds the host back: the pump that applies a queued
+/// page asks for no sleep, and the deferral is announced only once there is
+/// nothing else to pump for.
+#[test]
+fn a_deferred_load_does_not_hold_back_queued_delivery() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    let (epoch, _) = lane.streaming("a", 100);
+    let (id, _) = only(&lane.register("a"));
+    lane.enqueue(DownlinkEvent::Failed {
+        request: id,
+        reason: Some("offline".into()),
+        status: None,
+    });
+    for (from, to) in [(100, 110), (110, 120)] {
+        lane.enqueue(DownlinkEvent::Message {
+            epoch,
+            body: text(&page("a", from, to, Some("live"))),
+        });
+    }
+    // Delivery goes first, one page per pump, and no pump that commits one asks
+    // the host to sleep on a load that is waiting.
+    for _ in 0..2 {
+        let pumped = lane.pump();
+        committed(&pumped, &["a"]);
+        assert!(
+            !pumped.iter().any(waiting),
+            "a deferral must not delay queued delivery: {pumped:?}"
+        );
+    }
+    assert_eq!(lane.cursor("a"), Some(120));
+    // With the queue drained the deferral is announced, and the page is asked
+    // for again once it has passed.
+    let deferred = lane.pump();
+    assert_eq!(
+        statuses(&deferred),
+        Vec::<&BootstrapState>::new(),
+        "the run is untouched by a transport failure: {deferred:?}"
+    );
+    let millis = wait(deferred.last().expect("a wait"));
+    assert!((200..=30_000).contains(&millis));
+    lane.now += millis;
+    let (_, request) = only(&lane.drain());
+    assert_eq!((request.after, request.until), (0, 100));
+}

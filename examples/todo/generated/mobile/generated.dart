@@ -221,15 +221,35 @@ dynamic _dartActionEncode(dynamic value) {
  if (value is TodoIdentity) return value.toRecord();
  return value;
 }
+/// Which explicit Model outputs of AddTodo also update local Models.
+final class AddTodoStore extends ActionStore {
+ /// Store every eligible output (the default).
+ const AddTodoStore.all() : _mode = 0;
+ /// Store no output; results are returned unchanged.
+ const AddTodoStore.none() : _mode = 1;
+ final int _mode;
+ @override
+ Object? toWire() => _mode == 0 ? null : false;
+}
+/// Which explicit Model outputs of SetTodoDone also update local Models.
+final class SetTodoDoneStore extends ActionStore {
+ /// Store every eligible output (the default).
+ const SetTodoDoneStore.all() : _mode = 0;
+ /// Store no output; results are returned unchanged.
+ const SetTodoDoneStore.none() : _mode = 1;
+ final int _mode;
+ @override
+ Object? toWire() => _mode == 0 ? null : false;
+}
 class Actions {
  final Client client; Actions(this.client); late final DirectCalls call = DirectCalls(client);
- Future<ActionCall<AddTodoOutput>> addTodo({required TodoCreate todo}) => client.invokeAction<AddTodoOutput>('AddTodo', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return AddTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
- Future<ActionCall<SetTodoDoneOutput>> setTodoDone({required SetTodoDoneTodoUpdate todo}) => client.invokeAction<SetTodoDoneOutput>('SetTodoDone', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SetTodoDoneOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
+ Future<ActionCall<AddTodoOutput>> addTodo({required TodoCreate todo, AddTodoStore? store}) => client.invokeAction<AddTodoOutput>('AddTodo', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return AddTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, store: store);
+ Future<ActionCall<SetTodoDoneOutput>> setTodoDone({required SetTodoDoneTodoUpdate todo, SetTodoDoneStore? store}) => client.invokeAction<SetTodoDoneOutput>('SetTodoDone', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SetTodoDoneOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, store: store);
 }
 class DirectCalls {
  final Client client; DirectCalls(this.client);
- Future<AddTodoOutput> addTodo({required TodoCreate todo}) => client.invokeDirectAction<AddTodoOutput>('AddTodo', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return AddTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
- Future<SetTodoDoneOutput> setTodoDone({required SetTodoDoneTodoUpdate todo}) => client.invokeDirectAction<SetTodoDoneOutput>('SetTodoDone', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SetTodoDoneOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
+ Future<AddTodoOutput> addTodo({required TodoCreate todo, AddTodoStore? store}) => client.invokeDirectAction<AddTodoOutput>('AddTodo', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return AddTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, store: store);
+ Future<SetTodoDoneOutput> setTodoDone({required SetTodoDoneTodoUpdate todo, SetTodoDoneStore? store}) => client.invokeDirectAction<SetTodoDoneOutput>('SetTodoDone', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SetTodoDoneOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, store: store);
 }
 class LiveModels { final Client port; LiveModels(this.port);
  late final UserLiveModel user = UserLiveModel(port);

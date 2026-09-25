@@ -6,6 +6,7 @@ export { Transaction } from "./transaction.mts";
 export {
   ActionError,
   type ActionCall,
+  type ActionOptions,
   type ActionOutcome,
   type ActionStatus,
 } from "../client-js/actions.mts";

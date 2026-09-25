@@ -50,7 +50,7 @@ impl<S: ClientStore> Client<S> {
                 name: name.into(),
                 version,
                 args,
-                store: options.store,
+                store: options.store.canonical(),
             },
             models: self.declared_models(),
         })
@@ -111,7 +111,7 @@ impl<S: ClientStore> Client<S> {
         mutation.version = version;
         mutation.call_id = Some(call_id.clone());
         mutation.args = Some(args);
-        mutation.store = options.store;
+        mutation.store = options.store.canonical();
         let ordinal = self.transaction(|tx| tx.enqueue(mutation))?;
         Ok(SubmittedCall { call_id, ordinal })
     }

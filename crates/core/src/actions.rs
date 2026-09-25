@@ -27,6 +27,7 @@ impl ActionIntent {
         let action = schema.action(&self.name, self.version)?;
         self.args = normalize_action_args(schema, action, &self.args)?;
         self.store.validate(action)?;
+        self.store = self.store.canonical();
         Ok(self)
     }
 }
@@ -74,7 +75,25 @@ impl ActionStore {
         }
         Ok(())
     }
-    /// The canonical wire value, or `None` for the omitted default.
+    /// The canonical policy, taken after [`Self::validate`] has seen every
+    /// explicit entry: entries equal to the default (`true`) are dropped and
+    /// an empty map is the default. Equivalent policies share one identity.
+    pub fn canonical(self) -> Self {
+        match self {
+            Self::Outputs(map) => {
+                let map: BTreeMap<String, bool> =
+                    map.into_iter().filter(|(_, stored)| !stored).collect();
+                if map.is_empty() {
+                    Self::All
+                } else {
+                    Self::Outputs(map)
+                }
+            }
+            other => other,
+        }
+    }
+    /// The wire value, or `None` for the omitted default. Callers send and
+    /// fingerprint the [`Self::canonical`] form.
     pub fn wire(&self) -> Option<Value> {
         match self {
             Self::All => None,

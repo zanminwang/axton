@@ -396,7 +396,7 @@ fn saved_replay_returns_original_result_and_changed_policy_conflicts() {
     for (sequence, store) in [
         (3, Some(json!(false))),
         (4, None),
-        (5, Some(json!({"suggestions":false}))),
+        (5, Some(json!({"mainTodo":false,"suggestions":false}))),
     ] {
         let conflict = push(&host, sequence, vec![intent(CALL, 1, json!({}), store)]);
         assert_eq!(
@@ -537,4 +537,60 @@ fn store_false_keeps_absence_semantics_without_tombstones() {
         let receipt = push(&host, 1, vec![intent(CALL, 1, json!({}), store)]);
         assert_eq!(receipt["records"], json!([]));
     }
+}
+
+#[test]
+fn explicit_true_entries_share_the_default_call_identity() {
+    let host = StoreHost::new(outputs(Some(A), &[B]));
+    let first = push(
+        &host,
+        1,
+        vec![intent(CALL, 1, json!({}), Some(json!({"mainTodo":true})))],
+    );
+    let stored: Value =
+        serde_json::from_str(&host.0.lock().unwrap().calls[CALL].0.clone()).unwrap();
+    assert!(stored.get("store").is_none(), "{stored}");
+    host.clear_log();
+    let replay = push(&host, 2, vec![intent(CALL, 1, json!({}), None)]);
+    assert_eq!(replay["completions"], first["completions"]);
+    assert!(host.ops("handleAction").is_empty());
+    // {a:false, b:true} and {a:false} are one identity.
+    push(
+        &host,
+        3,
+        vec![intent(
+            CALL2,
+            1,
+            json!({}),
+            Some(json!({"suggestions":false,"mainTodo":true})),
+        )],
+    );
+    host.clear_log();
+    let again = push(
+        &host,
+        4,
+        vec![intent(
+            CALL2,
+            1,
+            json!({}),
+            Some(json!({"suggestions":false})),
+        )],
+    );
+    assert_eq!(again["rejections"], json!([]));
+    assert!(host.ops("handleAction").is_empty());
+}
+
+#[test]
+fn unknown_key_is_rejected_even_when_true() {
+    let host = StoreHost::new(outputs(Some(A), &[]));
+    let receipt = push(
+        &host,
+        1,
+        vec![intent(CALL, 1, json!({}), Some(json!({"missing":true})))],
+    );
+    assert_eq!(
+        receipt["rejections"],
+        json!([{"ordinal":1,"code":"action.invalid"}])
+    );
+    assert!(host.ops("handleAction").is_empty());
 }

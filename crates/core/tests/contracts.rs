@@ -1225,3 +1225,41 @@ fn direct_action_request_carries_store_outside_args_and_response_decodes() {
         DirectActionResponse::decode(response.to_string().as_bytes(), &request, &schema).unwrap();
     assert_eq!(decoded.completion.call_id, id);
 }
+
+#[test]
+fn action_store_canonical_form_drops_explicit_true_after_validation() {
+    let schema = store_schema();
+    let open = schema.action("Open", 1).unwrap();
+    let outputs = |pairs: &[(&str, bool)]| {
+        ActionStore::Outputs(pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect())
+    };
+    assert_eq!(outputs(&[("mainTodo", true)]).canonical(), ActionStore::All);
+    assert_eq!(
+        outputs(&[("mainTodo", true), ("suggestions", false)]).canonical(),
+        outputs(&[("suggestions", false)])
+    );
+    assert_eq!(ActionStore::None.canonical(), ActionStore::None);
+    // Validation sees the explicit map, so an unknown true key is refused.
+    assert!(outputs(&[("missing", true)]).validate(open).is_err());
+    let intent: ActionIntent = serde_json::from_value(store_intent(Some(
+        json!({"mainTodo":true,"suggestions":false}),
+    )))
+    .unwrap();
+    let normalized = intent.normalize(&schema).unwrap();
+    assert_eq!(
+        serde_json::to_value(&normalized).unwrap()["store"],
+        json!({"suggestions":false})
+    );
+    let all_true: ActionIntent =
+        serde_json::from_value(store_intent(Some(json!({"mainTodo":true})))).unwrap();
+    let normalized = all_true.normalize(&schema).unwrap();
+    assert!(
+        serde_json::to_value(&normalized)
+            .unwrap()
+            .get("store")
+            .is_none()
+    );
+    let unknown: ActionIntent =
+        serde_json::from_value(store_intent(Some(json!({"missing":true})))).unwrap();
+    assert!(unknown.normalize(&schema).is_err());
+}

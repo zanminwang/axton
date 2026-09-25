@@ -257,6 +257,8 @@ impl<S: ClientStore> Engine<'_, S> {
                 store: mutation.store.clone(),
             }
             .normalize(self.schema)?;
+            // Persist the canonical policy; validation saw the explicit one.
+            mutation.store = intent.store.clone();
             let descriptor = self.schema.action(&intent.name, intent.version)?;
             actions::validate_bindings(self.schema, descriptor, &intent.args)?;
             let expected = actions::derive_operations(self.schema, descriptor, &intent.args)?;

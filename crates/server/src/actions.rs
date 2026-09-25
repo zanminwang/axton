@@ -44,11 +44,13 @@ fn call_error(error: &Error) -> bool {
     )
 }
 
-/// The canonical call identity. The store policy joins it only when it is
-/// not the default, so default requests keep their existing fingerprint.
+/// The canonical call identity. The canonical store policy joins it only
+/// when it is not the default, so default requests keep their existing
+/// fingerprint and explicit `true` entries do not change the identity.
+/// Key validation still sees the explicit policy in `execute_fresh`.
 fn canonical_intent(call: &ActionIntent, models: &BTreeMap<String, u64>) -> Result<String> {
     let mut identity = json!({"callId":call.call_id,"name":call.name,"version":call.version,"args":call.args,"models":models});
-    if let Some(store) = call.store.wire() {
+    if let Some(store) = call.store.clone().canonical().wire() {
         identity["store"] = store;
     }
     canonical_json(&identity).map_err(internal)
@@ -190,6 +192,7 @@ async fn execute_fresh(
     call.store
         .validate(action)
         .map_err(|_| Error::code("action.invalid"))?;
+    let store = call.store.clone().canonical();
     let mut changes = Changes::new();
     for input in &action.inputs {
         if let ActionInputDescriptor::Model { name, model, .. } = input {
@@ -247,7 +250,7 @@ async fn execute_fresh(
         crate::action_results::ResultReadback {
             records: &records,
             models,
-            store: &call.store,
+            store: &store,
         },
         host,
     )

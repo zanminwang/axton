@@ -851,8 +851,8 @@ fn durable_store_policy_survives_reopen_freeze_and_retry() {
     assert_eq!(stored[0]["call_id"], disabled.call_id);
     assert_eq!(stored[0]["store"], "false");
     assert_eq!(
-        stored[1]["store"],
-        r#"{"mainTodo":true,"suggestions":false}"#
+        stored[1]["store"], r#"{"suggestions":false}"#,
+        "explicit true entries are validated, then dropped from the canonical form"
     );
     assert_eq!(stored[2]["store"], Value::Null);
     drop(client);
@@ -864,10 +864,7 @@ fn durable_store_policy_survives_reopen_freeze_and_retry() {
     assert_eq!(raw[0]["store"], json!(false));
     assert_eq!(raw[0]["args"], json!({"store":"business"}));
     assert_eq!(raw[1]["callId"], mapped.call_id);
-    assert_eq!(
-        raw[1]["store"],
-        json!({"mainTodo":true,"suggestions":false})
-    );
+    assert_eq!(raw[1]["store"], json!({"suggestions":false}));
     assert_eq!(raw[2]["callId"], default.call_id);
     assert!(raw[2].get("store").is_none());
     drop(client);
@@ -880,8 +877,13 @@ fn durable_store_policy_survives_reopen_freeze_and_retry() {
 fn invalid_store_policy_fails_before_optimism_or_enqueue() {
     let dir = tempfile::tempdir().unwrap();
     let mut client = open(&dir.path().join("db"), store_schema());
-    for key in ["todo", "missing", "store"] {
-        let options = with_store(ActionStore::Outputs([(key.to_string(), false)].into()));
+    for (key, value) in [
+        ("todo", false),
+        ("missing", false),
+        ("store", false),
+        ("missing", true),
+    ] {
+        let options = with_store(ActionStore::Outputs([(key.to_string(), value)].into()));
         assert!(
             client
                 .submit_action_with_options(
@@ -931,6 +933,15 @@ fn queued_action_without_a_store_column_keeps_default_policy() {
 fn direct_store_policy_is_prepared_outside_args_and_applies_returned_authority() {
     let dir = tempfile::tempdir().unwrap();
     let mut client = open(&dir.path().join("db"), store_schema());
+    let all_true = client
+        .prepare_action_with_options(
+            "Search",
+            1,
+            json!({"store":"business"}),
+            with_store(ActionStore::Outputs([("todos".to_string(), true)].into())),
+        )
+        .unwrap();
+    assert_eq!(all_true.call.store, ActionStore::All, "canonical form");
     let prepared = client
         .prepare_action_with_options(
             "Search",

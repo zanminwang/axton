@@ -4,7 +4,7 @@
 
 **Goal:** Load the historical part of a Scope through a durable, awaitable Engine task, jointly with its ongoing subscription.
 
-**Architecture:** Bootstrap advances its own numeric cursor B from zero to the subscription's fixed starting cursor S. Normal delivery owns positions after S. On the final historical page, a fixed server head H becomes the completion barrier; complete after ongoing cursor L reaches H. Reuse existing scans, Loaders, stamps and `/sync/pull`.
+**Architecture:** Bootstrap advances its own numeric cursor B from zero to the subscription's fixed starting cursor S. The #150 Downlink worker schedules Bootstrap alongside its normal delivery work; normal delivery owns positions after S. On the final historical page, a fixed server head H becomes the completion barrier; complete after ongoing cursor L reaches H. Reuse existing scans, Loaders, stamps and `/sync/pull`.
 
 **Tech Stack:** Rust protocol/server/client controllers, SQLite, existing PostgreSQL persistence, native bindings, TS/React Native and Dart.
 
@@ -14,7 +14,7 @@
 - Do not introduce `first_cursor`, stable identity pagination, a generic task table, or a second sync engine.
 - Publication-based delivery remains the boundary; current membership is #140.
 - Bootstrap never changes the subscription origin or normal cursor. Preserve existing Loader visibility, D7/D8 errors and authority stamp rules.
-- Persist work before network execution. One bootstrap HTTP request at a time across Scopes; rotate after each page. Push/live work remains independent.
+- Persist work before network execution. The shared Downlink worker schedules one bootstrap HTTP request at a time across Scopes and rotates after each page. Do not add a separate Bootstrap host loop or put Bootstrap in LiveSession. Uplink and live/delta work remain able to progress.
 - All counters use 0..2^53-1; each page loads at most the existing 50 records.
 - Completion is processed delivery coverage, conditional on successful authoritative reads; it is not a globally frozen snapshot or a claim that reported live read failures succeeded.
 
@@ -71,12 +71,12 @@ never write starting_cursor or normal cursor
 
 ## Task 3: Engine scheduling, transport and fixed completion barrier
 
-**Files:** Create `crates/client/src/bootstrap_controller.rs`; modify `crates/client/src/{lib,connection,live}.rs`, `bindings/common/src/lib.rs`, `packages/client-js/connection.mts`, `packages/dart/lib/src/connection.dart`; extend `crates/sqlite/tests/bootstrap.rs` and existing host connection tests.
+**Files:** Extend `crates/client/src/bootstrap.rs` with focused task transitions; modify `crates/client/src/{lib,downlink_worker}.rs`, `bindings/common/src/lib.rs`, `packages/client-js/connection.mts`, `packages/dart/lib/src/connection.dart`; extend `crates/sqlite/tests/bootstrap.rs` and existing host connection tests.
 
-**Interfaces:** Define `BootstrapController`, typed events `Wake`, `Response {request_id, body}`, `Failure {request_id}`, `Closed`; actions `Request {request_id, body}`, `RetryAt {time}`, `Changed {scope, subscription_id, run}`. Reuse existing time/backoff/transport conventions. Native registration command is `scopeBootstrap {scope,subscriptionId}`; status command is `scopeBootstrapState` with the same identifiers.
+**Interfaces:** Extend #150's `DownlinkEvent` with tagged Bootstrap HTTP completion/failure and its `DownlinkAction` with correlated Bootstrap requests and committed run-status changes. The shared worker drives task transitions in `bootstrap.rs`; reuse existing time/backoff/transport conventions. There is no independently running BootstrapController or additional SDK processing loop. Native registration command is `scopeBootstrap {scope,subscriptionId}`; status command is `scopeBootstrapState` with the same identifiers.
 
-- [ ] Test no request before initialization; independent push/live progress while a bootstrap response is held; round-robin page fairness; stale response after retry/close/reopen; transient backoff; no network configuration.
-- [ ] Implement one in-flight bootstrap request, with native-owned correlation IDs. Persisted requested/loading state resumes without another frontend invocation. Release SQLite transactions before HTTP and between pages.
+- [ ] Test no request before initialization; independent push/live progress while a bootstrap response is held; round-robin page fairness; stale response after retry/close/reopen; transient backoff; no network configuration; live queue overflow without losing Bootstrap completion; socket replacement during a valid Bootstrap request.
+- [ ] Implement one in-flight bootstrap request scheduled by DownlinkWorker, with native-owned correlation IDs independent of the live socket epoch. Socket replacement does not restart a valid Bootstrap run. Persisted requested/loading state resumes without another frontend invocation. Release SQLite transactions before HTTP and between pages.
 - [ ] Test the handoff: S=100, historical B reaches 100 with final H=130, L=120; remain catching_up. Advance L to 130 through normal delivery; mark complete locally. Publish to 150 meanwhile; retain target 130.
 
 ```text

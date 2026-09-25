@@ -120,19 +120,26 @@ impl<S: ClientStore> Engine<'_, S> {
         )?;
         Ok(affected == 1)
     }
-    /// Move an initialized subscription's cursor. An update, never an insert:
-    /// it cannot resurrect a Scope this client unsubscribed, and it cannot
-    /// initialize one whose first boundary is still pending. A caller reads the
-    /// cursor before it moves it, so no row to update is a fault, not a no-op.
-    pub fn advance_cursor(&mut self, channel: &str, cursor: u64) -> Result<()> {
+    /// Move the cursor of the initialized subscription `subscription_id`
+    /// names. An update, never an insert: it cannot resurrect a Scope this
+    /// client unsubscribed, cannot initialize one whose first boundary is still
+    /// pending, and cannot move a subscription that replaced the one the caller
+    /// read. A caller reads the row before it moves it, so no row to update is
+    /// a fault, not a no-op.
+    pub fn advance_cursor(
+        &mut self,
+        channel: &str,
+        subscription_id: u64,
+        cursor: u64,
+    ) -> Result<()> {
         let affected = self.exec(
             "axton_subscription",
-            "UPDATE axton_subscription SET cursor=? WHERE channel=? AND cursor IS NOT NULL",
-            &[json!(cursor), json!(channel)],
+            "UPDATE axton_subscription SET cursor=? WHERE channel=? AND subscription_id=? AND cursor IS NOT NULL",
+            &[json!(cursor), json!(channel), json!(subscription_id)],
         )?;
         if affected != 1 {
             return Err(invalid(format!(
-                "no initialized subscription for {channel}; its cursor cannot advance"
+                "no initialized subscription {subscription_id} for {channel}; its cursor cannot advance"
             )));
         }
         Ok(())

@@ -171,6 +171,82 @@ fn an_earlier_framework_layout_is_rebuilt_beside_not_refused() {
     assert_eq!(rows.rows[0][0], json!(1), "the old file is untouched");
 }
 
+/// The framework layout this issue replaced: `axton_subscription` without a
+/// subscription identity and an `axton_client` without the allocator
+/// ([#150](https://github.com/zanminwang/axton/issues/150)). It cannot be opened
+/// in place, and the rebuild carries the Scope names with no delivery boundary.
+#[test]
+fn a_subscription_table_without_identities_is_rebuilt_beside() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut s = SqliteStore::open(&path).unwrap();
+    s.execute_batch(
+        "CREATE TABLE axton_client (client_id TEXT PRIMARY KEY, next_ordinal INTEGER NOT NULL, next_push INTEGER NOT NULL, generation INTEGER NOT NULL, last_completed_push INTEGER NOT NULL DEFAULT 0, push_models TEXT, push_results TEXT);
+         CREATE TABLE axton_subscription (channel TEXT PRIMARY KEY, cursor INTEGER NOT NULL);
+         INSERT INTO axton_client (client_id, next_ordinal, next_push, generation) VALUES ('old', 1, 1, 1);
+         INSERT INTO axton_subscription VALUES ('a', 9);
+         INSERT INTO axton_subscription VALUES ('b', 4);",
+    )
+    .unwrap();
+    drop(s);
+    let mut s = SqliteStore::open(&path).unwrap();
+    assert!(
+        matches!(ddl::check_layout(&mut s).unwrap(), ddl::Layout::Legacy(reason) if reason.contains("next_subscription")),
+        "an allocator-less client row is an earlier layout"
+    );
+    drop(s);
+    assert!(
+        Client::open(SqliteStore::open(&path).unwrap(), schema()).is_err(),
+        "a bare store refuses it rather than converting it"
+    );
+
+    let mut c = open_at(&path, schema());
+    assert!(c.schema_state().rebuilt);
+    assert!(
+        c.schema_state()
+            .last_rebuild
+            .as_ref()
+            .unwrap()
+            .reason
+            .contains("next_subscription")
+    );
+    let mut identities = vec![];
+    for channel in ["a", "b"] {
+        let carried = c
+            .subscription_state(channel)
+            .unwrap()
+            .expect("carried over");
+        assert_eq!(
+            (carried.starting_cursor, carried.cursor),
+            (None, None),
+            "the Scope carries over, the old cursor does not"
+        );
+        identities.push(carried.subscription_id);
+    }
+    assert_eq!(
+        identities,
+        vec![1, 2],
+        "the replaced layout allocated no identity, so this replica starts at one"
+    );
+    assert!(c.subscriptions().unwrap().is_empty());
+    drop(c);
+
+    let mut s = SqliteStore::open(&path).unwrap();
+    assert_eq!(
+        s.query_committed(
+            "SELECT cursor FROM axton_subscription ORDER BY channel",
+            &[]
+        )
+        .unwrap()
+        .rows
+        .iter()
+        .map(|r| r[0].clone())
+        .collect::<Vec<_>>(),
+        vec![json!(9), json!(4)],
+        "the old file keeps its own cursors"
+    );
+}
+
 #[test]
 fn an_abandoned_partial_rebuild_is_removed_and_retried() {
     let dir = tempfile::tempdir().unwrap();

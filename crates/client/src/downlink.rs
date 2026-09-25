@@ -6,6 +6,10 @@ use crate::{ApplyReport, Client};
 use axton_core::{PullPage, Result, invalid};
 use std::collections::BTreeMap;
 
+/// A channel that held an initialized subscription when the page was gated and
+/// does not hold one now: the page cannot be applied to whatever took its place.
+const REPLACED: &str = "subscription removed or uninitialized during page application";
+
 impl<S: ClientStore> Client<S> {
     /// Apply one page in one transaction: all changes, then all cursors. A
     /// channel the client no longer subscribes to, or whose cursor already
@@ -59,21 +63,31 @@ impl<S: ClientStore> Client<S> {
             });
         }
         self.write(|e| {
+            // The identity each cursor is advanced under is read here, in the
+            // writing transaction, so the update cannot land on a subscription
+            // that replaced the one the page was gated against.
+            let mut advances = Vec::new();
             for (channel, range) in &page.cursors {
-                if let Some(to) = moving.get(channel) {
-                    let current = e
-                        .cursor(channel)?
-                        .ok_or_else(|| invalid("cursor moved during page application"))?;
-                    if current != range.from && current >= *to {
-                        return Err(invalid("cursor moved during page application"));
-                    }
-                }
+                let Some(to) = moving.get(channel) else {
+                    continue;
+                };
+                let identity = match e.subscription(channel)? {
+                    Some(state) => match state.cursor {
+                        Some(current) if current == range.from || current < *to => {
+                            state.subscription_id
+                        }
+                        Some(_) => return Err(invalid("cursor moved during page application")),
+                        None => return Err(invalid(REPLACED)),
+                    },
+                    None => return Err(invalid(REPLACED)),
+                };
+                advances.push((channel.clone(), identity, *to));
             }
             // Content first, by stamp alone: a record shared by two channels is
             // in the page once and lands once.
             let mut report = e.apply_records(&page.changes)?;
-            for (channel, to) in &moving {
-                e.advance_cursor(channel, *to)?;
+            for (channel, identity, to) in &advances {
+                e.advance_cursor(channel, *identity, *to)?;
             }
             report.cursors = moving.clone();
             Ok(report)

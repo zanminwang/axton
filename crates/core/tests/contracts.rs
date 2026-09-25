@@ -1263,3 +1263,85 @@ fn action_store_canonical_form_drops_explicit_true_after_validation() {
         serde_json::from_value(store_intent(Some(json!({"missing":true})))).unwrap();
     assert!(unknown.normalize(&schema).is_err());
 }
+
+fn kind_schema(action: Value) -> Result<Schema> {
+    Schema::from_value(json!({
+        "enums":[],
+        "models":[{"name":"Todo","identity":["id"],"fields":[{"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false}]}],
+        "resultModels":[{"name":"Todo","version":1,"identity":["id"],"fields":[{"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false}],"enums":[]}],
+        "actions":[action],
+    }))
+}
+
+#[test]
+fn operation_kind_defaults_to_mutation_and_round_trips_explicitly() {
+    let legacy = kind_schema(json!({"name":"Ping","version":1,"inputs":[],"outputs":[]})).unwrap();
+    assert_eq!(legacy.action("Ping", 1).unwrap().kind, CallKind::Mutation);
+    let explicit =
+        kind_schema(json!({"name":"Ping","version":1,"kind":"mutation","inputs":[],"outputs":[]}))
+            .unwrap();
+    assert_eq!(explicit.action("Ping", 1).unwrap().kind, CallKind::Mutation);
+    let query = kind_schema(json!({"name":"Find","version":1,"kind":"query","inputs":[
+        {"kind":"value","name":"text","type":{"kind":"scalar","name":"string"},"nullable":true,"list":false}
+    ],"outputs":[
+        {"name":"todos","kind":"model","model":"Todo","modelReadVersion":1,"cardinality":"list","source":"handlerIdentity","handlerType":{"kind":"identity","model":"Todo","fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}]}}
+    ]}))
+    .unwrap();
+    assert_eq!(query.action("Find", 1).unwrap().kind, CallKind::Query);
+    let written = serde_json::to_value(&query).unwrap();
+    assert_eq!(written["actions"][0]["kind"], "query");
+    // The kind is a typed field, never a leftover policy entry.
+    assert!(!query.action("Find", 1).unwrap().policy.contains_key("kind"));
+    let reopened: Schema = serde_json::from_value(written).unwrap();
+    reopened.validate().unwrap();
+    assert_eq!(reopened.action("Find", 1).unwrap().kind, CallKind::Query);
+    assert_eq!(
+        serde_json::to_value(&legacy).unwrap()["actions"][0]["kind"],
+        "mutation"
+    );
+}
+
+#[test]
+fn unknown_operation_kinds_are_rejected() {
+    for kind in [json!("action"), json!("Query"), json!(true), Value::Null] {
+        assert!(
+            kind_schema(json!({"name":"Ping","version":1,"kind":kind,"inputs":[],"outputs":[]}))
+                .is_err(),
+            "{kind}"
+        );
+    }
+}
+
+#[test]
+fn hand_written_query_descriptors_cannot_declare_business_effects() {
+    for operation in ["create", "update", "delete"] {
+        let mut input = json!({"kind":"model","name":"todo","model":"Todo","operation":operation,"cardinality":"single"});
+        if operation == "update" {
+            input["allowedPatchFields"] = json!([]);
+        }
+        let output_kind = if operation == "delete" {
+            "deleteIdentity"
+        } else {
+            "model"
+        };
+        let mut output = json!({"name":"todo","kind":output_kind,"model":"Todo","cardinality":"single","source":{"inputIdentity":"todo"}});
+        if operation != "delete" {
+            output["modelReadVersion"] = json!(1);
+        }
+        let action =
+            json!({"name":"Edit","version":1,"kind":"query","inputs":[input],"outputs":[output]});
+        let error = kind_schema(action.clone()).unwrap_err().to_string();
+        assert!(error.contains("Model operand"), "{operation}: {error}");
+        let mut mutation = action;
+        mutation["kind"] = json!("mutation");
+        kind_schema(mutation).unwrap();
+    }
+    let sequenced = json!({"name":"Find","version":1,"kind":"query","inputs":[],"outputs":[],
+        "sequence":{"after":[{"name":"Find","arguments":{}}]}});
+    let error = kind_schema(sequenced).unwrap_err().to_string();
+    assert!(error.contains("sequence"), "{error}");
+    kind_schema(
+        json!({"name":"Find","version":1,"kind":"query","inputs":[],"outputs":[],"sequence":null}),
+    )
+    .unwrap();
+}

@@ -154,7 +154,7 @@ fn action(v: &Validated, a: &Action) -> Value {
         "name":call.mutation,
         "arguments":call.bindings.iter().map(|b| (b.slot.clone(), Value::from(b.path.join(".")))).collect::<serde_json::Map<_,_>>(),
     })).collect::<Vec<_>>() }));
-    json!({"name":a.name,"version":a.version,"inputs":inputs,"outputs":outputs,"sequence":sequence})
+    json!({"name":a.name,"version":a.version,"kind":a.kind,"inputs":inputs,"outputs":outputs,"sequence":sequence})
 }
 
 fn mutation(m: &Mutation) -> Value {

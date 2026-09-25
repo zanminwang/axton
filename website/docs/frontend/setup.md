@@ -76,7 +76,7 @@ Start the fixture backend with `bash integration/e2e/fixtures/round-trip/run.sh`
       },
       connection: { onError: console.error },
     });
-    await client.channels.subscribe('book:demo');
+    await client.scopes.subscribe('book:demo');
     ```
 
 === "Flutter"
@@ -93,12 +93,12 @@ Start the fixture backend with `bash integration/e2e/fixtures/round-trip/run.sh`
       ),
       onError: (error) => print(error),
     );
-    await client.channels.subscribe('book:demo');
+    await client.scopes.subscribe('book:demo');
     ```
 
 Configure the server once. AXTON submits durable Actions over HTTP, catches up from saved channel cursors over HTTP, and receives ongoing record changes over WebSocket. Direct Actions use the separate request/response route. Every received page passes through the Rust engine into local SQLite and updates `watch` subscriptions.
 
-Subscribing wakes the connection; it does not wait for initial records. A client with no subscribed channels can still send durable Actions and receive its own result and authority. Subscribe when your UI needs later changes made elsewhere. [Action results](sync.md#receive-action-results) and live synchronization are described in the sync guide. Replace the demo URL and token with your application's endpoint and credentials. On a physical device, localhost refers to that device; use a reachable development-server address.
+Subscribing wakes the connection; it does not wait for initial records, and it does not download the records the channel already holds: a subscription starts at the position the server acknowledges for it and delivers what is published from then on ([subscribe and observe](sync.md#subscribe-and-observe)). The registration is durable, so it works offline and survives a restart. A client with no subscribed channels can still send durable Actions and receive its own result and authority. Subscribe when your UI needs later changes made elsewhere. [Action results](sync.md#receive-action-results) and live synchronization are described in the sync guide. Replace the demo URL and token with your application's endpoint and credentials. On a physical device, localhost refers to that device; use a reachable development-server address.
 
 Omit `server` to open local storage without starting a connection.
 

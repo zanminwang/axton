@@ -7,21 +7,25 @@ Local reads and writes go through the Rust engine and SQLite. A connection handl
 === "TypeScript"
 
     ```ts
-    await client.channels.subscribe('book:demo');
+    const followed = await client.scopes.subscribe('book:demo');
     const stop = client.models.entry.watch({}, entries => render(entries), console.error);
     ```
 
 === "Flutter"
 
     ```dart
-    await client.channels.subscribe('book:demo');
+    final followed = await client.scopes.subscribe('book:demo');
     final subscription = client.models.entry.watch().listen(
       render,
       onError: (Object error) => print(error),
     );
     ```
 
-Here `render` is your UI's update function. Subscribing records the desired channel and wakes the connection; it does not wait for the initial data. Expect an empty initial result on a new database. `watch` emits again when synchronization commits records.
+Here `render` is your UI's update function. Subscribing records the desired channel durably - it works offline and survives a restart - and wakes the connection; it does not wait for the initial data. `watch` emits again when synchronization commits records.
+
+**A subscription delivers changes from the moment it is established, not the channel's existing records.** The first time a connection negotiates a session for it, the position the server acknowledges becomes that subscription's starting point, and records published to the channel before that point are not downloaded. Expect an empty initial result on a new database, and expect it to stay empty until something is published. To make existing rows appear today, have your backend publish them again (see [background writes](../backend/api.md#background-writes)); loading a channel's existing records in one explicit operation is planned as `bootstrap()` in [#151](https://github.com/zanminwang/axton/issues/151).
+
+The handle `subscribe` returns tells you where that is: `followed.status` has `initialization` (`pending` until the starting point is committed, then `ready`) and `connection` (`offline`, `connecting`, `catching-up`, `live` or `stopped`), and `followed.watch(status => …)` reports the current snapshot and every change. `live` means the stream is healthy, not that everything has arrived. `followed.unsubscribe()` removes this registration; later calls through that handle fail with `subscription.closed`.
 
 Use channel names that your backend publishes to, and subscribe when the client needs to receive changes other clients make. A channel is not a database query or an authorization token. Loaders decide which requested records the authenticated user may see.
 
@@ -29,7 +33,7 @@ Use channel names that your backend publishes to, and subscribe when the client 
 
 **A subscription is not required to see your own result.** A durable Action's inferred local Model changes are optimistic. Its handle's `wait()` returns the final per-invocation result or an error. The receipt also carries batch-final authority for changed records, read through the Loader in the handler transaction. AXTON applies that authority and replays later pending edits over it. Thus the result snapshot and current local Model view can differ. A direct Action has no automatic local optimism or durable queue; its response carries its result and applies authority through the same local state path.
 
-Subscribe with `client.channels.subscribe(channel)` as above when the client needs changes made elsewhere: by other users, by background jobs, or by handlers that touch records without reporting them. Subscription starts synchronization; it does not wait for initial data. Use `watch` to observe the records, and wait for an existing record to be available locally before updating it.
+Subscribe with `client.scopes.subscribe(channel)` as above when the client needs changes made elsewhere: by other users, by background jobs, or by handlers that touch records without reporting them. Subscription starts synchronization from the point it was established; it does not wait for initial data and does not fetch what the channel already held. Use `watch` to observe the records, and wait for an existing record to be available locally before updating it.
 
 You can send Actions without subscribing to any channel. The receipt still corrects the local row to the server's batch-final state; what you do not receive is later changes from elsewhere. If you subscribe to a channel the handler publishes to, the page for your own change carries the same stamp as the receipt and rewrites nothing, whichever arrives first.
 
@@ -103,7 +107,7 @@ Provide `onError` to record background failures, and `refreshAuth` if your crede
 
 Use `wake()` after an application event that should prompt another scheduling check. Use `resume()` after explicitly pausing. A closed connection cannot resume; create a new one with `client.connect` or reopen the client. Direct Action requests use a finite timeout; an `unknown` execution status can mean the backend committed but the client did not observe the response.
 
-On connection or reconnection, AXTON establishes the WebSocket subscription and receives the current position of each channel. If every saved cursor is already there, it streams at once. Otherwise it sends one HTTP pull for all channels, holding changes that arrive meanwhile, then continues with WebSocket updates. Both sources use the same Rust page processing: each page applies as one transaction, covered pages are discarded, overlapping pages apply their unseen changes, and gaps trigger HTTP recovery from saved progress. Subscription changes replace the session; pages from replaced or canceled sessions cannot update local data.
+On connection or reconnection, AXTON establishes the WebSocket subscription and receives the current position of each channel. A channel with no saved position takes the acknowledged one as its starting point and downloads nothing older. For a channel that has one, reconnecting is not a new starting point: if the saved position is already current it streams at once; otherwise it sends one HTTP pull for all channels from their saved positions, holding changes that arrive meanwhile, then continues with WebSocket updates. A position never moves backwards, and a server position below saved progress is reported as an error instead of silently resetting the channel. Both sources use the same Rust page processing: each page applies as one transaction, covered pages are discarded, overlapping pages apply their unseen changes, and gaps trigger HTTP recovery from saved progress. Subscription changes replace the session; pages from replaced or canceled sessions cannot update local data.
 
 ## Authentication and account changes
 

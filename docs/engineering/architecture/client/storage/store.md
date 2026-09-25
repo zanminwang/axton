@@ -23,6 +23,8 @@ The SQLite store opens two connections to one file: a writer in WAL mode with fo
 
 Values cross as JSON: booleans become integers, arrays and objects become JSON text, numbers become integers or reals. On the way out, blobs and non-UTF-8 text are refused. Both read operations refuse statements that are not read-only or return no columns, which is what makes application SQL safe to expose.
 
+The store enforces the constraints the framework DDL declares, so an invariant written as a `CHECK` cannot be violated by any engine path: `axton_subscription`'s cursor pair, for instance, is either both NULL or both set ([Reconciliation](reconciliation.md)). A violating write fails the statement and the transaction rolls back like any other error.
+
 Code: [client/store.rs](../../../../../crates/client/src/store.rs) (contract), [sqlite/lib.rs](../../../../../crates/sqlite/src/lib.rs) (implementation).
 
 ## 10. Quality Requirements
@@ -30,6 +32,7 @@ Code: [client/store.rs](../../../../../crates/client/src/store.rs) (contract), [
 - **The reader sees only committed rows; the writer sees its own.** Evidence: [sqlite/tests/store.rs](../../../../../crates/sqlite/tests/store.rs) `reader_sees_only_committed_rows_and_writer_sees_its_own`.
 - **Savepoints nest and roll back independently** (basis of guarantee L3). Evidence: `savepoints_nest_and_rollback_independently`.
 - **Read paths refuse writes; a second writer fails instead of hanging.** Evidence: `queries_refuse_writes_and_arrays_travel_as_json_text`, `second_writer_waits_then_fails_on_conflicting_immediate_transaction`.
+- **A declared `CHECK` refuses the write the engine attempted.** Evidence: [sqlite/tests/subscriptions.rs](../../../../../crates/sqlite/tests/subscriptions.rs) `the_table_refuses_a_half_initialized_cursor_pair`.
 
 Tests read, not executed.
 

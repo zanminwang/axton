@@ -12,7 +12,8 @@ Use this index to find the interface you call or implement. Local Model examples
 | `tx.models.<model>` | Create, update or delete local-only records | [Local-only writes](frontend/client-api.md#local-only-writes) |
 | `client.actions.<name>`, `ActionCall<Output>` | Accept durable work locally; inspect `status` or await `wait()` for the final outcome | [Actions](frontend/client-api.md#actions) |
 | `client.actions.call.<name>` | Request a direct final result without queueing or automatic optimism | [Actions](frontend/client-api.md#actions) |
-| `client.channels` | Subscribe or unsubscribe to a named channel | [Channels](frontend/client-api.md#channels) |
+| `client.scopes`, `Subscription` | Subscribe to a named channel and follow that registration's status | [Channels](frontend/client-api.md#channels) |
+| `client.channels` | The retained spelling: subscribe or unsubscribe by channel name | [Channels](frontend/client-api.md#channels) |
 | `client.connection` | Pause, resume or wake background sync | [Connections](frontend/runtime.md#connection-controls) |
 | `client.syncState`, `client.close` | Inspect pending work and release resources | [Status and lifecycle](frontend/client-api.md#status-and-lifecycle) |
 | Model, Identity, Patch, Filter and Order types | Pass typed data to generated methods | [Generated data types](frontend/client-api.md#generated-data-types) |

@@ -172,15 +172,15 @@ Here `backendUrl`, `accessToken` and `renewAccessToken` belong to your applicati
 
 AXTON manages these phases automatically:
 
-1. Connect to `/sync/live` and subscribe to the current channel set. The server installs listeners, then acknowledges the subscription with each channel's current position.
-2. If a saved cursor is behind, fetch missing records through one `POST /sync/pull` for all channels, repeated while a channel has more. Queue WebSocket pages arriving while catch-up runs. If every cursor is current, skip this step.
+1. Connect to `/sync/live` and subscribe to the current channel set. The server installs listeners, then acknowledges the subscription with each channel's current position. A channel with no saved cursor adopts the acknowledged position as its starting point in one local transaction and fetches nothing older; that happens once per subscription, and a later session never repeats it.
+2. If a saved cursor is behind, fetch missing records through one `POST /sync/pull` for all channels, repeated while a channel has more. Queue WebSocket pages arriving while catch-up runs. If every cursor is current, skip this step. Only channels with a saved cursor are requested; one still waiting for its starting point is subscribed on the socket and asked for nothing.
 3. Continue receiving WebSocket updates. HTTP and WebSocket pages enter the same serialized Rust processing path, using each channel's saved cursor.
 
 For either source, a page applies as one transaction and names a range for each channel it covers. A channel already covered by its cursor is left alone. A range spanning the current cursor applies: for example, at cursor `100`, a range `90 → 120` advances the channel to `120`, and each record's stamp decides whether its content is newer. A range starting beyond the current cursor is a gap. Then nothing from the page applies, and HTTP recovery fetches the missing range. Pages update SQLite and watches through the same engine logic.
 
 Durable Action submission runs independently through `POST /sync/mutations`; direct calls use `POST /sync/actions` with the configured finite timeout. A connection with no subscribed channels can still submit Actions without opening a socket.
 
-Reconnection and subscription changes repeat catch-up from saved progress. The client checks that every HTTP response and queued WebSocket page belongs to the current session before applying it. Pause and close cancel requests and sockets; resume creates a new session. The runtime does not poll for remote changes.
+Reconnection and subscription changes repeat catch-up from saved progress; a new session is not a new starting point, and an acknowledged position below saved progress is reported through `onError` rather than rewinding the channel. The client checks that every HTTP response and queued WebSocket page belongs to the current session before applying it. Pause and close cancel requests and sockets; resume creates a new session. The runtime does not poll for remote changes.
 
 ## Connection controls
 

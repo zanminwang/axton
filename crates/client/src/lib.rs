@@ -17,7 +17,7 @@ pub mod schema_store;
 pub mod store;
 pub mod transport;
 
-pub use actions::SubmittedCall;
+pub use actions::{ActionCallOptions, SubmittedCall};
 pub use axton_core::*;
 pub use connection::*;
 pub use live::*;
@@ -56,6 +56,9 @@ pub struct Mutation {
     pub call_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub args: Option<Value>,
+    /// The Action call's store policy; only meaningful with `call_id`.
+    #[serde(default, skip_serializing_if = "ActionStore::is_all")]
+    pub store: ActionStore,
     pub operations: Vec<Operation>,
     #[serde(default)]
     pub companion: Vec<Operation>,
@@ -89,6 +92,7 @@ impl Mutation {
             version: 1,
             call_id: None,
             args: None,
+            store: ActionStore::All,
             operations,
             companion: vec![],
             effects: vec![],

@@ -2,8 +2,8 @@
 //! inferred optimistic Model operations.
 use crate::{ApplyReport, Client, ClientStore, Mutation, Operation, OperationKind};
 use axton_core::{
-    ActionInputDescriptor, ActionIntent, DirectActionRequest, DirectActionResponse, Result,
-    invalid, normalize_action_args,
+    ActionInputDescriptor, ActionIntent, ActionStore, DirectActionRequest, DirectActionResponse,
+    Result, invalid, normalize_action_args,
 };
 use serde_json::Value;
 
@@ -11,6 +11,14 @@ use serde_json::Value;
 pub struct SubmittedCall {
     pub call_id: String,
     pub ordinal: u64,
+}
+
+/// Invocation options kept apart from business args and never passed to
+/// the Handler.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ActionCallOptions {
+    /// Which explicit Model outputs contribute additional local authority.
+    pub store: ActionStore,
 }
 
 impl<S: ClientStore> Client<S> {
@@ -21,16 +29,28 @@ impl<S: ClientStore> Client<S> {
         version: u64,
         args: Value,
     ) -> Result<DirectActionRequest> {
+        self.prepare_action_with_options(name, version, args, ActionCallOptions::default())
+    }
+    /// [`Self::prepare_action`] with invocation options, validated before
+    /// the request can be dispatched.
+    pub fn prepare_action_with_options(
+        &self,
+        name: &str,
+        version: u64,
+        args: Value,
+        options: ActionCallOptions,
+    ) -> Result<DirectActionRequest> {
         let action = self.schema.action(name, version)?;
         let args = normalize_action_args(&self.schema, action, &args)?;
         validate_bindings(&self.schema, action, &args)?;
+        options.store.validate(action)?;
         Ok(DirectActionRequest {
             call: ActionIntent {
                 call_id: uuid::Uuid::new_v4().to_string(),
                 name: name.into(),
                 version,
                 args,
-                store: Default::default(),
+                store: options.store,
             },
             models: self.declared_models(),
         })
@@ -69,15 +89,29 @@ impl<S: ClientStore> Client<S> {
         version: u64,
         args: Value,
     ) -> Result<SubmittedCall> {
+        self.submit_action_with_options(name, version, args, ActionCallOptions::default())
+    }
+    /// [`Self::submit_action`] with invocation options. The store policy is
+    /// validated before any local write and persisted with the call ID,
+    /// args and optimism in one transaction.
+    pub fn submit_action_with_options(
+        &mut self,
+        name: &str,
+        version: u64,
+        args: Value,
+        options: ActionCallOptions,
+    ) -> Result<SubmittedCall> {
         let action = self.schema.action(name, version)?;
         let args = normalize_action_args(&self.schema, action, &args)?;
         validate_bindings(&self.schema, action, &args)?;
+        options.store.validate(action)?;
         let operations = derive_operations(&self.schema, action, &args)?;
         let call_id = uuid::Uuid::new_v4().to_string();
         let mut mutation = Mutation::new(name, operations);
         mutation.version = version;
         mutation.call_id = Some(call_id.clone());
         mutation.args = Some(args);
+        mutation.store = options.store;
         let ordinal = self.transaction(|tx| tx.enqueue(mutation))?;
         Ok(SubmittedCall { call_id, ordinal })
     }

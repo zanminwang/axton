@@ -245,13 +245,16 @@ impl<S: ClientStore> Engine<'_, S> {
         if mutation.call_id.is_some() != mutation.args.is_some() {
             return Err(invalid("Action identity and args must appear together"));
         }
+        if mutation.call_id.is_none() && !mutation.store.is_all() {
+            return Err(invalid("store policy requires an Action call"));
+        }
         if let (Some(call_id), Some(args)) = (&mutation.call_id, &mutation.args) {
             let intent = ActionIntent {
                 call_id: call_id.clone(),
                 name: mutation.name.clone(),
                 version: mutation.version,
                 args: args.clone(),
-                store: Default::default(),
+                store: mutation.store.clone(),
             }
             .normalize(self.schema)?;
             let descriptor = self.schema.action(&intent.name, intent.version)?;

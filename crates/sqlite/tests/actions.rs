@@ -790,3 +790,169 @@ fn raw_queue_cannot_forge_an_action_intent_or_bypass_legacy_operation_rule() {
     assert!(client.transaction(|tx| tx.enqueue(forged)).is_err());
     assert_eq!(client.pending_count().unwrap(), 0);
 }
+
+fn store_schema() -> Schema {
+    let fields = json!([{"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false},{"name":"title","type":{"kind":"scalar","name":"string"},"nullable":false}]);
+    let handler = json!({"kind":"identity","model":"Todo","fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}]});
+    Schema::from_value(json!({"enums":[],
+        "models":[{"name":"Todo","version":1,"identity":["id"],"fields":fields}],
+        "resultModels":[{"name":"Todo","version":1,"identity":["id"],"fields":fields,"enums":[]}],
+        "actions":[
+            {"name":"Search","version":1,"inputs":[{"kind":"value","name":"store","type":{"kind":"scalar","name":"string"},"nullable":false}],
+             "outputs":[{"name":"todos","kind":"model","model":"Todo","modelReadVersion":1,"cardinality":"list","source":"handlerIdentity","handlerType":handler}]},
+            {"name":"Save","version":1,"inputs":[{"kind":"model","name":"todo","model":"Todo","operation":"create","cardinality":"single"}],
+             "outputs":[{"name":"mainTodo","kind":"model","model":"Todo","modelReadVersion":1,"cardinality":"single","source":"handlerIdentity","handlerType":handler},
+                        {"name":"suggestions","kind":"model","model":"Todo","modelReadVersion":1,"cardinality":"list","source":"handlerIdentity","handlerType":handler},
+                        {"name":"todo","kind":"model","model":"Todo","modelReadVersion":1,"cardinality":"single","source":{"inputIdentity":"todo"}}]}]
+    }))
+    .unwrap()
+}
+
+fn with_store(store: ActionStore) -> ActionCallOptions {
+    ActionCallOptions { store }
+}
+
+#[test]
+fn durable_store_policy_survives_reopen_freeze_and_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut client = open(&path, store_schema());
+    let disabled = client
+        .submit_action_with_options(
+            "Search",
+            1,
+            json!({"store":"business"}),
+            with_store(ActionStore::None),
+        )
+        .unwrap();
+    let mapped = client
+        .submit_action_with_options(
+            "Save",
+            1,
+            json!({"todo":{"id":"t","title":"A"}}),
+            with_store(ActionStore::Outputs(
+                [
+                    ("suggestions".to_string(), false),
+                    ("mainTodo".to_string(), true),
+                ]
+                .into(),
+            )),
+        )
+        .unwrap();
+    let default = client
+        .submit_action("Search", 1, json!({"store":"plain"}))
+        .unwrap();
+    let stored = client
+        .read_sql(
+            "SELECT call_id, store FROM axton_mutation ORDER BY ordinal",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(stored[0]["call_id"], disabled.call_id);
+    assert_eq!(stored[0]["store"], "false");
+    assert_eq!(
+        stored[1]["store"],
+        r#"{"mainTodo":true,"suggestions":false}"#
+    );
+    assert_eq!(stored[2]["store"], Value::Null);
+    drop(client);
+    let mut client = open(&path, store_schema());
+    let bytes = client.freeze().unwrap().unwrap();
+    let request = PushRequest::decode_actions(&bytes, &store_schema()).unwrap();
+    let raw: Vec<&Value> = request.mutations.iter().map(|m| &m.raw).collect();
+    assert_eq!(raw[0]["callId"], disabled.call_id);
+    assert_eq!(raw[0]["store"], json!(false));
+    assert_eq!(raw[0]["args"], json!({"store":"business"}));
+    assert_eq!(raw[1]["callId"], mapped.call_id);
+    assert_eq!(
+        raw[1]["store"],
+        json!({"mainTodo":true,"suggestions":false})
+    );
+    assert_eq!(raw[2]["callId"], default.call_id);
+    assert!(raw[2].get("store").is_none());
+    drop(client);
+    // A retry after restart resends the frozen bytes, policy included.
+    let mut client = open(&path, store_schema());
+    assert_eq!(client.freeze().unwrap().unwrap(), bytes);
+}
+
+#[test]
+fn invalid_store_policy_fails_before_optimism_or_enqueue() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"), store_schema());
+    for key in ["todo", "missing", "store"] {
+        let options = with_store(ActionStore::Outputs([(key.to_string(), false)].into()));
+        assert!(
+            client
+                .submit_action_with_options(
+                    "Save",
+                    1,
+                    json!({"todo":{"id":"t","title":"A"}}),
+                    options.clone(),
+                )
+                .is_err(),
+            "{key}"
+        );
+        assert!(
+            client
+                .prepare_action_with_options("Search", 1, json!({"store":"x"}), options)
+                .is_err()
+        );
+    }
+    assert_eq!(client.pending_count().unwrap(), 0);
+    assert_eq!(
+        client
+            .read_sql("SELECT COUNT(*) AS n FROM Todo", &[])
+            .unwrap()[0]["n"],
+        0
+    );
+}
+
+#[test]
+fn queued_action_without_a_store_column_keeps_default_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let submitted = open(&path, store_schema())
+        .submit_action("Search", 1, json!({"store":"old"}))
+        .unwrap();
+    SqliteStore::open(&path)
+        .unwrap()
+        .execute_batch("ALTER TABLE axton_mutation DROP COLUMN store")
+        .unwrap();
+    let mut client = open(&path, store_schema());
+    assert_eq!(client.pending_count().unwrap(), 1);
+    let bytes = client.freeze().unwrap().unwrap();
+    let request = PushRequest::decode_actions(&bytes, &store_schema()).unwrap();
+    assert_eq!(request.mutations[0].raw["callId"], submitted.call_id);
+    assert!(request.mutations[0].raw.get("store").is_none());
+}
+
+#[test]
+fn direct_store_policy_is_prepared_outside_args_and_applies_returned_authority() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"), store_schema());
+    let prepared = client
+        .prepare_action_with_options(
+            "Search",
+            1,
+            json!({"store":"business"}),
+            with_store(ActionStore::None),
+        )
+        .unwrap();
+    assert_eq!(prepared.call.store, ActionStore::None);
+    let wire: Value = serde_json::from_slice(&prepared.encode().unwrap()).unwrap();
+    assert_eq!(wire["call"]["store"], json!(false));
+    assert_eq!(wire["call"]["args"], json!({"store":"business"}));
+    let response = json!({"completion":{"callId":prepared.call.call_id,"outcome":{"status":"succeeded","result":{"todos":[{"id":"t","title":"A"}]}}},"records":[]});
+    let report = client
+        .apply_action_response_bytes(&prepared.encode().unwrap(), response.to_string().as_bytes())
+        .unwrap();
+    assert_eq!(report.completions.len(), 1);
+    assert_eq!(
+        client
+            .read_sql("SELECT COUNT(*) AS n FROM Todo", &[])
+            .unwrap()[0]["n"],
+        0
+    );
+    assert_eq!(client.pending_count().unwrap(), 0);
+}

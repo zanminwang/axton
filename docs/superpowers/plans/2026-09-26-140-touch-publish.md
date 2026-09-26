@@ -1,213 +1,276 @@
-# Generated touch and explicit publication implementation plan
+# Channel Membership and Explicit Results Implementation Plan
 
-> **SUPERSEDED — do not implement this revision.** On 2026-09-26 the user approved persistent record-to-Channel membership: `publish` enrolls a record and publishes current state; later inferred or explicitly touched changes automatically distribute to all member Channels. Each changed record gets one new stamp, with separate publication cursors in its Channels, atomically with the business transaction. Client subscription cursors remain client-owned. The [updated #140](https://github.com/zanminwang/axton/issues/140) is authoritative. This document's exclusions of membership and automatic distribution, its unchanged-engine assumptions, and its implementation readiness no longer apply. Rewrite and review the spec/plan to cover membership persistence, removal, concurrency, deletion/retention, repeated publication and Bootstrap compatibility before execution. The text below preserves the previous proposal for reference.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking. Use implementation subagents only when the assigned task authorizes delegation; the user's preferred implementation model is Sol. This preparation session writes documents only.
 
-> **For agentic workers:** Use superpowers:executing-plans to implement the following tasks and review checkpoints. Use implementation subagents only when authorized; if delegated, the user prefers Sol. Do not start implementation as part of the documentation-only preparation request.
+**Goal:** Implement persistent Channel membership with automatic distribution of declared changes, independent explicit business results, and automatic input-target reconciliation.
 
-**Goal:** Replace public backend changes collectors with generated touch methods, add generated publication helpers, and require explicit publication records everywhere.
+**Architecture:** Rust separates changed records, required input authority and explicit outputs. A shared settlement module serializes record/membership decisions inside the application's transaction, while PostgreSQL persists relationships and cursor positions. The backend SDK collects typed synchronous intents through Channel handles and touch methods.
 
-**Architecture:** Reuse the current changed-record settlement/readback engine. A per-callback SDK effect collector normalizes owned identity snapshots; generated contexts type its Model methods. Rust receives the same changes set and only explicit publication vectors. Inputs, outputs and publication remain separate contracts.
-
-**Tech stack:** Rust compiler/server, TypeScript backend SDK, generated TypeScript contracts, Node/native and PostgreSQL integration fixtures.
+**Tech Stack:** Rust compiler/core/server/simulation, generated TypeScript/Dart clients, TypeScript backend SDK, PostgreSQL persistence with pg/prisma/drizzle adapters.
 
 ## Global constraints
 
-- Follow the [spec](../specs/2026-09-26-140-touch-publish-design.md), repository AGENTS.md and issue workflow. Use an isolated codex branch based on current main; include reviewed planning commits.
-- Preserve inferred input targets and Rust-side canonical deduplication, stamps, readback, rejection isolation, stored-call replay and receipt/direct authority.
-- No public `changes.add`, `changes.records`, implicit publication, return-as-change inference, new schema annotation or automatic Channel membership.
-- `ctx.touch.<model>(identity)` returns void. Both `ctx.publish({channel, records})` and `ctx.publish.<model>({channel, identity})` are synchronous intent declarations, not database writes.
-- Snapshot identities and membership at each declaration; content and final stamps are resolved at settlement. Publication records are mandatory, and empty arrays remain valid.
-- Keep the host's private JSON key `changes`. Tighten `PublicationIntent.records` and update all host producers/fixtures in the same PR. No business operation history/version bump solely for this API change.
-- Support generated external transactions and legacy slot handlers; Query contexts have neither capability. Do not add a Dart backend runtime or modify the client executor.
-- One implementation PR, no merge until all tasks, final review and required checks pass. Current request produces documents only.
+- The [spec](../specs/2026-09-26-140-touch-publish-design.md) is authoritative. Earlier versions of these files and issue comments are superseded. Keep work isolated; start from current main with this planning branch's documents.
+- Concrete proposed API: `ctx.channel(name).todo.add/remove(identity)`, mixed `channel.add/remove(RecordRef[])`, and `ctx.touch.todo(identity)`. No public publish/attach/detach/changes collector aliases.
+- Inputs and explicit outputs are independent, including same-name fields. Never fill a missing handler output from the input. All new source outputs are explicit.
+- Changed records = inferred inputs union explicit touches; mandatory caller authority = input targets. Extra touches are not automatic caller authority. Explicit output storage follows the existing store policy.
+- One changed-record stamp per settlement; one publication position per distinct affected Channel/record pair. Saved-call replay performs neither again.
+- Persist membership separately from invalidations. Removal does not evict client rows; filter removed membership before pagination LIMIT in both server pull modes.
+- SDK intent declarations are synchronous and callback-scoped. Rust owns settlement; SQL remains in packages/postgres. Do not put membership fan-out in SDK loops.
+- Preserve operation isolation, authorization on actual reads, bounded PostgreSQL transaction retries, after-commit wakes, Bootstrap origin/barrier, and client completion after committed authority application.
+- No runtime compatibility facade or production backfill: this is a coordinated prelaunch upgrade. Do not weaken history validation; rebuild only reviewed repository fixture baselines/evolution fixtures.
+- One implementation PR with reviewed checkpoints below. Do not call a passing compiler-only checkpoint evidence that server membership or delivery is correct.
 
-## File ownership and interfaces
+## Start and file ownership
 
-| File | Work |
+- [ ] Read AGENTS.md, the issue and comments, spec, [testing strategy](../../engineering/testing/strategy.md) and [running guide](../../engineering/testing/running.md). Inspect current main and other active work before editing. Preparation baseline was `9cfb0b8`; re-evaluate changed owning files if main has moved.
+- [ ] Install/build only for implementation: `npm ci` and `bash scripts/build.sh`. Use the documented Rust 1.98.1, Node 26.4.0, Dart 3.12.1 and PostgreSQL 16 environment. Capture any baseline failure separately from regressions.
+
+| Area | Files |
 | --- | --- |
-| `packages/server/effects.mts` (new) | Owned reference snapshots, per-callback collector, touch and callable publication dictionaries, closed-context guard |
-| `packages/server/index.mts` | Re-export shared reference symbol/types; replace public contexts and collector call sites; preserve settlement host keys |
-| `crates/server/src/host.rs` | Require records in PublicationIntent |
-| `crates/server/src/readback.rs` | Remove final-change-set publication fallback; retain record/version behavior |
-| `crates/compiler/src/emit.rs` | Generated Touch/Publish and context aliases, reference union, typed external transaction return surface |
-| `crates/compiler/src/validate.rs` | Diagnose generated Model accessor collisions if no existing validation covers them |
-| `crates/compiler/tests/compiler.rs` | Generation and naming contracts |
-| `crates/server/tests/{host_contract,readback,actions}.rs` | Required-publication host contract, unchanged stamps and failure isolation |
-| `integration/persistence/server/effects.test.mjs` (new), `run.sh` | Focused collector behavior and inclusion in the server gate |
-| `integration/action-runtime-ts/{types.ts,backend.test.mts}` | Generated positive/negative types and emitted context behavior |
-| `integration/persistence/server/{runtime,host-contract,driver-conformance,actions}.test.mjs` | Real adapter and host producer migration/regressions |
-| `integration/action-e2e/{backend-fixture.ts,action.test.mts}` | End-to-end inferred/extra authority, explicit publications, returns and retry |
-| Other generated fixtures, demo handlers and active documentation | Regenerate/migrate uses discovered by the API search; no edits to old task history |
+| Source output contract | `crates/compiler/src/{validate,generate,emit,history}.rs`, `crates/compiler/tests/compiler.rs` |
+| Descriptor/runtime compatibility | `crates/core/src/actions.rs`, `crates/core/tests/{contracts,compatibility}.rs` |
+| Shared settlement | new `crates/server/src/settlement.rs`; `crates/server/src/{lib,actions,readback,action_results,host}.rs` |
+| Persistence | `packages/postgres/migration.sql`, `packages/postgres/src/{sql,persistence}.mts`, `packages/server/host-contract.mts` |
+| SDK intent lifecycle | new `packages/server/effects.mts`; `packages/server/index.mts` |
+| Rust validation | `crates/server/tests/{host_contract,readback,stamp,actions,action_store,bootstrap}.rs`; new `crates/server/tests/membership.rs` |
+| Simulation | `crates/sim/src/host.rs`, `crates/sim/tests/{distribution,bootstrap,authority,resilience}.rs` |
+| Real database | `integration/persistence/server/{driver-conformance,runtime,host-contract,actions}.test.mjs`, `run.sh`; new `effects.test.mjs` and `membership.test.mjs` |
+| Generated/client end-to-end | `integration/action-contract`, `integration/action-runtime-ts`, `integration/action-runtime-dart`, `integration/generated-api`, `integration/action-e2e`, `integration/e2e/bootstrap.test.mjs` |
+| Lasting docs | compiler/schema actions, backend interface, server engine/persistence, guarantees, server typed API, website backend and frontend operation guides |
 
-Internal collector interface (implement and test before wiring handlers):
+Only the files listed as new need to be created. Reuse existing test host/setup utilities; do not invent a second production settlement path to simplify fixtures.
+
+## Checkpoint 1: Explicit source outputs and generated results
+
+**Consumes:** schema operation inputs and explicit output AST. **Produces:** new descriptors whose outputs contain only handler-value/handler-identity sources, separate generated handler/result types, and unchanged input operand descriptors.
+
+- [ ] Add compiler tests compiling these two operations in the existing fixture harness:
+
+```axton
+mutation Edit(todo Todo.update)
+mutation EditAndRead(todo Todo.update) {
+  todo Todo
+}
+```
+
+Assert Edit has an empty output descriptor and no result.todo field; EditAndRead accepts overlapping input/output names and its output source is `handlerIdentity`, not `inputIdentity`. Add delete, optional/list input and scalar-result variants. Assert duplicate outputs still fail independently of duplicate inputs.
+- [ ] Run `cargo test -p axton-compiler --test compiler --locked`; confirm failures are the implicit output injection/name collision. In validate.rs remove output generation and output-name reservation from the Model-input branch; preserve input validation/inference data. Keep parsing unchanged. Generate handler identity types for every explicit Model output, including those sharing input names.
+- [ ] Add TS/Dart positive/negative assertions: Edit returns no business value, EditAndRead exposes a loaded Todo result, and the handler must provide todo identity. This concrete TS handler result must type-check:
+
+```ts
+const output: EditAndReadHandlerOutput = { todo: { id: "B" } };
+// @ts-expect-error explicit output is required even though input has the same name
+const missing: EditAndReadHandlerOutput = {};
+```
+
+Use the actual generated fixture export names after adding the operation. Do not manually edit generated files instead of updating schema/history/emitters.
+- [ ] Regenerate repository prelaunch fixture histories intentionally. For retained-version fixtures, rebuild each source version in order so unrelated compatibility tests remain meaningful. Keep history.rs rejecting incompatible external retained outputs at an unchanged version; add a regression asserting the existing diagnostic. Do not globally strip old output entries on history load. Existing InputIdentity decoder branches can remain for historical descriptor tests but no newly compiled source may produce them.
+- [ ] Run compiler/core tests and the contract checks:
+
+```sh
+cargo test -p axton-compiler -p axton-core --locked
+cargo run -p axton-compiler --locked -- compile integration/action-contract integration/action-contract --backend-runtime ../../packages/server/index.mts --client-runtime ../../packages/client-js/index.mts
+node_modules/.bin/tsc -p integration/action-contract
+dart pub get --directory integration/action-contract
+dart analyze integration/action-contract/generated.dart
+dart analyze integration/action-contract/positive.dart
+bash integration/action-contract/check-negative.sh
+```
+
+Review generated output and history diffs for accidental contract changes, then commit. Other integration consumers migrate at Checkpoint 6; list their pending generated-result adjustments explicitly.
+
+## Checkpoint 2: Persistent membership and record serialization primitives
+
+**Consumes:** canonical Model/identity and the existing application transaction. **Produces:** `lockRecord`, `memberships`, `setMembership` host operations; membership table/indexes; real adapter and simulation support. Scan filtering is enabled at Checkpoint 5, after callers enroll records.
+
+- [ ] Add typed operations in Rust host.rs and the TS host contract. Wire shapes are:
+
+```ts
+{ op: "lockRecord", model, identityKey } // -> number | null
+{ op: "memberships", model, identityKey } // -> string[]
+{ op: "setMembership", channel, model, identityKey, present } // -> null
+```
+
+Validate safe positive stamps, unique valid Channel names, required boolean present and unknown fields. Add cases to the existing shared host conformance fixtures and mock-host exhaustive matches.
+- [ ] Add the spec's table and two index orders to migration.sql. In sql.mts add these statements alongside existing stamp operations:
+
+```sql
+UPDATE axton_record SET stamp=stamp
+ WHERE model=$1 AND identity_key=$2 RETURNING stamp;
+SELECT channel FROM axton_membership
+ WHERE model=$1 AND identity_key=$2 ORDER BY channel;
+INSERT INTO axton_channel(channel,head) VALUES($1,0)
+ ON CONFLICT(channel) DO NOTHING;
+INSERT INTO axton_membership(channel,model,identity_key)
+ VALUES($1,$2,$3) ON CONFLICT DO NOTHING;
+DELETE FROM axton_membership
+ WHERE channel=$1 AND model=$2 AND identity_key=$3;
+```
+
+Use named constants in sql.mts; persistence.mts binds parameters and maps typed answers. Record metadata must already exist for insertion. Do not increment a Channel head for membership deletion or idempotent insertion.
+- [ ] Extend driver-conformance with per-adapter assertions: add/list/remove, duplicate insert/delete, no head increment without publish, absent lock returns null, lock preserves stamp, membership survives a new transaction, rollback restores relationships. Add a real RR test proving a membership-only writer's no-op record UPDATE makes a competing stale-snapshot writer retry. A lock-only mock does not establish this property.
+- [ ] Extend the simulation host state with membership sets included in savepoint/transaction snapshots and operations. Keep cursor/stamp fields distinct. Use canonical identities and sorted answers as production does.
+- [ ] Run `cargo test -p axton-server --test host_contract --locked`, `cargo test -p axton-sim --locked`, rebuild native artifacts, then `bash integration/persistence/server/run.sh`. Inspect all three adapters' conformance results; commit the tested additive storage/host capability.
+
+## Checkpoint 3: Rust settlement and caller-authority separation
+
+**Consumes:** changed/input sets, ordered membership intents and the primitives above. **Produces:** one shared settlement engine, mandatory input-only readback, and strict `{changes,memberships}` host effects for modern/legacy/external paths.
+
+- [ ] Introduce `MembershipIntent {channel, model, identity, present}` and replace handled effects' `publications` field with `memberships`. Keep action outputs and refusal/error variants. Update all host producers and test fixtures to the new shape, including the temporary SDK collector serialization until Checkpoint 4 replaces its public API. There must be no implicit publish-all fallback. Reject forged Query changes or memberships.
+- [ ] In settlement.rs define the shared boundary (concrete types use existing canonical keys):
+
+```rust
+pub(crate) async fn settle_changes(
+    config: &Config,
+    changed: &Changes,
+    memberships: &[MembershipIntent],
+    host: &impl Host,
+) -> Result<BTreeMap<String, u64>>;
+```
+
+Return allocated stamps for changed records. Validate every reference with backend schema/Loader registration, without requiring a caller's read-version map. Reduce membership intents by pair to final desired state, retain record keys, then process the union in canonical order. Changed: advanceStamp. Nonchanged with final add: ensureStamp. Remove-only: lockRecord; null is a no-op. Read initial membership only after its record guard. After all guards, calculate final memberships and net new pairs; create/apply membership changes in sorted Channel/key order. Publish the union of changed-record/final-member pairs and unchanged/net-new-member pairs once each, sorted by Channel/key. No application SQL lives in this function.
+- [ ] Separate `input_targets` from `changed` in actions.rs and legacy push. Call shared settlement with their union plus extras. Read back only input_targets using the already allocated stamps. Remove stamping/publication responsibilities from read_back; do not accidentally allocate a second stamp there. Feed those input records into action_results.rs and retain explicit output storage/Loader semantics. External settlement calls shared settlement without any client readback.
+- [ ] Add named server regressions in membership.rs and actions.rs with these exact observable outcomes:
+
+| Test case | Assertions |
+| --- | --- |
+| input A, same-name output B | receipt contains A; result.todo is B; omitted output fails, never substitutes A |
+| no declared outputs | wire result null, input authority exists, SDK void result |
+| extra Project touch, caller declares only Todo | success, Project stamp/fan-out advance; Project Loader is not invoked as caller and Project is absent from caller authority |
+| touched Project also requested as output | actual output read checks version/auth and failure rolls back mutation |
+| duplicate/inferred touch | one stamp, not two |
+| changed member in A/B | one record stamp and one new position per Channel |
+| newly added and changed | one position at final stamp, regardless touch/add declaration order |
+| membership operations cancel | compare initial/final membership; no spurious publication |
+| output-only/unchanged enrollment | existing record stamp unchanged |
+| saved call replay | identical saved result, unchanged stamps/heads/relationships |
+
+- [ ] Update store regressions: false suppresses output-only storage, never mandatory input authority; pure extra touches do not force storage. Preserve operation-level Loader failure rollback and adjacent-call progress. Run:
+
+```sh
+cargo test -p axton-server --test membership --test actions --test action_store --test readback --test stamp --test host_contract --locked
+cargo test -p axton-sim --locked
+```
+
+Review modern, legacy and external paths together and commit. Note that the public SDK spelling is finalized in the next checkpoint, not a second supported API.
+
+## Checkpoint 4: Generated Channel handles and touch collector
+
+**Consumes:** schema identity descriptors and typed membership intents. **Produces:** callback-scoped public API and owned effect payloads.
+
+- [ ] Create effects.mts with a single shared record-reference definition/symbol ownership where needed by other internals, avoiding import cycles. Its collector interface is:
 
 ```ts
 interface EffectCollector {
-  readonly touch: Record<string, (identity: object) => void>;
-  readonly publish: RuntimePublish;
+  touch: RuntimeTouch;
+  channel(name: string): RuntimeChannel;
   seed(record: RecordRef): void;
   settlement(): {
     changes: RecordRef[];
-    publications: { channel: string; records: RecordRef[] }[];
+    memberships: MembershipIntent[];
   };
   close(): void;
 }
 ```
 
-`RuntimePublish` is a callable explicit-record publisher with a dictionary of single-Model helpers. `RecordRef` and the existing `RECORD` symbol have one definition and are re-exported from index.mts, avoiding two symbols or a circular import. `createEffects(models)` returns EffectCollector for the configured schema Model descriptors. The generated application types replace broad runtime dictionaries with concrete Model identity signatures. `settlement()` returns owned data; `close()` prevents further declarations but does not prevent obtaining the already-collected settlement.
-
-## Task 1: Explicit intent collector and context lifecycle
-
-**Inputs:** configured schema Model descriptors, existing tagged operand/reference forms. **Outputs:** createEffects and the unchanged changes/explicit-publications settlement payload.
-
-- [ ] Add `effects.test.mjs` against the new module, using real shape examples rather than only checking method existence. Include this core regression:
+RuntimeTouch and RuntimeChannel are runtime dictionaries for the spec's generated methods. `createEffects(models)` accepts existing configured Model descriptors. Seed stays private for legacy operands; modern inference stays Rust-owned. All exported methods assert the collector remains open. Snapshot identities using schema identity codecs at each call, not at settlement. Channel selection validates a nonblank name but creates no durable state.
+- [ ] Add effects.test.mjs and include it in run.sh. Core declaration example to assert:
 
 ```ts
-const effects = createEffects([
-  { name: "Todo", identity: ["id"], fields: [
-    { name: "id", type: { kind: "scalar", name: "string" }, nullable: false },
-  ] },
-]);
-const identity = { id: "before" };
-const records = [{ model: "Todo", identity }];
-effects.publish({ channel: "shared", records });
-identity.id = "after";
-records.push({ model: "Todo", identity: { id: "late" } });
-effects.touch.todo({ id: "extra" });
+const identity = { id: "A" };
+const channel = effects.channel("project:1");
+channel.todo.add(identity);
+identity.id = "B";
+effects.touch.todo({ id: "A" });
 assert.deepEqual(effects.settlement(), {
-  changes: [{ model: "Todo", identity: { id: "extra" } }],
-  publications: [{ channel: "shared", records: [
-    { model: "Todo", identity: { id: "before" } },
-  ] }],
+  changes: [{ model: "Todo", identity: { id: "A" } }],
+  memberships: [{ channel: "project:1", model: "Todo", identity: { id: "A" }, present: true }],
 });
 ```
 
-- [ ] Add cases for absent/undefined/null records rejected; empty records accepted; helper and mixed publication equivalence; plain untagged identity rejected in mixed calls; duplicate touches canonicalized; missing identity keys; composite key-order normalization; Date encoded and copied before mutation; closed collector refusing touch/publish. Use a descriptor with a DateTime identity for the Date case.
-- [ ] Exercise Model method names mapping to `name`, `length`, `call`, `apply`, `bind`, `prototype` and `__proto__`, plus generated-key duplicates. Valid names must invoke helpers without modifying prototypes; ambiguous duplicate keys must fail startup. Use own-property definition on an arrow callable and a null-prototype touch dictionary; do not rely on assignment to Function.name/length.
-- [ ] Run `node --experimental-strip-types --test integration/persistence/server/effects.test.mjs`; expected first failure is the missing module/API. Implement the collector, normalization and lifecycle guard, then rerun until all assertions pass.
-
-Implementation shape for the two publication paths:
-
-```ts
-const publish = (args: PublishArgs): void => {
-  assertOpen();
-  if (!Array.isArray(args.records)) throw new Error("publish: records are required");
-  const channel = validateChannel(args.channel);
-  const records = args.records.map(snapshotRecord);
-  publications.push({ channel, records });
-};
-// For each schema Model, install an own property safely:
-Object.defineProperty(publish, methodName, {
-  value: ({ channel, identity }: { channel: string; identity: object }) =>
-    publish({ channel, records: [{ model: modelName, identity }] }),
-  enumerable: true,
-});
-```
-
-`assertOpen` checks the callback-lifetime flag; `validateChannel` rejects non-string/blank names consistently with Rust; `snapshotRecord` resolves the existing RECORD tag or explicit reference, checks the configured Model, selects and validates its identity fields, normalizes supported scalar identity encodings, and returns an owned JSON-compatible copy. Reject missing/invalid identity values rather than turning undefined or nonfinite values into null. Reuse existing identity encoding rules and test them against generated encoders; do not normalize arbitrary business row fields.
-
-- [ ] Keep target seeding a private collector operation. Preserve current legacy slot seeding; do not infer extra touches from output values. Do not newly duplicate modern input inference in the SDK where Rust already owns it.
-- [ ] Review the snapshot and lifecycle tests, then commit this independently tested internal unit.
-
-## Task 2: Wire contexts and enforce explicit publications in Rust
-
-**Inputs:** Task 1 collector. **Outputs:** supported runtime callbacks have touch/publish; native host cannot implicitly publish the change set.
-
-- [ ] Replace `Changes` in MutationContext, TransactionCall and legacy HandlerCall with the new runtime Touch type. Wire every callback through the same createEffects path. Query construction stays limited to tx/userId/callId.
-- [ ] Close the collector in a finally block when the callback settles. On success serialize its owned settlement; on callback failure keep the existing refusal/transaction error path. Never close it only on success, and never make a later escaped callback mutate serialized state.
-- [ ] Change PublicationIntent to this strict form and remove the optional-records branch from publish_intents:
-
-```rust
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PublicationIntent {
-    pub channel: String,
-    pub records: Vec<RecordRef>,
-}
-```
-
-- [ ] Add native host contract regressions:
-
-```rust
-assert!(serde_json::from_value::<PublicationIntent>(
-    serde_json::json!({"channel":"shared"})
-).is_err());
-assert!(serde_json::from_value::<PublicationIntent>(
-    serde_json::json!({"channel":"shared","records":null})
-).is_err());
-assert_eq!(serde_json::from_value::<PublicationIntent>(
-    serde_json::json!({"channel":"shared","records":[]})
-).unwrap().records.len(), 0);
-```
-
-- [ ] Replace `default_publication_covers_the_final_change_set` with rejection of omitted records at the appropriate host-answer decode boundary. Keep explicit-empty, current-stamp publication, rollback, Loader refusal/deletion and per-call rejection tests. Check malformed publication in one call leaves adjacent valid calls executable.
-- [ ] Migrate all direct Rust struct constructors and protocol host fixtures from optional records to explicit vectors. Preserve decoded `changes` and `publications` host field names and HTTP envelope fields.
-- [ ] Migrate handwritten TypeScript runtime test/legacy handlers: `changes.add(ref)` becomes `touch.<model>(identity)`; omitted-record publishes become an explicit application-chosen list, not a new "all touched" helper. For legacy inputs use their existing identity wrapper; current Model operands are flattened and remain valid tagged publication records.
-- [ ] Run `cargo test -p axton-server --test host_contract --test readback --test actions --locked`, the focused effect tests, and after native rebuild `node --test integration/persistence/server/host-contract.test.mjs`. Record the before/after failures and passing commands. Review inference/deduplication and refusal boundaries, then commit.
-
-## Task 3: Generate typed Model methods and external transaction contexts
-
-**Inputs:** Task 2 runtime surfaces. **Outputs:** backend.ts Touch/Publish types, schema-specific MutationContext and typed transaction callback; unchanged handler args/outputs.
-
-- [ ] Generate Touch and callable Publish methods for every current schema Model, with identity types matching generated Model reference constructors. Alias imported raw runtime context types to avoid re-exporting them as application-specific contexts. Use the same lower-first accessor transform and diagnose collisions in compiler/config startup rather than silently replacing methods.
-- [ ] Preserve existing named reference constructors for assembling mixed sets without touching records. Generate an explicit-reference discriminated union and allow existing tagged input operands. Do not claim TypeScript structurally proves an object carries the non-enumerable runtime tag; cover untagged rejection at runtime.
-- [ ] Give `createBackend(...).transaction` a schema-specific callback signature without changing its runtime behavior or arbitrary return value. Replace broad raw context inference by a generated facade/type declaration that forwards to the same runtime transaction and collector. Cover retained Mutation registrations, legacy Handlers and generated exported context aliases.
-- [ ] Update generated contract fixture source only if needed to add an identity shape; do not bump operation versions to accommodate method renames. Regenerate backend output with the existing runner. Add positive and negative calls in `integration/action-runtime-ts/types.ts`:
+Build `effects` with a real Todo schema descriptor in the test. Add Date/composite identities, empty arrays, missing/null references, unknown Model, raw untagged mixed identity rejected, a mixed call with a later invalid element appends no intents even if caught, explicit constructor accepted, safe `__proto__` property and closed escaped handles. SDK preserves membership declaration order; final-state reduction is tested in Rust, not duplicated here.
+- [ ] Wire createEffects into modern/legacy/external callbacks. Close in finally on success and failure; keep settlement data retrievable after close without allowing mutation. Query contexts remain tx/userId/callId only. Remove public Changes/Publish and implicit publication helpers; external arbitrary return values are untouched.
+- [ ] Generate Touch, Channel, ModelMembership and concrete context aliases in emit.rs; do not re-export the broad raw runtime MutationContext as the final application type. Type the generated external transaction callback too. Narrow named reference constructors to their discriminated Model identity variants. Diagnose duplicate lower-first keys and Channel reserved keys add/remove at compile time and reject malformed hand-authored runtime configs likewise.
+- [ ] Add generated positive/negative type examples in action-runtime-ts/types.ts and generated-api fixtures:
 
 ```ts
-context.touch.todo({ id: todo.id });
-context.publish.todo({ channel: "todos", identity: { id: todo.id } });
-context.publish({ channel: "todos", records: [todo] });
-// @ts-expect-error explicit records are mandatory
-context.publish({ channel: "todos" });
-// @ts-expect-error wrong generated identity
-context.touch.todo({ missing: "one" });
-// @ts-expect-error public collector was removed
-context.changes.add(todo);
-// @ts-expect-error Queries cannot touch records
-queryContext.touch.todo({ id: todo.id });
+ctx.channel("project:1").todo.add({ id: "A" });
+ctx.channel("project:1").todo.remove({ id: "A" });
+ctx.touch.todo({ id: "A" });
+// @ts-expect-error missing identity
+ctx.channel("project:1").todo.add({});
+// @ts-expect-error old API is gone
+ctx.publish({ channel: "project:1" });
+// @ts-expect-error Query has no membership writer
+queryCtx.channel("project:1").todo.add({ id: "A" });
 ```
 
-Also add a temporal `moment` identity and external transaction calls; existing fixture Models Todo and Moment supply these. Add a composite-identity compiler fixture with a generated compile check, not only substring assertions. Query runtime context keys must remain unchanged; Mutation keys become callId/publish/touch/tx/userId.
+Use the existing Todo/Moment fixture and add a composite-identity compile case. Test no function/Model property collision tricks are needed. The backend is TS; do not invent a Dart server runtime, but regenerate generic Dart contracts and frontend result types.
+- [ ] Run focused collector tests, compiler tests, `bash integration/action-runtime-ts/verify.sh` and `bash integration/generated-api/verify.sh` after rebuilding native artifacts. Review generated signatures and runtime parity; commit.
 
-- [ ] In `backend.test.mts`, replace the extra-reference collector calls with generated touch methods and assert decoded settlement still contains the same normalized references. Keep same-identity Date equivalence and extra-change deduplication assertions. Add per-Model publication parity and external transaction inference coverage.
-- [ ] Run `cargo test -p axton-compiler --test compiler --locked`, `bash integration/action-runtime-ts/verify.sh` and `bash integration/generated-api/verify.sh`. Inspect generated diffs, including Dart artifacts, and fix incorrect context exports or unexpected history changes. Review type safety and generated-key handling, then commit.
+## Checkpoint 5: Removal, pagination and real concurrent delivery
 
-## Task 4: End-to-end semantics and caller migration
+**Consumes:** enrolled relationships and shared fan-out. **Produces:** membership-filtered delta/Bootstrap and proven transaction ordering.
 
-**Inputs:** new generated and runtime APIs. **Outputs:** all active callers migrated, unchanged record authority behavior demonstrated.
+- [ ] Change SQL.SCAN to filter membership BEFORE ORDER/LIMIT while retaining the left join that diagnoses missing record stamps:
 
-- [ ] In `integration/action-e2e/backend-fixture.ts`, change the three Todo operand mutations to `ctx.publish({channel: "todos:demo", records: [args.todo]})`. In `retitleTodos`, call `ctx.touch.todo(identity)` for each returned DB identity and publish each through `ctx.publish.todo`; keep returned `todos`/`first` identities unchanged. Do not make every returned result an automatic touch.
-- [ ] Extend action e2e assertions to demonstrate extra touched records reconcile without a Channel or declared Model output, output-only existing records do not advance stamps, repeated/inferred touches advance once, and both publish forms distribute the same current authority. Assert durable replay does not call the business handler or allocate stamps twice.
-- [ ] Extend external-transaction PostgreSQL tests with generated touch and publication, no inferred targets, arbitrary return preservation, rolled-back writes/stamps/publications and no after-commit wake on failure. Use the existing pg/prisma/drizzle conformance paths rather than adding another adapter.
-- [ ] Search all active consumers and migrate them explicitly:
+```sql
+SELECT i.channel,i.cursor,i.model,i.identity_key,i.identity,r.stamp
+FROM axton_invalidation i
+JOIN axton_membership m
+ ON m.channel=i.channel AND m.model=i.model AND m.identity_key=i.identity_key
+LEFT JOIN axton_record r
+ ON r.model=i.model AND r.identity_key=i.identity_key
+WHERE i.channel=$1 AND i.cursor>$2
+ORDER BY i.cursor LIMIT $3;
+```
+
+Mirror the predicate in simulation/test hosts. Keep removed invalidation rows and heads. Update fixtures to enroll records before low-level publication; no automatic membership backfill from old rows. Review both lib.rs delta progression and loading.rs Bootstrap terminal logic against filtered rows, rather than adding an SDK workaround.
+- [ ] Add server/real-PG cases: all remaining rows removed yields a terminal advancing page; removed rows exceeding a page do not starve later active rows; remove then touch elsewhere cannot expose current content through the old Channel; re-add gives a fresh position; move above Bootstrap origin is covered by live barrier; a deletion retains membership and yields null; same-identity recreation distributes again; explicit removal keeps existing client rows.
+- [ ] Create membership.test.mjs using the existing temporary PG runner infrastructure and include it in run.sh. Coordinate concurrency with barriers/latches, not sleeps: establish transaction snapshots before letting competing operations execute. Assert both possible valid serialization orders for touch/add and touch/remove; the committed outcome must match one complete order, with no missed enrolled update. Include an initial absent record and membership-only changes whose record stamp remains unchanged. Inspect retries rather than claiming SELECT FOR UPDATE alone proves freshness.
+- [ ] Verify rollback of business writes, relationships, versions, heads, saved outcomes and wake sets. Verify a later subscriber read failure is isolated from the already committed mutation. Extend sim distribution/bootstrap tests with generated add/remove/touch sequences and restart/duplicate delivery scenarios using existing harness conventions.
+- [ ] Run:
 
 ```sh
-rg -n 'changes\.add|changes\.records|\bChanges\b|publish\(' packages integration examples website docs/engineering
+cargo test -p axton-server --test membership --test bootstrap --test live --locked
+cargo test -p axton-sim --test distribution --test bootstrap --test resilience --locked
+bash integration/persistence/server/run.sh
 ```
 
-Inspect multiline calls too. Preserve uses of internal wire `changes`, protocol change arrays and historical task documents; a global text replacement is incorrect. Include demo backend handlers, generated API fixtures and snippets. Do not add compatibility aliases merely to avoid migrations.
+Review actual PostgreSQL race assertions and page progress, then commit.
 
-- [ ] Run `bash integration/persistence/server/run.sh`, `bash integration/action-e2e/run.sh` and relevant demo/generated checks. Keep meaningful existing assertions; replace tests of implicit publication with rejection/explicit-selection tests. Review the distinction among touched, returned and published records, then commit.
+## Checkpoint 6: User-visible workflows, documentation and final acceptance
 
-## Task 5: Documentation, combined review and final gate
+**Consumes:** all preceding contracts. **Produces:** migrated first-party examples, end-to-end proof, reviewed PR.
 
-- [ ] Update `website/docs/backend/api.md`, `setup.md`, `database.md`, `docs/engineering/architecture/server/backend-interface.md`, the owning server engine publication/readback documents, `docs/engineering/architecture/schema/actions.md`, and `docs/engineering/architecture/sdks/typed-api/server.md`. Explain that touch declares a write rather than detecting differences or changing updatedAt; show automatic operand tracking, extra touch, both publication forms and external transactions.
-- [ ] Document required records, call-time reference snapshots versus settlement-time content, Query restrictions, closed callback contexts and the tightened native host contract. Keep schema/history compatibility distinct from host SDK/native rebuild requirements. Do not claim membership, retention or #17 hook implementation.
-- [ ] Update from current main and review the entire diff. Audit every public context and generated export for leftover changes collectors and every producer for omitted records. Verify no record stamp is advanced merely by returning or publishing it, and snapshot tests protect references rather than accidentally copying whole business records.
-- [ ] Run `bash scripts/test.sh` with the documented prerequisites. The gate covers formatting/linting, server/client regression, generated APIs, PostgreSQL and website examples. Record actual results and any environment limits; do not equate inspected tests with execution. Repeat only checks justified by later changes or unresolved failures.
-- [ ] Open/update one PR with `Closes #140`, design/plan links, exact behavior changes and validation. Attach the PR to the Codex task if supported. Resolve review findings and required CI before merge when executing under the user's merge authorization; do not merge documentation preparation as implementation completion.
+- [ ] Update action-e2e source fixtures and handler implementations. Create joins its Channel once; later update/delete handlers need no enrollment call. Retitle reports explicit extra touches. Callers needing result.todo explicitly declare that output and handlers return its identity. Callers needing only local synchronization await completion and inspect the local model instead. Preserve intentional scalar-only mutations and read-only Queries.
+- [ ] Add an end-to-end operation editing A while explicitly returning B. Check local A corrected after completion, result.todo contains B's snapshot, and no duplicate stamp occurs. Add a no-output edit whose call completes with reconciled local A, and a touch-only extra Model unknown to the initiating client's descriptor that is delivered to a different authorized subscriber. Test both direct and durable paths, immutable retry results and output `store: false`.
+- [ ] Regenerate TS/Dart/RN consuming fixtures and run:
 
-## Review matrix
+```sh
+bash integration/action-runtime-ts/verify.sh
+bash integration/generated-api/verify.sh
+bash integration/action-e2e/run.sh
+```
 
-| Requirement | Primary tasks |
+Use scripts/test.sh's existing Dart setup/commands for action-runtime-dart. Keep frontend runtime ownership and call completion logic intact unless a concrete regression shows a required contract adjustment; do not rewrite the client engine for this backend feature.
+- [ ] Search active code/docs with `rg` for `changes.add`, `changes.records`, `publish(`, `inputIdentity`, and implicit result assumptions. Migrate application examples, host producers and generated fixtures; retain only intentionally tested legacy descriptor decoding and historical task documents. Do not globally rename protocol change arrays or low-level HostRequest::Publish.
+- [ ] Update `docs/engineering/architecture/schema/actions.md`, server `backend-interface.md`, `engine/README.md`, `engine/publish.md`, `engine/pull.md`, `persistence.md`, `sdks/typed-api/server.md`, compiler generating/history guidance, and `docs/engineering/guarantees.md`. Update website backend API/setup/database and operation result examples discovered by the search. Explain input authority vs result, no same-name binding, store policy, callback lifetime, per-Channel membership vs authorization, deletion/recreation, removed-history filtering and Bootstrap's refined coverage. Link named evidence, not test counts alone.
+- [ ] Review the whole diff against every acceptance item in spec section 8. Confirm all three paths (modern, legacy, external) use one settlement algorithm; all actual reads keep auth/version checks; metadata guard writes do not accidentally bump stamps; idempotent member changes do not manufacture cursor events; and migrations never infer membership from historical publications.
+- [ ] Run `bash scripts/test.sh` with the documented prerequisites. Record executed commands, failures/fixes and limits. Repeat only affected checks after subsequent changes, then ensure required CI passes on the final PR head. Device testing and performance claims require separate evidence; do not invent it.
+- [ ] Open one PR with `Closes #140`, spec/plan links, intentional API/schema changes, and validation. Attach the PR to the assigned task when supported. Review the final diff and resolve findings before handing back the PR. Merge only under authorization in the assigned implementation task; this handoff itself does not introduce new merge permission.
+
+## Coverage map and preparation evidence
+
+| Spec | Checkpoints |
 | --- | --- |
-| Explicit publication and owned identities | 1, 2 |
-| No public changes collector, all callback lifetimes | 1, 2, 3 |
-| Automatic input targets, touched extras and single stamps | 2, 4 |
-| Generated temporal/composite types and external transactions | 3, 4 |
-| Queries/outputs/store policy remain distinct | 2, 3, 4 |
-| Failure isolation and rollback across SDK/native boundary | 2, 4 |
-| All callers/docs migrated, no membership expansion | 4, 5 |
+| Public handles, snapshots, generated types, context lifetime | 4, 6 |
+| Explicit outputs, independent same-name identities, delete/optional/list | 1, 3, 6 |
+| Mandatory input authority, extra-touch separation, store/version rules | 3, 6 |
+| Persistent membership, final-state reduction, one stamp and pair | 2, 3, 5 |
+| Deletion/recreation, removal filtering, Bootstrap progress | 5, 6 |
+| Real transaction concurrency, rollback, replay, after-commit wake | 2, 3, 5, 6 |
+| Prelaunch fixture/history handling without weaker compatibility checks | 1, 6 |
 
-Preparation has not installed dependencies, executed baseline/runtime tests or changed implementation code. The first implementation session must record its baseline and use the current main, not assume the planning base remains latest.
+Preparation is source inspection and document review only. The plan does not report runtime test results. The receiving agent must capture its own baseline and implementation evidence. The [handoff](2026-09-26-140-touch-publish-handoff.md) supplies the assignment and planning branch.

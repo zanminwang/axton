@@ -1,162 +1,206 @@
-# Generated touch and explicit publication APIs
+# Channel membership, change declarations and explicit results
 
-> **SUPERSEDED — do not implement this revision.** On 2026-09-26 the user approved persistent record-to-Channel membership: `publish` enrolls a record and publishes current state; later inferred or explicitly touched changes automatically distribute to all member Channels. Each changed record gets one new stamp, with separate publication cursors in its Channels, atomically with the business transaction. Client subscription cursors remain client-owned. The [updated #140](https://github.com/zanminwang/axton/issues/140) is authoritative. This document's exclusions of membership and automatic distribution, its unchanged-engine assumptions, and its implementation readiness no longer apply. Rewrite and review the spec/plan to cover membership persistence, removal, concurrency, deletion/retention, repeated publication and Bootstrap compatibility before execution. The text below preserves the previous proposal for reference.
+Status: reviewed implementation proposal for [#140](https://github.com/zanminwang/axton/issues/140). Replaces the earlier API-only proposal and the superseded same-name input/output binding. No implementation is included. Baseline: `origin/main` at `9cfb0b88506b001fa78e744af132245a7d0d0230`, inspected 2026-09-26.
 
-Status: agreed API direction for [#140](https://github.com/zanminwang/axton/issues/140), with engineering details specified here for review. This is a design document, not shipped behavior. Baseline inspected: main `9cfb0b8`.
+## 1. Contract and ownership
 
-## 1. Goal
+Keep four responsibilities separate:
 
-Keep three backend responsibilities distinct without requiring nested reference helpers for routine Model operations:
+| Responsibility | Declaration | Framework work |
+| --- | --- | --- |
+| Input mutation target | `todo Todo.create/update/delete` | Register change, reconcile the optimistic target through protocol authority, distribute to its Channels |
+| Additional changed record | `ctx.touch.project(identity)` | Advance its version and distribute to its Channels; no automatic caller readback |
+| Persistent distribution relationship | `ctx.channel(name).todo.add/remove(identity)` | Maintain which Channels receive a record's current state and future changes |
+| Business result | Explicit schema output plus handler return | Resolve handler-supplied Model identities through Loaders and produce `result` |
 
-- `touch` declares additional records changed by the handler.
-- `publish` explicitly selects records and their destination Channel.
-- The handler's return value supplies its schema-declared outputs.
+Rust owns target inference, settlement, membership reduction, fan-out, stamps, result assembly and replay. SDKs collect typed declarations and execute host effects. PostgreSQL persistence owns SQL inside the application's transaction. Preserve the [architecture](../../engineering/architecture.md) and [guarantees](../../engineering/guarantees.md), with the intentional changes below documented in their owning pages.
 
-Mutation Model operands already identify their changed targets. They remain automatic; the developer only touches additional records. No server content comparison, return-value change inference, schema annotation, `changed(...)` return wrapper, or automatic Channel membership is introduced.
+The user approved the responsibilities. This document chooses `.todo.add/remove()` and `touch` as the concrete API for implementation: resource before verb matches `client.models.todo.create()`, and `touch` remains a change declaration, not a network send. These are explicit design recommendations following the naming review, not claims that the spelling already shipped.
 
-Preserve the [guarantees](../../engineering/guarantees.md), [backend interface](../../engineering/architecture/server/backend-interface.md), and [server readback/stamping responsibilities](../../engineering/architecture/server/engine/README.md). The implementation must update the public API documentation to distinguish new developer spelling from unchanged engine semantics.
-
-## 2. Public interface
-
-Mutation handlers keep `{ ctx, args }`. Their context keeps `tx`, `userId` and `callId`; replace `changes` with generated `touch` methods. `publish` is callable for mixed records and also carries generated per-Model methods.
+## 2. Public backend API
 
 ```ts
-async function addTodo({ ctx, args }) {
-  // Application-owned database writes happen through ctx.tx.
-  // args.todo is already a declared Todo.create operand.
+const channel = ctx.channel(`project:${projectId}`);
+channel.todo.add({ id: todoId });
+channel.todo.remove({ id: otherTodoId });
 
-  ctx.touch.project({ id: args.todo.projectId });
+// Same API without a local variable.
+ctx.channel(`project:${projectId}`).todo.add({ id: todoId });
 
-  ctx.publish({
-    channel: `project:${args.todo.projectId}`,
-    records: [args.todo],
-  });
-  ctx.publish.project({
-    channel: `project:${args.todo.projectId}`,
-    identity: { id: args.todo.projectId },
-  });
+// Business writes were already performed through ctx.tx.
+ctx.touch.project({ id: projectId });
 
-  return { project: { id: args.todo.projectId } };
-}
+// Mixed sets use existing generated, explicitly typed references.
+channel.add([Todo({ id: todoId }), Project({ id: projectId })]);
+channel.remove([Todo({ id: oldTodoId })]);
 ```
 
-The example assumes the schema declares that explicit Project output and the handler actually updated Project before calling touch. Touch does not write business fields or `updatedAt`.
-
-Generated type shape for an illustrative schema:
+`ctx.channel(name)` creates a transaction-scoped operation handle, with no network request or durable creation. It is not a client subscription and does not check whether the Channel already exists. Repeated calls address the same logical Channel; JavaScript object identity is not promised. No `getChannel`, `publish`, `attach`, `detach`, `changes.add`, or public `changes.records` alias remains in the new surface.
 
 ```ts
-export interface Touch {
+interface ModelMembership<Identity> {
+  add(identity: Identity): void;
+  remove(identity: Identity): void;
+}
+interface Channel {
+  todo: ModelMembership<TodoIdentity>;
+  project: ModelMembership<ProjectIdentity>;
+  add(records: readonly RecordRef[]): void;
+  remove(records: readonly RecordRef[]): void;
+}
+interface Touch {
   todo(identity: TodoIdentity): void;
   project(identity: ProjectIdentity): void;
-  projectMember(identity: ProjectMemberIdentity): void;
 }
-
-export interface Publish {
-  (args: { channel: string; records: readonly PublishRecord[] }): void;
-  todo(args: { channel: string; identity: TodoIdentity }): void;
-  project(args: { channel: string; identity: ProjectIdentity }): void;
-  projectMember(args: {
-    channel: string;
-    identity: ProjectMemberIdentity;
-  }): void;
-}
-
-export interface MutationContext<Tx> {
+interface MutationContext<Tx> {
   tx: Tx;
   userId: string;
   callId: string;
+  channel(name: string): Channel;
   touch: Touch;
-  publish: Publish;
 }
 ```
 
-`PublishRecord` is the runtime's accepted reference input: a tagged generated Model operand or an explicit `{ model, identity }` reference. Generated backend files should describe explicit references with a discriminated Model/identity union. Preserve the existing tagged operand representation and its compile-time assignability; raw structural objects must still be validated at runtime. An arbitrary untagged `{id}` does not identify a Model and is refused by mixed publication.
+These interfaces are generated per schema, not hand-maintained Model lists. Generate a discriminated Model/identity union for `RecordRef` and narrow existing `Todo(identity)` constructors accordingly. Mixed methods deliberately accept explicit references only; do not depend on invisible input-object symbol tags. The short generated method `channel.todo.add(args.todo)` can select identity fields from a structurally compatible value, but must snapshot only identity fields. An untagged `{id}` cannot identify its Model in `channel.add([...])` and must fail. No callable function with generated Model properties is needed.
 
-Routine generated methods require no `ref` helper. For a heterogeneous set created independently of inputs, retain the existing generated Model-named reference constructors, such as `Todo({ id })` and `Project({ id })`; do not add a new `ref` namespace or pretend that a plain identity alone identifies its Model.
+Use existing lower-first Model accessors. Detect duplicate accessor names. The Channel namespace reserves `add` and `remove`; emit a specific compiler diagnostic for Models mapping to those keys. This is a documented generated-API restriction, not silent overwriting. Use null-prototype dictionaries and safe own-property definition for other keys such as `__proto__` and `constructor`. Do not add further arbitrary reservations.
 
-```ts
-const records = [Todo({ id: todoId }), Project({ id: projectId })];
-ctx.publish({ channel: "shared", records });
+`touch`, `add`, and `remove` synchronously validate and collect owned intents; they return void. Copy canonical identity values, including composite and temporal identities, at the declaration. Later object/Date/array changes cannot retarget them. Empty mixed arrays are no-ops; missing, null, malformed or unknown references fail. Validate and snapshot the entire mixed call before appending any intents so a caught error cannot leave a partial declaration. Reuse identity codecs rather than serializing whole business records.
+
+All handles close when the handler/external callback settles, including when it throws. Escaped references reject later operations. A handler returning successfully is not yet a committed operation: settlement and required Loader reads may still fail.
+
+`backend.transaction(async ({tx, channel, touch}) => ...)` provides the same generated API, has no inferred inputs or client result, and preserves its arbitrary application return value. Still-supported legacy slot handlers expose the same declaration API. Query contexts expose neither touch nor mutable Channel handles; forged effects are rejected by Rust. This does not claim to sandbox arbitrary writes through an application-owned `tx`.
+
+## 3. Explicit results and automatic input authority
+
+```axton
+mutation UpdateTodo(todo Todo.update)
+
+mutation UpdateTodoAndRead(todo Todo.update) {
+  todo Todo
+  project Project
+}
 ```
 
-Touch methods return void; do not make touching a requirement to construct a publication reference. A record may be published without having changed. Arrays of existing tagged operands can be passed directly as records. The mixed publication API takes a readonly array in v1, not an arbitrary Iterable/Set; a JavaScript Set can be spread by the application. Multiple records of a single Model use the same mixed form or repeated per-Model calls; no extra batch overload is needed.
+The first operation has no named business output. Its input still automatically registers a change and receives authoritative reconciliation; the generated return/result keeps the existing no-output convention (`void` in application types, null in its wire result).
 
-Use the same generated Model accessor spelling as existing APIs (e.g. `projectMember`). Reject duplicate generated keys clearly rather than silently overwriting methods. Install callable publication properties safely, including schema names that map to function/prototype keys; `Object.assign` onto a function or a normal-object dictionary is not sufficient. Do not reserve otherwise valid Model names merely to avoid testing the property installation.
-
-## 3. Touch semantics
-
-`ctx.touch.project(identity)` reports a write that business code performed. It adds the encoded `(Model, identity)` to the settlement's changed-record set. It performs no immediate database operation, output registration, Channel publication or network I/O.
-
-The existing Rust executor remains authoritative for the final set: inferred Model operand targets plus explicit touches, deduplicated by canonical identity. Optional absent operands add nothing; list operands add their members. A repeated touch or a touch of an inferred target allocates only one stamp for that record within that successful Mutation. Separate successful Mutations are separate write declarations, even within one batch.
-
-A touch asserts modification; the framework does not compare old/new business content. Declaring a write whose final content happens to be identical can still advance the record stamp. Returned-only and published-only records keep their existing stamp (or initialize one under the existing ensureStamp rule). An authoritative Loader null supplies deletion evidence; a Loader refusal/error is not deletion. Store options do not suppress required touched/input authority.
-
-A touch is independent of declared outputs: an extra changed record can reconcile through receipt/direct authority without becoming a named result field. Returning an identity without touching it does not declare a write. Touching a record does not modify the handler's result shape.
-
-Mutation contexts expose generated touch and publish at runtime and in types. Query contexts expose neither, and retain the existing Rust `query.effects_forbidden` enforcement for forged host settlements.
-
-## 4. Explicit publication and snapshot boundary
-
-Both entry points register the same internal intent:
+The second operation's outputs are independent of its inputs, even when names and Models match:
 
 ```ts
-ctx.publish({ channel: "shared", records: [args.todo] });
-ctx.publish.todo({ channel: "shared", identity: { id: todoId } });
+return {
+  todo: { id: anotherTodoId },
+  project: { id: projectId },
+};
 ```
 
-`records` is required. Missing, undefined or null records fails validation; an explicit empty array publishes nothing. The generated single-Model form requires one identity. There is no implicit "all changed records", live view of the collector, `touch.records`, or public replacement for `changes.records`.
+If input Todo A is modified and output Todo B is selected, protocol authority confirms A and `result.todo` is the Loader snapshot of B. Missing explicit output fields must fail; never fill them from input fields. The handler returns identities for Models and actual values for scalar/enum outputs. Generated handler types and client result types differ accordingly. No output declaration implies modification or Channel enrollment.
 
-At each call, normalize and take an owned snapshot of the Channel and each Model identity. Snapshot array membership AND identity values, including mutable Date instances and nested objects; a shallow array copy is not sufficient. Validate/encode temporal and composite identities through the established identity codec. Later mutations to an input, identity, reference or source array cannot retarget a prior publication or touch. Later touches never expand an earlier publication.
+Input and output names are unique within their own namespaces, not across them. Explicit optional outputs require a handler field containing an identity or null; list outputs require an identity array. Optional absent input operands and empty input lists add no input targets. Each concrete input target still receives reconciliation even without outputs.
 
-This snapshot fixes which records are published, not a copy of their business content. Loader readback and current stamps are determined during normal settlement after the handler returns. Thus publishing a reference before later touching the same record still publishes at that transaction's final allocated stamp. Publishing never changes the record stamp merely for distribution; Channel cursors advance under the existing rules. Preserve existing ordering and repeated-publication behavior; this is not a new cross-call publication deduplication feature.
+Delete inputs also produce no implicit business result. They receive ordinary authoritative deletion reconciliation. A developer wanting a deleted ID as a business result declares scalar identity fields (including each component for a composite identity) and returns those values. Do not add a new deletion-result grammar. An explicit `Todo` output always means a Loader-resolved Model: a deleted record cannot satisfy a nonnullable `Todo`; use `Todo?` and return null when appropriate. Preserve normal nullable/list read validation.
 
-A publish call does not establish persistent membership or automatic future publication. It does not imply record eviction, a client subscription, read permission, or a backend write. No publications occur on an aborted enclosing transaction. After-commit wakes and multi-process limitations stay unchanged.
+Caller authority is the union of mandatory input-target authority and explicit Model-output authority selected by the existing `store` option. `store: false` suppresses optional output storage, not input reconciliation or the business result snapshot. Extra touches alone do not add caller authority and do not require that caller to declare or read the touched Model. All sync-participating references still need valid schema identities and registered Model Loaders; extra touches do not invoke those Loaders as the initiating caller.
 
-## 5. External transactions and supported backend surfaces
+If a touched record is also an input or an explicit output, those independent reasons require the appropriate read. Reuse compatible reads at the same identity, version, owner and snapshot; never mix retained result versions with current authority versions. An output-read failure or input reconciliation failure preserves existing operation rejection/rollback. A later subscriber Loader failure is a subscriber page error under existing isolation rules; it cannot retroactively reject the committed mutation.
 
-The generated backend's external transaction callback receives the same typed touch and publish capabilities:
+Completion still follows committed local application of required authority. This issue does not redesign `call.wait()`, direct Query completion, the Rust client runtime, onStore, or query-once caching. Update their fixtures when generated result shapes change; saved results remain immutable.
+
+## 4. Membership semantics
+
+Membership is a persistent `(channel, model, canonical identity)` relationship, independent of active subscribers and backend processes. Adding an absent member distributes its current state without declaring a content change. Adding an existing member does nothing observable. Removing an existing member stops future distribution; removing a non-member does nothing observable. Neither removal nor client unsubscribe deletes local business data.
+
+Membership declarations form an ordered intent list. For each record/Channel pair, the last add/remove determines desired membership. Compare that final state with membership at settlement start: a present member removed then re-added in one settlement is unchanged; an absent member added then removed is unchanged. Intermediate membership is never externally published.
+
+Every changed record advances its stamp once per successful Mutation/external settlement. Inferred input targets and explicit touches deduplicate. Its final member Channels all get a new publication position. An unchanged newly added member also gets one position at its existing stamp, initialized at 1 only if absent. Deduplicate a newly added and changed pair to one position. Separate successful mutations remain separate changes even in one batch.
+
+Example: one Todo advances from stamp 7 to 8 and is in A and B. It may receive A cursor 121 and B cursor 46, both at stamp 8. Do not advance its stamp twice, and do not modify any client's subscription cursor. Notify live subscribers only after commit; no connected subscriber is required for durable distribution.
+
+Membership applies to a logical identity, including after business deletion. A touched/deleted record remains enrolled so offline subscribers can receive Loader-null deletion evidence. Recreating the same identity later resumes distribution to the same memberships. Applications wanting a new lifecycle use a new identity or explicitly remove old memberships. If a transaction deletes and removes a record from A, the final relationship wins: A receives no new deletion notification. To notify A of deletion, keep it enrolled. Do not fabricate a global deletion for Channel removal.
+
+### Removal and historical delivery
+
+Keep invalidation evidence physically separate from membership. Both ordinary delta scans and Bootstrap scans must filter out identities that are no longer members in the scan's database snapshot, BEFORE applying the page limit. Otherwise an old invalidation joined to the record's current stamp would continue exposing later content after removal.
+
+Do not erase historical rows or rewind Channel heads on removal. Removed positions are holes: existing page rules advance to the head or bounded origin when no eligible rows remain. No removal event or client eviction is introduced. A read begun in an earlier snapshot or an already in-flight response may still arrive; removal is not revocation of previously readable data. Loader authorization remains authoritative.
+
+Re-adding a removed record overwrites its invalidation position with a new cursor and publishes its current state. Bootstrap retains its fixed-origin history scan and fixed live completion barrier; a record moved above the origin is covered by live delivery. Refine D10 documentation to say that coverage is subject to membership in the scan snapshot, not permanent entitlement to every historically published identity. Do not claim a point-in-time collection snapshot or maintained query results.
+
+## 5. Storage and concurrency
+
+Add `axton_membership` separately from retained invalidations:
+
+```sql
+CREATE TABLE IF NOT EXISTS axton_membership (
+ channel text NOT NULL REFERENCES axton_channel(channel),
+ model text NOT NULL,
+ identity_key text NOT NULL,
+ PRIMARY KEY(model, identity_key, channel),
+ FOREIGN KEY(model, identity_key) REFERENCES axton_record(model, identity_key)
+);
+CREATE INDEX IF NOT EXISTS axton_membership_channel
+ ON axton_membership(channel, model, identity_key);
+```
+
+The record-first primary key serves reverse membership lookup; the Channel-first index serves filtered scans. Identity payload remains in intents/invalidation rows. Ensure a Channel row at head zero when first enrolling, then publish to allocate its first actual position. Do not derive membership from invalidation retention, or enroll all old invalidations implicitly.
+
+New persistence operations, mirrored in Rust host types and TypeScript:
+
+| Operation | Request fields | Answer |
+| --- | --- | --- |
+| `lockRecord` | model, identityKey | current stamp or null if no row |
+| `memberships` | model, identityKey | sorted unique Channel strings |
+| `setMembership` | channel, model, identityKey, present | unit |
+
+`lockRecord` performs `UPDATE axton_record SET stamp=stamp ... RETURNING stamp`, NOT merely `SELECT FOR UPDATE`, and never creates a missing row. For changed records use existing `advanceStamp` instead; for records with a final add intent use existing `ensureStamp`. These existing upserts also write-lock the row. Process the full union of changed records and membership-intent records in canonical key order, acquiring one of these three guards before reading membership. Under PostgreSQL Repeatable Read, concurrent membership/touch transactions then conflict on a written record row and restart on serialization failure instead of observing a stale membership snapshot. A remove-only record with no metadata is a no-op, ordered before a concurrent first enrollment.
+
+After all record guards, obtain initial memberships, reduce desired state, apply only net relationship changes, and collect publication pairs. Emit pairs sorted by Channel then canonical record identity, so Channel head locks are acquired in a consistent order. Set-member creation inserts the Channel row if needed; perform these creates in sorted Channel order as well. Preserve bounded 40001/40P01 retries of the entire application transaction. Other application lock ordering may still require retries; do not claim deadlock freedom.
+
+All business writes, relation edits, stamps, positions, invalidations and saved-call outcomes share the existing transaction/savepoint. Retried call IDs return stored outcomes without restamping or republishing. Membership operations and wakes roll back together. Record guards are an internal implementation detail, not extra version increments.
+
+## 6. Engine and host interfaces
+
+Use one settlement intent shape for modern handlers, legacy handlers and external transactions:
 
 ```ts
-await backend.transaction(async ({ tx, touch, publish }) => {
-  // Perform the application-owned database write using tx.
-  touch.project({ id: projectId });
-  publish.project({ channel: "shared", identity: { id: projectId } });
-  return applicationResult;
-});
+interface MembershipIntent {
+  channel: string;
+  model: string;
+  identity: object;
+  present: boolean;
+}
+interface SettlementEffects {
+  changes: RecordRef[];
+  memberships: MembershipIntent[];
+}
 ```
 
-There are no inferred operands outside a Mutation. Its return value stays application-owned; it is not interpreted as a Mutation output or change list. Keep rollback, stamp allocation and after-commit notifications in the existing external settlement path.
+Keep private `changes`, replace host `publications` with `memberships`. Modern handled actions also carry their existing `outputs`; refusal/error variants remain. Internal `HostRequest::Publish` remains a low-level cursor/invalidation write, not the removed developer API. Require typed membership fields and reject old/malformed effect payloads; upgrade all host producers together. Query effect rejection checks both arrays.
 
-Update the still-supported legacy slot-handler context to the same touch/publish names as well, preserving its existing inferred slot targets. Do not retain a second public `changes.add`/`changes.records` interface there. Loader interfaces are unchanged.
+Refactor Rust to distinguish `changed = inputs union extras`, `reconcile = inputs`, and explicit output reads. A shared `settle_changes` in `crates/server/src/settlement.rs` owns record guards, membership reduction, stamp allocation and publication. `readback.rs` reads only required input authority using allocated stamps; it no longer decides which extra changes return to the caller. The output assembler retains explicit result assembly and output store policy. External settlement uses the same fan-out without client reads. Legacy slots keep input-target reconciliation while extras stop being automatic caller authority.
 
-The runnable backend is TypeScript. Update its runtime, generated backend contexts and external transaction inference, tests, demos and documentation. Dart-generated abstract handler contracts retain their existing generic context parameter; do not invent a Dart server or touch the client Rust executor for this issue. Run shared generation checks to catch incidental impacts.
+Do not weaken authorization, read-version checks for actual reads, immutable call replay or failure isolation to make this separation easier. A touch-only extra unknown to the caller is valid; an explicit output requiring an unsupported read contract is still invalid. A reference to an unregistered backend Model/Loader remains invalid.
 
-## 6. Implementation ownership and compatibility
+## 7. Coordinated prelaunch change
 
-Keep the public spelling change in the server SDK and compiler. Retain the private settlement key `changes` used between the host and Rust; it remains a set of reported record identities and is not the retired public collector.
+There are no production users to migrate. Ship a coordinated compiler/server/generated-fixture change rather than a compatibility facade for old public APIs. Keep operation-history compatibility checks intact: removing implicit outputs is genuinely a contract change, unlike merely renaming backend helpers.
 
-For explicitness to hold across supported hosts, make Rust `PublicationIntent.records` a required vector rather than an optional final-change-set shortcut, and remove the implicit branch from readback. This intentionally tightens the internal host contract, not the client/backend HTTP schema. Update native host fixtures and all handwritten producers together. A malformed host publication must fail at the existing handler/external-transaction boundary, with existing operation-level isolation; it must not partially publish or become a rejection of an unrelated batch item.
+For repository sample/fixture histories, regenerate reviewed prelaunch baselines and retained-version fixtures from their source under the new rules. Preserve deliberate version-evolution tests rather than deleting all history. Do not silently rewrite a caller's history when compilation runs: an old external history with an incompatible output snapshot must still receive the existing version diagnostic. Existing decoder support for old retained `inputIdentity` descriptors may remain for bounded compatibility tests; the compiler must emit none for newly compiled source. No additional migration service, automatic backfill or production data rewrite is in scope.
 
-Generate strongly typed context aliases in backend.ts rather than re-exporting an untyped runtime MutationContext as the final application type. Raw runtime contexts may derive their method dictionaries from the schema descriptor; generated context types supply compile-time identity types. Ensure retained Mutation versions, current identity codecs, temporal identities and startup registration all agree. The executor, not a new SDK algorithm, still infers target writes from retained descriptors.
+The new membership table starts empty on an existing development database. Reset/re-enroll development fixtures explicitly; never assume old publications mean perpetual membership. No operation version bump is required solely for the host helper rename; actual retained output-contract incompatibilities still follow the existing version rules.
 
-No backend operation version bump, schema grammar/history migration, persistent membership table or deprecation facade is needed solely for these developer API changes. Regenerate and update all in-repository callers atomically. A server SDK/native pair must be rebuilt together for the tightened host contract; do not advertise mixed old/new host bindings as supported.
+Preserve in-process wake limitations (#62), no eviction (#139), no automatic change detection and no new frontend subscription API. Runtime memory handles remain callback-scoped; persistent memberships do not.
 
-Registration capabilities are valid only while their handler/external callback is active. Close the collector when the callback settles and reject later touch/publish calls rather than allowing unawaited work to mutate a finalized settlement. This is a local lifecycle guard, not a promise to cancel arbitrary application side effects.
+## 8. Acceptance and review evidence
 
-## 7. Decisions, exclusions and evidence
+Implementation must demonstrate:
 
-This supersedes #140's `changes.push` proposal and its automatic Channel membership/enter-leave design. Membership, retention and automatic distribution are excluded; #139 remains deferred. The purpose of the issue is now generated touch and explicit publication ergonomics, not reimplementing existing stamping/readback.
+1. Explicit output names can equal input names while referring to different identities; missing output never falls back to input. No-output and delete-input results generate no implicit fields.
+2. Input authority is mandatory with or without result/store/Channel; extra touch alone is absent from caller authority and can target a Model the caller did not declare.
+3. One change stamp reaches all member Channels once; no membership means no fan-out. Output-only reads and unchanged add do not bump an existing stamp.
+4. Net membership reduction, duplicate add/remove, declaration order, snapshots and callback lifetimes behave as specified.
+5. Real PostgreSQL interleavings cover touch/add/remove, including first enrollment, repeated membership-only changes at unchanged stamp, rollback and driver retries.
+6. Removed records are filtered before LIMIT in delta and Bootstrap, empty/holey pages progress, re-add publishes current state, deleted/recreated identities obey persistent membership.
+7. Saved call replay creates no new stamps, cursors or membership changes; live delivery wakes after successful commit only.
+8. TS/Dart generated results, backend types, external callbacks, legacy contexts, simulation, PostgreSQL adapters and documentation agree.
 
-Current evidence inspected: `packages/server/index.mts` collector and contexts; `crates/compiler/src/emit.rs::backend_typescript`; `crates/server/src/host.rs::PublicationIntent`; `crates/server/src/readback.rs`; `crates/server/src/actions.rs`; generated action-runtime and PostgreSQL fixtures. Current runtime supports `changes.add`, optional publish records and Model-named reference constructors. The new API is not implemented by this document.
-
-## 8. Acceptance and verification
-
-- Generated TS contexts infer all Model identity types, including temporal/composite identities. Missing records, invalid identities, unknown Model helpers and Query effects fail type checks; untyped calls fail runtime validation.
-- Touching an inferred input, touching twice and key-order variants still advance one stamp. Extra touches appear in authority even without explicit output/publication. Ordinary output and publication-only records do not advance existing stamps.
-- Mixed-record and per-Model publications produce equivalent explicit intents; empty arrays publish nothing; missing records is refused for SDK and handcrafted Rust-host settlements.
-- Publication/touch snapshots survive later source-array, identity-object and Date mutation. A later touch does not expand an earlier publish. A later touch of an explicitly published identity still supplies its final stamp.
-- Handler and external transaction rollback leaves business writes, stamps and publications unchanged. One invalid handler intent does not reject unrelated calls. Durable retries replay saved outcomes without re-running declarations.
-- Direct and durable Mutation paths, generated external transactions and legacy slot handlers use the same API; Query contexts remain effect-free.
-- Generated fixtures, examples and active docs contain no implicit publish or public changes collector. Historical task documents may retain old terminology. Internal settlement JSON remains named changes.
-
-Follow the [testing strategy](../../engineering/testing/strategy.md) and [running guide](../../engineering/testing/running.md). Preparation is source inspection and documentation review only; no implementation tests have run.
+Preparation evidence: current source and architecture inspected, spec/plan cross-reviewed, document links and whitespace checked. No runtime tests or implementation have run for this document. See the [implementation plan](../plans/2026-09-26-140-touch-publish.md) for executable checkpoints and the [handoff](../plans/2026-09-26-140-touch-publish-handoff.md) for assignment.

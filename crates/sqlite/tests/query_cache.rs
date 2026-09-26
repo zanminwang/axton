@@ -383,3 +383,529 @@ fn a_rebuilt_replica_starts_with_an_empty_cache() {
     assert!(client.schema_state().rebuilt);
     assert_eq!(count(&mut client), 0);
 }
+
+// ---- Coordinator: begin / finish / fail / invalidate -------------------
+
+fn once(refresh: bool) -> QueryOnceOptions {
+    QueryOnceOptions {
+        store: ActionStore::All,
+        refresh,
+    }
+}
+fn begin(client: &mut Client<SqliteStore>, refresh: bool) -> QueryOnce {
+    client
+        .begin_query_once("GetTodos", 1, &args(), &once(refresh))
+        .unwrap()
+}
+/// The Fetch decision's flight and exact prepared request.
+fn fetch(decision: QueryOnce) -> (String, DirectActionRequest) {
+    match decision {
+        QueryOnce::Fetch { flight_id, request } => (flight_id, request),
+        other => panic!("expected Fetch, got {other:?}"),
+    }
+}
+fn cached(decision: QueryOnce) -> Value {
+    match decision {
+        QueryOnce::Cached { result } => result,
+        other => panic!("expected Cached, got {other:?}"),
+    }
+}
+fn titled(title: &str) -> Value {
+    json!({"todos":[{"id":"a","title":title}],"total":1,"asOf":"2026-01-02T03:04:05.000Z","next":null})
+}
+/// A successful direct response carrying `result` and `Todo a` at `stamp`.
+fn succeeded(request: &DirectActionRequest, title: &str, stamp: u64) -> Vec<u8> {
+    json!({"completion":{"callId":request.call.call_id,"outcome":{"status":"succeeded","result":titled(title)}},
+           "records":[{"model":"Todo","identity":{"id":"a"},"stamp":stamp,"state":{"title":title}}]})
+    .to_string()
+    .into_bytes()
+}
+fn failed(request: &DirectActionRequest) -> Vec<u8> {
+    json!({"completion":{"callId":request.call.call_id,"outcome":{"status":"failed","code":"backend.down","execution":"rejected"}},"records":[]})
+        .to_string()
+        .into_bytes()
+}
+fn todo_title(client: &mut Client<SqliteStore>) -> Option<Value> {
+    client
+        .read(&RecordKey {
+            model: "Todo".into(),
+            identity: json!({"id":"a"}),
+        })
+        .unwrap()
+        .map(|todo| todo["title"].clone())
+}
+fn saved(client: &mut Client<SqliteStore>) -> Option<Value> {
+    let k = key(client, args(), ActionStore::All);
+    client.query_cache_entry(&k).unwrap().and_then(|e| e.result)
+}
+
+#[test]
+fn a_miss_fetches_once_and_later_calls_reuse_the_saved_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    let (flight, request) = fetch(begin(&mut client, false));
+    assert_eq!(request.call.name, "GetTodos");
+    assert_eq!(saved(&mut client), None, "nothing is cached before success");
+    let report = client
+        .finish_query_once(&flight, &succeeded(&request, "A", 1))
+        .unwrap();
+    assert_eq!(report.completions.len(), 1);
+    assert_eq!(report.completions[0].call_id, request.call.call_id);
+    assert_eq!(
+        todo_title(&mut client),
+        Some(json!("A")),
+        "authority applied"
+    );
+    assert_eq!(cached(begin(&mut client, false)), titled("A"));
+    // Equivalent arguments hit the same snapshot.
+    let equivalent = json!({"tags":["a","b"],"since":"2026-01-02T04:04:05+01:00","projectId":PROJECT.to_uppercase()});
+    assert_eq!(
+        cached(
+            client
+                .begin_query_once("GetTodos", 1, &equivalent, &once(false))
+                .unwrap()
+        ),
+        titled("A")
+    );
+}
+
+#[test]
+fn concurrent_misses_join_one_flight() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    let (flight, request) = fetch(begin(&mut client, false));
+    assert_eq!(
+        begin(&mut client, false),
+        QueryOnce::Join {
+            flight_id: flight.clone()
+        }
+    );
+    // A refresh with no saved result joins the same uncached request.
+    assert_eq!(
+        begin(&mut client, true),
+        QueryOnce::Join {
+            flight_id: flight.clone()
+        }
+    );
+    client
+        .finish_query_once(&flight, &succeeded(&request, "A", 1))
+        .unwrap();
+    assert_eq!(cached(begin(&mut client, false)), titled("A"));
+}
+
+#[test]
+fn refreshes_coalesce_while_plain_once_keeps_hitting_the_old_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    let (first, request) = fetch(begin(&mut client, false));
+    client
+        .finish_query_once(&first, &succeeded(&request, "A", 1))
+        .unwrap();
+    let (refresh, refresh_request) = fetch(begin(&mut client, true));
+    assert_ne!(refresh, first);
+    assert_ne!(
+        refresh_request.call.call_id, request.call.call_id,
+        "a refresh is a fresh direct call"
+    );
+    assert_eq!(
+        begin(&mut client, true),
+        QueryOnce::Join {
+            flight_id: refresh.clone()
+        }
+    );
+    assert_eq!(cached(begin(&mut client, false)), titled("A"));
+    client
+        .finish_query_once(&refresh, &succeeded(&refresh_request, "B", 2))
+        .unwrap();
+    assert_eq!(cached(begin(&mut client, false)), titled("B"));
+    assert_eq!(todo_title(&mut client), Some(json!("B")));
+}
+
+#[test]
+fn a_failed_refresh_keeps_the_previous_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    let (first, request) = fetch(begin(&mut client, false));
+    client
+        .finish_query_once(&first, &succeeded(&request, "A", 1))
+        .unwrap();
+    // A backend failure outcome.
+    let (refresh, refresh_request) = fetch(begin(&mut client, true));
+    let report = client
+        .finish_query_once(&refresh, &failed(&refresh_request))
+        .unwrap();
+    assert!(matches!(
+        report.completions[0].outcome,
+        ActionOutcome::Failed { .. }
+    ));
+    assert_eq!(cached(begin(&mut client, false)), titled("A"));
+    // A transport failure the host reports.
+    let (refresh, _) = fetch(begin(&mut client, true));
+    assert!(client.fail_query_once(&refresh));
+    assert!(!client.fail_query_once(&refresh), "released exactly once");
+    assert_eq!(cached(begin(&mut client, false)), titled("A"));
+}
+
+#[test]
+fn a_failed_miss_caches_nothing_and_a_retry_is_a_fresh_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    let (flight, request) = fetch(begin(&mut client, false));
+    client
+        .finish_query_once(&flight, &failed(&request))
+        .unwrap();
+    assert_eq!(saved(&mut client), None);
+    assert_eq!(count(&mut client), 0);
+    let (retry, retry_request) = fetch(begin(&mut client, false));
+    assert_ne!(retry, flight);
+    assert_ne!(retry_request.call.call_id, request.call.call_id);
+    assert!(client.fail_query_once(&retry));
+    let (again, _) = fetch(begin(&mut client, false));
+    assert_ne!(again, retry);
+}
+
+#[test]
+fn an_invalid_response_releases_the_flight_and_caches_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    let (flight, request) = fetch(begin(&mut client, false));
+    let mut other = request.clone();
+    other.call.call_id = "7c9e6679-7425-40de-944b-e07fc1f90ae7".into();
+    assert!(
+        client
+            .finish_query_once(&flight, &succeeded(&other, "A", 1))
+            .is_err(),
+        "a response for another call"
+    );
+    assert!(
+        client
+            .finish_query_once(&flight, &succeeded(&request, "A", 1))
+            .is_err(),
+        "the flight is gone after its terminal completion"
+    );
+    assert!(client.finish_query_once("unknown", b"{}").is_err());
+    assert_eq!(saved(&mut client), None);
+    assert_eq!(todo_title(&mut client), None);
+    fetch(begin(&mut client, false));
+}
+
+#[test]
+fn default_direct_calls_never_join_or_populate_the_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    let (_flight, request) = fetch(begin(&mut client, false));
+    let plain = client.prepare_action("GetTodos", 1, args()).unwrap();
+    assert_ne!(plain.call.call_id, request.call.call_id);
+    client
+        .apply_action_response(&plain, &succeeded(&plain, "P", 1))
+        .unwrap();
+    assert_eq!(count(&mut client), 0);
+    assert_eq!(todo_title(&mut client), Some(json!("P")));
+}
+
+#[test]
+fn once_is_rejected_for_mutations_invalid_input_and_inside_transactions() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    seed(&mut client, "a");
+    assert!(
+        client
+            .begin_query_once(
+                "Rename",
+                1,
+                &json!({"todo":{"id":"a","title":"x"}}),
+                &once(false)
+            )
+            .is_err()
+    );
+    assert!(
+        client
+            .begin_query_once("GetTodos", 1, &json!({}), &once(false))
+            .is_err()
+    );
+    assert_eq!(client.pending_count().unwrap(), 0);
+    let (flight, request) = fetch(begin(&mut client, false));
+    client
+        .finish_query_once(&flight, &succeeded(&request, "A", 1))
+        .unwrap();
+    client.begin_session().unwrap();
+    assert!(
+        client
+            .begin_query_once("GetTodos", 1, &args(), &once(false))
+            .is_err(),
+        "even a hit is refused inside an application transaction"
+    );
+    assert!(
+        client
+            .invalidate_query_once("GetTodos", 1, &args())
+            .is_err()
+    );
+    client.rollback_session().unwrap();
+    assert_eq!(cached(begin(&mut client, false)), titled("A"));
+}
+
+#[test]
+fn a_hit_never_reapplies_the_snapshot_to_models_or_wakes_watchers() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    let (flight, request) = fetch(begin(&mut client, false));
+    client
+        .finish_query_once(&flight, &succeeded(&request, "A", 1))
+        .unwrap();
+    // Newer authority, then a local edit, change the Model.
+    let plain = client.prepare_action("GetTodos", 1, args()).unwrap();
+    client
+        .apply_action_response(&plain, &succeeded(&plain, "B", 5))
+        .unwrap();
+    client
+        .transaction(|tx| {
+            tx.direct(Operation {
+                model: "Todo".into(),
+                op: OperationKind::Update,
+                identity: json!({"id":"a"}),
+                values: Some(json!({"title":"C"})),
+            })
+        })
+        .unwrap();
+    let watcher = client.watch(["Todo".to_string()].into());
+    let generation = client.generation();
+    assert_eq!(cached(begin(&mut client, false)), titled("A"));
+    assert_eq!(todo_title(&mut client), Some(json!("C")));
+    assert_eq!(client.generation(), generation, "a hit commits nothing");
+    assert!(watcher.try_recv().is_err());
+    assert_eq!(
+        client
+            .record_stamp(&RecordKey {
+                model: "Todo".into(),
+                identity: json!({"id":"a"}),
+            })
+            .unwrap(),
+        5
+    );
+}
+
+#[test]
+fn store_variants_do_not_satisfy_each_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    let no_store = QueryOnceOptions {
+        store: ActionStore::None,
+        refresh: false,
+    };
+    let (flight, request) = fetch(
+        client
+            .begin_query_once("GetTodos", 1, &args(), &no_store)
+            .unwrap(),
+    );
+    assert_eq!(request.call.store, ActionStore::None);
+    let response = json!({"completion":{"callId":request.call.call_id,"outcome":{"status":"succeeded","result":titled("A")}},"records":[]});
+    client
+        .finish_query_once(&flight, response.to_string().as_bytes())
+        .unwrap();
+    assert_eq!(todo_title(&mut client), None, "store:false writes no Model");
+    // The complete snapshot is still persisted for the store:false variant.
+    assert_eq!(
+        cached(
+            client
+                .begin_query_once("GetTodos", 1, &args(), &no_store)
+                .unwrap()
+        ),
+        titled("A")
+    );
+    // A call that asks for Models is a different key: it must fetch.
+    fetch(begin(&mut client, false));
+}
+
+#[test]
+fn invalidation_fences_an_older_miss_without_disturbing_the_newer_flight() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    let (old, old_request) = fetch(begin(&mut client, false));
+    client
+        .invalidate_query_once("GetTodos", 1, &args())
+        .unwrap();
+    let (new, new_request) = fetch(begin(&mut client, false));
+    assert_ne!(new, old, "a new generation never joins the older request");
+    // The older request still completes for its callers and applies its
+    // stamped authority, but cannot repopulate the invalidated key.
+    let report = client
+        .finish_query_once(&old, &succeeded(&old_request, "OLD", 1))
+        .unwrap();
+    assert_eq!(report.completions[0].call_id, old_request.call.call_id);
+    assert_eq!(todo_title(&mut client), Some(json!("OLD")));
+    assert_eq!(saved(&mut client), None);
+    // The newer flight is still joinable and saves.
+    assert_eq!(
+        begin(&mut client, false),
+        QueryOnce::Join {
+            flight_id: new.clone()
+        }
+    );
+    client
+        .finish_query_once(&new, &succeeded(&new_request, "NEW", 2))
+        .unwrap();
+    assert_eq!(cached(begin(&mut client, false)), titled("NEW"));
+}
+
+#[test]
+fn an_older_failure_cannot_release_a_newer_flight() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    let (old, _) = fetch(begin(&mut client, false));
+    client
+        .invalidate_query_once("GetTodos", 1, &args())
+        .unwrap();
+    let (new, _) = fetch(begin(&mut client, false));
+    assert!(client.fail_query_once(&old));
+    assert_eq!(
+        begin(&mut client, false),
+        QueryOnce::Join {
+            flight_id: new.clone()
+        }
+    );
+}
+
+#[test]
+fn invalidation_during_a_refresh_leaves_the_key_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    let (first, request) = fetch(begin(&mut client, false));
+    client
+        .finish_query_once(&first, &succeeded(&request, "A", 1))
+        .unwrap();
+    let (refresh, refresh_request) = fetch(begin(&mut client, true));
+    client
+        .invalidate_query_once("GetTodos", 1, &args())
+        .unwrap();
+    client
+        .finish_query_once(&refresh, &succeeded(&refresh_request, "B", 2))
+        .unwrap();
+    assert_eq!(saved(&mut client), None);
+    fetch(begin(&mut client, false));
+}
+
+#[test]
+fn a_failed_commit_leaves_neither_snapshot_nor_authority() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut client = open(&path);
+    let (flight, request) = fetch(begin(&mut client, false));
+    // Real SQLite refuses the cache write inside the same transaction as
+    // the authority it would commit with.
+    SqliteStore::open(&path)
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER refuse_cache BEFORE INSERT ON axton_query_cache BEGIN SELECT RAISE(ABORT, 'cache refused'); END",
+        )
+        .unwrap();
+    let error = client
+        .finish_query_once(&flight, &succeeded(&request, "A", 1))
+        .unwrap_err();
+    assert!(error.to_string().contains("cache refused"), "{error}");
+    assert_eq!(todo_title(&mut client), None, "authority rolled back");
+    assert_eq!(saved(&mut client), None);
+    // The flight is released; a retry is a new request.
+    let (retry, retry_request) = fetch(begin(&mut client, false));
+    assert_ne!(retry, flight);
+    SqliteStore::open(&path)
+        .unwrap()
+        .execute_batch("DROP TRIGGER refuse_cache")
+        .unwrap();
+    client
+        .finish_query_once(&retry, &succeeded(&retry_request, "A", 1))
+        .unwrap();
+    assert_eq!(todo_title(&mut client), Some(json!("A")));
+    assert_eq!(cached(begin(&mut client, false)), titled("A"));
+}
+
+#[test]
+fn a_plain_result_with_no_records_is_saved_in_its_own_transaction() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
+    let decision = client
+        .begin_query_once("Ping", 1, &json!({}), &once(false))
+        .unwrap();
+    let (flight, request) = fetch(decision);
+    let generation = client.generation();
+    let response = json!({"completion":{"callId":request.call.call_id,"outcome":{"status":"succeeded","result":null}},"records":[]});
+    client
+        .finish_query_once(&flight, response.to_string().as_bytes())
+        .unwrap();
+    assert!(client.generation() > generation, "committed locally");
+    assert_eq!(
+        cached(
+            client
+                .begin_query_once("Ping", 1, &json!({}), &once(false))
+                .unwrap()
+        ),
+        Value::Null
+    );
+}
+
+#[test]
+fn a_malformed_snapshot_is_invalidated_and_missed_but_read_errors_surface() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut client = open(&path);
+    let (flight, request) = fetch(begin(&mut client, false));
+    client
+        .finish_query_once(&flight, &succeeded(&request, "A", 1))
+        .unwrap();
+    let before = {
+        let k = key(&client, args(), ActionStore::All);
+        client.query_cache_entry(&k).unwrap().unwrap().generation
+    };
+    SqliteStore::open(&path)
+        .unwrap()
+        .execute_batch("UPDATE axton_query_cache SET result = '{\"todos\":7}'")
+        .unwrap();
+    fetch(begin(&mut client, false));
+    let k = key(&client, args(), ActionStore::All);
+    let entry = client.query_cache_entry(&k).unwrap().unwrap();
+    assert_eq!(entry.result, None);
+    assert_ne!(entry.generation, before);
+    drop(client);
+    let mut client = open(&path);
+    SqliteStore::open(&path)
+        .unwrap()
+        .execute_batch("DROP TABLE axton_query_cache")
+        .unwrap();
+    assert!(
+        client
+            .begin_query_once("GetTodos", 1, &args(), &once(false))
+            .is_err(),
+        "a database failure is an error, not a miss"
+    );
+}
+
+#[test]
+fn saved_results_survive_reopen_but_active_flights_do_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut client = open(&path);
+    let (flight, request) = fetch(begin(&mut client, false));
+    client
+        .finish_query_once(&flight, &succeeded(&request, "A", 1))
+        .unwrap();
+    let mut other = args();
+    other["tags"] = json!([]);
+    let pending = client
+        .begin_query_once("GetTodos", 1, &other, &once(false))
+        .unwrap();
+    let (pending, _) = fetch(pending);
+    drop(client);
+    let mut client = open(&path);
+    assert_eq!(cached(begin(&mut client, false)), titled("A"));
+    // The unfinished request was not durable work: a new request is needed.
+    let (fresh, _) = fetch(
+        client
+            .begin_query_once("GetTodos", 1, &other, &once(false))
+            .unwrap(),
+    );
+    assert_ne!(fresh, pending);
+    assert!(
+        client.finish_query_once(&pending, b"{}").is_err(),
+        "a flight of the closed runtime matches nothing"
+    );
+    assert_eq!(client.pending_count().unwrap(), 0);
+}

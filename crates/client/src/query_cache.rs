@@ -7,13 +7,86 @@
 //! applied to Models: a hit returns the saved result and writes nothing.
 use crate::engine::Engine;
 use crate::store::ClientStore;
-use crate::{Client, schema_store};
+use crate::{ActionCallOptions, ApplyReport, Client, schema_store};
 use axton_core::{
-    ActionStore, CallKind, Result, Schema, canonical_json, invalid, normalize_action_args,
-    validate_action_result,
+    ActionStore, CallKind, DirectActionRequest, DirectActionResponse, Result, Schema,
+    canonical_json, invalid, normalize_action_args, validate_action_result,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+
+/// Invocation controls of a direct Query `once` call.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QueryOnceOptions {
+    /// Which explicit Model outputs also update local Models. Part of the key.
+    pub store: ActionStore,
+    /// Always observe a new network outcome; replace the snapshot on success.
+    pub refresh: bool,
+}
+
+/// What a host does for one `once` call.
+#[derive(Clone, Debug)]
+pub enum QueryOnce {
+    /// A saved result: return it; no request, no Model write.
+    Cached { result: Value },
+    /// Wait for the host's shared outcome of an active request.
+    Join { flight_id: String },
+    /// Execute this exact direct request, then [`Client::finish_query_once`]
+    /// or [`Client::fail_query_once`] with the flight.
+    Fetch {
+        flight_id: String,
+        request: DirectActionRequest,
+    },
+}
+
+impl PartialEq for QueryOnce {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Cached { result: a }, Self::Cached { result: b }) => a == b,
+            (Self::Join { flight_id: a }, Self::Join { flight_id: b }) => a == b,
+            (
+                Self::Fetch {
+                    flight_id: a,
+                    request: x,
+                },
+                Self::Fetch {
+                    flight_id: b,
+                    request: y,
+                },
+            ) => a == b && x.encode().ok() == y.encode().ok(),
+            _ => false,
+        }
+    }
+}
+
+/// One active request: memory-only, never durable work.
+struct Flight {
+    key: QueryCacheKey,
+    /// The row generation the request saw; `None` when no row existed.
+    generation: Option<String>,
+    request: DirectActionRequest,
+}
+
+/// Active once requests of one open runtime, by flight ID, with a join
+/// index by (key, generation) so an invalidated generation and its
+/// successor can be in flight together.
+#[derive(Default)]
+pub(crate) struct QueryFlights {
+    flights: BTreeMap<String, Flight>,
+    joins: BTreeMap<(String, Option<String>), String>,
+}
+impl QueryFlights {
+    /// Retire exactly this flight and only its own join entry.
+    fn take(&mut self, flight_id: &str) -> Option<Flight> {
+        let flight = self.flights.remove(flight_id)?;
+        let join = (flight.key.key.clone(), flight.generation.clone());
+        if self.joins.get(&join).map(String::as_str) == Some(flight_id) {
+            self.joins.remove(&join);
+        }
+        Some(flight)
+    }
+}
 
 /// Revision of the key derivation and stored result encoding. Changing it
 /// makes every earlier row unreachable, like a contract change.
@@ -167,6 +240,15 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         Ok(true)
     }
+    /// Discard one row's result and change its generation.
+    pub(crate) fn invalidate_query_key(&mut self, key: &QueryCacheKey) -> Result<()> {
+        self.exec(
+            "axton_query_cache",
+            "UPDATE axton_query_cache SET result = NULL, generation = ? WHERE key = ?",
+            &[json!(uuid::Uuid::new_v4().to_string()), json!(key.key)],
+        )?;
+        Ok(())
+    }
     /// Clear the result and change the generation of every store variant of
     /// one Query argument set, and leave a fresh tombstone for each `extra`
     /// key (active requests with no row yet) so none of them can repopulate
@@ -254,11 +336,116 @@ impl<S: ClientStore> Client<S> {
         self.write(|engine| engine.save_query_result(key, generation, &result))
     }
     /// Invalidate every store variant of one Query argument set in the
-    /// current contract, in one local transaction. Needs no network.
+    /// current contract, in one local transaction. Needs no network. Active
+    /// requests of the older generation still complete for their callers
+    /// but can no longer save their result.
     pub fn invalidate_query_once(&mut self, name: &str, version: u64, args: &Value) -> Result<()> {
+        if self.session_active() {
+            return Err(invalid("client transaction active"));
+        }
         let key = self.query_cache_key(name, version, args, &ActionStore::All)?;
+        // Requests that began with no row get a tombstone too, so the
+        // generation they saw (none) no longer matches.
+        let unrowed: Vec<QueryCacheKey> = self
+            .query_flights
+            .flights
+            .values()
+            .filter(|flight| {
+                flight.generation.is_none()
+                    && flight.key.name == key.name
+                    && flight.key.version == key.version
+                    && flight.key.args == key.args
+            })
+            .map(|flight| flight.key.clone())
+            .collect();
         self.write(|engine| {
-            engine.invalidate_query_results(&key.contract, &key.name, key.version, &key.args, &[])
+            engine.invalidate_query_results(
+                &key.contract,
+                &key.name,
+                key.version,
+                &key.args,
+                &unrowed,
+            )
         })
+    }
+    /// Decide one `once` call: a valid saved result unless `refresh`, else
+    /// join the active request of the same key and generation, else start a
+    /// new one. Validation, the Query-only rule and the application
+    /// transaction guard apply before any cache access; a hit needs no
+    /// network. Database read failures are errors, never misses.
+    pub fn begin_query_once(
+        &mut self,
+        name: &str,
+        version: u64,
+        args: &Value,
+        options: &QueryOnceOptions,
+    ) -> Result<QueryOnce> {
+        if self.session_active() {
+            return Err(invalid("client transaction active"));
+        }
+        let key = self.query_cache_key(name, version, args, &options.store)?;
+        let mut entry = self.view(|engine| engine.query_cache_entry(&key))?;
+        if let Some(QueryCacheEntry {
+            result: Some(result),
+            ..
+        }) = &entry
+        {
+            let action = self.schema.action(name, version)?;
+            match validate_action_result(&self.schema, action, result) {
+                Ok(result) if !options.refresh => return Ok(QueryOnce::Cached { result }),
+                Ok(_) => {}
+                // A snapshot the current output contract refuses is
+                // discarded, and this call misses.
+                Err(_) => {
+                    self.write(|engine| engine.invalidate_query_key(&key))?;
+                    entry = self.view(|engine| engine.query_cache_entry(&key))?;
+                }
+            }
+        }
+        let generation = entry.map(|entry| entry.generation);
+        let join = (key.key.clone(), generation.clone());
+        if let Some(flight_id) = self.query_flights.joins.get(&join) {
+            return Ok(QueryOnce::Join {
+                flight_id: flight_id.clone(),
+            });
+        }
+        let request = self.prepare_action_with_options(
+            name,
+            version,
+            args.clone(),
+            ActionCallOptions {
+                store: options.store.clone(),
+            },
+        )?;
+        let flight_id = uuid::Uuid::new_v4().to_string();
+        self.query_flights.joins.insert(join, flight_id.clone());
+        self.query_flights.flights.insert(
+            flight_id.clone(),
+            Flight {
+                key,
+                generation,
+                request: request.clone(),
+            },
+        );
+        Ok(QueryOnce::Fetch { flight_id, request })
+    }
+    /// Complete a Fetch with the direct response to its exact request. The
+    /// flight is retired on every path. Authority is applied under the
+    /// existing stamp rules and, when the call succeeded and the key still
+    /// has the generation the request saw, the result is saved in the same
+    /// local transaction; nothing is exposed before that commit.
+    pub fn finish_query_once(&mut self, flight_id: &str, response: &[u8]) -> Result<ApplyReport> {
+        let flight = self
+            .query_flights
+            .take(flight_id)
+            .ok_or_else(|| invalid("unknown query once flight"))?;
+        let response = DirectActionResponse::decode(response, &flight.request, &self.schema)?;
+        self.apply_direct_response(response, Some((&flight.key, flight.generation.as_deref())))
+    }
+    /// Release a Fetch whose request produced no applicable response
+    /// (transport failure, close, cancellation). Returns whether it was
+    /// active; an older flight never releases a newer one.
+    pub fn fail_query_once(&mut self, flight_id: &str) -> bool {
+        self.query_flights.take(flight_id).is_some()
     }
 }

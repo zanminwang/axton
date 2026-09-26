@@ -26,6 +26,7 @@ pub use connection::*;
 pub use downlink_worker::*;
 pub use live::*;
 pub use query::{Direction, QueryOrder, QuerySpec};
+pub use query_cache::{QueryCacheEntry, QueryCacheKey, QueryOnce, QueryOnceOptions};
 pub use store::*;
 pub use subscriptions::{Initialization, SubscriptionState};
 pub use transport::*;
@@ -208,6 +209,8 @@ pub struct Client<S: ClientStore> {
     origin: Option<Origin<S>>,
     /// Fingerprint of `schema` partitioning saved Query results.
     query_contract: String,
+    /// Active Query once requests of this runtime; memory-only.
+    query_flights: query_cache::QueryFlights,
 }
 
 /// Where a client opened through [`Client::open_at`] came from: the path the
@@ -407,6 +410,7 @@ impl<S: ClientStore> Client<S> {
             schema_state: SchemaState::default(),
             origin: None,
             query_contract,
+            query_flights: Default::default(),
         })
     }
     /// Open the database the application names by `path`, choosing the file

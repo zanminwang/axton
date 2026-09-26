@@ -6,19 +6,13 @@
 //! no application transaction is open, so its reads use the committed reader
 //! and its writes own their own local transaction. The lane and direct-call
 //! commands (`connection`, `downlink`, `startSync`, `prepareAction`, …) keep
-//! their host-driven shape and read `now` / `entropy` from the command until
-//! the runtime owns those lifecycles in the later checkpoints of #134.
+//! their host-driven shape and read `now` / `entropy` from the command; the
+//! runtime owns those lifecycles now (`connect`, `invoke`,
+//! `runPrerequisites`), and checkpoint 4 of #134 deletes them.
+use super::lanes::Lanes;
 use crate::*;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-
-/// The connection lanes the runtime owns beside its client.
-#[derive(Default)]
-pub(super) struct Lanes {
-    cycle: SyncCycle,
-    connection: ConnectionDriver,
-    downlink: DownlinkWorker,
-}
 
 /// Execute one task command against the committed client.
 pub(super) fn execute<S: ClientStore + 'static>(

@@ -55,51 +55,80 @@
 //! outstanding effect, ends the observers and queues [`Event::RuntimeClosed`]
 //! last. After it, [`ClientRuntime::receive`] answers [`BridgeError::Closed`].
 //!
+//! # Connection lanes and effects
+//!
+//! A `connect` task records the connection intent and starts both lanes: the
+//! push lane (`ConnectionDriver` + `SyncCycle`) and the Downlink worker. From
+//! then on the runtime decides every request, retry, refresh, cancellation and
+//! report, and the host only executes effects: an HTTP post, a socket stream,
+//! a timer, a credential refresh, a prerequisite handler. An effect result is
+//! a fact; [`ClientRuntime::receive`] correlates it by `effectId` (a result for
+//! an id that is not outstanding is ignored: that is the fence for cancelled,
+//! duplicate and stale answers) and turns it into a *ready continuation* or a
+//! Downlink worker event without touching the database. [`ClientRuntime::step`]
+//! then runs one unit: the application transaction's own lane first, then it
+//! alternates between one ordinary task and one *lane unit* - a ready
+//! continuation (a receipt), else a
+//! Downlink pump, else a push-lane turn - so neither starves. Each unit holds
+//! at most one local transaction and none is held across an effect: prepare,
+//! effect and apply are three units. Every ordinary task or continuation that
+//! committed wakes both lanes, as the SDKs' `work`/`channels` events did.
+//!
 //! # Module layout
 //!
 //! - [`protocol`]: the envelopes shared with every SDK.
-//! - `tasks`: the task table, the queues, request correlation and close.
+//! - `tasks`: the task table, the queues, request correlation, scheduling and
+//!   close.
 //! - `transactions`: the active transaction, its capability tokens, savepoint
 //!   stack, failure accounting and the callback effect.
+//! - `effects`: the effect table, result correlation, ready continuations and
+//!   the one credential refresh the lanes share.
+//! - `lanes`: the connection intent, its controls, the push lane and the
+//!   Downlink worker as runtime work.
 //! - `commands`: the command set: the local reads, writes, Scope, status and
-//!   sync commands executed against the client. While the checkpoints of #134
-//!   land, the lane and direct-call commands of the former `RuntimeHost`
-//!   remain here as tasks; the runtime replaces them with owned lifecycles
-//!   and effects in its later checkpoints.
+//!   sync commands executed against the client. The former host-driven lane
+//!   commands (`connection` lifecycle events, `downlink`, `startSync`,
+//!   `next`, `complete`, …) still execute for one more checkpoint of #134 and
+//!   are refused while a runtime-owned connection is active.
 mod commands;
+mod effects;
+mod lanes;
 pub mod protocol;
 mod tasks;
 mod transactions;
 
 pub use protocol::*;
 
-use crate::{Client, ClientStore, Result, Schema, StoreFactory};
+use crate::{Client, ClientStore, DownlinkEvent, Result, Schema, StoreFactory};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 
 /// One open client and everything the runtime decided about it. See the
 /// module documentation for the contract of the three driving calls.
 pub struct ClientRuntime<S: ClientStore> {
     client: Client<S>,
-    lanes: commands::Lanes,
+    lanes: lanes::Lanes,
+    /// The runtime-owned connection: its intent, lane effects and credential
+    /// refresh. `None` until `connect` and after `stop`.
+    connection: Option<lanes::Connection>,
     tasks: tasks::Tasks,
     transaction: Option<transactions::Transaction>,
-    /// Every effect the host may still answer, by id. Checkpoint 1 issues only
-    /// callback effects, answered by [`Input::CallbackResult`]; the table is
-    /// what later effects correlate and fence against.
-    effects: BTreeMap<String, EffectKind>,
+    /// Every effect the host may still answer, by id, and what it was issued
+    /// for. A result for an id that is not here is ignored.
+    effects: BTreeMap<String, effects::EffectKind>,
+    /// Effect results turned into local work, one unit each, in arrival order.
+    ready: VecDeque<effects::Ready>,
+    /// Downlink worker events admitted since the last pump; fed to the worker
+    /// right before it pumps. The worker's own page queue is the bound.
+    inbox: VecDeque<DownlinkEvent>,
+    /// Whether the next step prefers a lane unit over an ordinary task.
+    lane_turn: bool,
     /// The one counter behind `transactionId`, `scope` and `effectId`: every
     /// identity the runtime issues is fresh for its lifetime.
     issued: u64,
     events: Vec<Event>,
     lifecycle: Lifecycle,
-}
-
-/// What an outstanding effect was issued for.
-enum EffectKind {
-    /// The application callback of the transaction this id names.
-    Callback,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -129,10 +158,14 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     pub fn new(client: Client<S>) -> Self {
         Self {
             client,
-            lanes: commands::Lanes::default(),
+            lanes: lanes::Lanes::default(),
+            connection: None,
             tasks: tasks::Tasks::default(),
             transaction: None,
             effects: BTreeMap::new(),
+            ready: VecDeque::new(),
+            inbox: VecDeque::new(),
+            lane_turn: false,
             issued: 0,
             events: vec![],
             lifecycle: Lifecycle::Open,
@@ -199,5 +232,13 @@ impl<S: ClientStore> ClientRuntime<S> {
     }
     fn report(&mut self, diagnostic: Diagnostic) {
         self.events.push(Event::Report { diagnostic });
+    }
+    fn error(&mut self, message: impl Into<String>) {
+        self.report(Diagnostic::Error {
+            message: message.into(),
+        });
+    }
+    fn signal(&mut self, signal: Value) {
+        self.events.push(Event::LaneSignal { signal });
     }
 }

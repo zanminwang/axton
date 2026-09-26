@@ -316,7 +316,7 @@ fn callback_failure_rolls_back_and_stale_or_late_messages_join_nothing() {
         json!({"type":"callbackResult","effectId":a.effect,"transactionId":"tx999","ok":true}),
     )
     .unwrap();
-    // So is any effect result: this checkpoint issues only callback effects.
+    // So is an effect result for the callback: only `callbackResult` ends it.
     h.submit(json!({"type":"effectResult","effectId":a.effect,"outcome":{"ok":true,"value":null}}))
         .unwrap();
     assert_eq!(h.run(), Vec::<Value>::new());

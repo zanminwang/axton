@@ -34,6 +34,15 @@
     {"type":"report","diagnostic":{"kind":"error","message":"socket closed"}},
     {"type":"report","diagnostic":{"kind":"protocol","message":"duplicate request id 42"}},
     {"type":"changed","tables":["Todo"]},
+    {"type":"laneSignal","signal":{"lane":"opened","epoch":1}},
+    {"type":"laneSignal","signal":{"lane":"ended","epoch":1}},
+    {"type":"laneSignal","signal":{"lane":"paused"}},
+    {"type":"laneSignal","signal":{"lane":"resumed"}},
+    {"type":"laneSignal","signal":{"lane":"stopped"}},
+    {"type":"laneSignal","signal":{"lane":"requests","outstanding":1}},
+    {"type":"laneSignal","signal":{"lane":"acknowledged","scopes":["book"]}},
+    {"type":"laneSignal","signal":{"lane":"changed","scopes":["book"]}},
+    {"type":"laneSignal","signal":{"lane":"bootstrap","run":{"scope":"book","subscriptionId":1,"state":"catching_up","run":1,"cursor":7,"barrier":9,"error":null}}},
     {"type":"runtimeClosed"}
   ]
 }

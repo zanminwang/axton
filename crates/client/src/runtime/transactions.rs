@@ -56,7 +56,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         if let Err(e) = self.client.begin_session() {
             return self.complete(request_id, Err(e.to_string()));
         }
-        self.effects.insert(effect_id.clone(), EffectKind::Callback);
+        self.effects
+            .insert(effect_id.clone(), effects::EffectKind::Callback);
         self.events.push(Event::Effect {
             effect_id: effect_id.clone(),
             operation: Operation::Callback {

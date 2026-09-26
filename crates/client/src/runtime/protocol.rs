@@ -200,6 +200,15 @@ pub enum Event {
     /// tables included). Until watch observers move into the runtime, the
     /// SDKs re-run their watched queries on it.
     Changed { tables: Vec<String> },
+    /// Transport state of the connection lanes for the SDK's subscription
+    /// status projection; no decision depends on it. Transitional: it goes
+    /// once subscription observers move into the runtime. `signal` is the
+    /// SDKs' `DownlinkSignal`: `{"lane":"opened"|"ended","epoch":n}`,
+    /// `{"lane":"paused"|"resumed"|"stopped"}`,
+    /// `{"lane":"requests","outstanding":n}`,
+    /// `{"lane":"acknowledged"|"changed","scopes":[…]}` or
+    /// `{"lane":"bootstrap","run":{scope,subscriptionId,state,run,cursor,barrier,error}}`.
+    LaneSignal { signal: Value },
     /// The runtime is gone; nothing follows. The SDK drains it, releases its
     /// platform resources and detaches the carrier.
     RuntimeClosed,
@@ -217,8 +226,12 @@ pub enum Operation {
         transaction_id: String,
         request_id: String,
     },
-    /// `POST` `body` to the route; answer with the response text, or a
-    /// failure carrying the HTTP status when there was one.
+    /// `POST` `body` to the route: `push` is `/sync/mutations`, `pull` is
+    /// `/sync/pull`, `action` is `/sync/actions`. Answer `ok` with
+    /// `{"status": <HTTP status>, "body": <response text>}` (a bare string is
+    /// read as the body), or a failure carrying the HTTP status when there was
+    /// one: a non-2xx answer is a failure, and a 401 is what asks for a
+    /// credential refresh.
     Http { route: HttpRoute, body: String },
     /// Open the live socket, send `subscribe` once it is open, and stream its
     /// frames as [`SocketEvent`] results under this id until it closes or is
@@ -399,6 +412,12 @@ mod tests {
                 json!({"type":"changed","tables":["Todo"]}),
                 Event::Changed {
                     tables: vec!["Todo".into()],
+                },
+            ),
+            (
+                json!({"type":"laneSignal","signal":{"lane":"opened","epoch":3}}),
+                Event::LaneSignal {
+                    signal: json!({"lane":"opened","epoch":3}),
                 },
             ),
             (json!({"type":"runtimeClosed"}), Event::RuntimeClosed),

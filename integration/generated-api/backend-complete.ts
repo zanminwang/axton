@@ -14,6 +14,8 @@ export const handlers: Handlers<Tx> = {
   },
   async addBook({ input, changes, publish }) { changes.add(Book({ id: input.book.id })); publish({ channel: "c", records: [] }); },
   async addComment({ publish }) { publish({ channel: "c" }); },
+  // Handlers receive the client-expanded create: defaulted fields are present and required (#27).
+  async addDraft({ input, tx }) { const { id, created, body }: { id: string; created: Date; body: string } = input.draft; tx.rows.set(id, { created, body }); },
 };
 export const loaders: Loaders<Tx> = {
   entry: {
@@ -23,6 +25,7 @@ export const loaders: Loaders<Tx> = {
   async book({ ids }) { return ids.map(() => null); },
   async comment({ ids }) { return ids.map(() => null); },
   async counter({ ids }) { return ids.map(() => null); },
+  async draft({ ids }) { return ids.map(() => null); },
 };
 export const backend = createBackend<Tx>({
   database: { transaction: async (body) => body({ rows: new Map() }), persistence: () => ({ call: async () => null }) },

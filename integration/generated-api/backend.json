@@ -35,6 +35,7 @@
     }
   ],
   "loaders": [
+    "Draft",
     "Entry",
     "Book",
     "Comment",
@@ -125,6 +126,72 @@
         "id"
       ],
       "name": "Counter",
+      "version": 1
+    },
+    {
+      "enums": [
+        {
+          "name": "Mood",
+          "values": [
+            "calm",
+            "busy"
+          ]
+        }
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "uuid"
+          }
+        },
+        {
+          "name": "body",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "mood",
+          "nullable": false,
+          "type": {
+            "kind": "enum",
+            "name": "Mood"
+          }
+        },
+        {
+          "name": "created",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "dateTime"
+          }
+        },
+        {
+          "name": "note",
+          "nullable": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "memo",
+          "nullable": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "identity": [
+        "id"
+      ],
+      "name": "Draft",
       "version": 1
     },
     {
@@ -360,6 +427,100 @@
           "cardinality": "single",
           "model": "Comment",
           "name": "comment",
+          "operation": "create"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "input": {
+        "enums": [
+          {
+            "name": "Mood",
+            "values": [
+              "calm",
+              "busy"
+            ]
+          }
+        ],
+        "models": [
+          {
+            "fields": [
+              {
+                "name": "id",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "uuid"
+                }
+              },
+              {
+                "name": "body",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              },
+              {
+                "name": "mood",
+                "nullable": false,
+                "type": {
+                  "kind": "enum",
+                  "name": "Mood"
+                }
+              },
+              {
+                "name": "created",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "dateTime"
+                }
+              },
+              {
+                "name": "note",
+                "nullable": true,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              },
+              {
+                "name": "memo",
+                "nullable": true,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "identity": [
+              "id"
+            ],
+            "name": "Draft"
+          }
+        ]
+      },
+      "knownFields": {
+        "Draft": [
+          "id",
+          "body",
+          "mood",
+          "created",
+          "note",
+          "memo"
+        ]
+      },
+      "name": "AddDraft",
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "slots": [
+        {
+          "cardinality": "single",
+          "model": "Draft",
+          "name": "draft",
           "operation": "create"
         }
       ],
@@ -828,6 +989,100 @@
         "input": {
           "enums": [
             {
+              "name": "Mood",
+              "values": [
+                "calm",
+                "busy"
+              ]
+            }
+          ],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "body",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "mood",
+                  "nullable": false,
+                  "type": {
+                    "kind": "enum",
+                    "name": "Mood"
+                  }
+                },
+                {
+                  "name": "created",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                },
+                {
+                  "name": "note",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "memo",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Draft"
+            }
+          ]
+        },
+        "knownFields": {
+          "Draft": [
+            "id",
+            "body",
+            "mood",
+            "created",
+            "note",
+            "memo"
+          ]
+        },
+        "name": "AddDraft",
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "slots": [
+          {
+            "cardinality": "single",
+            "model": "Draft",
+            "name": "draft",
+            "operation": "create"
+          }
+        ],
+        "version": 1
+      },
+      {
+        "input": {
+          "enums": [
+            {
               "name": "Status",
               "values": [
                 "active",
@@ -1171,6 +1426,13 @@
     ],
     "enums": [
       {
+        "name": "Mood",
+        "values": [
+          "calm",
+          "busy"
+        ]
+      },
+      {
         "name": "Status",
         "values": [
           "active",
@@ -1179,6 +1441,83 @@
       }
     ],
     "models": [
+      {
+        "fields": [
+          {
+            "createDefault": {
+              "kind": "uuid"
+            },
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "uuid"
+            }
+          },
+          {
+            "createDefault": {
+              "kind": "literal",
+              "value": "q 'single' \"double\" ''' \"\"\" $dollar ${x} \\ back\nline"
+            },
+            "name": "body",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "createDefault": {
+              "kind": "literal",
+              "value": "busy"
+            },
+            "name": "mood",
+            "nullable": false,
+            "type": {
+              "kind": "enum",
+              "name": "Mood"
+            }
+          },
+          {
+            "createDefault": {
+              "kind": "now"
+            },
+            "name": "created",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "createDefault": {
+              "kind": "literal",
+              "value": "n"
+            },
+            "name": "note",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "memo",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Draft",
+        "relations": [],
+        "unique": [],
+        "version": 1
+      },
       {
         "fields": [
           {
@@ -1430,6 +1769,72 @@
           "id"
         ],
         "name": "Counter",
+        "version": 1
+      },
+      {
+        "enums": [
+          {
+            "name": "Mood",
+            "values": [
+              "calm",
+              "busy"
+            ]
+          }
+        ],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "uuid"
+            }
+          },
+          {
+            "name": "body",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "mood",
+            "nullable": false,
+            "type": {
+              "kind": "enum",
+              "name": "Mood"
+            }
+          },
+          {
+            "name": "created",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "name": "note",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "memo",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Draft",
         "version": 1
       },
       {

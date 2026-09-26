@@ -5,13 +5,77 @@ export interface WritePort extends ReadPort { direct(operation:object):Promise<v
 export interface LivePort extends WritePort { watch(model:string,where:Record<string,unknown>,listener:(rows:Record<string,unknown>[])=>void,onError?:(error:unknown)=>void):()=>void; syncState(model:string,identity:object):Promise<unknown>; }
 export interface CallPort { invokeAction<T>(name:string,version:number,args:object,decode:(value:unknown)=>T,options?:CallOptions):Promise<Call<T>>; invokeDirectAction<T>(name:string,version:number,args:object,decode:(value:unknown)=>T,options?:CallOptions):Promise<T>; }
 export interface MutatePort { mutate(value:object):Promise<number>; }
-export const schema = {"actions":[],"clientPolicies":[{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Book"}]},"knownFields":{"Book":["id","title"]},"name":"AddBook","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"single","model":"Book","name":"book","operation":"create"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"bookId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Comment"}]},"knownFields":{"Comment":["id","bookId","text"]},"name":"AddComment","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"single","model":"Comment","name":"comment","operation":"create"}],"version":1},{"input":{"enums":[{"name":"Status","values":["active","archived"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"tags","nullable":false,"type":{"element":{"kind":"scalar","name":"string"},"kind":"list"}},{"name":"status","nullable":false,"type":{"kind":"enum","name":"Status"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"CreateEntry","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"single","model":"Entry","name":"entry","operation":"create"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"EditEntry","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"allowedPatchFields":["title"],"cardinality":"single","model":"Entry","name":"target","operation":"update"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"EditEntry","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"allowedPatchFields":["title","note","at"],"cardinality":"single","model":"Entry","name":"entry","operation":"update"}],"version":2},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"RemoveEntries","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"list","model":"Entry","name":"entries","operation":"delete"},{"cardinality":"optional","model":"Entry","name":"maybe","operation":"delete"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"RemoveEntries","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"list","model":"Entry","name":"entries","operation":"delete"},{"allowedPatchFields":["note"],"cardinality":"optional","model":"Entry","name":"maybe","operation":"update"}],"version":2}],"enums":[{"name":"Status","values":["active","archived"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"tags","nullable":false,"type":{"element":{"kind":"scalar","name":"string"},"kind":"list"}},{"name":"status","nullable":false,"type":{"kind":"enum","name":"Status"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":2},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Book","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"bookId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Comment","relations":[{"fields":["bookId"],"name":"book","onDelete":"delete","target":"Book","targetFields":["id"]}],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"index","nullable":true,"type":{"kind":"scalar","name":"int"}}],"identity":["id"],"name":"Counter","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Book","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"bookId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Comment","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"index","nullable":true,"type":{"kind":"scalar","name":"int"}}],"identity":["id"],"name":"Counter","version":1},{"enums":[{"name":"Status","values":["active","archived"]}],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"status","nullable":false,"type":{"kind":"enum","name":"Status"}}],"identity":["id"],"name":"Entry","version":1},{"enums":[{"name":"Status","values":["active","archived"]}],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"tags","nullable":false,"type":{"element":{"kind":"scalar","name":"string"},"kind":"list"}},{"name":"status","nullable":false,"type":{"kind":"enum","name":"Status"}}],"identity":["id"],"name":"Entry","version":2}]} as const;
-export type MutationName = 'AddBook'|'AddComment'|'CreateEntry'|'EditEntry'|'RemoveEntries';
+export const schema = {"actions":[],"clientPolicies":[{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Book"}]},"knownFields":{"Book":["id","title"]},"name":"AddBook","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"single","model":"Book","name":"book","operation":"create"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"bookId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Comment"}]},"knownFields":{"Comment":["id","bookId","text"]},"name":"AddComment","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"single","model":"Comment","name":"comment","operation":"create"}],"version":1},{"input":{"enums":[{"name":"Mood","values":["calm","busy"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"body","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"mood","nullable":false,"type":{"kind":"enum","name":"Mood"}},{"name":"created","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"memo","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft"}]},"knownFields":{"Draft":["id","body","mood","created","note","memo"]},"name":"AddDraft","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"single","model":"Draft","name":"draft","operation":"create"}],"version":1},{"input":{"enums":[{"name":"Status","values":["active","archived"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"tags","nullable":false,"type":{"element":{"kind":"scalar","name":"string"},"kind":"list"}},{"name":"status","nullable":false,"type":{"kind":"enum","name":"Status"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"CreateEntry","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"single","model":"Entry","name":"entry","operation":"create"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"EditEntry","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"allowedPatchFields":["title"],"cardinality":"single","model":"Entry","name":"target","operation":"update"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"EditEntry","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"allowedPatchFields":["title","note","at"],"cardinality":"single","model":"Entry","name":"entry","operation":"update"}],"version":2},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"RemoveEntries","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"list","model":"Entry","name":"entries","operation":"delete"},{"cardinality":"optional","model":"Entry","name":"maybe","operation":"delete"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"RemoveEntries","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"list","model":"Entry","name":"entries","operation":"delete"},{"allowedPatchFields":["note"],"cardinality":"optional","model":"Entry","name":"maybe","operation":"update"}],"version":2}],"enums":[{"name":"Mood","values":["calm","busy"]},{"name":"Status","values":["active","archived"]}],"models":[{"fields":[{"createDefault":{"kind":"uuid"},"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"createDefault":{"kind":"literal","value":"q 'single' \"double\" ''' \"\"\" $dollar ${x} \\ back\nline"},"name":"body","nullable":false,"type":{"kind":"scalar","name":"string"}},{"createDefault":{"kind":"literal","value":"busy"},"name":"mood","nullable":false,"type":{"kind":"enum","name":"Mood"}},{"createDefault":{"kind":"now"},"name":"created","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"createDefault":{"kind":"literal","value":"n"},"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"memo","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"tags","nullable":false,"type":{"element":{"kind":"scalar","name":"string"},"kind":"list"}},{"name":"status","nullable":false,"type":{"kind":"enum","name":"Status"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":2},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Book","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"bookId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Comment","relations":[{"fields":["bookId"],"name":"book","onDelete":"delete","target":"Book","targetFields":["id"]}],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"index","nullable":true,"type":{"kind":"scalar","name":"int"}}],"identity":["id"],"name":"Counter","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Book","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"bookId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Comment","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"index","nullable":true,"type":{"kind":"scalar","name":"int"}}],"identity":["id"],"name":"Counter","version":1},{"enums":[{"name":"Mood","values":["calm","busy"]}],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"body","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"mood","nullable":false,"type":{"kind":"enum","name":"Mood"}},{"name":"created","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"memo","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","version":1},{"enums":[{"name":"Status","values":["active","archived"]}],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"status","nullable":false,"type":{"kind":"enum","name":"Status"}}],"identity":["id"],"name":"Entry","version":1},{"enums":[{"name":"Status","values":["active","archived"]}],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"tags","nullable":false,"type":{"element":{"kind":"scalar","name":"string"},"kind":"list"}},{"name":"status","nullable":false,"type":{"kind":"enum","name":"Status"}}],"identity":["id"],"name":"Entry","version":2}]} as const;
+export type MutationName = 'AddBook'|'AddComment'|'AddDraft'|'CreateEntry'|'EditEntry'|'RemoveEntries';
 export interface PendingMutation { ordinal:number; name:MutationName; phase:'queued'|'frozen'; prerequisites:{key:string;state:'ready'|'pending'|'failed'}[]; diverged?:boolean; }
 export interface Rejection { ordinal:number; code:string; [key:string]:unknown; }
 export interface SyncState { pending:PendingMutation[]; rejections:Rejection[]; }
+export type Mood = "calm" | "busy";
 /** @deprecated "archived": archive with RemoveEntries instead */
 export type Status = "active" | "archived";
+export interface Draft {
+ id: string;
+ body: string;
+ mood: Mood;
+ created: Date;
+ note: string | null;
+ memo: string | null;
+}
+export interface DraftIdentity {
+ id: string;
+}
+export interface DraftPatch {
+ body?: string;
+ mood?: Mood;
+ created?: Date;
+ note?: string | null;
+ memo?: string | null;
+}
+export interface DraftCreate {
+ id?: string;
+ body?: string;
+ mood?: Mood;
+ created?: Date;
+ note?: string | null;
+ memo: string | null;
+}
+export function decodeDraft(row:Record<string,unknown>):Draft { return {
+ id: row.id as string,
+ body: row.body as string,
+ mood: row.mood as Mood,
+ created: new Date(row.created as string),
+ note: row.note == null ? null : row.note as string,
+ memo: row.memo == null ? null : row.memo as string,
+}; }
+export function decodeDraftIdentity(row:Record<string,unknown>):DraftIdentity { return {
+ id: row.id as string,
+}; }
+export function encodeDraft(value:Draft):Record<string,unknown> { return {
+ id: value.id,
+ body: value.body,
+ mood: value.mood,
+ created: value.created.toISOString(),
+ note: value.note == null ? null : value.note,
+ memo: value.memo == null ? null : value.memo,
+}; }
+export function encodeDraftIdentity(value:DraftIdentity):Record<string,unknown> { return {
+ id: value.id,
+}; }
+export function encodeDraftPatch(value:DraftPatch):Record<string,unknown> { return {
+ ...(value.body !== undefined ? { body: value.body } : {}),
+ ...(value.mood !== undefined ? { mood: value.mood } : {}),
+ ...(value.created !== undefined ? { created: value.created.toISOString() } : {}),
+ ...(value.note !== undefined ? { note: value.note == null ? null : value.note } : {}),
+ ...(value.memo !== undefined ? { memo: value.memo == null ? null : value.memo } : {}),
+}; }
+export function encodeDraftWhere(value:Partial<Draft>):Record<string,unknown> { return {
+ ...(value.id !== undefined ? { id: value.id } : {}),
+ ...(value.body !== undefined ? { body: value.body } : {}),
+ ...(value.mood !== undefined ? { mood: value.mood } : {}),
+ ...(value.created !== undefined ? { created: value.created.toISOString() } : {}),
+ ...(value.note !== undefined ? { note: value.note == null ? null : value.note } : {}),
+ ...(value.memo !== undefined ? { memo: value.memo == null ? null : value.memo } : {}),
+}; }
 export interface Entry {
  id: string;
  title: string;
@@ -29,6 +93,14 @@ export interface EntryPatch {
  at?: Date;
  tags?: string[];
  status?: Status;
+}
+export interface EntryCreate {
+ id: string;
+ title: string;
+ note: string | null;
+ at: Date;
+ tags: string[];
+ status: Status;
 }
 export function decodeEntry(row:Record<string,unknown>):Entry { return {
  id: row.id as string,
@@ -77,6 +149,10 @@ export interface BookIdentity {
 export interface BookPatch {
  title?: string;
 }
+export interface BookCreate {
+ id: string;
+ title: string;
+}
 export function decodeBook(row:Record<string,unknown>):Book { return {
  id: row.id as string,
  title: row.title as string,
@@ -109,6 +185,11 @@ export interface CommentIdentity {
 export interface CommentPatch {
  bookId?: string;
  text?: string;
+}
+export interface CommentCreate {
+ id: string;
+ bookId: string;
+ text: string;
 }
 export function decodeComment(row:Record<string,unknown>):Comment { return {
  id: row.id as string,
@@ -147,6 +228,11 @@ export interface CounterPatch {
  /** @deprecated counters are not indexed */
  index?: number | null;
 }
+export interface CounterCreate {
+ id: string;
+ /** @deprecated counters are not indexed */
+ index: number | null;
+}
 export function decodeCounter(row:Record<string,unknown>):Counter { return {
  id: row.id as string,
  index: row.index == null ? null : row.index as number,
@@ -168,12 +254,63 @@ export function encodeCounterWhere(value:Partial<Counter>):Record<string,unknown
  ...(value.id !== undefined ? { id: value.id } : {}),
  ...(value.index !== undefined ? { index: value.index == null ? null : value.index } : {}),
 }; }
+export function encodeDraftCreate(value:DraftCreate):Record<string,unknown> { return {
+ ...(value.id !== undefined ? { id: value.id } : {}),
+ ...(value.body !== undefined ? { body: value.body } : {}),
+ ...(value.mood !== undefined ? { mood: value.mood } : {}),
+ ...(value.created !== undefined ? { created: value.created.toISOString() } : {}),
+ ...(value.note !== undefined ? { note: value.note == null ? null : value.note } : {}),
+ memo: value.memo == null ? null : value.memo,
+}; }
+export function encodeDraftCreateIdentity(value:DraftCreate):Record<string,unknown> { return {
+ ...(value.id !== undefined ? { id: value.id } : {}),
+}; }
+export function encodeEntryCreate(value:EntryCreate):Record<string,unknown> { return {
+ id: value.id,
+ title: value.title,
+ note: value.note == null ? null : value.note,
+ at: value.at.toISOString(),
+ tags: value.tags.map(e => e),
+ status: value.status,
+}; }
+export function encodeEntryCreateIdentity(value:EntryCreate):Record<string,unknown> { return {
+ id: value.id,
+}; }
+export function encodeBookCreate(value:BookCreate):Record<string,unknown> { return {
+ id: value.id,
+ title: value.title,
+}; }
+export function encodeBookCreateIdentity(value:BookCreate):Record<string,unknown> { return {
+ id: value.id,
+}; }
+export function encodeCommentCreate(value:CommentCreate):Record<string,unknown> { return {
+ id: value.id,
+ bookId: value.bookId,
+ text: value.text,
+}; }
+export function encodeCommentCreateIdentity(value:CommentCreate):Record<string,unknown> { return {
+ id: value.id,
+}; }
+export function encodeCounterCreate(value:CounterCreate):Record<string,unknown> { return {
+ id: value.id,
+ index: value.index == null ? null : value.index,
+}; }
+export function encodeCounterCreateIdentity(value:CounterCreate):Record<string,unknown> { return {
+ id: value.id,
+}; }
+export interface AddDraftArgs {
+ draft: DraftCreate;
+}
+export function AddDraft(args:AddDraftArgs) { const operations:object[] = [];
+ for (const value of [args.draft]) {
+ operations.push({ model:'Draft', op:'create', identity:encodeDraftCreateIdentity(value), values:encodeDraftPatch(value) }); }
+ return {name:'AddDraft',version:1,operations}; }
 export interface CreateEntryArgs {
- entry: Entry;
+ entry: EntryCreate;
 }
 export function CreateEntry(args:CreateEntryArgs) { const operations:object[] = [];
  for (const value of [args.entry]) {
- operations.push({ model:'Entry', op:'create', identity:encodeEntryIdentity(value), values:encodeEntryPatch(value) }); }
+ operations.push({ model:'Entry', op:'create', identity:encodeEntryCreateIdentity(value), values:encodeEntryPatch(value) }); }
  return {name:'CreateEntry',version:1,operations}; }
 export interface EditEntryArgs {
  entry: { identity:EntryIdentity; values:Pick<EntryPatch, "title" | "note" | "at"> };
@@ -194,25 +331,39 @@ export function RemoveEntries(args:RemoveEntriesArgs) { const operations:object[
  operations.push({ model:'Entry', op:'update', identity:encodeEntryIdentity(value.identity), values:encodeEntryPatch(value.values) }); }
  return {name:'RemoveEntries',version:2,operations}; }
 export interface AddBookArgs {
- book: Book;
+ book: BookCreate;
 }
 export function AddBook(args:AddBookArgs) { const operations:object[] = [];
  for (const value of [args.book]) {
- operations.push({ model:'Book', op:'create', identity:encodeBookIdentity(value), values:encodeBookPatch(value) }); }
+ operations.push({ model:'Book', op:'create', identity:encodeBookCreateIdentity(value), values:encodeBookPatch(value) }); }
  return {name:'AddBook',version:1,operations}; }
 export interface AddCommentArgs {
- comment: Comment;
+ comment: CommentCreate;
 }
 export function AddComment(args:AddCommentArgs) { const operations:object[] = [];
  for (const value of [args.comment]) {
- operations.push({ model:'Comment', op:'create', identity:encodeCommentIdentity(value), values:encodeCommentPatch(value) }); }
+ operations.push({ model:'Comment', op:'create', identity:encodeCommentCreateIdentity(value), values:encodeCommentPatch(value) }); }
  return {name:'AddComment',version:1,operations}; }
+export class DraftModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
+ async get(identity:DraftIdentity):Promise<Draft|null> { const row=await this.port.read('Draft',encodeDraftIdentity(identity)); return row===null ? null : decodeDraft(row); }
+ async query(options:{where?:Partial<Draft>;orderBy?:{field:'id' | 'body' | 'created' | 'note' | 'memo';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Draft[]> { return (await this.port.querySpec('Draft',{filter:encodeDraftWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeDraft); }
+}
+export class DraftTxModel<P extends WritePort=WritePort> extends DraftModel<P> {
+ create(value:DraftCreate):Promise<void> { return this.port.direct({model:'Draft',op:'create',identity:encodeDraftCreateIdentity(value),values:encodeDraftPatch(value)}); }
+ update(identity:DraftIdentity, patch:DraftPatch):Promise<void> { return this.port.direct({model:'Draft',op:'update',identity:encodeDraftIdentity(identity),values:encodeDraftPatch(patch)}); }
+ delete(identity:DraftIdentity):Promise<void> { return this.port.direct({model:'Draft',op:'delete',identity:encodeDraftIdentity(identity)}); }
+}
+export class DraftLiveModel extends DraftTxModel<LivePort> {
+ watch(options:{where?:Partial<Draft>}, listener:(rows:Draft[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Draft',encodeDraftWhere(options.where??{}),(rows)=>listener(rows.map(decodeDraft)),onError); }
+ /** This record's sync state: its pending mutations and retained rejections. Local only. */
+ async syncState(identity:DraftIdentity):Promise<SyncState> { return (await this.port.syncState('Draft',encodeDraftIdentity(identity))) as SyncState; }
+}
 export class EntryModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:EntryIdentity):Promise<Entry|null> { const row=await this.port.read('Entry',encodeEntryIdentity(identity)); return row===null ? null : decodeEntry(row); }
  async query(options:{where?:Partial<Omit<Entry, 'tags'>>;orderBy?:{field:'id' | 'title' | 'note' | 'at';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Entry[]> { return (await this.port.querySpec('Entry',{filter:encodeEntryWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeEntry); }
 }
 export class EntryTxModel<P extends WritePort=WritePort> extends EntryModel<P> {
- create(value:Entry):Promise<void> { return this.port.direct({model:'Entry',op:'create',identity:encodeEntryIdentity(value),values:encodeEntryPatch(value)}); }
+ create(value:EntryCreate):Promise<void> { return this.port.direct({model:'Entry',op:'create',identity:encodeEntryCreateIdentity(value),values:encodeEntryPatch(value)}); }
  update(identity:EntryIdentity, patch:EntryPatch):Promise<void> { return this.port.direct({model:'Entry',op:'update',identity:encodeEntryIdentity(identity),values:encodeEntryPatch(patch)}); }
  delete(identity:EntryIdentity):Promise<void> { return this.port.direct({model:'Entry',op:'delete',identity:encodeEntryIdentity(identity)}); }
 }
@@ -227,7 +378,7 @@ export class BookModel<P extends ReadPort=ReadPort> { readonly port:P; construct
  async comments(identity:BookIdentity):Promise<Comment[]> { return (await this.port.referencing('Book',encodeBookIdentity(identity),'Comment','book')).map(decodeComment); }
 }
 export class BookTxModel<P extends WritePort=WritePort> extends BookModel<P> {
- create(value:Book):Promise<void> { return this.port.direct({model:'Book',op:'create',identity:encodeBookIdentity(value),values:encodeBookPatch(value)}); }
+ create(value:BookCreate):Promise<void> { return this.port.direct({model:'Book',op:'create',identity:encodeBookCreateIdentity(value),values:encodeBookPatch(value)}); }
  update(identity:BookIdentity, patch:BookPatch):Promise<void> { return this.port.direct({model:'Book',op:'update',identity:encodeBookIdentity(identity),values:encodeBookPatch(patch)}); }
  delete(identity:BookIdentity):Promise<void> { return this.port.direct({model:'Book',op:'delete',identity:encodeBookIdentity(identity)}); }
 }
@@ -242,7 +393,7 @@ export class CommentModel<P extends ReadPort=ReadPort> { readonly port:P; constr
  async book(identity:CommentIdentity):Promise<Book|null> { const row=await this.port.related('Comment',encodeCommentIdentity(identity),'book'); return row===null?null:decodeBook(row); }
 }
 export class CommentTxModel<P extends WritePort=WritePort> extends CommentModel<P> {
- create(value:Comment):Promise<void> { return this.port.direct({model:'Comment',op:'create',identity:encodeCommentIdentity(value),values:encodeCommentPatch(value)}); }
+ create(value:CommentCreate):Promise<void> { return this.port.direct({model:'Comment',op:'create',identity:encodeCommentCreateIdentity(value),values:encodeCommentPatch(value)}); }
  update(identity:CommentIdentity, patch:CommentPatch):Promise<void> { return this.port.direct({model:'Comment',op:'update',identity:encodeCommentIdentity(identity),values:encodeCommentPatch(patch)}); }
  delete(identity:CommentIdentity):Promise<void> { return this.port.direct({model:'Comment',op:'delete',identity:encodeCommentIdentity(identity)}); }
 }
@@ -256,7 +407,7 @@ export class CounterModel<P extends ReadPort=ReadPort> { readonly port:P; constr
  async query(options:{where?:Partial<Counter>;orderBy?:{field:'id' | 'index';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Counter[]> { return (await this.port.querySpec('Counter',{filter:encodeCounterWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeCounter); }
 }
 export class CounterTxModel<P extends WritePort=WritePort> extends CounterModel<P> {
- create(value:Counter):Promise<void> { return this.port.direct({model:'Counter',op:'create',identity:encodeCounterIdentity(value),values:encodeCounterPatch(value)}); }
+ create(value:CounterCreate):Promise<void> { return this.port.direct({model:'Counter',op:'create',identity:encodeCounterCreateIdentity(value),values:encodeCounterPatch(value)}); }
  update(identity:CounterIdentity, patch:CounterPatch):Promise<void> { return this.port.direct({model:'Counter',op:'update',identity:encodeCounterIdentity(identity),values:encodeCounterPatch(patch)}); }
  delete(identity:CounterIdentity):Promise<void> { return this.port.direct({model:'Counter',op:'delete',identity:encodeCounterIdentity(identity)}); }
 }
@@ -268,14 +419,15 @@ export class CounterLiveModel extends CounterTxModel<LivePort> {
 export function makeMutations(_port:CallPort) { return { call: {} }; }
 export function makeQueries(_port:CallPort) { return { enqueue: {} }; }
 export class Mutate { readonly port:MutatePort; constructor(port:MutatePort) { this.port=port; }
+ addDraft(args:AddDraftArgs):Promise<number> { return this.port.mutate(AddDraft(args)); }
  createEntry(args:CreateEntryArgs):Promise<number> { return this.port.mutate(CreateEntry(args)); }
  editEntry(args:EditEntryArgs):Promise<number> { return this.port.mutate(EditEntry(args)); }
  removeEntries(args:RemoveEntriesArgs):Promise<number> { return this.port.mutate(RemoveEntries(args)); }
  addBook(args:AddBookArgs):Promise<number> { return this.port.mutate(AddBook(args)); }
  addComment(args:AddCommentArgs):Promise<number> { return this.port.mutate(AddComment(args)); }
 }
-export interface LiveModels { entry:EntryLiveModel; book:BookLiveModel; comment:CommentLiveModel; counter:CounterLiveModel; }
-export function liveModels(port:LivePort):LiveModels { return { entry:new EntryLiveModel(port), book:new BookLiveModel(port), comment:new CommentLiveModel(port), counter:new CounterLiveModel(port) }; }
-export interface TxModels { entry:EntryTxModel; book:BookTxModel; comment:CommentTxModel; counter:CounterTxModel; }
-export function txModels(port:WritePort):TxModels { return { entry:new EntryTxModel(port), book:new BookTxModel(port), comment:new CommentTxModel(port), counter:new CounterTxModel(port) }; }
+export interface LiveModels { draft:DraftLiveModel; entry:EntryLiveModel; book:BookLiveModel; comment:CommentLiveModel; counter:CounterLiveModel; }
+export function liveModels(port:LivePort):LiveModels { return { draft:new DraftLiveModel(port), entry:new EntryLiveModel(port), book:new BookLiveModel(port), comment:new CommentLiveModel(port), counter:new CounterLiveModel(port) }; }
+export interface TxModels { draft:DraftTxModel; entry:EntryTxModel; book:BookTxModel; comment:CommentTxModel; counter:CounterTxModel; }
+export function txModels(port:WritePort):TxModels { return { draft:new DraftTxModel(port), entry:new EntryTxModel(port), book:new BookTxModel(port), comment:new CommentTxModel(port), counter:new CounterTxModel(port) }; }
 export class GeneratedTransaction { readonly transaction:WritePort; readonly models:TxModels; constructor(transaction:WritePort) { this.transaction=transaction; this.models=txModels(transaction); } }

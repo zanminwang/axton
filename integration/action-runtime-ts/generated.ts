@@ -26,6 +26,13 @@ export interface TodoPatch {
  status?: Status;
  note?: string | null;
 }
+export interface TodoCreate {
+ id: string;
+ title: string;
+ at: Date;
+ status: Status;
+ note: string | null;
+}
 export function decodeTodo(row:Record<string,unknown>):Todo { return {
  id: row.id as string,
  title: row.title as string,
@@ -69,6 +76,10 @@ export interface MomentIdentity {
 export interface MomentPatch {
  title?: string;
 }
+export interface MomentCreate {
+ at: Date;
+ title: string;
+}
 export function decodeMoment(row:Record<string,unknown>):Moment { return {
  at: new Date(row.at as string),
  title: row.title as string,
@@ -90,12 +101,29 @@ export function encodeMomentWhere(value:Partial<Moment>):Record<string,unknown> 
  ...(value.at !== undefined ? { at: value.at.toISOString() } : {}),
  ...(value.title !== undefined ? { title: value.title } : {}),
 }; }
+export function encodeTodoCreate(value:TodoCreate):Record<string,unknown> { return {
+ id: value.id,
+ title: value.title,
+ at: value.at.toISOString(),
+ status: value.status,
+ note: value.note == null ? null : value.note,
+}; }
+export function encodeTodoCreateIdentity(value:TodoCreate):Record<string,unknown> { return {
+ id: value.id,
+}; }
+export function encodeMomentCreate(value:MomentCreate):Record<string,unknown> { return {
+ at: value.at.toISOString(),
+ title: value.title,
+}; }
+export function encodeMomentCreateIdentity(value:MomentCreate):Record<string,unknown> { return {
+ at: value.at.toISOString(),
+}; }
 export class TodoModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:TodoIdentity):Promise<Todo|null> { const row=await this.port.read('Todo',encodeTodoIdentity(identity)); return row===null ? null : decodeTodo(row); }
  async query(options:{where?:Partial<Todo>;orderBy?:{field:'id' | 'title' | 'at' | 'note';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Todo[]> { return (await this.port.querySpec('Todo',{filter:encodeTodoWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeTodo); }
 }
 export class TodoTxModel<P extends WritePort=WritePort> extends TodoModel<P> {
- create(value:Todo):Promise<void> { return this.port.direct({model:'Todo',op:'create',identity:encodeTodoIdentity(value),values:encodeTodoPatch(value)}); }
+ create(value:TodoCreate):Promise<void> { return this.port.direct({model:'Todo',op:'create',identity:encodeTodoCreateIdentity(value),values:encodeTodoPatch(value)}); }
  update(identity:TodoIdentity, patch:TodoPatch):Promise<void> { return this.port.direct({model:'Todo',op:'update',identity:encodeTodoIdentity(identity),values:encodeTodoPatch(patch)}); }
  delete(identity:TodoIdentity):Promise<void> { return this.port.direct({model:'Todo',op:'delete',identity:encodeTodoIdentity(identity)}); }
 }
@@ -109,7 +137,7 @@ export class MomentModel<P extends ReadPort=ReadPort> { readonly port:P; constru
  async query(options:{where?:Partial<Moment>;orderBy?:{field:'at' | 'title';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Moment[]> { return (await this.port.querySpec('Moment',{filter:encodeMomentWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeMoment); }
 }
 export class MomentTxModel<P extends WritePort=WritePort> extends MomentModel<P> {
- create(value:Moment):Promise<void> { return this.port.direct({model:'Moment',op:'create',identity:encodeMomentIdentity(value),values:encodeMomentPatch(value)}); }
+ create(value:MomentCreate):Promise<void> { return this.port.direct({model:'Moment',op:'create',identity:encodeMomentCreateIdentity(value),values:encodeMomentPatch(value)}); }
  update(identity:MomentIdentity, patch:MomentPatch):Promise<void> { return this.port.direct({model:'Moment',op:'update',identity:encodeMomentIdentity(identity),values:encodeMomentPatch(patch)}); }
  delete(identity:MomentIdentity):Promise<void> { return this.port.direct({model:'Moment',op:'delete',identity:encodeMomentIdentity(identity)}); }
 }
@@ -118,10 +146,8 @@ export class MomentLiveModel extends MomentTxModel<LivePort> {
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:MomentIdentity):Promise<SyncState> { return (await this.port.syncState('Moment',encodeMomentIdentity(identity))) as SyncState; }
 }
-export type TodoCreate = Todo;
 export type TodoUpdate<K extends keyof TodoPatch = keyof TodoPatch> = TodoIdentity & Partial<Pick<TodoPatch, K>>;
 export type TodoDelete = TodoIdentity;
-export type MomentCreate = Moment;
 export type MomentUpdate<K extends keyof MomentPatch = keyof MomentPatch> = MomentIdentity & Partial<Pick<MomentPatch, K>>;
 export type MomentDelete = MomentIdentity;
 export interface ChangeInput {
@@ -200,7 +226,7 @@ function encodePingInput(args:PingInput):Record<string,unknown> { return {
 }; }
 function decodePingOutput(_value:unknown):void { return undefined; }
 function encodePutInput(args:PutInput):Record<string,unknown> { return {
- todo: encodeTodo(args.todo),
+ todo: encodeTodoCreate(args.todo),
  when: args.when.toISOString(),
  statuses: args.statuses.map(e => e),
  note: args.note === null ? null : args.note,

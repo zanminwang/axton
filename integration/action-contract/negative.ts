@@ -1,7 +1,7 @@
 import * as actionBackend from "./backend.ts";
 import type { Call, GeneratedClient } from "./client.ts";
-import type { AddTodoInput, AddTodoOutput, Todo, TodoIdentity, TodoUpdate, ProjectIdentity, PingOutput } from './generated.ts';
-import type { AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, FindTodosHandlerOutput, LinkHandlerOutput, PingHandlerOutput, QueryContext, RemoveTodoHandlerOutput, Mutations, Queries, StateListHandlerOutput, StateListV1HandlerOutput } from './backend.ts';
+import type { AddTodoInput, AddTodoOutput, Note, NoteCreate, Todo, TodoIdentity, TodoUpdate, ProjectIdentity, PingOutput } from './generated.ts';
+import type { AddNotesInput as AddNotesHandlerInput, AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, FindTodosHandlerOutput, LinkHandlerOutput, PingHandlerOutput, QueryContext, RemoveTodoHandlerOutput, Mutations, Queries, StateListHandlerOutput, StateListV1HandlerOutput } from './backend.ts';
 
 declare const client: GeneratedClient;
 declare const concrete: GeneratedClient;
@@ -132,3 +132,15 @@ client.mutations.call.ping({}, { store: {} });
 client.queries.findTodos({ text: 'x', cursor: null }, { store: { nextCursor: false } });
 // @ts-expect-error Queued Query store maps reject unknown outputs.
 client.queries.enqueue.findTodos({ text: 'x', cursor: null }, { store: { missing: true } });
+// Creation defaults (#27): only client create inputs admit omission.
+// @ts-expect-error A field without a creation default is still required.
+const missingMemo: NoteCreate = {};
+// @ts-expect-error An omitted field is left out, not set to undefined.
+const undefinedTag: NoteCreate = { memo: null, tag: undefined };
+// @ts-expect-error The full Model type stays complete.
+const partialNote: Note = { memo: null };
+// @ts-expect-error A handler's create argument is the complete, expanded record.
+const partialHandlerArgs: AddNotesHandlerInput = { note: { memo: null }, many: [] };
+// @ts-expect-error Local create takes the same create input.
+client.models.note.create({ body: 'x' });
+void [missingMemo, undefinedTag, partialNote, partialHandlerArgs];

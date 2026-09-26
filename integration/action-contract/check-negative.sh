@@ -42,6 +42,9 @@ expected=(
   'invalid_assignment:61'
   'missing_required_argument:62'
   'undefined_getter:64'
+  'missing_required_argument:71'
+  'argument_type_not_assignable:72'
+  'argument_type_not_assignable:73'
 )
 failed=0
 for pair in "${expected[@]}"; do

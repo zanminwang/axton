@@ -1,5 +1,5 @@
 import type { Call, CallOutcome, GeneratedClient } from './client.ts';
-import type { OpenTodoOutput, AddTodoInput, AddTodoOutput, FindTodosOutput, TodoCreate, TodoUpdate, TodoDelete, TodoIdentity, ProjectIdentity, PingOutput } from './generated.ts';
+import type { NoteCreate, OpenTodoOutput, AddTodoInput, AddTodoOutput, FindTodosOutput, TodoCreate, TodoUpdate, TodoDelete, TodoIdentity, ProjectIdentity, PingOutput } from './generated.ts';
 import type { AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, FindTodosHandlerOutput, GetTodosV1HandlerOutput, MutationContext, PingHandlerOutput, QueryContext, RemoveTodoHandlerOutput, Mutations, Queries, Loaders, StateListHandlerOutput, StateListV1HandlerOutput } from './backend.ts';
 
 const created: TodoCreate = { id: 't', title: 'Task', state: 'open', note: null };
@@ -66,7 +66,15 @@ async function clientContract(client: GeneratedClient) {
   await client.queries.enqueue.getTodos({}, { store: true });
   await client.mutations.call.ping({}, { store: false });
   await client.mutations.deleteTodo({ todo: deletion }, { store: true });
-  void [status, final, removedId, noOutput, email, rows, suggestion, openOutcome, queuedOutcome];
+  // Creation defaults (#27): create inputs may omit defaulted fields, locally and in Mutations.
+  const draft: NoteCreate = { memo: null };
+  await client.models.note.create(draft);
+  await client.models.note.create({ memo: 'm', tag: null, pinned: true });
+  await client.transaction(tx => tx.models.note.create({ memo: null, at: new Date(0) }));
+  const saved = await client.mutations.call.addNotes({ note: draft, many: [{ memo: 'x' }, { id: 'given', memo: null }] });
+  const savedAt: Date = saved.saved.at;
+  await client.mutations.addNotes({ note: { memo: null }, maybe: null, many: [] });
+  void [status, final, removedId, noOutput, email, rows, suggestion, openOutcome, queuedOutcome, savedAt];
 }
 
 type Tx = { db: unknown };
@@ -88,6 +96,8 @@ const handlers: Mutations<Tx> = {
   // v1 of GetTodos stays a Mutation; its v2 is registered as a Query.
   getTodos: async ({ ctx }) => { ctx.changes.add({ model: 'Todo', identity: { id: 't' } }); return oldGetTodos; },
   stateList: { async v1() { return oldStateListOutput; }, async v2() { return stateListOutput; } },
+  // Handlers receive the expanded create: every defaulted field is present.
+  addNotes: async ({ args }) => { const id: string = args.note.id; const at: Date = args.note.at; const pinned: boolean = args.note.pinned; const tag: string | null = args.note.tag; const ids: string[] = args.many.map(n => n.id); void [at, pinned, tag, ids, args.maybe?.id]; return { saved: { id } }; },
 };
 const queries: Queries<Tx> = {
   findTodos: async ({ ctx, args }) => { void ctx.tx.db; void ctx.userId; void args.text; void args.cursor; return findOutput; },
@@ -96,5 +106,6 @@ const queries: Queries<Tx> = {
 const loaders: Loaders<Tx> = {
   todo: { async v1() { return []; }, async v2() { return []; } },
   project: async () => [],
+  note: async () => [],
 };
 void [handlers, queries, mutationContext, queryContext, loaders, clientContract, composite, oldInput, oldOutput, pingHandlerResult, removeHandlerResult, oldStateListOutput];

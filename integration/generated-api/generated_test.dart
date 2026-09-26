@@ -50,6 +50,46 @@ void main(){
    expect(await client.client.freeze(),isNotNull);
   }finally{await client.close();await temp.delete(recursive:true);}
  });
+ // Creation defaults ([#27](https://github.com/zanminwang/axton/issues/27)):
+ // the schema string survives embedding, and the native client fills only
+ // omitted fields of a fresh create, once, whether local or a mutation.
+ const tricky='q \'single\' "double" \'\'\' """ \$dollar \${x} \\ back\nline';
+ test('create defaults fill omitted fields and round-trip escaped strings',()async{
+  final draft=(schema['models'] as List).cast<Map<String,dynamic>>().singleWhere((m)=>m['name']=='Draft');
+  final body=(draft['fields'] as List).cast<Map<String,dynamic>>().singleWhere((f)=>f['name']=='body');
+  expect(body['createDefault'],{'kind':'literal','value':tricky});
+  expect(const DraftCreate(memo:null).toCreateRecord(),{'memo':null},reason:'omission is not encoded');
+  expect(const DraftCreate(memo:null,note:Present(null)).toCreateRecord(),{'note':null,'memo':null});
+  final temp=await Directory.systemTemp.createTemp('generated-api-defaults-');
+  final client=await GeneratedClient.open(path:'${temp.path}/state.sqlite',libraryPath:Platform.environment['AXTON_DART_LIBRARY'] ?? '../../target/debug/libaxton_dart.dylib');
+  try{
+   final before=DateTime.now().toUtc().subtract(const Duration(seconds:5));
+   await client.transaction((tx)async{
+    await tx.models.draft.create(const DraftCreate(memo:null));
+    await tx.models.draft.create(const DraftCreate(memo:'explicit',body:'mine',note:Present(null)));
+   });
+   await client.mutate.addDraft(draft:const DraftCreate(memo:'queued'));
+   final rows=await client.models.draft.query();
+   expect(rows.length,3);
+   final uuid=RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$');
+   expect(rows.map((r)=>r.id).toSet().length,3,reason:'each create generates its own id');
+   for(final row in rows){
+    expect(uuid.hasMatch(row.id),isTrue,reason:row.id);
+    expect(row.created.isAfter(before),isTrue);
+    expect(row.mood,Mood.busy);
+   }
+   final defaulted=rows.singleWhere((r)=>r.memo==null);
+   expect(defaulted.body,tricky);
+   expect(defaulted.note,'n');
+   final explicit=rows.singleWhere((r)=>r.memo=='explicit');
+   expect(explicit.body,'mine');
+   expect(explicit.note,isNull,reason:'an explicit null is kept, not defaulted');
+   // A complete record remains a valid create input.
+   final copy=Draft(id:'123e4567-e89b-42d3-a456-426614174001',body:'full',mood:Mood.calm,created:DateTime.utc(2020),note:null,memo:null);
+   await client.transaction((tx)=>tx.models.draft.create(copy));
+   expect((await client.models.draft.get(DraftIdentity(id:copy.id)))?.body,'full');
+  }finally{await client.close();await temp.delete(recursive:true);}
+ });
  // The generated Scope facade ([#150](https://github.com/zanminwang/axton/issues/150)):
  // one handle per registration, typed handle members, and the retained
  // `channels` spelling on that same ledger path.

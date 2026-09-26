@@ -22,6 +22,11 @@ export interface EntryPatch {
  text?: string;
  note?: string | null;
 }
+export interface EntryCreate {
+ id: string;
+ text: string;
+ note: string | null;
+}
 export function decodeEntry(row:Record<string,unknown>):Entry { return {
  id: row.id as string,
  text: row.text as string,
@@ -47,6 +52,14 @@ export function encodeEntryWhere(value:Partial<Entry>):Record<string,unknown> { 
  ...(value.text !== undefined ? { text: value.text } : {}),
  ...(value.note !== undefined ? { note: value.note == null ? null : value.note } : {}),
 }; }
+export function encodeEntryCreate(value:EntryCreate):Record<string,unknown> { return {
+ id: value.id,
+ text: value.text,
+ note: value.note == null ? null : value.note,
+}; }
+export function encodeEntryCreateIdentity(value:EntryCreate):Record<string,unknown> { return {
+ id: value.id,
+}; }
 export interface EditArgs {
  entry: { identity:EntryIdentity; values:Pick<EntryPatch, "text" | "note"> };
 }
@@ -59,7 +72,7 @@ export class EntryModel<P extends ReadPort=ReadPort> { readonly port:P; construc
  async query(options:{where?:Partial<Entry>;orderBy?:{field:'id' | 'text' | 'note';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Entry[]> { return (await this.port.querySpec('Entry',{filter:encodeEntryWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeEntry); }
 }
 export class EntryTxModel<P extends WritePort=WritePort> extends EntryModel<P> {
- create(value:Entry):Promise<void> { return this.port.direct({model:'Entry',op:'create',identity:encodeEntryIdentity(value),values:encodeEntryPatch(value)}); }
+ create(value:EntryCreate):Promise<void> { return this.port.direct({model:'Entry',op:'create',identity:encodeEntryCreateIdentity(value),values:encodeEntryPatch(value)}); }
  update(identity:EntryIdentity, patch:EntryPatch):Promise<void> { return this.port.direct({model:'Entry',op:'update',identity:encodeEntryIdentity(identity),values:encodeEntryPatch(patch)}); }
  delete(identity:EntryIdentity):Promise<void> { return this.port.direct({model:'Entry',op:'delete',identity:encodeEntryIdentity(identity)}); }
 }

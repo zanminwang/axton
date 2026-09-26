@@ -1,5 +1,153 @@
 {
   "actions": {
+    "AddNotes": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "body",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "pinned",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "boolean"
+                  }
+                },
+                {
+                  "name": "at",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                },
+                {
+                  "name": "tag",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "memo",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Note"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Note",
+            "name": "note",
+            "operation": "create"
+          },
+          {
+            "cardinality": "optional",
+            "kind": "model",
+            "model": "Note",
+            "name": "maybe",
+            "operation": "create"
+          },
+          {
+            "cardinality": "list",
+            "kind": "model",
+            "model": "Note",
+            "name": "many",
+            "operation": "create"
+          }
+        ],
+        "kind": "mutation",
+        "name": "AddNotes",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Note",
+            "modelReadVersion": 1,
+            "name": "note",
+            "source": {
+              "inputIdentity": "note"
+            }
+          },
+          {
+            "cardinality": "optional",
+            "kind": "model",
+            "model": "Note",
+            "modelReadVersion": 1,
+            "name": "maybe",
+            "source": {
+              "inputIdentity": "maybe"
+            }
+          },
+          {
+            "cardinality": "list",
+            "kind": "model",
+            "model": "Note",
+            "modelReadVersion": 1,
+            "name": "many",
+            "source": {
+              "inputIdentity": "many"
+            }
+          },
+          {
+            "cardinality": "single",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Note"
+            },
+            "kind": "model",
+            "model": "Note",
+            "modelReadVersion": 1,
+            "name": "saved",
+            "source": "handlerIdentity"
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      }
+    },
     "AddTodo": {
       "1": {
         "input": {

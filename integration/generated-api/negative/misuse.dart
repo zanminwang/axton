@@ -32,6 +32,12 @@ void misuse(GeneratedClient client, GeneratedTransaction tx, Entry row) {
   final Status old = Status.archived;
   final int? index = const Counter(id: 'c', index: 1).index;
   client.mutate.removeEntries(entries: const [], maybe: EntryIdentity(id: row.id));
+  // a create input still requires fields without a creation default
+  tx.models.draft.create(const DraftCreate());
+  // a defaulted nullable field distinguishes omission from null through Present
+  tx.models.draft.create(const DraftCreate(memo: null, note: 'plain'));
+  // the complete record stays complete: defaulted fields are still required
+  tx.models.draft.create(Draft(body: 'x', mood: Mood.calm, created: DateTime.utc(2020), note: null, memo: null));
 }
 
 // The Scope facade refuses the same misuse the TypeScript twin does

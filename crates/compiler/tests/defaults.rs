@@ -153,3 +153,148 @@ fn invalid_defaults_are_rejected_at_the_declaration() {
         assert!(line >= 2, "diagnostic names the declaration: {err}");
     }
 }
+
+const TYPED: &str = "enum Status { open closed }
+model Todo {
+  id String @default(uuid())
+  title String @default(\"\")
+  status Status @default(open)
+  createdAt DateTime @default(now())
+  note String? @default(\"n\")
+  memo String?
+  rank Int
+  @@id(id)
+}
+mutation AddTodo(todo Todo.create, maybe Todo.create?, many Todo.create[]) { saved Todo }
+";
+
+fn section<'a>(text: &'a str, start: &str) -> &'a str {
+    let from = text
+        .find(start)
+        .unwrap_or_else(|| panic!("missing {start}\n{text}"));
+    let rest = &text[from..];
+    &rest[..rest.find("\n}").map(|i| i + 2).unwrap_or(rest.len())]
+}
+
+#[test]
+fn typescript_create_inputs_make_only_defaulted_fields_optional() {
+    let config = compile(TYPED).unwrap();
+    let ts = axton_compiler::typescript(&config);
+    assert_eq!(
+        section(&ts, "export interface TodoCreate {"),
+        "export interface TodoCreate {\n id?: string;\n title?: string;\n status?: Status;\n createdAt?: Date;\n note?: string | null;\n memo: string | null;\n rank: number;\n}"
+    );
+    // The full record stays complete.
+    assert!(
+        section(&ts, "export interface Todo {").contains(" id: string;\n title: string;"),
+        "{ts}"
+    );
+    // Encoders omit missing fields instead of encoding undefined.
+    assert!(ts.contains("export function encodeTodoCreate(value:TodoCreate):Record<string,unknown> { return {\n ...(value.id !== undefined ? { id: value.id } : {}),"), "{ts}");
+    assert!(ts.contains(" ...(value.createdAt !== undefined ? { createdAt: value.createdAt.toISOString() } : {}),"), "{ts}");
+    assert!(ts.contains(" ...(value.note !== undefined ? { note: value.note == null ? null : value.note } : {}),"), "{ts}");
+    assert!(ts.contains(" rank: value.rank,\n}; }"), "{ts}");
+    assert!(ts.contains("export function encodeTodoCreateIdentity(value:TodoCreate):Record<string,unknown> { return {\n ...(value.id !== undefined ? { id: value.id } : {}),\n}; }"), "{ts}");
+    assert!(ts.contains(" create(value:TodoCreate):Promise<void> { return this.port.direct({model:'Todo',op:'create',identity:encodeTodoCreateIdentity(value),values:encodeTodoPatch(value)}); }"), "{ts}");
+    let input = section(&ts, "export interface AddTodoInput {");
+    assert!(
+        input.contains(" todo: TodoCreate;\n maybe?: TodoCreate | null;\n many: TodoCreate[];"),
+        "{input}"
+    );
+    assert!(ts.contains(" todo: encodeTodoCreate(args.todo),"), "{ts}");
+    assert!(
+        ts.contains(" many: args.many.map(value => encodeTodoCreate(value)),"),
+        "{ts}"
+    );
+    // Handlers receive the expanded, complete values.
+    let backend = axton_compiler::backend_typescript(&config, "@axton/server");
+    let handler = section(&backend, "export interface AddTodoInput {");
+    assert!(
+        handler.contains(" todo: Todo;\n maybe?: Todo | null;\n many: Todo[];"),
+        "{handler}"
+    );
+    assert!(!backend.contains("TodoCreate"), "{backend}");
+}
+
+#[test]
+fn dart_create_inputs_distinguish_omission_from_explicit_null() {
+    let config = compile(TYPED).unwrap();
+    let dart = axton_compiler::dart(&config);
+    assert!(
+        dart.contains(
+            "abstract interface class TodoCreateInput { Map<String,dynamic> toCreateRecord(); }"
+        ),
+        "{dart}"
+    );
+    assert!(
+        dart.contains("class Todo implements TodoCreateInput {"),
+        "{dart}"
+    );
+    let create = section(&dart, "class TodoCreate implements TodoCreateInput {");
+    for line in [
+        " final String? id;",
+        " final String? title;",
+        " final Status? status;",
+        " final DateTime? createdAt;",
+        " final Present<String?>? note;",
+        " final String? memo;",
+        " final int rank;",
+        " const TodoCreate({this.id,this.title,this.status,this.createdAt,this.note,required this.memo,required this.rank});",
+        " if (id != null) 'id': id!,",
+        " if (createdAt != null) 'createdAt': createdAt!.toUtc().toIso8601String(),",
+        " if (note != null) 'note': note!.value == null ? null : note!.value!,",
+        " 'memo': memo == null ? null : memo!,",
+        " 'rank': rank,",
+    ] {
+        assert!(create.contains(line), "{line}\n{create}");
+    }
+    // The client accepts either create input; handlers receive complete records.
+    assert!(dart.contains("required TodoCreateInput todo, TodoCreateInput? maybe, required List<TodoCreateInput> many"), "{dart}");
+    let input = section(&dart, "class AddTodoInput implements _DartActionRecord {");
+    assert!(
+        input.contains(" final Todo todo;\n final Todo? maybe;\n final List<Todo> many;"),
+        "{input}"
+    );
+    assert!(
+        dart.contains(" Future<void> create(TodoCreateInput value) {"),
+        "{dart}"
+    );
+    assert!(
+        !dart.contains("r'''"),
+        "the schema is embedded as an escaped string"
+    );
+}
+
+#[test]
+fn model_only_schemas_expose_create_inputs() {
+    let config = compile(
+        "model Note {\n id UUID @default(uuid())\n body String @default(\"\")\n @@id(id)\n}\n",
+    )
+    .unwrap();
+    let ts = axton_compiler::typescript(&config);
+    assert!(
+        ts.contains("export interface NoteCreate {\n id?: string;\n body?: string;\n}"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains(" create(value:NoteCreate):Promise<void>"),
+        "{ts}"
+    );
+    let dart = axton_compiler::dart(&config);
+    assert!(
+        dart.contains("class NoteCreate implements NoteCreateInput {"),
+        "{dart}"
+    );
+    assert!(
+        dart.contains(" Future<void> create(NoteCreateInput value) {"),
+        "{dart}"
+    );
+}
+
+#[test]
+fn generated_names_reserve_the_create_input_interface() {
+    let err =
+        compile("model Todo { id UUID @@id(id) }\nmodel TodoCreateInput { id UUID @@id(id) }\n")
+            .unwrap_err();
+    assert!(err.contains("TodoCreateInput"), "{err}");
+}

@@ -419,12 +419,14 @@ impl DownlinkWorker {
             dirty: running,
             ..Loading::default()
         };
+        // Paused included: its first pump then re-evaluates the barriers - a
+        // local read and at most a commit, never I/O - before `resume`.
         self.reopened = running;
         self.reset = true;
     }
 
     /// The next catch-up or historical request id: one id space, never reused.
-    fn allocate(&mut self) -> Result<u64> {
+    fn next_request(&mut self) -> Result<u64> {
         self.requests = allocate(self.requests, "downlink request id")?;
         Ok(self.requests)
     }
@@ -553,27 +555,45 @@ impl DownlinkWorker {
     ) -> Result<Vec<DownlinkAction>> {
         let mut actions = vec![];
         // The host abandons the old replica's I/O before it opens or requests
-        // anything for the new one.
-        if std::mem::take(&mut self.reset) {
+        // anything for the new one. A pump that fails drops what it collected,
+        // so the reset is owed to the next one.
+        let reset = std::mem::take(&mut self.reset);
+        if reset {
             actions.push(DownlinkAction::Reset);
         }
-        self.flush(&mut actions);
+        let pumped = self.advance(client, now, entropy, &mut actions);
+        if pumped.is_err() {
+            self.reset |= reset;
+        }
+        pumped.map(|()| actions)
+    }
+
+    /// The pump's body, after the reset: everything it decides is collected
+    /// into `actions`.
+    fn advance<S: ClientStore>(
+        &mut self,
+        client: &mut Client<S>,
+        now: u64,
+        entropy: u64,
+        actions: &mut Vec<DownlinkAction>,
+    ) -> Result<()> {
+        self.flush(actions);
         // A committed subscribe or unsubscribe invalidates the session: the
         // lane starts over with the new channel set, without backoff.
         if self.stale(client) {
             self.invalidate(now);
-            self.flush(&mut actions);
+            self.flush(actions);
         }
         // A lane that just started re-evaluates every persisted barrier before
         // it issues anything: a run whose delivery reached its barrier while
         // the client was closed completes without another request.
-        if std::mem::take(&mut self.reopened) && self.resume(client, &mut actions)? {
-            return Ok(actions);
+        if std::mem::take(&mut self.reopened) && self.resume(client, actions)? {
+            return Ok(());
         }
-        let committed = self.process(client, now, entropy, &mut actions)?;
-        self.flush(&mut actions);
-        self.barriers(client, &mut actions)?;
-        self.historical(client, now, entropy, committed, &mut actions)?;
+        let committed = self.process(client, now, entropy, actions)?;
+        self.flush(actions);
+        self.barriers(client, actions)?;
+        self.historical(client, now, entropy, committed, actions)?;
         // The two schedules are read together and answered with one sleep: the
         // load's next attempt is its own, so the socket's backoff must never
         // hold a page back ([#151](https://github.com/zanminwang/axton/issues/151)).
@@ -581,13 +601,13 @@ impl DownlinkWorker {
         let mut socket = None;
         if !self.session.open() {
             match self.driver.next(now) {
-                ConnectionAction::Sync => self.begin(client, now, &mut actions)?,
+                ConnectionAction::Sync => self.begin(client, now, actions)?,
                 ConnectionAction::Wait { millis } => socket = Some(millis),
                 ConnectionAction::Idle => {}
             }
         }
-        self.rest(load, socket, &mut actions);
-        Ok(actions)
+        self.rest(load, socket, actions);
+        Ok(())
     }
 
     /// When the historical schedule next wants a pump, in millis from `now`:
@@ -895,7 +915,7 @@ impl DownlinkWorker {
         let request = task.request(client.declared_models());
         let body = String::from_utf8(request.encode()?)
             .map_err(|_| invalid("a bootstrap request must be UTF-8"))?;
-        let id = self.allocate()?;
+        let id = self.next_request()?;
         self.loading.rotation = Some(task.state.scope.clone());
         self.bootstrap = Some(PendingBootstrap {
             id,
@@ -1009,7 +1029,7 @@ impl DownlinkWorker {
             return Ok(());
         };
         let request = PullRequest::decode(body.as_bytes())?;
-        let id = self.allocate()?;
+        let id = self.next_request()?;
         self.active = Some(Pending { id, request });
         actions.push(DownlinkAction::Request {
             request: id,

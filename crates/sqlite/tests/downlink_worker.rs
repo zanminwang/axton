@@ -527,6 +527,21 @@ fn a_rebuild_resets_a_running_lane_in_place_and_fences_what_the_old_replica_had_
     });
 
     rebuild(&mut lane);
+    // Delivered after the reset and before the first pump, while no new
+    // session or request exists yet: dropped all the same.
+    lane.enqueue(DownlinkEvent::Message {
+        epoch: first,
+        body: ack(&[("a", 5)]),
+    });
+    lane.enqueue(DownlinkEvent::Response {
+        request: pull,
+        body: text(&page("a", 3, 5, Some("racing pull"))),
+    });
+    lane.enqueue(DownlinkEvent::Response {
+        request: load,
+        body: loaded("a", 3, 5),
+    });
+    lane.enqueue(DownlinkEvent::Closed { epoch: first });
     let actions = lane.drain();
     assert_eq!(
         actions[0],
@@ -542,7 +557,11 @@ fn a_rebuild_resets_a_running_lane_in_place_and_fences_what_the_old_replica_had_
         "no old close, no old request: {actions:?}"
     );
     assert_eq!(lane.pump(), vec![], "the reset is announced once");
-    assert_eq!(lane.cursor("a"), None, "nothing queued applied");
+    assert_eq!(
+        lane.cursor("a"),
+        None,
+        "nothing queued before or after the reset applied"
+    );
     assert!(lane.client.read(&key()).unwrap().is_none());
     // Whatever the old socket and requests still deliver belongs to nothing.
     for stale in [
@@ -656,6 +675,45 @@ fn a_rebuild_keeps_a_paused_lane_paused_and_a_stopped_lane_stopped() {
     rebuild(&mut idle);
     assert_eq!(idle.drain(), vec![DownlinkAction::Reset]);
     assert_eq!(idle.send(DownlinkEvent::Wake), vec![], "never started");
+}
+
+/// A pump that fails after a rebuild does not lose the reset: whatever the
+/// failed pump had collected is dropped, so the next one announces it again,
+/// still before it opens anything
+/// ([#162](https://github.com/zanminwang/axton/issues/162)).
+#[test]
+fn a_pump_that_fails_after_a_rebuild_announces_the_reset_on_the_next_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::rebuildable(&dir.path().join("db"));
+    lane.saved("a", 0);
+    let (first, _) = opened(&lane.send(DownlinkEvent::Start)[0]);
+    let fresh = lane.client.rebuild(true).unwrap().new_file;
+    lane.worker.reset_for_rebuild();
+    // The first pump re-evaluates the persisted barriers of the fresh file,
+    // which it cannot read while the table is renamed away.
+    let mut other = axton_sqlite::SqliteStore::open(std::path::Path::new(&fresh)).unwrap();
+    other
+        .execute_batch("ALTER TABLE axton_subscription RENAME TO held")
+        .unwrap();
+    assert!(
+        lane.worker
+            .handle(&mut lane.client, DownlinkEvent::Next, lane.now, 500)
+            .is_err(),
+        "the pump fails after it took the reset"
+    );
+    other
+        .execute_batch("ALTER TABLE held RENAME TO axton_subscription")
+        .unwrap();
+    let actions = lane.drain();
+    assert_eq!(
+        actions[0],
+        DownlinkAction::Reset,
+        "the host still abandons the old I/O first: {actions:?}"
+    );
+    let (second, subscribe) = opened(&actions[1]);
+    assert!(second > first);
+    assert_eq!(subscribe.channels, ["a"]);
+    assert_eq!(lane.pump(), vec![], "and only once");
 }
 
 #[test]

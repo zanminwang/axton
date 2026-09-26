@@ -305,6 +305,14 @@ test("client close waits for in-flight connection setup and remains idempotent",
 });
 
 const settled = () => new Promise((r) => setTimeout(r, 10));
+/** Poll until `condition` holds; a real native client answers on its own schedule. */
+const eventually = async (condition, what) => {
+  const deadline = Date.now() + 5000;
+  while (!condition()) {
+    if (Date.now() > deadline) assert.fail(`${what} timed out`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+};
 /** A downlink lane over a scripted worker: every event is recorded, `next` answers the queued actions. */
 const downlinkLane = (answers, network = {}, options = {}, report) => {
   const events = [];
@@ -683,12 +691,13 @@ test("a rebuild wakes the sleeping downlink lane without another start", async (
       { url: "http://unused", token: "token" },
       { onError: (error) => reported.push(error) },
     );
-    await settled();
     // The lane opened its socket and is asleep with no timer: nothing but a
     // wake pumps it again.
-    assert.equal(sockets.length, 1);
-    const downlink = log.filter((entry) => entry.op === "downlink");
-    assert.deepEqual(downlink.at(-1), { op: "downlink", event: "next", actions: [] });
+    const lastPump = () => log.filter((entry) => entry.op === "downlink").at(-1);
+    await eventually(
+      () => sockets.length === 1 && lastPump()?.event === "next" && lastPump().actions.length === 0,
+      "the lane opened its socket and went idle",
+    );
     const asleep = log.length;
     await settled();
     assert.equal(log.length, asleep, "the lane sleeps until woken");
@@ -701,11 +710,12 @@ test("a rebuild wakes the sleeping downlink lane without another start", async (
     );
     log.splice(asleep);
     await client.rebuild({ discardPending: true });
-    await settled();
+    const woken = () =>
+      log.slice(asleep).find((entry) => entry.op === "downlink" && entry.event === "next");
+    await eventually(() => woken() && sockets.length === 2, "the rebuild woke the lane");
     const after = log.slice(asleep);
-    assert.equal(after[0].op, "rebuild", "the wake is serialized after the native rebuild");
-    const pump = after.find((entry) => entry.op === "downlink" && entry.event === "next");
-    assert.ok(pump, "the rebuild woke the lane");
+    assert.equal(after[0].op, "rebuild", "no lane command answers before the native rebuild");
+    const pump = woken();
     assert.equal(pump.actions[0].type, "reset", "the old I/O is abandoned first");
     assert.equal(pump.actions[1]?.type, "open", "the carried Channel is subscribed again");
     assert.ok(pump.actions[1].epoch > 1, "under a fresh epoch");

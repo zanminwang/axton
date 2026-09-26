@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import type { IncomingMessage, RequestListener, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket } from "ws";
-import type { HostRequest } from "./host-contract.mts";
+import type { HostRequest, SettlementEffects } from "./host-contract.mts";
 import { isRetryableTransactionError } from "./retryable.mts";
 export { WebSocket } from "ws";
 const require = createRequire(import.meta.url);
@@ -27,7 +27,7 @@ export type Native = {
     request: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
-  /** Settles a business change made outside a handler: the same `{changes, publications}` a handler answers with. */
+  /** Settles a business change made outside a handler: the same `{changes, memberships}` a handler answers with. */
   settleExternal(
     config: string,
     settlement: string,
@@ -710,42 +710,73 @@ export function createBackend<T>(options: BackendOptions<T>) {
     return { error: error instanceof Error ? error.message : String(error) };
   };
   /**
-   * The change set and publication intents one handler or one external
+   * The change set and membership intents one handler or one external
    * transaction body accumulates; `add` keeps one entry per (model, identity).
+   *
+   * Temporary serialization of the existing `publish` helper onto the
+   * settlement's membership intents, until the generated Channel API replaces
+   * it (#140): `publish({channel, records})` declares each named record a
+   * member of `channel`, and `publish({channel})` declares every record of the
+   * final change set a member, including records added after the call and an
+   * Action's input targets. The engine then publishes each newly added member
+   * once and every later change of a member; there is no implicit publication.
    */
   const collect = () => {
+    const key = (ref: RecordRef) =>
+      `${ref.model}\u0000${canonical(ref.identity)}`;
     const records: RecordRef[] = [];
     const seen = new Set<string>();
     const add = (ref: RecordRef) => {
-      const key = `${ref.model}\u0000${canonical(ref.identity)}`;
-      if (seen.has(key)) return;
-      seen.add(key);
+      if (seen.has(key(ref))) return;
+      seen.add(key(ref));
       records.push(ref);
     };
     const changes: Changes = {
       records,
       add: (record) => add(toRef(record, "changes.add")),
     };
-    const publications: { channel: string; records?: RecordRef[] }[] = [];
+    // An Action's input targets: the engine infers them as changes, so they
+    // stay out of `changes`, but `publish({channel})` still covers them.
+    const targets: RecordRef[] = [];
+    const publishCalls: { channel: string; records?: RecordRef[] }[] = [];
     const publish: Publish = ({ channel, records }) => {
       if (typeof channel !== "string" || channel === "")
         throw new Error("publish: channel must be a non-empty string");
       if (records === undefined) {
-        publications.push({ channel });
+        publishCalls.push({ channel });
         return;
       }
       if (!Array.isArray(records))
         throw new Error("publish: records must be an array");
-      publications.push({
+      publishCalls.push({
         channel,
         records: records.map((record) => toRef(record, "publish")),
+      });
+    };
+    const changeSet = () => {
+      const covered = new Set<string>();
+      return [...targets, ...records].filter((ref) => {
+        if (covered.has(key(ref))) return false;
+        covered.add(key(ref));
+        return true;
       });
     };
     return {
       changes,
       publish,
       seed: add,
-      settlement: () => ({ changes: [...records], publications }),
+      target: (ref: RecordRef) => targets.push(ref),
+      settlement: (): SettlementEffects => ({
+        changes: [...records] as SettlementEffects["changes"],
+        memberships: publishCalls.flatMap(({ channel, records: named }) =>
+          (named ?? changeSet()).map(({ model, identity }) => ({
+            channel,
+            model,
+            identity: identity as Record<string, unknown>,
+            present: true,
+          })),
+        ),
+      }),
     };
   };
   const host = (
@@ -839,6 +870,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
                 identityFields.map((field) => [field, record[field]]),
               );
               decodeActionRecord(record, model);
+              collected.target({ model: input.model!, identity });
               return tag(record, { model: input.model!, identity });
             };
             const value = args[input.name];
@@ -848,7 +880,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
                 : shape(value);
           }
           // A Query context has no effect capabilities at runtime either:
-          // its settlement never carries changes or publications.
+          // its settlement never carries changes or memberships.
           const query = (action.kind ?? "mutation") === "query";
           try {
             const outputs = await handler({
@@ -866,7 +898,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
             result = {
               outputs: outputs === undefined ? {} : outputs,
               ...(query
-                ? { changes: [], publications: [] }
+                ? { changes: [], memberships: [] }
                 : collected.settlement()),
             };
           } catch (error) {
@@ -1008,8 +1040,9 @@ export function createBackend<T>(options: BackendOptions<T>) {
   /**
    * Runs `body` in one application transaction with a handler's `changes` and
    * `publish`. After the body returns, the engine settles what it collected in
-   * the same transaction: one new stamp per changed record, publications at
-   * those stamps. After the driver commits, the live subscribers of every
+   * the same transaction: one new stamp per changed record, published at that
+   * stamp to each Channel it is a member of, and each newly added member
+   * published once. After the driver commits, the live subscribers of every
    * channel published to are woken; a failure rolls back and wakes nobody.
    * Not for use inside a handler, which already has a transaction.
    */

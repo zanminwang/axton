@@ -428,19 +428,19 @@ test('a handler that publishes nothing still returns readback records and touche
  assert.equal(await recordStamp('quiet-a'),1);assert.deepEqual(await invalidations('quiet-a'),[]);assert.equal(await count('axton_channel'),channels);
  const again=JSON.parse(await backend.push('alice',push('quiet',2,[mutation(2,'quiet','quiet-a')])));assert.deepEqual(again.records,[authority('quiet-a',2,{title:'quiet'})],'every successful change advances the stamp, published or not');
 });
-test('publish({channel}) publishes the final change set, an addition made after the call included',async()=>{
+test('publish({channel}) enrolls the final change set, an addition made after the call included; the addition is not caller authority',async()=>{
  const receipt=JSON.parse(await backend.push('alice',push('extra',1,[mutation(1,'extra','extra-a')])));
- assert.deepEqual(receipt.records,[authority('extra-a',1,{title:'extra'}),authority('extra-a-extra',1,{title:'extra too'})]);
+ assert.deepEqual(receipt.records,[authority('extra-a',1,{title:'extra'})],'only the uploaded target is read back');assert.equal(await recordStamp('extra-a-extra'),1,'the addition is still settled');
  assert.deepEqual((await invalidations('extra-a')).map(([channel,,stamp])=>[channel,stamp]),[['shared',1]]);assert.deepEqual((await invalidations('extra-a-extra')).map(([channel,,stamp])=>[channel,stamp]),[['shared',1]]);
 });
-test('explicit records publish only those, never join the change set, and are initialised at stamp 1 once',async()=>{
+test('explicit records publish only those, never join the change set, are initialised at stamp 1 once, and re-enrolling a member publishes nothing',async()=>{
  assert.equal(await recordStamp('pub-only'),null,'no metadata before the first publication');
  const first=JSON.parse(await backend.push('alice',push('pub-only',1,[mutation(1,'publish-only','pub-only-a')])));
  assert.deepEqual(first.records,[authority('pub-only-a',1,{title:'publish-only'})],'a published record is not a changed one');
  const other=await head('other');assert.deepEqual(await invalidations('pub-only'),[['other',other,1]]);assert.equal(await recordStamp('pub-only'),1,'first publication initialises the stamp');
  const second=JSON.parse(await backend.push('alice',push('pub-only',2,[mutation(2,'publish-only','pub-only-b')])));
  assert.deepEqual(second.records,[authority('pub-only-b',1,{title:'publish-only'})]);
- assert.equal(await head('other'),other+1,'the channel head advanced');assert.deepEqual(await invalidations('pub-only'),[['other',other+1,1]],'the invalidation moved to the new cursor at the same stamp');assert.equal(await recordStamp('pub-only'),1,'publishing an unchanged record never advances it');
+ assert.equal(await head('other'),other,'an existing unchanged member is not published again');assert.deepEqual(await invalidations('pub-only'),[['other',other,1]],'the invalidation keeps its cursor');assert.equal(await recordStamp('pub-only'),1,'enrolling an unchanged record never advances it');
  const page=await pull('other',0);assert.deepEqual(page.changes.find(c=>c.identity.id==='pub-only'),{model:'Task',identity:{id:'pub-only'},stamp:1,state:null});
  assert.equal(page.changes.some(c=>c.identity.id.startsWith('pub-only-')),false,'the changed records went to shared only');
 });
@@ -490,12 +490,12 @@ test('one push publishing to two channels carries the same stamp to both and adv
  assert.deepEqual(await invalidations('two-a'),[['other',before[1]+1,1],['shared',before[0]+1,1]]);
  assert.deepEqual([await head('shared'),await head('other')],[before[0]+1,before[1]+1]);
 });
-test('an external write advances the stamp on every call; a push publishing an unchanged record does not',async()=>{
+test('an external write advances the stamp on every call; a push re-enrolling an unchanged member neither advances nor publishes it',async()=>{
  const change=()=>external(backend,'other',[{model:'Task',identity:{id:'pub-only'}}]);
  const start=await recordStamp('pub-only');await change();await change();assert.equal(await recordStamp('pub-only'),start+2,'an external notification reports a business change');
  const [[,cursor,stamp]]=await invalidations('pub-only');assert.equal(stamp,start+2);
  await backend.push('alice',push('pub-only',3,[mutation(3,'publish-only','pub-only-c')]));
- assert.equal(await recordStamp('pub-only'),start+2,'publication alone is distribution');assert.deepEqual(await invalidations('pub-only'),[['other',cursor+1,start+2]]);
+ assert.equal(await recordStamp('pub-only'),start+2,'membership alone is distribution');assert.deepEqual(await invalidations('pub-only'),[['other',cursor,start+2]]);
 });
 test('concurrent first publications initialise one stamp of 1 and never overwrite an established one',async()=>{
  const ensure=tx=>store(tx).call({op:'ensureStamp',model:'Task',identityKey:key('ensure-race')});
@@ -519,7 +519,9 @@ test('publish refuses a record without metadata or with a stamp that is not its 
 test('scan pairs the invalidation cursor with the current record stamp; a missing record row is a storage defect',async()=>{
  await backend.push('alice',push('join',1,[mutation(1,'published','join-a')]));
  const [[,cursor,stored]]=await invalidations('join-a');assert.equal(stored,1);
- await backend.push('alice',push('join',2,[mutation(2,'quiet','join-a')]));
+ // A change that reaches no Channel: the business write and its stamp alone
+ // (a member's change through settlement would move the invalidation).
+ await db.$transaction(async tx=>{await write(tx,'join-a','quiet');await store(tx).call({op:'advanceStamp',model:'Task',identityKey:key('join-a')});});
  assert.equal(await recordStamp('join-a'),2);assert.deepEqual(await invalidations('join-a'),[['shared',cursor,1]],'no publication: the invalidation row is untouched');
  const page=await pull('shared',cursor-1);
  assert.deepEqual(page.changes[0],{model:'Task',identity:{id:'join-a'},stamp:2,state:{title:'quiet'}},'the original cursor with the current stamp and content');
@@ -795,15 +797,15 @@ test('notify and bindTransaction are gone; backend.transaction is the only exter
  await backend.transaction(async({tx,changes,publish})=>{await write(tx,'tx-only-path','only path');changes.add({model:'Task',identity:{id:'tx-only-path'}});publish({channel:'shared'});});
  assert.equal(await head('shared'),before+1);
 });
-test('publishing an unchanged record does not advance its stamp; a body without publish still stamps its changes',async()=>{
+test('re-enrolling an unchanged member keeps its stamp and publishes nothing; a later change reaches its Channel without publish',async()=>{
  await external(backend,'shared',[{model:'Task',identity:{id:'stamp-probe'}}]);
  const stampOf=()=>recordStamp('stamp-probe');
  const first=await stampOf();
  const headBefore=await head('shared');
  await backend.transaction(async({publish})=>{publish({channel:'shared',records:[{model:'Task',identity:{id:'stamp-probe'}}]});});
- assert.equal(await stampOf(),first,'publication-only records keep their stamp');assert.equal(await head('shared'),headBefore+1,'but are still published');
+ assert.equal(await stampOf(),first,'membership-only records keep their stamp');assert.equal(await head('shared'),headBefore,'and an existing member is not published again');
  await backend.transaction(async({changes})=>{changes.add({model:'Task',identity:{id:'stamp-probe'}});});
- assert.equal(await stampOf(),first+1,'changes advance even without a publish');assert.equal(await head('shared'),headBefore+1,'and nothing is published');
+ assert.equal(await stampOf(),first+1,'changes advance even without a publish');assert.equal(await head('shared'),headBefore+1,'and reach the Channel the record is a member of');
 });
 test('a pull covers every channel in one request and delivers a record shared by two channels once',async()=>{
  await db.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('multi-a','A'),('multi-b','B') ON CONFLICT(id) DO NOTHING");

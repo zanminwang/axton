@@ -201,20 +201,35 @@ export type Published = { cursor: number; stamp: number };
 export type Locked = number | null;
 /** The answer to `memberships`: unique Channel names, sorted by the database. */
 export type Memberships = string[];
-/** A record a handler names: an additional change or a publication member. */
+/** A record a handler names: an additional changed record. */
 export type HostRecordRef = {
   model: string;
   identity: Record<string, unknown>;
 };
 /**
- * One publication a handler asked for. `records` absent means the mutation's
- * final change set; present and empty means nothing.
+ * One persistent Channel membership declaration: the record should
+ * (`present`) or should not be a member of `channel`. Intents are ordered; the
+ * last one per Channel/record pair is the desired state.
  */
-export type PublicationIntent = { channel: string; records?: HostRecordRef[] };
+export type MembershipIntent = {
+  channel: string;
+  model: string;
+  identity: Record<string, unknown>;
+  present: boolean;
+};
+/**
+ * The effects one settlement carries, shared by Mutation handlers, legacy
+ * handlers and `backend.transaction`: changed records beyond any input
+ * targets and ordered membership intents. There is no implicit publication.
+ */
+export type SettlementEffects = {
+  changes: HostRecordRef[];
+  memberships: MembershipIntent[];
+};
 /**
  * The answer to `handle`: the records the handler changed beyond the uploaded
- * operations and the publications it asked for, a rejection code, or a
- * failure carrying a thrown handler error — never more than one of these.
+ * operations and its membership intents, a rejection code, or a failure
+ * carrying a thrown handler error — never more than one of these.
  *
  * "Never more than one" is not something this union can enforce. TypeScript
  * only applies its excess-property check to object literals, so a value that
@@ -224,15 +239,9 @@ export type PublicationIntent = { channel: string; records?: HostRecordRef[] };
  * as a rejection or a failure.
  */
 export type Handled =
-  | { changes: HostRecordRef[]; publications: PublicationIntent[] }
-  | { rejection: string }
-  | { error: string };
+  SettlementEffects | { rejection: string } | { error: string };
 export type HandledAction =
-  | {
-      outputs: Record<string, unknown>;
-      changes: HostRecordRef[];
-      publications: PublicationIntent[];
-    }
+  | ({ outputs: Record<string, unknown> } & SettlementEffects)
   | { rejection: string }
   | { error: string };
 /**

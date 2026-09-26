@@ -2,7 +2,7 @@
 //! Rust types, and a malformed request or response is refused per operation.
 use axton_server::host::{
     Acknowledged, Claimed, ClaimedCall, Handled, HandledAction, Head, HostRequest, Invalidation,
-    Loaded, Locked, Memberships, OPERATIONS, PublicationIntent, Published, RecordRef, Scanned,
+    Loaded, Locked, MembershipIntent, Memberships, OPERATIONS, Published, RecordRef, Scanned,
     Stamped,
 };
 use serde_json::{Value, json};
@@ -233,38 +233,38 @@ fn a_response_of_the_wrong_type_is_refused_per_operation() {
 }
 
 #[test]
-fn a_handle_response_carries_changes_and_publications_or_a_rejection_and_never_both() {
+fn a_handle_response_carries_changes_and_memberships_or_a_rejection_and_never_both() {
     let task = |id: &str| RecordRef {
         model: "Task".into(),
         identity: json!({"id": id}),
     };
+    let intent = |channel: &str, present: bool| MembershipIntent {
+        channel: channel.into(),
+        model: "Task".into(),
+        identity: json!({"id": "t-2"}),
+        present,
+    };
     assert_eq!(
         serde_json::from_value::<Handled>(json!({
             "changes": [{"model":"Task","identity":{"id":"t-2"}}],
-            "publications": [{"channel":"shared"}, {"channel":"other","records":[]}]
+            "memberships": [
+                {"channel":"shared","model":"Task","identity":{"id":"t-2"},"present":true},
+                {"channel":"other","model":"Task","identity":{"id":"t-2"},"present":false}
+            ]
         }))
         .unwrap(),
         Handled::Settled {
             changes: vec![task("t-2")],
-            publications: vec![
-                PublicationIntent {
-                    channel: "shared".into(),
-                    records: None
-                },
-                PublicationIntent {
-                    channel: "other".into(),
-                    records: Some(vec![])
-                }
-            ]
+            memberships: vec![intent("shared", true), intent("other", false)]
         }
     );
     assert_eq!(
-        serde_json::from_value::<Handled>(json!({"changes": [], "publications": []})).unwrap(),
+        serde_json::from_value::<Handled>(json!({"changes": [], "memberships": []})).unwrap(),
         Handled::Settled {
             changes: vec![],
-            publications: vec![]
+            memberships: vec![]
         },
-        "a handler that changed nothing beyond its operations and published nothing"
+        "a handler that changed nothing beyond its operations and enrolled nothing"
     );
     assert_eq!(
         serde_json::from_value::<Handled>(json!({"rejection": "task.refused"})).unwrap(),
@@ -273,7 +273,7 @@ fn a_handle_response_carries_changes_and_publications_or_a_rejection_and_never_b
         }
     );
     let both = serde_json::from_value::<Handled>(
-        json!({"changes": [], "publications": [], "rejection": "task.refused"}),
+        json!({"changes": [], "memberships": [], "rejection": "task.refused"}),
     )
     .unwrap_err()
     .to_string();
@@ -287,7 +287,7 @@ fn a_handle_response_carries_changes_and_publications_or_a_rejection_and_never_b
     for refused in [
         json!({"error": 1}),
         json!({"error": "boom", "rejection": "x"}),
-        json!({"error": "boom", "changes": [], "publications": []}),
+        json!({"error": "boom", "changes": [], "memberships": []}),
     ] {
         assert!(
             serde_json::from_value::<Handled>(refused.clone()).is_err(),
@@ -298,17 +298,40 @@ fn a_handle_response_carries_changes_and_publications_or_a_rejection_and_never_b
         .unwrap_err()
         .to_string();
     assert!(none.contains("invalid handler settlement"), "{none}");
+    let member = |fields: Value| {
+        let mut intent =
+            json!({"channel":"shared","model":"Task","identity":{"id":"t"},"present":true});
+        for (name, value) in fields.as_object().unwrap() {
+            if value.is_null() {
+                intent.as_object_mut().unwrap().remove(name);
+            } else {
+                intent[name] = value.clone();
+            }
+        }
+        json!({"changes": [], "memberships": [intent]})
+    };
     for refused in [
         json!({}),
         json!({"changes": []}),
-        json!({"publications": []}),
+        json!({"memberships": []}),
         json!({"channel": "shared"}),
-        json!({"changes": null, "publications": []}),
-        json!({"changes": [{"model":"","identity":{}}], "publications": []}),
-        json!({"changes": [{"model":"Task","identity":"t"}], "publications": []}),
-        json!({"changes": [], "publications": [{"channel":""}]}),
-        json!({"changes": [], "publications": [{"channel":"shared","records":[{"model":"Task"}]}]}),
-        json!({"changes": [], "publications": [{"scope":"shared"}]}),
+        json!({"changes": null, "memberships": []}),
+        json!({"changes": [], "memberships": null}),
+        json!({"changes": [{"model":"","identity":{}}], "memberships": []}),
+        json!({"changes": [{"model":"Task","identity":"t"}], "memberships": []}),
+        // The retired publication shape: no implicit publish-all remains.
+        json!({"changes": [], "publications": []}),
+        json!({"changes": [], "memberships": [], "publications": [{"channel":"shared"}]}),
+        member(json!({"channel": ""})),
+        member(json!({"channel": null})),
+        member(json!({"model": ""})),
+        member(json!({"model": null})),
+        member(json!({"identity": "t"})),
+        member(json!({"identity": null})),
+        member(json!({"present": null})),
+        member(json!({"present": "true"})),
+        member(json!({"present": 1})),
+        member(json!({"records": []})),
         json!({"rejection": null}),
         json!({"rejection": "Not A Code"}),
         json!({"settled": "shared"}),
@@ -317,6 +340,14 @@ fn a_handle_response_carries_changes_and_publications_or_a_rejection_and_never_b
             serde_json::from_value::<Handled>(refused.clone()).is_err(),
             "accepted {refused}"
         );
+        if refused.get("changes").is_some() {
+            let mut action = refused.clone();
+            action["outputs"] = json!({});
+            assert!(
+                serde_json::from_value::<HandledAction>(action.clone()).is_err(),
+                "an Action handler answer accepted {action}"
+            );
+        }
     }
 }
 

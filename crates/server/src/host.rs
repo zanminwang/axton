@@ -394,7 +394,7 @@ pub struct Published {
     pub stamp: u64,
 }
 
-/// A record a handler names: additional changes and publication members.
+/// A record a handler names: an additional changed record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecordRef {
@@ -402,26 +402,49 @@ pub struct RecordRef {
     pub identity: Value,
 }
 
-/// One publication a handler asked for. `records` absent means the mutation's
-/// final change set; present and empty means nothing.
+/// One persistent Channel membership declaration: the record should
+/// (`present`) or should not be a member of `channel`. Intents form an ordered
+/// list; for each Channel/record pair the last one is the desired state
+/// ([Publish](../../../docs/engineering/architecture/server/engine/publish.md)).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PublicationIntent {
+pub struct MembershipIntent {
     pub channel: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub records: Option<Vec<RecordRef>>,
+    pub model: String,
+    pub identity: Value,
+    pub present: bool,
 }
 
+/// The effects of one settlement, shared by modern handlers, legacy handlers
+/// and external transactions: the changed records beyond any input targets,
+/// and the ordered membership intents. There is no implicit publication.
+fn effects(changes: Value, memberships: Value) -> std::result::Result<Effects, String> {
+    let changes: Vec<RecordRef> = serde_json::from_value(changes)
+        .map_err(|error| format!("invalid handler changes: {error}"))?;
+    let memberships: Vec<MembershipIntent> = serde_json::from_value(memberships)
+        .map_err(|error| format!("invalid handler memberships: {error}"))?;
+    let malformed = |model: &str, identity: &Value| model.is_empty() || !identity.is_object();
+    if changes.iter().any(|r| malformed(&r.model, &r.identity))
+        || memberships
+            .iter()
+            .any(|m| m.channel.is_empty() || malformed(&m.model, &m.identity))
+    {
+        return Err("invalid handler settlement".into());
+    }
+    Ok((changes, memberships))
+}
+type Effects = (Vec<RecordRef>, Vec<MembershipIntent>);
+
 /// The answer to `handle`: the records the handler changed beyond the
-/// uploaded operations and the publications it asked for, a rejection code,
-/// or a failure carrying a thrown handler error. Carrying more than one of
-/// these, or none, is refused.
+/// uploaded operations and its membership intents, a rejection code, or a
+/// failure carrying a thrown handler error. Carrying more than one of these,
+/// or none, is refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, try_from = "HandledWire")]
 pub enum Handled {
     Settled {
         changes: Vec<RecordRef>,
-        publications: Vec<PublicationIntent>,
+        memberships: Vec<MembershipIntent>,
     },
     Rejected {
         rejection: String,
@@ -431,14 +454,14 @@ pub enum Handled {
     },
 }
 
-/// Action handlers return explicit named fields in addition to change and publication intents.
+/// Action handlers return explicit named fields in addition to their effects.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged, try_from = "HandledActionWire")]
 pub enum HandledAction {
     Settled {
         outputs: Value,
         changes: Vec<RecordRef>,
-        publications: Vec<PublicationIntent>,
+        memberships: Vec<MembershipIntent>,
     },
     Rejected {
         rejection: String,
@@ -456,7 +479,7 @@ struct HandledActionWire {
     #[serde(default, deserialize_with = "present")]
     changes: Option<Value>,
     #[serde(default, deserialize_with = "present")]
-    publications: Option<Value>,
+    memberships: Option<Value>,
     #[serde(default, deserialize_with = "present")]
     rejection: Option<Value>,
     #[serde(default, deserialize_with = "present")]
@@ -469,7 +492,7 @@ impl TryFrom<HandledActionWire> for HandledAction {
         match (
             wire.outputs,
             wire.changes,
-            wire.publications,
+            wire.memberships,
             wire.rejection,
             wire.error,
         ) {
@@ -486,17 +509,14 @@ impl TryFrom<HandledActionWire> for HandledAction {
                     error: error.into(),
                 })
                 .ok_or_else(|| "invalid handler error".into()),
-            (Some(outputs), Some(changes), Some(publications), None, None)
+            (Some(outputs), Some(changes), Some(memberships), None, None)
                 if outputs.is_object() =>
             {
-                let changes: Vec<RecordRef> = serde_json::from_value(changes)
-                    .map_err(|error| format!("invalid handler changes: {error}"))?;
-                let publications: Vec<PublicationIntent> = serde_json::from_value(publications)
-                    .map_err(|error| format!("invalid handler publications: {error}"))?;
+                let (changes, memberships) = effects(changes, memberships)?;
                 Ok(Self::Settled {
                     outputs,
                     changes,
-                    publications,
+                    memberships,
                 })
             }
             _ => Err("invalid Action handler settlement".into()),
@@ -510,7 +530,7 @@ struct HandledWire {
     #[serde(default, deserialize_with = "present")]
     changes: Option<Value>,
     #[serde(default, deserialize_with = "present")]
-    publications: Option<Value>,
+    memberships: Option<Value>,
     #[serde(default, deserialize_with = "present")]
     rejection: Option<Value>,
     #[serde(default, deserialize_with = "present")]
@@ -520,7 +540,7 @@ struct HandledWire {
 impl TryFrom<HandledWire> for Handled {
     type Error = String;
     fn try_from(wire: HandledWire) -> std::result::Result<Self, String> {
-        match (wire.changes, wire.publications, wire.rejection, wire.error) {
+        match (wire.changes, wire.memberships, wire.rejection, wire.error) {
             (None, None, Some(rejection), None) => rejection
                 .as_str()
                 .filter(|code| valid_code(code))
@@ -535,30 +555,14 @@ impl TryFrom<HandledWire> for Handled {
                 })
                 .ok_or_else(|| "invalid handler error".into()),
             (_, _, Some(_), _) | (_, _, _, Some(_)) => Err(
-                "a settlement carries changes and publications, a rejection or a failure, not several"
+                "a settlement carries changes and memberships, a rejection or a failure, not several"
                     .into(),
             ),
-            (Some(changes), Some(publications), None, None) => {
-                let changes: Vec<RecordRef> = serde_json::from_value(changes)
-                    .map_err(|error| format!("invalid handler changes: {error}"))?;
-                let publications: Vec<PublicationIntent> = serde_json::from_value(publications)
-                    .map_err(|error| format!("invalid handler publications: {error}"))?;
-                if changes
-                    .iter()
-                    .any(|r| r.model.is_empty() || !r.identity.is_object())
-                    || publications.iter().any(|p| {
-                        p.channel.is_empty()
-                            || p.records
-                                .iter()
-                                .flatten()
-                                .any(|r| r.model.is_empty() || !r.identity.is_object())
-                    })
-                {
-                    return Err("invalid handler settlement".into());
-                }
+            (Some(changes), Some(memberships), None, None) => {
+                let (changes, memberships) = effects(changes, memberships)?;
                 Ok(Self::Settled {
                     changes,
-                    publications,
+                    memberships,
                 })
             }
             _ => Err("invalid handler settlement".into()),

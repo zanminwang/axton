@@ -8,7 +8,7 @@ use axton_server::{
     Host,
     host::{
         Acknowledged, Claimed, ClaimedCall, Handled, Head, HostRequest,
-        Invalidation as ContractInvalidation, Loaded, Locked, Memberships, PublicationIntent,
+        Invalidation as ContractInvalidation, Loaded, Locked, MembershipIntent, Memberships,
         Published, RecordRef, Scanned, Stamped,
     },
 };
@@ -463,7 +463,7 @@ fn stored_memberships(t: &Tables, key: &RecordKey) -> BTreeSet<String> {
 /// `setMembership`: add (creating the channel at head zero) or remove one
 /// membership. Idempotent both ways; adding needs the record's metadata row,
 /// as the foreign key does.
-fn set_membership(
+fn set_stored_membership(
     t: &mut Tables,
     channel: &str,
     key: &RecordKey,
@@ -730,10 +730,13 @@ impl Host for MemHost {
                     match apply_business(&mut s.tables, &name, &arguments, uppercase) {
                         Ok(changed) => {
                             // Report every changed record (the engine dedups the ones
-                            // the operations already named) and ask for one publication
-                            // per channel any of them is a member of, carrying exactly
-                            // the changed records that channel provides. A record with
-                            // no membership is changed, stamped and read back, but
+                            // the operations already named) and declare the scenario's
+                            // routing as each record's desired persistent membership:
+                            // an add per routed channel and a removal per stored
+                            // channel the routing no longer names. The engine reduces
+                            // these against the stored memberships, so a changed
+                            // record reaches exactly its routed channels. A record
+                            // with no routing is changed, stamped and read back, but
                             // published nowhere.
                             let changes: Vec<RecordRef> = changed
                                 .iter()
@@ -742,30 +745,37 @@ impl Host for MemHost {
                                     identity: key.identity.clone(),
                                 })
                                 .collect();
-                            let mut by_channel: BTreeMap<String, Vec<RecordRef>> = BTreeMap::new();
-                            for (key, record) in changed.iter().zip(&changes) {
-                                let channels: BTreeSet<String> = s
+                            let mut memberships = vec![];
+                            for key in &changed {
+                                let routed: BTreeSet<String> = s
                                     .membership
                                     .get(&encoded(key))
                                     .cloned()
                                     .unwrap_or_default()
                                     .into_iter()
                                     .collect();
-                                for channel in channels {
-                                    by_channel.entry(channel).or_default().push(record.clone());
+                                let stored = stored_memberships(&s.tables, key);
+                                for channel in stored.difference(&routed) {
+                                    memberships.push(MembershipIntent {
+                                        channel: channel.clone(),
+                                        model: key.model.clone(),
+                                        identity: key.identity.clone(),
+                                        present: false,
+                                    });
+                                }
+                                for channel in routed {
+                                    memberships.push(MembershipIntent {
+                                        channel,
+                                        model: key.model.clone(),
+                                        identity: key.identity.clone(),
+                                        present: true,
+                                    });
                                 }
                             }
-                            let publications = by_channel
-                                .into_iter()
-                                .map(|(channel, records)| PublicationIntent {
-                                    channel,
-                                    records: Some(records),
-                                })
-                                .collect();
                             s.accepted += 1;
                             response!(Handled::Settled {
                                 changes,
-                                publications,
+                                memberships,
                             })
                         }
                         Err(code) => {
@@ -832,7 +842,7 @@ impl Host for MemHost {
                     present,
                 } => {
                     let key = key_from_identity_key(&model, &identity_key)?;
-                    set_membership(&mut s.tables, &channel, &key, present)?;
+                    set_stored_membership(&mut s.tables, &channel, &key, present)?;
                     response!(Acknowledged)
                 }
                 HostRequest::Scan {
@@ -1192,12 +1202,11 @@ mod tests {
         .unwrap();
         assert!(host.state(&entry_key("e1")).is_none());
         assert!(host.state(&schema::comment_key("c1")).is_none());
-        assert_eq!(
-            r.records.len(),
-            2,
-            "the cascaded comment is a change the handler reported"
-        );
-        assert!(r.records.iter().all(|c| c.state.is_null()));
+        // The cascaded comment is a change the handler reported: it is stamped
+        // and distributed, but only the uploaded target is caller authority.
+        assert_eq!(r.records.len(), 1);
+        assert_eq!(r.records[0].identity, entry_key("e1").identity);
+        assert!(r.records[0].state.is_null());
         assert_eq!(host.stamp(&entry_key("e1")), 2);
         assert_eq!(host.stamp(&schema::comment_key("c1")), 2);
         assert_eq!(host.head("a"), 4);

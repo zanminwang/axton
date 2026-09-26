@@ -33,7 +33,7 @@ impl Host for HostState {
                         "Values" => json!({"maybe":null,"items":["a","b"]}),
                         _ => json!({"message":"ok"}),
                     };
-                    json!({"outputs":outputs,"changes":[],"publications":[]})
+                    json!({"outputs":outputs,"changes":[],"memberships":[]})
                 }
                 _ => Value::Null,
             })
@@ -153,7 +153,7 @@ impl Host for ModelHost {
                 }
                 "claimCall" => json!({"fresh":true,"request":request["request"],"response":null}),
                 "handleAction" => {
-                    json!({"outputs":{"todo":{"id":"01890f47-1234-7123-8123-123456789abc"}},"changes":[],"publications":[]})
+                    json!({"outputs":{"todo":{"id":"01890f47-1234-7123-8123-123456789abc"}},"changes":[],"memberships":[]})
                 }
                 "ensureStamp" => json!(1),
                 "load" if request["version"] == 1 => {
@@ -286,26 +286,26 @@ impl Host for StatefulHost {
                     state.handlers += 1;
                     if request["name"] == "Read" {
                         return Ok(
-                            json!({"outputs":{"todo":{"id":"t"}},"changes":[],"publications":[]}),
+                            json!({"outputs":{"todo":{"id":"t"}},"changes":[],"memberships":[]}),
                         );
                     }
                     if request["name"] == "Delete" {
                         if state.delete_on_handle {
                             state.row = None;
                         }
-                        return Ok(json!({"outputs":{},"changes":[],"publications":[]}));
+                        return Ok(json!({"outputs":{},"changes":[],"memberships":[]}));
                     }
                     if request["arguments"]["todo"].is_null() {
-                        return Ok(json!({"outputs":{},"changes":[],"publications":[]}));
+                        return Ok(json!({"outputs":{},"changes":[],"memberships":[]}));
                     }
                     let title = request["arguments"]["todo"]["title"].as_str().unwrap();
                     match title {
                         "refuse" => json!({"rejection":"todo.refused"}),
                         "crash" => json!({"error":"application fault"}),
-                        "missing" => json!({"outputs":{},"changes":[],"publications":[]}),
+                        "missing" => json!({"outputs":{},"changes":[],"memberships":[]}),
                         _ => {
                             state.row = Some(title.into());
-                            json!({"outputs":{},"changes":[],"publications":[]})
+                            json!({"outputs":{},"changes":[],"memberships":[]})
                         }
                     }
                 }
@@ -313,6 +313,8 @@ impl Host for StatefulHost {
                     state.stamp += 1;
                     json!(state.stamp)
                 }
+                // The one Todo belongs to no Channel.
+                "memberships" => json!([]),
                 "ensureStamp" => {
                     if state.stamp == 0 {
                         state.stamp = 1;
@@ -333,6 +335,10 @@ impl Host for StatefulHost {
     }
 }
 
+/// A retained historical descriptor: `Edit`'s `todo` output is bound to its
+/// input (`inputIdentity`), which newly compiled source no longer emits. These
+/// tests keep the decoder's bounded compatibility for saved calls and retained
+/// versions; the explicit-output contract is covered by the #140 tests below.
 fn stateful_config() -> Config {
     stateful_config_with_note(false)
 }
@@ -613,20 +619,22 @@ impl Host for ForgedQueryHost {
         Box::pin(async move {
             self.0.lock().unwrap().push(request.clone());
             let todo = json!({"model":"Todo","identity":{"id":"t1"}});
+            let membership =
+                json!({"channel":"c","model":"Todo","identity":{"id":"t1"},"present":true});
             Ok(match request["op"].as_str().unwrap() {
                 "claim" => json!({"clientId":"device","owner":"alice","sequence":0,"receipt":null}),
                 "claimCall" => json!({"fresh":true,"request":request["request"],"response":null}),
                 "handleAction" => match request["name"].as_str().unwrap() {
                     "Changes" => {
-                        json!({"outputs":{"message":"x"},"changes":[todo],"publications":[]})
+                        json!({"outputs":{"message":"x"},"changes":[todo],"memberships":[]})
                     }
-                    "Publishes" => {
-                        json!({"outputs":{"message":"x"},"changes":[],"publications":[{"channel":"c"}]})
+                    "Enrolls" => {
+                        json!({"outputs":{"message":"x"},"changes":[],"memberships":[membership]})
                     }
                     "Both" => {
-                        json!({"outputs":{"message":"x"},"changes":[todo],"publications":[{"channel":"c","records":[todo]}]})
+                        json!({"outputs":{"message":"x"},"changes":[todo],"memberships":[membership]})
                     }
-                    _ => json!({"outputs":{"message":"ok"},"changes":[],"publications":[]}),
+                    _ => json!({"outputs":{"message":"ok"},"changes":[],"memberships":[]}),
                 },
                 "ensureStamp" | "advanceStamp" => json!(1),
                 "load" => json!([{"id":"t1"}]),
@@ -640,7 +648,7 @@ fn forged_config() -> Config {
     let message = json!([{"name":"message","kind":"value","type":{"kind":"scalar","name":"string"},"cardinality":"single","source":"handlerValue"}]);
     let actions: Vec<Value> = [
         ("Changes", "query"),
-        ("Publishes", "query"),
+        ("Enrolls", "query"),
         ("Both", "query"),
         ("Read", "query"),
         ("Save", "mutation"),
@@ -655,7 +663,7 @@ fn forged_config() -> Config {
 fn forged_query_effects_reject_only_that_call_before_framework_handling() {
     let config = forged_config();
     let host = ForgedQueryHost(Mutex::new(vec![]));
-    let calls = ["Changes", "Save", "Publishes", "Both", "Read"]
+    let calls = ["Changes", "Save", "Enrolls", "Both", "Read"]
         .into_iter()
         .enumerate()
         .map(|(index, name)| {
@@ -698,8 +706,16 @@ fn forged_query_effects_reject_only_that_call_before_framework_handling() {
     );
     assert_eq!(receipt["records"], json!([]));
     let ops = host.0.lock().unwrap();
-    // No stamping, readback or publication happened for any call.
-    for op in ["ensureStamp", "advanceStamp", "load", "publish"] {
+    // No guard, stamping, readback, membership or publication happened.
+    for op in [
+        "ensureStamp",
+        "advanceStamp",
+        "lockRecord",
+        "memberships",
+        "setMembership",
+        "load",
+        "publish",
+    ] {
         assert!(!ops.iter().any(|request| request["op"] == op), "{op}");
     }
     let rolled: Vec<_> = ops

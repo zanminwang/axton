@@ -150,7 +150,11 @@ test("generated backend decodes Date values and keeps canonical Model references
   for (const handled of seen.slice(0, 2) as {
     outputs: { echoed: string; status: string };
     changes: { model: string; identity: Record<string, unknown> }[];
-    publications: { records: { identity: Record<string, unknown> }[] }[];
+    memberships: {
+      channel: string;
+      identity: Record<string, unknown>;
+      present: boolean;
+    }[];
   }[]) {
     assert.equal(handled.outputs.echoed, first);
     assert.equal(handled.outputs.status, "open");
@@ -164,9 +168,15 @@ test("generated backend decodes Date values and keeps canonical Model references
         { at: "2026-01-04T00:00:00.000Z" },
       ],
     );
-    assert.deepEqual(handled.publications[0]?.records?.[0]?.identity, {
-      id: "one",
-    });
+    // The temporary serialization of `publish` onto membership intents.
+    assert.deepEqual(handled.memberships, [
+      {
+        channel: "todos",
+        model: "Todo",
+        identity: { id: "one" },
+        present: true,
+      },
+    ]);
   }
   assert.ok(CallRejected.prototype instanceof Error);
 });
@@ -288,9 +298,9 @@ test("Query handlers receive no effect capabilities and settle without effects",
     {
       outputs: { todo: { id: "one" } },
       changes: [{ model: "Todo", identity: { id: "one" } }],
-      publications: [],
+      memberships: [],
     },
-    { outputs: { todo: { id: "one" } }, changes: [], publications: [] },
+    { outputs: { todo: { id: "one" } }, changes: [], memberships: [] },
   ]);
 });
 

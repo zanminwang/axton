@@ -413,6 +413,12 @@ impl DownlinkWorker {
         }
     }
 
+    /// The streamed page frames held for the pump, never more than
+    /// [`QUEUED_FRAMES`].
+    pub fn queued_frames(&self) -> usize {
+        self.pages.len()
+    }
+
     /// The replica under the lane was rebuilt in place
     /// ([`Client::rebuild`]): everything this worker held was measured against
     /// the old file, so every session, queue, request slot and retry is

@@ -147,6 +147,47 @@ void main() {
     );
 
     test(
+      'every outer client task rejects transaction_active inside a callback',
+      () async {
+        Matcher active() => throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'transaction_active',
+          ),
+        );
+        var nested = false;
+        await client.transaction((tx) async {
+          // Each would park behind this open transaction and deadlock.
+          await expectLater(
+            client
+                .read('Entry', {'id': 'e'})
+                .timeout(const Duration(seconds: 2)),
+            active(),
+          );
+          await expectLater(
+            client
+                .transaction((_) async => nested = true)
+                .timeout(const Duration(seconds: 2)),
+            active(),
+          );
+          await expectLater(
+            client.watch('Entry').first.timeout(const Duration(seconds: 2)),
+            active(),
+          );
+          await expectLater(
+            client.syncState().timeout(const Duration(seconds: 2)),
+            active(),
+          );
+          // The transaction's own commands are unaffected.
+          expect((await tx.read('Entry', {'id': 'e'}))!['text'], 'hello');
+        });
+        expect(nested, isFalse, reason: 'the nested body never ran');
+        expect(await text(client), 'hello', reason: 'the outer client works');
+      },
+    );
+
+    test(
       'failed standalone enqueue leaves no queue entry or optimistic record',
       () async {
         await expectLater(
@@ -300,6 +341,46 @@ void main() {
   );
 
   test(
+    'the runtime refuses a second active connection, concurrent or not',
+    () async {
+      final fixture = await Fixture.create('axton-dart-connect-');
+      final client = await fixture.open();
+      final server = SyncServer(
+        url: 'http://127.0.0.1:1',
+        token: () => 'secret',
+      );
+      final refused = throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          'connection already active',
+        ),
+      );
+      try {
+        final first = await client.connect(server, onError: (_) {});
+        await expectLater(client.connect(server), refused);
+        await first.close();
+        final racing = [
+          for (var i = 0; i < 2; i++)
+            client
+                .connect(server, onError: (_) {})
+                .then<Object>((c) => c, onError: (Object e) => e),
+        ];
+        final settled = await Future.wait(racing);
+        expect(settled.whereType<RuntimeConnection>(), hasLength(1));
+        expect(
+          settled.whereType<StateError>().single.message,
+          'connection already active',
+        );
+        await settled.whereType<RuntimeConnection>().single.close();
+      } finally {
+        await client.close();
+        await fixture.dispose();
+      }
+    },
+  );
+
+  test(
     'an incompatible schema keeps unsent work in the old file until rebuild is asked to leave it',
     () async {
       final fixture = await Fixture.create('axton-dart-rebuild-');
@@ -440,6 +521,124 @@ void main() {
       }
     },
   );
+
+  // Local watch: the runtime runs the query, re-runs it after every commit and
+  // publishes only a different result; the stream delivers what it publishes
+  // (#134).
+  group('local watch', () {
+    late Fixture fixture;
+    late Client client;
+    setUp(() async {
+      fixture = await Fixture.create('axton-dart-watch-');
+      client = await fixture.open();
+      await seed(client);
+    });
+    tearDown(() async {
+      await client.close();
+      await fixture.dispose();
+    });
+
+    List<String?> texts(List<Map<String, dynamic>> rows) =>
+        rows.map((row) => row['text'] as String?).toList();
+
+    test(
+      'delivers the committed rows, then each different result, until cancelled',
+      () async {
+        final seen = <List<String?>>[];
+        final watching = client
+            .watch('Entry')
+            .listen((rows) => seen.add(texts(rows)));
+        await _eventually(() => seen.isNotEmpty, 'the initial snapshot');
+        expect(seen, [
+          ['hello'],
+        ]);
+        // A commit that changes nothing this query reads is not a new result.
+        await client.direct(update('hello'));
+        await client.direct(update('world'));
+        await _eventually(() => seen.length == 2, 'the changed result');
+        await pumpEventQueue();
+        expect(seen, [
+          ['hello'],
+          ['world'],
+        ], reason: 'an equal result is suppressed');
+        await watching.cancel();
+        await client.direct(update('again'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(seen, hasLength(2), reason: 'a cancelled watch hears nothing');
+      },
+    );
+
+    test('a filtered watch sees only its own rows', () async {
+      final seen = <List<String?>>[];
+      final watching = client
+          .watch('Entry', where: {'text': 'other'})
+          .listen((rows) => seen.add(texts(rows)));
+      await _eventually(() => seen.isNotEmpty, 'the initial snapshot');
+      expect(seen.single, isEmpty);
+      await client.direct(update('other'));
+      await _eventually(() => seen.length == 2, 'the matching row');
+      expect(seen.last, ['other']);
+      await watching.cancel();
+    });
+
+    test(
+      'a throwing listener is reported and later results still arrive',
+      () async {
+        final seen = <List<String?>>[];
+        final reported = <Object>[];
+        late StreamSubscription<List<Map<String, dynamic>>> watching;
+        runZonedGuarded(() {
+          watching = client.watch('Entry').listen((rows) {
+            seen.add(texts(rows));
+            if (seen.length == 1) throw StateError('listener failed');
+          });
+        }, (error, _) => reported.add(error));
+        await _eventually(() => seen.isNotEmpty, 'the initial snapshot');
+        await client.direct(update('after'));
+        await _eventually(() => seen.length == 2, 'the next result');
+        expect(seen.last, ['after']);
+        expect(reported, [
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'listener failed',
+          ),
+        ]);
+        expect(await text(client), 'after', reason: 'the commit stands');
+        await watching.cancel();
+      },
+    );
+
+    test('closing the client completes every watch', () async {
+      final seen = <List<String?>>[];
+      final done = Completer<void>();
+      client
+          .watch('Entry')
+          .listen((rows) => seen.add(texts(rows)), onDone: done.complete);
+      await _eventually(() => seen.isNotEmpty, 'the initial snapshot');
+      await client.close();
+      await done.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => fail('the watch did not complete'),
+      );
+      expect(seen, [
+        ['hello'],
+      ], reason: 'the terminal snapshot repeats no result');
+    });
+
+    test('a watch whose query fails reports it and ends', () async {
+      final errors = <Object>[];
+      final done = Completer<void>();
+      client
+          .watch('Missing')
+          .listen((_) {}, onError: errors.add, onDone: done.complete);
+      await done.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => fail('the failed watch did not end'),
+      );
+      expect(errors, [isA<StateError>()]);
+    });
+  });
 }
 
 /// Poll [condition] until it holds or five seconds pass.

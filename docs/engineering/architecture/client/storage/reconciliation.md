@@ -8,7 +8,7 @@ A local database records the schema it was built for. Opening a client compares 
 
 The application passes one `path`; the client chooses the file. Opening reads the sidecar `<path>.current` (one line, the file name; missing means `path` itself), opens that file, and runs the **layout gate** on the committed reader before any DDL: a file laid out by the checkpoint-era runtime is a legacy layout, a file without `axton_client` is fresh, anything else is current. It then runs the framework DDL, reads the stored descriptor from `axton_schema` and classifies the difference with the shared rule `Schema::compatibility(stored, incoming)` from [core/schema.rs](../../../../../crates/core/src/schema.rs). **Reconciliation** proper, the DDL that makes the model tables match, runs once inside the opening transaction for a fresh file and for an additive change; a rebuild runs it on the new file. Input: the sidecar, the `axton_` table names, the stored descriptor and the compiled schema. Output: an open client whose `schema_state()` says what happened, or an error and an untouched file.
 
-Callers are [`Client::open_at`](../frontend-interface.md) (bindings, simulation) and `Client::open` for a store the caller opened itself; the latter has no path, so it refuses a legacy layout instead of rebuilding.
+Callers are [`Client::open_at`](../frontend-interface.md) (the [runtime](../runtime.md), simulation) and `Client::open` for a store the caller opened itself; the latter has no path, so it refuses a legacy layout instead of rebuilding.
 
 ## 5. Building Block View
 
@@ -84,10 +84,10 @@ Consequences worth knowing: a field rename is a removal plus an addition, so it 
 - **Discarding reports the mutations and direct records left behind and keeps the file.** Evidence: `discarding_pending_work_reports_what_the_old_file_keeps`.
 - **A descriptor-less current file adopts the schema it opens with.** Evidence: `a_current_layout_file_without_a_descriptor_adopts_the_schema_it_opens_with`.
 - **Every rule of the comparison names its reason.** Evidence: [core/tests/compatibility.rs](../../../../../crates/core/tests/compatibility.rs).
-- **Across the bindings and SDKs: `syncState().schema`, a refused rebuild while work is unsent, the report, the empty fresh file.** Evidence: [bindings/common/tests/session.rs](../../../../../bindings/common/tests/session.rs) `incompatible_schema_reports_pending_work_and_rebuild_switches_files`; [integration/bindings/client-js/rebuild.test.mjs](../../../../../integration/bindings/client-js/rebuild.test.mjs); [packages/dart/test/client_test.dart](../../../../../packages/dart/test/client_test.dart) `an incompatible schema keeps unsent work in the old file until rebuild is asked to leave it`.
+- **Across the runtime and SDKs: `syncState().schema`, a refused rebuild while work is unsent, the report, the empty fresh file.** Evidence: [sqlite/tests/runtime.rs](../../../../../crates/sqlite/tests/runtime.rs) `an_incompatible_schema_keeps_its_file_until_the_work_is_settled_and_rebuilt`; [integration/bindings/client-js/rebuild.test.mjs](../../../../../integration/bindings/client-js/rebuild.test.mjs); [packages/dart/test/client_test.dart](../../../../../packages/dart/test/client_test.dart) `an incompatible schema keeps unsent work in the old file until rebuild is asked to leave it`.
 - **End to end: the rebuilt client converges like a fresh one; a restart follows the sidecar.** Evidence: [sim/tests/upgrade.rs](../../../../../crates/sim/tests/upgrade.rs).
 
-Executed 2026-09-16: `cargo test -p axton-core -p axton-client -p axton-sqlite -p axton-binding -p axton-sim --locked`, the JS and Dart suites, passed with the tests above.
+Executed 2026-09-16: `cargo test -p axton-core -p axton-client -p axton-sqlite -p axton-binding -p axton-sim --locked`, the JS and Dart suites, passed with the tests above. The runtime test that replaced the binding session test ran in `cargo test --workspace --locked` on 2026-09-26, 687 passed (owner, [#165](https://github.com/zanminwang/axton/pull/165)).
 
 ## 11. Risks and Technical Debt
 

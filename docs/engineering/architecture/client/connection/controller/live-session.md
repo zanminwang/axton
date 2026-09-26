@@ -6,16 +6,16 @@ A live session is one socket attempt of the [Downlink worker](downlink-worker.md
 
 ## 3. Context and Scope
 
-`LiveSession` is a value inside the worker and is driven only by it; no host and no binding command reach it. Its state is the epoch, the `SubscribeRequest` the socket sent, whether the acknowledgement arrived, and the subscription generation the channels were snapshotted under ([Frontend interface](../../frontend-interface.md), `subscription_generation`).
+`LiveSession` is a value inside the worker and is driven only by it; neither the [runtime](../../runtime.md) nor an SDK reaches it. Its state is the epoch, the `SubscribeRequest` the socket sent, whether the acknowledgement arrived, and the subscription generation the channels were snapshotted under ([Frontend interface](../../frontend-interface.md), `subscription_generation`).
 
 | The worker asks | The session answers |
 | --- | --- |
-| `begin(channels, models, generation)` | The next epoch and the subscribe frame the host sends once the socket is open ([Protocol / Subscriptions](../../../protocol/subscriptions.md)). |
+| `begin(channels, models, generation)` | The next epoch and the subscribe frame the host sends once the socket is open: the `subscribe` of the runtime's `socket` effect ([Protocol / Subscriptions](../../../protocol/subscriptions.md)). |
 | `current(epoch)`, `open()` | Whether that epoch is the session now open, and whether one is open at all. |
 | `generation()` | What the open session subscribed under, so a committed subscription change invalidates it. |
 | `acknowledge(ack)` | Handshake order: the first acknowledgement of the session, for exactly the channels it subscribed (`ack.confirms`). Anything else is `invalid live subscription acknowledgement`. |
 | `streamed()`, `acknowledged()` | Whether a streamed page is in order; a page before the acknowledgement is `live page before acknowledgement`. |
-| `close()` | The epoch of the socket the host closes, if one is open. After a replica rebuild the worker discards it: the host's `reset` abandons that socket instead ([Downlink worker](downlink-worker.md)). |
+| `close()` | The epoch of the socket to close, if one is open; the runtime cancels that socket's effect. After a replica rebuild the worker discards it: the runtime abandons that socket on `reset` instead ([Downlink worker](downlink-worker.md)). |
 
 ## 5. Building Block View
 

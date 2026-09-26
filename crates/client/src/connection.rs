@@ -63,6 +63,10 @@ impl ConnectionDriver {
     pub fn active(&self) -> bool {
         self.running && !self.paused
     }
+    /// Whether a started lane is paused.
+    pub fn paused(&self) -> bool {
+        self.running && self.paused
+    }
     /// How long to wait before the attempt after `attempt` failed ones: 250 ms
     /// doubling per attempt, capped at 30 s, with ±20 % jitter from host
     /// entropy. One policy, so every retry on the lane is bounded the same way.

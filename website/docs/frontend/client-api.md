@@ -143,7 +143,7 @@ For a `Comment.book` relationship, `client.models.comment.book(commentIdentity)`
     });
     ```
 
-`transaction<T>(callback)` returns the callback's result after local commit. Throwing or a failed operation rolls it back. Await each operation, including nested callbacks; unfinished work is rejected. Inside the callback, use `tx.models` for reads that must see earlier writes in the same transaction. Calling the outer `client` for a read from inside its transaction can wait behind that transaction. Calling a Mutation or Query from the transaction callback fails with `transaction_active` instead of waiting on itself.
+`transaction<T>(callback)` returns the callback's result after local commit. Throwing or a failed operation rolls it back. Await each operation, including nested callbacks; unfinished work is rejected. Inside the callback, use `tx.models` for reads that must see earlier writes in the same transaction. Calling the outer `client` from inside its own transaction callback - a read, a Mutation or a Query - fails with `transaction_active` on Node and Dart (React Native rejects Mutations and Queries and lets other outer calls wait behind the transaction) instead of waiting on itself.
 
 `GeneratedTransaction` exposes `models` and the underlying `transaction`; it has no `mutations`, `queries` or watch method. For nested savepoints, see [transactions and savepoints](runtime.md#transactions-and-savepoints).
 

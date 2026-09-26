@@ -29,6 +29,12 @@ fn schema() -> Schema {
     old_fields.retain(|f| f["name"] != "note");
     for f in &mut old_fields {
         f.as_object_mut().unwrap().remove("createDefault");
+        // A field the old contract shaped differently: the current Int
+        // default does not belong to it.
+        if f["name"] == "priority" {
+            *f =
+                json!({"name":"priority","type":{"kind":"scalar","name":"string"},"nullable":true});
+        }
     }
     let mut old = create("AddOld", "todo", "single");
     old["input"] = json!({"models":[{"name":"Todo","version":1,"identity":["id"],"fields":old_fields}],"enums":[{"name":"Status","values":["open","closed"]}]});
@@ -363,6 +369,8 @@ fn a_retained_input_contract_only_receives_defaults_for_its_own_fields() {
     assert!(!todo.contains_key("note"), "{todo:?}");
     assert_uuid_v4(&todo["id"]);
     assert_eq!(todo["title"], "");
+    // Same name, different shape: the current default is not injected.
+    assert_eq!(todo["priority"], Value::Null, "{todo:?}");
 }
 
 #[test]

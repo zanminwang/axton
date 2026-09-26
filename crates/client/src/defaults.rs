@@ -80,8 +80,9 @@ pub(crate) fn fill_operation(schema: &Schema, op: &mut Operation) {
 
 /// Fill the `Model.create` operands of fresh Mutation arguments. The current
 /// Model descriptor supplies the policy; the operation's retained input
-/// contract limits it to fields that contract declares, so a default is
-/// never injected into a version that predates its field. Absent optional
+/// contract limits it to fields that contract declares with the same type,
+/// so a default is never injected into a version that predates or reshaped
+/// its field. Absent optional
 /// operands stay absent and every list item gets its own values.
 pub(crate) fn fill_action_args(schema: &Schema, action: &ActionDescriptor, args: &mut Value) {
     let Some(args) = args.as_object_mut() else {
@@ -132,7 +133,18 @@ fn fill_record(
     let mut additions: Vec<(String, Value)> = vec![];
     fill(
         policy,
-        |name| contract.fields.iter().any(|f| f.name == name),
+        |name| {
+            // The retained contract must declare the field with the same
+            // type; a same-named field of another shape is not this policy's.
+            let current = policy.fields.iter().find(|f| f.name == name);
+            contract.fields.iter().any(|f| {
+                f.name == name
+                    && current.is_some_and(|c| {
+                        serde_json::to_value(&c.value_type).ok()
+                            == serde_json::to_value(&f.value_type).ok()
+                    })
+            })
+        },
         |name| record.contains_key(name),
         |name, value| additions.push((name.to_string(), value)),
     );

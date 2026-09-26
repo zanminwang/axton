@@ -92,7 +92,7 @@ An explicit value always wins, and an explicit `null` for a nullable field stays
 
 The client generates `uuid()` and `now()` values once, before the create is written locally or sent, so the local row, the queued call, every retry and the backend handler see the same values; reopening the app regenerates nothing. `now()` is the device clock and is not a trusted server timestamp; set server-side times in your handler. To know an identity before submitting, supply it yourself.
 
-Generated create inputs make only defaulted fields optional: `TodoCreate` in TypeScript, and in Dart `TodoCreate` (a defaulted nullable field takes `Present(...)`, so omission and an explicit null differ) or any complete `Todo`, both accepted as `TodoCreateInput`. Full `Todo` records and backend handler arguments stay complete: handlers receive the expanded values.
+Generated create inputs make only defaulted fields optional: `TodoCreate` in TypeScript, and in Dart `TodoCreate` (a defaulted nullable field takes `Present(...)`, so omission and an explicit null differ) or any complete `Todo`, both accepted as `TodoCreateInput`. (Dart `TodoCreate` was previously an alias of `Todo`; code that assigns one to the other, or declares a handler's create argument as `TodoCreate`, now uses `Todo`.) Full `Todo` records and backend handler arguments stay complete: handlers receive the expanded values.
 
 A default is creation policy, not stored data. Adding, changing or removing one needs no version bump and rewrites no existing rows or queued calls. It never fills historical records: adding a required field still needs a new `@@version` even with a default, and the local database is rebuilt for it.
 

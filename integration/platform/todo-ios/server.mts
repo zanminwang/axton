@@ -11,19 +11,13 @@ const started = await app.listen(0);
 const target = new URL(started.url);
 
 /**
- * TODO(#151): a subscription starts at the head its first handshake acknowledges
- * ([#150](https://github.com/zanminwang/axton/issues/150)), so the rows seeded
- * above are not loaded by subscribing. Until
- * [#151](https://github.com/zanminwang/axton/issues/151) gives the app an
- * explicit `bootstrap()`, this harness republishes them on a bounded timer (see
- * the `TODO(#151)` at `setInterval` below). A phone's live socket is an upgrade
- * through its proxy, counted here.
+ * The rows seeded above were published before any phone had a subscription, so
+ * subscribing does not deliver them
+ * ([#150](https://github.com/zanminwang/axton/issues/150)). The app asks for
+ * them with `subscription.bootstrap()`
+ * ([#151](https://github.com/zanminwang/axton/issues/151)); this harness
+ * republishes nothing.
  */
-let sessionUpgrades = 0;
-let publishedAfterSession = 0;
-/** Publications after a phone's socket opened, and for the whole run. */
-const REPUBLISH_AFTER_SESSION = 3;
-const REPUBLISH_LIMIT = 60;
 
 async function proxy(dropFirstPush: boolean) {
   let online = true;
@@ -76,11 +70,6 @@ async function proxy(dropFirstPush: boolean) {
       socket.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
       return;
     }
-    // A phone is opening its live socket: the republish timer above is bounded by
-    // this. Only an upgrade this proxy carries counts; one it refused offline
-    // opens no session, so it neither bounds the timer nor resets its budget.
-    sessionUpgrades++;
-    publishedAfterSession = 0;
     const upstream = netConnect(Number(target.port), target.hostname, () => {
       const headers = Object.entries(req.headers).flatMap(([name, value]) =>
         Array.isArray(value) ? value.map((v) => `${name}: ${v}`) : [`${name}: ${value}`],
@@ -130,32 +119,6 @@ const control = createServer(async (req, res) => {
   }
 });
 await new Promise<void>((resolve) => control.listen(0, "127.0.0.1", resolve));
-// TODO(#151): stand-in for the explicit historical load. Republish the seeded
-// rows once a second until a phone's session has been live for a few
-// publications, and never more than REPUBLISH_LIMIT times in the run; the rows
-// never change, so only the arrival of the seeded state depends on this.
-let republishes = 0;
-let publishing = false;
-const reseed = setInterval(() => {
-  if (publishing) return;
-  if (
-    republishes >= REPUBLISH_LIMIT ||
-    (sessionUpgrades > 0 && publishedAfterSession >= REPUBLISH_AFTER_SESSION)
-  ) {
-    clearInterval(reseed);
-    return;
-  }
-  republishes++;
-  if (sessionUpgrades > 0) publishedAfterSession++;
-  publishing = true;
-  void app
-    .publishSeeds()
-    .catch((error) => console.log("seed:", String(error)))
-    .finally(() => {
-      publishing = false;
-    });
-}, 1000);
-reseed.unref();
 const ports = {
   alice: alice.url,
   bob: bob.url,
@@ -167,7 +130,6 @@ let closing = false;
 async function close() {
   if (closing) return;
   closing = true;
-  clearInterval(reseed);
   await Promise.all([alice.close(), bob.close()]);
   await new Promise<void>((resolve) => control.close(() => resolve()));
   await app.close();

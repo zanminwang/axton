@@ -35,6 +35,7 @@ async function scenario(body) {
  let app = await createExample();
  const directory = await mkdtemp(join(tmpdir(), 'axton-todo-e2e-'));
  const clients = new Set();
+ const scopes = new Map();
  const errors = [];
  const fetchOriginal = globalThis.fetch;
  let server;
@@ -47,10 +48,10 @@ async function scenario(body) {
    * Opens a client database with a live connection under `token`; `server: false`
    * opens it offline. A subscription starts at the first head its handshake
    * acknowledges (#150), so the seeds published at startup are not loaded by
-   * subscribing: once a connected client reports that boundary the backend
-   * publishes them again, which is how a from-now client meets existing data
-   * until #151 adds the explicit `bootstrap()`. `ready: false` skips that for a
-   * client whose handshake is not expected to succeed.
+   * subscribing: the client asks for them with `bootstrap()` (#151), which is
+   * what the example app does. `ready: false` skips that for a client whose
+   * handshake is not expected to succeed, and `bootstrap: false` leaves the
+   * Scope's history unloaded.
    */
   async open(name, token, options = {}) {
    const client = await GeneratedClient.open({
@@ -60,13 +61,16 @@ async function scenario(body) {
    clients.add(client);
    if (options.subscribe !== false) {
     const subscription = await client.scopes.subscribe(CHANNEL);
+    scopes.set(name, subscription);
     if (options.server !== false && options.ready !== false) {
      await wait(() => subscription.status.initialization === 'ready', `${name}'s subscription is initialized`);
-     await app.publishSeeds();
+     if (options.bootstrap !== false) await subscription.bootstrap();
     }
    }
    return client;
   },
+  /** The subscription handle `open` registered for `name`. */
+  scope: name => scopes.get(name),
   async close(client) {
    clients.delete(client);
    await client.close();
@@ -91,6 +95,20 @@ async function scenario(body) {
    globalThis.fetch = async (url, init) => {
     if (!held && String(url).endsWith('/sync/mutations') && init?.headers?.authorization === `Bearer ${token}`) {
      held = true;
+     entered.resolve();
+     await opened.promise;
+    }
+    return fetchOriginal(url, init);
+   };
+   return { entered: entered.promise, release: () => { opened.resolve(); globalThis.fetch = fetchOriginal; } };
+  },
+  /** Holds every historical page request made with `token` until the returned release function runs. */
+  holdBootstrap(token) {
+   const opened = Promise.withResolvers();
+   const entered = Promise.withResolvers();
+   globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/sync/pull') && init?.headers?.authorization === `Bearer ${token}`
+     && typeof init.body === 'string' && JSON.parse(init.body).mode === 'bootstrap') {
      entered.resolve();
      await opened.promise;
     }
@@ -133,6 +151,39 @@ test('seeds reach both participants and survive a restart without resetting edit
   await setDone(alice, 'seed-3', false);
   await ctx.settled(alice);
   assert.equal((await ctx.row('seed-3')).done, false);
+  assert.equal(ctx.errors.length, 0);
+ });
+});
+
+// A durable Action submitted while the Scope's history is still loading
+// ([#151](https://github.com/zanminwang/axton/issues/151)): the two are separate
+// work, so the call completes from its receipt (A3) and the load finishes
+// afterwards with its own coverage intact.
+test('an Action submitted during the historical load completes, and the load still covers the Scope', async () => {
+ await scenario(async ctx => {
+  const alice = await ctx.open('alice', 'alice', { bootstrap: false });
+  const subscription = ctx.scope('alice');
+  assert.deepEqual({ ...subscription.status.bootstrap }, { phase: 'not-requested', error: null });
+  assert.equal(await alice.models.todo.get({ id: 'seed-1' }), null, 'subscribing loaded nothing published before the origin');
+
+  // The historical page is held on the wire for the whole of the Action.
+  const held = ctx.holdBootstrap('alice');
+  const loading = subscription.bootstrap();
+  loading.catch(() => {});
+  await held.entered;
+  await wait(() => subscription.status.bootstrap.phase === 'loading', 'a running load');
+  await addTodo(alice, { id: 'during-1', title: 'Added while loading', done: false, createdById: 'alice' });
+  await ctx.settled(alice);
+  assert.equal((await alice.models.todo.get({ id: 'during-1' })).title, 'Added while loading', 'the receipt applied without waiting for the load');
+  assert.deepEqual(await ctx.row('during-1'), { id: 'during-1', title: 'Added while loading', done: false, createdById: 'alice' });
+  assert.equal(subscription.status.bootstrap.phase, 'loading', 'the Action disturbed no historical progress');
+
+  held.release();
+  await loading;
+  assert.deepEqual({ ...subscription.status.bootstrap }, { phase: 'complete', error: null });
+  assert.equal((await alice.models.todo.get({ id: 'seed-1' })).title, 'Buy milk', 'the load covered the Scope\'s history');
+  assert.deepEqual(await alice.models.user.get({ id: 'bob' }), { id: 'bob', name: 'Bob' });
+  assert.equal((await alice.models.todo.get({ id: 'during-1' })).title, 'Added while loading', 'and delivered no older authority over the receipt');
   assert.equal(ctx.errors.length, 0);
  });
 });

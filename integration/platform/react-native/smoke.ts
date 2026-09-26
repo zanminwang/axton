@@ -72,7 +72,13 @@ export async function runSmoke(show: (message: string) => void) {
         current.clientId === expectedClientId,
         "client identity changed across restart",
       );
-    await current.channels.subscribe("book:demo");
+    // The seeded row was published before this installation's subscription had
+    // an origin, so subscribing does not deliver it
+    // ([#150](https://github.com/zanminwang/axton/issues/150)). The explicit
+    // load is what brings it ([#151](https://github.com/zanminwang/axton/issues/151));
+    // it registers its work when the call is made and runs in the background.
+    const subscription = await current.channels.subscribe("book:demo");
+    subscription.bootstrap().catch((error) => console.log("bootstrap:", String(error)));
     let watched = new Map<string, string>();
     current.models.entry.watch({}, (rows) => {
       watched = new Map(rows.map((row) => [row.id, row.text]));

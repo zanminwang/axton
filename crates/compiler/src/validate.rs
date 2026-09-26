@@ -207,9 +207,10 @@ pub enum ActionInput {
         slot: Slot,
     },
 }
+/// Every output is explicit and supplied by the handler: a value, or the
+/// identity of a Model record the server resolves through its Loader.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActionOutputSource {
-    InputIdentity { input: String },
     HandlerValue,
     HandlerModelIdentity,
 }
@@ -217,7 +218,6 @@ pub enum ActionOutputSource {
 pub enum ActionOutputType {
     Value(FieldType),
     Model(String),
-    DeleteIdentity(String),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActionOutput {
@@ -1188,24 +1188,10 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
                         list: f.list,
                     });
                 }
+                // A Model operand declares a mutation target, never a
+                // result: outputs are explicit and form their own namespace.
                 ActionInputDecl::Model(s) => {
                     let slot = validate_action_slot(s, &decl.inputs, &models)?;
-                    let model = model(&s.model).unwrap();
-                    output_names.insert(s.name.as_str());
-                    outputs.push(ActionOutput {
-                        name: s.name.clone(),
-                        ty: if slot.operation == Operation::Delete {
-                            ActionOutputType::DeleteIdentity(s.model.clone())
-                        } else {
-                            ActionOutputType::Model(s.model.clone())
-                        },
-                        cardinality: slot.cardinality,
-                        source: ActionOutputSource::InputIdentity {
-                            input: s.name.clone(),
-                        },
-                        model_read_version: (slot.operation != Operation::Delete)
-                            .then_some(model.version),
-                    });
                     inputs.push(ActionInput::Model { slot });
                 }
             }

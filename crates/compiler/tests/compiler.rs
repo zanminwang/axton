@@ -79,38 +79,17 @@ fn action_values_and_explicit_outputs_are_typed() {
 }
 
 #[test]
-fn action_model_operands_imply_bound_outputs() {
+fn action_model_operands_imply_no_outputs() {
     let schema = parse("model Todo { id String title String @@id(id) } mutation Edit(one Todo.create, maybe Todo.update<title>?, many Todo.delete[]) { related Todo? }").unwrap();
     let action = &validate(&schema).unwrap().actions[0];
-    assert_eq!(
-        action
-            .outputs
-            .iter()
-            .map(|x| x.cardinality)
-            .collect::<Vec<_>>(),
-        [
-            Cardinality::Single,
-            Cardinality::Optional,
-            Cardinality::List,
-            Cardinality::Optional
-        ]
-    );
-    assert_eq!(action.outputs[0].ty, ActionOutputType::Model("Todo".into()));
-    assert_eq!(
-        action.outputs[2].ty,
-        ActionOutputType::DeleteIdentity("Todo".into())
-    );
-    assert_eq!(
-        action.outputs[1].source,
-        ActionOutputSource::InputIdentity {
-            input: "maybe".into()
-        }
-    );
-    assert_eq!(
-        action.outputs[3].source,
-        ActionOutputSource::HandlerModelIdentity
-    );
-    assert_eq!(action.outputs[0].model_read_version, Some(1));
+    assert_eq!(action.inputs.len(), 3);
+    assert_eq!(action.outputs.len(), 1);
+    let related = &action.outputs[0];
+    assert_eq!(related.name, "related");
+    assert_eq!(related.cardinality, Cardinality::Optional);
+    assert_eq!(related.ty, ActionOutputType::Model("Todo".into()));
+    assert_eq!(related.source, ActionOutputSource::HandlerModelIdentity);
+    assert_eq!(related.model_read_version, Some(1));
 }
 
 #[test]
@@ -161,23 +140,7 @@ fn action_model_operations_keep_each_operand_cardinality() {
                 panic!("expected Model operand")
             };
             assert_eq!(slot.cardinality, expected, "{source}");
-            assert_eq!(action.outputs[0].cardinality, expected, "{source}");
-            assert_eq!(
-                action.outputs[0].source,
-                ActionOutputSource::InputIdentity {
-                    input: "todo".into()
-                },
-                "{source}"
-            );
-            assert_eq!(
-                action.outputs[0].ty,
-                if operation == "delete" {
-                    ActionOutputType::DeleteIdentity("Todo".into())
-                } else {
-                    ActionOutputType::Model("Todo".into())
-                },
-                "{source}"
-            );
+            assert!(action.outputs.is_empty(), "{source}");
         }
     }
 }
@@ -210,7 +173,7 @@ fn action_semantic_errors_name_the_member_and_location() {
     for (source, name) in [
         ("mutation Search(query Object)", "Object"),
         (
-            "model Todo { id String @@id(id) } mutation A(todo Todo.create) { todo Todo }",
+            "model Todo { id String @@id(id) } mutation A(todo Todo.create) { todo Todo todo Todo }",
             "todo",
         ),
         ("mutation A(x String, x Int)", "x"),
@@ -268,6 +231,182 @@ fn action_value_input_can_share_a_name_with_an_explicit_output() {
     assert_eq!(action.inputs.len(), 1);
     assert_eq!(action.outputs.len(), 1);
 }
+
+/// #140: a Model operand declares a mutation target, never a result. Outputs
+/// are explicit, handler-sourced and independent of inputs with the same name.
+const EXPLICIT_RESULTS: &str = "model Todo { id String title String @@id(id) }\nmutation Edit(todo Todo.update)\nmutation EditAndRead(todo Todo.update) {\n  todo Todo\n}";
+
+#[test]
+fn model_operands_imply_no_result_and_outputs_share_input_names() {
+    let valid = validate(&parse(EXPLICIT_RESULTS).unwrap()).unwrap();
+    let [edit, read] = &valid.actions[..] else {
+        panic!("two operations")
+    };
+    assert!(edit.outputs.is_empty(), "{:?}", edit.outputs);
+    assert_eq!(edit.inputs, read.inputs);
+    let ActionInput::Model { slot } = &read.inputs[0] else {
+        panic!("Model operand")
+    };
+    assert_eq!((slot.name.as_str(), slot.model.as_str()), ("todo", "Todo"));
+    assert_eq!(read.outputs.len(), 1);
+    let output = &read.outputs[0];
+    assert_eq!(output.name, "todo");
+    assert_eq!(output.ty, ActionOutputType::Model("Todo".into()));
+    assert_eq!(output.cardinality, Cardinality::Single);
+    assert_eq!(output.source, ActionOutputSource::HandlerModelIdentity);
+    assert_eq!(output.model_read_version, Some(1));
+
+    let descriptor = compile(EXPLICIT_RESULTS).unwrap();
+    let actions = descriptor["actions"].as_array().unwrap();
+    assert_eq!(actions[0]["outputs"], serde_json::json!([]));
+    assert_eq!(actions[0]["inputs"], actions[1]["inputs"]);
+    assert_eq!(
+        actions[0]["inputs"][0],
+        serde_json::json!({"kind":"model","name":"todo","model":"Todo","operation":"update","cardinality":"single","allowedPatchFields":["title"]})
+    );
+    assert_eq!(
+        actions[1]["outputs"],
+        serde_json::json!([{
+            "name":"todo","kind":"model","cardinality":"single","source":"handlerIdentity",
+            "model":"Todo","modelReadVersion":1,
+            "handlerType":{"kind":"identity","model":"Todo","fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}]}
+        }])
+    );
+    assert!(!descriptor.to_string().contains("inputIdentity"));
+}
+
+#[test]
+fn every_operand_shape_adds_no_result_and_explicit_outputs_keep_their_own() {
+    for operation in ["create", "update", "delete"] {
+        for suffix in ["", "?", "[]"] {
+            let source = format!(
+                "model Todo {{ id String title String @@id(id) }} mutation Do(todo Todo.{operation}{suffix}) mutation DoAndRead(todo Todo.{operation}{suffix}) {{ todo Todo? others Todo[] }}"
+            );
+            let valid = validate(&parse(&source).unwrap()).unwrap();
+            assert!(valid.actions[0].outputs.is_empty(), "{source}");
+            let outputs = &valid.actions[1].outputs;
+            assert_eq!(
+                outputs
+                    .iter()
+                    .map(|x| (x.name.as_str(), x.cardinality))
+                    .collect::<Vec<_>>(),
+                [
+                    ("todo", Cardinality::Optional),
+                    ("others", Cardinality::List)
+                ],
+                "{source}"
+            );
+            assert!(
+                outputs
+                    .iter()
+                    .all(|x| x.ty == ActionOutputType::Model("Todo".into())
+                        && x.source == ActionOutputSource::HandlerModelIdentity),
+                "{source}"
+            );
+            let descriptor = compile(&source).unwrap();
+            assert!(
+                !descriptor.to_string().contains("inputIdentity"),
+                "{source}"
+            );
+            assert!(
+                !descriptor.to_string().contains("deleteIdentity"),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn deleted_identities_are_returned_through_explicit_scalar_outputs() {
+    let source = "model Project { tenantId String id String @@id(tenantId, id) } mutation Drop(project Project.delete) { tenantId String id String }";
+    let valid = validate(&parse(source).unwrap()).unwrap();
+    let outputs = &valid.actions[0].outputs;
+    assert_eq!(
+        outputs.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(),
+        ["tenantId", "id"]
+    );
+    assert!(outputs.iter().all(|x| x.ty
+        == ActionOutputType::Value(FieldType::Scalar(Scalar::String))
+        && x.source == ActionOutputSource::HandlerValue
+        && x.model_read_version.is_none()));
+    // A same-name scalar output is the handler's value, not the operand.
+    let same = validate(
+        &parse(
+            "model Todo { id String @@id(id) } mutation Remove(todo Todo.delete) { todo String }",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        same.actions[0].outputs[0].source,
+        ActionOutputSource::HandlerValue
+    );
+}
+
+#[test]
+fn duplicate_outputs_and_duplicate_inputs_fail_independently() {
+    // Each refusal names the second declaration within its own namespace.
+    for (source, expected) in [
+        (
+            "model Todo { id String @@id(id) }\nmutation A(todo Todo.update) { todo Todo todo Todo }",
+            "2:42: duplicate Mutation output todo",
+        ),
+        (
+            "model Todo { id String @@id(id) }\nmutation A() { todo Todo todo Todo? }",
+            "2:26: duplicate Mutation output todo",
+        ),
+        (
+            "model Todo { id String @@id(id) }\nquery A(text String) { text String text Int }",
+            "2:36: duplicate Query output text",
+        ),
+        (
+            "model Todo { id String @@id(id) }\nmutation A(todo Todo.update, todo Todo.delete) { todo Todo }",
+            "2:30: duplicate Mutation input todo",
+        ),
+        (
+            "model Todo { id String @@id(id) }\nmutation A(todo Todo.update, todo String)",
+            "2:30: duplicate Mutation input todo",
+        ),
+    ] {
+        let err = validate(&parse(source).unwrap()).unwrap_err();
+        assert_eq!(err, expected, "{source}");
+    }
+}
+
+#[test]
+fn explicit_results_generate_separate_client_and_handler_types() {
+    let descriptor = compile(EXPLICIT_RESULTS).unwrap();
+    let ts = axton_compiler::typescript(&descriptor);
+    let backend = axton_compiler::backend_typescript(&descriptor, "@axton/server");
+    let dart = axton_compiler::dart(&descriptor);
+    for expected in [
+        "export type EditOutput = void;",
+        "function decodeEditOutput(_value:unknown):void { return undefined; }",
+        "export interface EditAndReadOutput {\n todo: Todo;\n}",
+        "export type EditAndReadOptions = CallOptions<'todo'>;",
+    ] {
+        assert!(ts.contains(expected), "missing {expected}: {ts}");
+    }
+    for expected in [
+        "export interface EditInput {\n todo: TodoUpdate",
+        "export type EditHandlerOutput = void;",
+        "export interface EditAndReadInput {\n todo: TodoUpdate",
+        "export interface EditAndReadHandlerOutput {\n todo: TodoIdentity;\n}",
+    ] {
+        assert!(backend.contains(expected), "missing {expected}: {backend}");
+    }
+    for expected in [
+        "typedef EditOutput = void;",
+        "typedef EditHandlerOutput = void;",
+        "class EditAndReadOutput implements _DartActionRecord {\n final Todo todo;",
+        "class EditAndReadHandlerOutput implements _DartActionRecord {\n final TodoIdentity todo;",
+    ] {
+        assert!(dart.contains(expected), "missing {expected}: {dart}");
+    }
+    assert!(!ts.contains("export interface EditOutput"), "{ts}");
+    assert!(!dart.contains("class EditOutput"), "{dart}");
+}
+
 #[test]
 fn schema_and_mutations() {
     let v=compile("enum Status { active archived } model Entry { owner UUID id UUID title String note String? labels String[] at DateTime status Status @@id(owner,id) @@unique(title) } mutation Edit { entry Entry.update<title,note> @@version(2) }").unwrap();
@@ -911,21 +1050,24 @@ fn action_descriptors_separate_values_operands_and_output_sources() {
         action["inputs"][2]["allowedPatchFields"],
         serde_json::json!(["title"])
     );
+    assert_eq!(action["inputs"][3]["operation"], "delete");
+    assert_eq!(action["inputs"][3]["cardinality"], "list");
+    // Operands contribute no outputs; each output names its handler source.
+    assert_eq!(action["outputs"].as_array().unwrap().len(), 2);
     assert_eq!(
-        action["outputs"][1]["source"],
-        serde_json::json!({"inputIdentity":"maybe"})
-    );
-    assert_eq!(action["outputs"][2]["kind"], "deleteIdentity");
-    assert_eq!(action["outputs"][2]["cardinality"], "list");
-    assert_eq!(
-        action["outputs"][3]["source"],
+        action["outputs"][0]["source"],
         serde_json::json!("handlerIdentity")
     );
     assert_eq!(
-        action["outputs"][3]["handlerType"]["fields"][0]["name"],
+        action["outputs"][0]["handlerType"]["fields"][0]["name"],
         "id"
     );
-    assert_eq!(action["outputs"][3]["modelReadVersion"], 1);
+    assert_eq!(action["outputs"][0]["modelReadVersion"], 1);
+    assert_eq!(
+        action["outputs"][1]["source"],
+        serde_json::json!("handlerValue")
+    );
+    assert!(action["outputs"][1].get("handlerType").is_none());
     assert!(
         descriptor["schema"]["clientPolicies"]
             .as_array()
@@ -951,16 +1093,16 @@ mutation Rename(child Child.update<title>)
         action["sequence"]["after"][0]["arguments"]["child"],
         "child"
     );
-    assert_eq!(action["outputs"][2]["cardinality"], "list");
+    assert_eq!(action["outputs"][0]["cardinality"], "list");
     assert_eq!(
-        action["outputs"][2]["handlerType"]["fields"]
+        action["outputs"][0]["handlerType"]["fields"]
             .as_array()
             .unwrap()
             .len(),
         2
     );
     assert_eq!(
-        action["outputs"][2]["handlerType"]["fields"][0]["name"],
+        action["outputs"][0]["handlerType"]["fields"][0]["name"],
         "tenant"
     );
     let history = axton_compiler::reconcile_action_history(&descriptors, None).unwrap();
@@ -1492,11 +1634,7 @@ fn mutation_and_query_descriptors_carry_their_kind() {
     .unwrap();
     let actions = v["schema"]["actions"].as_array().unwrap();
     assert_eq!(actions[0]["kind"], "mutation");
-    assert_eq!(
-        actions[0]["outputs"][0]["source"],
-        serde_json::json!({"inputIdentity":"todo"})
-    );
-    assert_eq!(actions[0]["outputs"][0]["modelReadVersion"], 2);
+    assert_eq!(actions[0]["outputs"], serde_json::json!([]));
     assert_eq!(actions[1]["kind"], "query");
     assert_eq!(actions[1]["outputs"][0]["source"], "handlerIdentity");
     assert_eq!(actions[1]["outputs"][0]["cardinality"], "list");

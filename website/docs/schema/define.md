@@ -17,7 +17,7 @@ model Entry {
 mutation EditEntry(entry Entry.update<text,note>) { updated Entry? }
 ```
 
-`@@id(id)` defines identity. `String?` is nullable. `EditEntry` declares an update operand named `entry`; callers can change `text` and `note` but not identity through that patch. Its implicit `entry` result resolves the input identity through the Loader. The handler selects the explicit nullable `updated` result by identity.
+`@@id(id)` defines identity. `String?` is nullable. `EditEntry` declares an update operand named `entry`; callers can change `text` and `note` but not identity through that patch. The `entry` input is not part of the result: once the call completes, the backend's version of that record is already applied locally. The only result is the explicit nullable `updated` output, which the handler selects by identity.
 
 Fields can declare [creation defaults](reference.md#creation-defaults), filled in only when a new record omits them:
 

@@ -167,13 +167,20 @@ for(const shim of shims){
   assert.deepEqual(await q('SELECT * FROM axton_invalidation WHERE identity_key=$1',[key(id)]),[]);
   assert.deepEqual(await q('SELECT * FROM axton_channel WHERE channel=$1',[p('undone')]),[]);
  });
- test(`[${shim.name}] scan pairs the invalidation cursor with the current record stamp and reports missing metadata`,async()=>{
-  const id=p('scan');
-  await inTx(async(tx,_,a)=>{const stamp=await a({op:'ensureStamp',model:'Task',identityKey:key(id)});await a({op:'publish',channel:p('scan'),model:'Task',identity:{id},identityKey:key(id),stamp});await a({op:'advanceStamp',model:'Task',identityKey:key(id)});});
-  const rows=await inTx((tx,_,a)=>a({op:'scan',channel:p('scan'),after:0,limit:50}));
-  assert.deepEqual(rows,[{channel:p('scan'),cursor:1,model:'Task',identityKey:key(id),identity:{id},stamp:2}]);
-  await q('DELETE FROM axton_record WHERE identity_key=$1',[key(id)]);
-  await assert.rejects(()=>inTx((tx,_,a)=>a({op:'scan',channel:p('scan'),after:0,limit:50})),/Record metadata missing/);
+ test(`[${shim.name}] scan answers members only before its limit, pairs the invalidation cursor with the current record stamp and reports missing metadata`,async()=>{
+  const channel=p('scan');const [id,gone,other]=[p('scan'),p('scan-gone'),p('scan-other')];
+  const set=(member,present)=>({op:'setMembership',channel,model:'Task',identityKey:key(member),present});
+  // Enrolled first: a scan answers members only.
+  await inTx(async(tx,_,a)=>{for(const member of [gone,other,id]){const stamp=await a({op:'ensureStamp',model:'Task',identityKey:key(member)});await a(set(member,true));await a({op:'publish',channel,model:'Task',identity:{id:member},identityKey:key(member),stamp});}await a({op:'advanceStamp',model:'Task',identityKey:key(id)});});
+  const scan=(after=0,limit=50)=>inTx((tx,_,a)=>a({op:'scan',channel,after,limit}));
+  assert.deepEqual((await scan()).map(r=>r.identity.id),[gone,other,id]);
+  await inTx((tx,_,a)=>a(set(gone,false)));
+  await inTx((tx,_,a)=>a(set(other,false)));
+  assert.deepEqual(await scan(0,1),[{channel,cursor:3,model:'Task',identityKey:key(id),identity:{id},stamp:2}],'removed rows are filtered before the limit');
+  assert.deepEqual((await q('SELECT cursor::int FROM axton_invalidation WHERE channel=$1 ORDER BY cursor',[channel])).map(r=>r.cursor),[1,2,3],'and retained');
+  // The membership foreign key forbids dropping a member's record row; forge the defect with triggers off.
+  await inTx(async(tx,query)=>{await query('SET LOCAL session_replication_role = replica');await query('DELETE FROM axton_record WHERE identity_key=$1',[key(id)]);});
+  await assert.rejects(()=>scan(),/Record metadata missing/);
  });
  test(`[${shim.name}] savepoints isolate one mutation's writes and the transaction continues after a rollback`,async()=>{
   const id=p('sp');

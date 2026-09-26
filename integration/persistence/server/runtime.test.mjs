@@ -561,8 +561,10 @@ test('scan pairs the invalidation cursor with the current record stamp; a missin
  const page=await pull('shared',cursor-1);
  assert.deepEqual(page.changes[0],{model:'Task',identity:{id:'join-a'},stamp:2,state:{title:'quiet'}},'the original cursor with the current stamp and content');
  const rows=await db.$transaction(tx=>store(tx).call({op:'scan',channel:'shared',after:cursor-1,limit:1}));assert.deepEqual(rows.map(r=>[r.cursor,r.stamp]),[[cursor,2]]);
- await db.$transaction(async tx=>{const storage=store(tx);const stamp=await storage.call({op:'ensureStamp',model:'Task',identityKey:key('orphan')});await storage.call({op:'publish',channel:'orphan',model:'Task',identity:{id:'orphan'},identityKey:key('orphan'),stamp});});
- await db.$executeRawUnsafe('DELETE FROM axton_record WHERE identity_key=$1',key('orphan'));
+ // Enrolled first: a scan answers members only.
+ await db.$transaction(async tx=>{const storage=store(tx);const stamp=await storage.call({op:'ensureStamp',model:'Task',identityKey:key('orphan')});await storage.call({op:'setMembership',channel:'orphan',model:'Task',identityKey:key('orphan'),present:true});await storage.call({op:'publish',channel:'orphan',model:'Task',identity:{id:'orphan'},identityKey:key('orphan'),stamp});});
+ // The membership foreign key forbids dropping a member's record row; forge the defect with triggers off.
+ await db.$transaction(async tx=>{await tx.$executeRawUnsafe('SET LOCAL session_replication_role = replica');await tx.$executeRawUnsafe('DELETE FROM axton_record WHERE identity_key=$1',key('orphan'));});
  await assert.rejects(()=>db.$transaction(tx=>store(tx).call({op:'scan',channel:'orphan',after:0,limit:50})),/Record metadata missing/);
  await assert.rejects(()=>pull('orphan',0),/Record metadata missing/);
 });

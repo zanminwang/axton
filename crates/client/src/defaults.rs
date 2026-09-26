@@ -1,0 +1,140 @@
+//! Create-only Model defaults ([#27](https://github.com/zanminwang/axton/issues/27)).
+//!
+//! Source `@default` fills a field only when a fresh create omits it. This is
+//! the one place that evaluates `uuid()` and `now()`: the client prepares a
+//! fresh local create, low-level enqueue or Mutation call here, before strict
+//! normalization, persistence or dispatch. Everything downstream (optimism,
+//! persisted intent, frozen bytes, the direct request, retries, reopen,
+//! replay and settlement) consumes the concrete values produced once here.
+//! Updates, deletes, reads, Loader records, incoming authority and migration
+//! never come through this module.
+use crate::{Operation, OperationKind};
+use axton_core::{ActionDescriptor, ActionInputDescriptor, CreateDefault, ModelDescriptor, Schema};
+use chrono::SecondsFormat;
+use serde_json::{Map, Value};
+
+/// A concrete value for one omitted field.
+fn materialize(default: &CreateDefault) -> Value {
+    match default {
+        CreateDefault::Literal { value } => value.clone(),
+        CreateDefault::Uuid => Value::String(uuid::Uuid::new_v4().hyphenated().to_string()),
+        CreateDefault::Now => {
+            Value::String(chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true))
+        }
+    }
+}
+
+/// Fill every defaulted field of `policy` that `admits` and that no part of
+/// the create already names; `insert` places each filled value.
+fn fill(
+    policy: &ModelDescriptor,
+    admits: impl Fn(&str) -> bool,
+    present: impl Fn(&str) -> bool,
+    mut insert: impl FnMut(&str, Value),
+) {
+    for field in &policy.fields {
+        let Some(default) = &field.create_default else {
+            continue;
+        };
+        if admits(&field.name) && !present(&field.name) {
+            insert(&field.name, materialize(default));
+        }
+    }
+}
+
+/// A fresh create operation split into identity and values: an omitted
+/// identity field is filled into the identity, an omitted state field into
+/// the values. A field named on either side counts as supplied, so a
+/// misplaced identity key is left for normalization to refuse rather than
+/// replaced by a generated one. Anything that is not an object is left for
+/// normalization to refuse as well.
+pub(crate) fn fill_operation(schema: &Schema, op: &mut Operation) {
+    if op.op != OperationKind::Create {
+        return;
+    }
+    let Ok(policy) = schema.model(&op.model) else {
+        return;
+    };
+    let (Some(identity), Some(Some(values))) = (
+        op.identity.as_object(),
+        op.values.as_ref().map(Value::as_object),
+    ) else {
+        return;
+    };
+    let mut additions: Vec<(String, Value)> = vec![];
+    fill(
+        policy,
+        |_| true,
+        |name| identity.contains_key(name) || values.contains_key(name),
+        |name, value| additions.push((name.to_string(), value)),
+    );
+    for (name, value) in additions {
+        let side = if policy.identity.contains(&name) {
+            &mut op.identity
+        } else {
+            op.values.as_mut().unwrap()
+        };
+        side.as_object_mut().unwrap().insert(name, value);
+    }
+}
+
+/// Fill the `Model.create` operands of fresh Mutation arguments. The current
+/// Model descriptor supplies the policy; the operation's retained input
+/// contract limits it to fields that contract declares, so a default is
+/// never injected into a version that predates its field. Absent optional
+/// operands stay absent and every list item gets its own values.
+pub(crate) fn fill_action_args(schema: &Schema, action: &ActionDescriptor, args: &mut Value) {
+    let Some(args) = args.as_object_mut() else {
+        return;
+    };
+    for input in &action.inputs {
+        let ActionInputDescriptor::Model {
+            name,
+            model,
+            operation,
+            cardinality,
+            ..
+        } = input
+        else {
+            continue;
+        };
+        if operation != "create" {
+            continue;
+        }
+        let Ok(policy) = schema.model(model) else {
+            continue;
+        };
+        let contract = action
+            .input
+            .as_ref()
+            .and_then(|input| input.models.iter().find(|m| m.name == *model))
+            .unwrap_or(policy);
+        let Some(value) = args.get_mut(name) else {
+            continue;
+        };
+        let items: Vec<&mut Value> = match (cardinality.as_str(), value) {
+            ("list", Value::Array(items)) => items.iter_mut().collect(),
+            (_, value) => vec![value],
+        };
+        for item in items {
+            if let Value::Object(record) = item {
+                fill_record(policy, contract, record);
+            }
+        }
+    }
+}
+
+fn fill_record(
+    policy: &ModelDescriptor,
+    contract: &ModelDescriptor,
+    record: &mut Map<String, Value>,
+) {
+    let mut additions: Vec<(String, Value)> = vec![];
+    fill(
+        policy,
+        |name| contract.fields.iter().any(|f| f.name == name),
+        |name| record.contains_key(name),
+        |name, value| additions.push((name.to_string(), value)),
+    );
+    record.extend(additions);
+}

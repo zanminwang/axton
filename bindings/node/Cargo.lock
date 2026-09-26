@@ -22,7 +22,6 @@ name = "axton-binding"
 version = "0.1.0"
 dependencies = [
  "axton-client",
- "axton-core",
  "axton-sqlite",
  "serde_json",
 ]

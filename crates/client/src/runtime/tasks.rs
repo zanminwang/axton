@@ -16,7 +16,7 @@ pub(super) struct Tasks {
 }
 pub(super) struct Queued {
     pub(super) request_id: String,
-    pub(super) command: Value,
+    pub(super) command: Command,
     /// Its admission number, which orders it against lane work.
     seq: u64,
 }
@@ -128,7 +128,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         // Admission order decides: lane work runs when it was ready before
         // the oldest ordinary task arrived, otherwise that task goes first.
         // After a lane unit the lane re-enters the order behind everything
-        // admitted so far, as the host loops' re-queued pump did.
+        // admitted so far.
         match (head, lane_since) {
             (None, None) => return false,
             (Some(_), None) => self.ordinary_unit(now),
@@ -181,9 +181,10 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             self.push_turn(now, entropy);
         }
     }
-    /// One ordinary task. The runtime-owned lifecycles - the connection, direct
-    /// calls, prerequisites and rebuild - are decided here; everything else is
-    /// a command against the client. A task that committed wakes both lanes.
+    /// One ordinary task. The runtime-owned lifecycles - the transaction, the
+    /// connection, direct calls, prerequisites, rebuild and the observers -
+    /// are decided here; everything else is a command against the client. A
+    /// task that committed wakes both lanes.
     fn ordinary_unit(&mut self, now: u64) {
         let Some(Queued {
             request_id,
@@ -193,41 +194,53 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         else {
             return;
         };
-        let kind = command["kind"].as_str().unwrap_or_default();
-        if kind == "transaction" {
-            self.open_transaction(request_id);
-            return;
-        }
-        let connected = self.connection.is_some();
         let generation = self.client.generation();
-        let outcome = match kind {
-            "connect" => Some(self.connect(&command, now)),
-            "connection" if connected => Some(self.control(&command, now)),
-            "downlink" | "startSync" | "next" | "complete" if connected => {
-                Some(Err(lanes::ALREADY_ACTIVE.into()))
-            }
-            "invoke" => self.invoke(&request_id, &command),
-            "runPrerequisites" => self.run_prerequisites(&request_id, &command),
-            "rebuild" => Some(self.rebuild(&command, now)),
-            "scopeSubscribe" => Some(self.subscribe_scope(&command)),
-            "scopeBootstrap" => self.bootstrap_scope(&request_id, &command),
-            "watch" => Some(self.watch(&command)),
-            "unwatch" => Some(self.unwatch(&command)),
-            _ => Some(
-                commands::execute(&mut self.client, &mut self.lanes, &command)
-                    .map_err(|e| e.to_string()),
+        let outcome = match &command {
+            Command::Transaction => return self.open_transaction(request_id),
+            Command::Connect {
+                direct_timeout_ms,
+                refresh_auth,
+            } => Some(self.connect(*direct_timeout_ms, refresh_auth.unwrap_or(false), now)),
+            Command::Connection { event } => Some(self.control(*event, now)),
+            Command::Invoke {
+                name,
+                version,
+                args,
+                store,
+                once,
+                refresh,
+            } => self.invoke(
+                &request_id,
+                direct::Invocation {
+                    name,
+                    version: *version,
+                    args,
+                    store,
+                    once: once.unwrap_or(false),
+                    refresh: refresh.unwrap_or(false),
+                },
             ),
+            Command::RunPrerequisites { handlers } => {
+                self.run_prerequisites(&request_id, handlers.clone())
+            }
+            Command::Rebuild { discard_pending } => {
+                Some(self.rebuild(discard_pending.unwrap_or(false), now))
+            }
+            Command::ScopeSubscribe { scope } => Some(self.subscribe_scope(scope)),
+            Command::ScopeBootstrap { .. } => self.bootstrap_scope(&request_id, &command),
+            Command::Watch { model, spec } => Some(self.watch(model, spec.as_ref())),
+            Command::Unwatch { observer_id } => Some(self.unwatch(observer_id)),
+            _ => Some(commands::execute(&mut self.client, &command).map_err(|e| e.to_string())),
         };
-        // `rebuild` and `scopeBootstrap` announce their own commit, ahead of
-        // what they settle.
-        if !matches!(kind, "rebuild" | "scopeBootstrap") {
-            self.changed_since(generation);
-        }
+        self.committed_since(generation);
         if let Some(Ok(value)) = &outcome {
-            self.removed(kind, &command, value);
+            self.removed(&command, value);
             // The protocol seams settle calls too; every final outcome
             // travels as `callCompleted`, after the commit that decided it.
-            if matches!(kind, "ack" | "pull" | "drop") {
+            if matches!(
+                command,
+                Command::Ack { .. } | Command::Pull { .. } | Command::Drop { .. }
+            ) {
                 self.seam_completions(value);
             }
         }
@@ -238,32 +251,38 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             self.complete(request_id, outcome);
         }
     }
-    /// `rebuild {discardPending?}` as the command answers it, plus the fence:
-    /// everything in flight belongs to the replaced replica. Lane effects are
-    /// cancelled and the lanes start over in the same intent, direct calls
-    /// fail with an unknown execution, the prerequisite loop moves on, and
-    /// every abandoned durable call is completed. A refused rebuild changes
-    /// nothing.
-    fn rebuild(&mut self, command: &Value, now: u64) -> std::result::Result<Value, String> {
-        let report = commands::execute(&mut self.client, &mut self.lanes, command)
+    /// `rebuild {discardPending?}`: the report the client answers, plus the
+    /// fence - everything in flight belongs to the replaced replica. Lane
+    /// effects are cancelled and the lanes start over in the same intent,
+    /// direct calls fail with an unknown execution, the prerequisite loop
+    /// moves on, every observer of the old replica ends and every abandoned
+    /// durable call is completed. A refused rebuild changes nothing.
+    fn rebuild(&mut self, discard_pending: bool, now: u64) -> std::result::Result<Value, String> {
+        let report = self
+            .client
+            .rebuild(discard_pending)
             .map_err(|e| e.to_string())?;
+        // The push cycle starts over with the fresh replica; the worker
+        // forgets the old one but keeps its intent and its identifier
+        // allocators, so no answer to old I/O can match new I/O (#162).
+        self.lanes.cycle = crate::SyncCycle::default();
+        self.lanes.downlink.reset_for_rebuild();
         self.fail_directs(direct::EXECUTION_UNKNOWN);
         self.rebuilt_prerequisites();
         self.rebuilt_lanes(now);
-        self.changed();
+        self.observers.stale = true;
         self.rebuilt_observers();
-        for abandoned in report["abandonedCalls"].as_array().into_iter().flatten() {
-            let frozen = abandoned["frozen"].as_bool().unwrap_or(false);
+        for abandoned in &report.abandoned_calls {
             self.events.push(Event::CallCompleted {
-                call_id: abandoned["callId"].as_str().unwrap_or_default().to_string(),
+                call_id: abandoned.call_id.clone(),
                 outcome: json!({
                     "status": "failed",
                     "code": "abandoned",
-                    "execution": if frozen { "unknown" } else { "rejected" },
+                    "execution": if abandoned.frozen { "unknown" } else { "rejected" },
                 }),
             });
         }
-        Ok(report)
+        Ok(commands::rebuild_json(&report))
     }
     /// The `completions` of an `ack`, `pull` or `drop` answer, announced.
     fn seam_completions(&mut self, value: &Value) {

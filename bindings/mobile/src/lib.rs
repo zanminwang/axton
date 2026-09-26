@@ -1,46 +1,8 @@
-//! C ABI used by mobile platform modules: `axton_mobile_call` on a dedicated
-//! worker queue, and the runtime actor's open/submit/drain/detach.
-use axton_binding::{RuntimeHost, ffi};
-use serde_json::json;
-use std::{
-    ffi::{CStr, CString, c_char, c_void},
-    sync::{Mutex, OnceLock},
-};
-
-static HOST: OnceLock<Mutex<RuntimeHost>> = OnceLock::new();
-
-/// Calls the process-wide AXTON runtime host.
-///
-/// # Safety
-/// `input` must point to a valid NUL-terminated UTF-8 string for the duration
-/// of this call.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn axton_mobile_call(input: *const c_char) -> *mut c_char {
-    let result = std::panic::catch_unwind(|| {
-        if input.is_null() {
-            return Err("null input".to_string());
-        }
-        let text = unsafe { CStr::from_ptr(input) }
-            .to_str()
-            .map_err(|error| error.to_string())?;
-        let request = serde_json::from_str(text).map_err(|error| error.to_string())?;
-        // A panic while holding the lock poisons it for the rest of the process,
-        // matching the Dart carrier; the app must be relaunched after such a fault.
-        HOST.get_or_init(|| Mutex::new(RuntimeHost::default()))
-            .lock()
-            .map_err(|_| "runtime poisoned".to_string())?
-            .call(request)
-            .map_err(|error| error.to_string())
-    });
-    let response = match result {
-        Ok(Ok(value)) => json!({"ok": true, "result": value}),
-        Ok(Err(error)) => json!({"ok": false, "error": error}),
-        Err(_) => json!({"ok": false, "error": "runtime panic"}),
-    };
-    CString::new(response.to_string())
-        .expect("serialized JSON contains no raw NUL")
-        .into_raw()
-}
+//! C ABI used by mobile platform modules: the runtime actor's
+//! open/submit/drain/detach
+//! ([#134](https://github.com/zanminwang/axton/issues/134)).
+use axton_binding::ffi;
+use std::ffi::{c_char, c_void};
 
 /// Opens a Rust-owned client runtime
 /// ([#134](https://github.com/zanminwang/axton/issues/134)). Answers the
@@ -86,34 +48,19 @@ pub extern "C" fn axton_mobile_runtime_detach(runtime: u64) {
     ffi::detach(runtime)
 }
 
-/// Frees a response allocated by [`axton_mobile_call`] or the
-/// `axton_mobile_runtime` functions.
+/// Frees a string the `axton_mobile_runtime` functions returned.
 ///
 /// # Safety
 /// `output` must be null or a pointer returned by one of those functions that
 /// has not already been freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn axton_mobile_free(output: *mut c_char) {
-    if !output.is_null() {
-        drop(unsafe { CString::from_raw(output) });
-    }
+    unsafe { ffi::free(output) }
 }
 
 #[cfg(test)]
 mod tests {
     use std::ffi::{CStr, CString};
-
-    fn call(input: &str) -> serde_json::Value {
-        let input = CString::new(input).unwrap();
-        let output = unsafe { super::axton_mobile_call(input.as_ptr()) };
-        assert!(!output.is_null());
-        let text = unsafe { CStr::from_ptr(output) }
-            .to_str()
-            .unwrap()
-            .to_owned();
-        unsafe { super::axton_mobile_free(output) };
-        serde_json::from_str(&text).unwrap()
-    }
 
     /// The wake context: a channel the test waits on, never a sleep.
     extern "C" fn wake(runtime: u64, context: *mut std::ffi::c_void) {
@@ -221,61 +168,106 @@ mod tests {
         assert_eq!(drained(u64::MAX), Vec::<serde_json::Value>::new());
     }
 
-    #[test]
-    fn rejects_null_and_malformed_inputs_as_json_errors() {
-        let output = unsafe { super::axton_mobile_call(std::ptr::null()) };
-        let value: serde_json::Value = unsafe { CStr::from_ptr(output) }
-            .to_str()
-            .map(|text| serde_json::from_str(text).unwrap())
-            .unwrap();
-        unsafe { super::axton_mobile_free(output) };
-        assert_eq!(
-            value,
-            serde_json::json!({"ok": false, "error": "null input"})
-        );
-
-        let malformed = call("{");
-        assert_eq!(malformed["ok"], false);
-        assert!(malformed["error"].as_str().unwrap().contains("EOF"));
+    /// Take events on every wake until one of `kind` arrives; answer it.
+    fn wait_for(
+        wakes: &std::sync::mpsc::Receiver<u64>,
+        runtime: u64,
+        events: &mut Vec<serde_json::Value>,
+        kind: &str,
+    ) -> serde_json::Value {
+        loop {
+            if let Some(i) = events.iter().position(|e| e["type"] == kind) {
+                return events.remove(i);
+            }
+            assert_eq!(
+                wakes
+                    .recv_timeout(std::time::Duration::from_secs(20))
+                    .unwrap(),
+                runtime
+            );
+            events.extend(drained(runtime));
+        }
     }
 
+    /// The error string an ABI call set, freed.
+    fn taken(error: *mut std::ffi::c_char) -> String {
+        assert!(!error.is_null());
+        let text = unsafe { CStr::from_ptr(error) }
+            .to_str()
+            .unwrap()
+            .to_owned();
+        unsafe { super::axton_mobile_free(error) };
+        text
+    }
+
+    /// An open that fails answers its request with the error and closes the
+    /// runtime; input that is not JSON is refused at the boundary with the
+    /// parser's message, and a string it returned is freed exactly once.
     #[test]
-    fn returns_the_runtime_host_envelope_across_the_c_boundary() {
+    fn a_failed_open_and_malformed_input_are_answered_across_the_c_boundary() {
         let dir = tempfile::tempdir().unwrap();
         let schema: serde_json::Value =
             serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
-        let request = serde_json::json!({
-            "op": "open",
-            "path": dir.path().join("mobile.db"),
-            "schema": schema,
-            "owner": "mobile-test"
-        });
-        let opened = call(&request.to_string());
-        assert_eq!(opened["ok"], true);
-        assert!(opened["result"]["value"]["handle"].is_number());
-
-        let failed = call(
-            &serde_json::json!({
-                "op": "open",
-                "path": dir.path().join("missing").join("sub").join("mobile.db"),
-                "schema": schema
-            })
-            .to_string(),
-        );
+        let (sender, wakes) = std::sync::mpsc::channel::<u64>();
+        let context = Box::into_raw(Box::new(std::sync::Mutex::new(sender)));
+        let missing = dir.path().join("missing").join("sub").join("mobile.db");
+        let request = CString::new(
+            serde_json::json!({"type":"open","requestId":"1","path":missing,"schema":schema})
+                .to_string(),
+        )
+        .unwrap();
+        let mut error = std::ptr::null_mut();
+        let runtime = unsafe {
+            super::axton_mobile_runtime_open(
+                request.as_ptr(),
+                Some(wake),
+                context.cast(),
+                &mut error,
+            )
+        };
+        assert!(runtime > 0 && error.is_null(), "the open is admitted");
+        let mut events = vec![];
+        let failed = wait_for(&wakes, runtime, &mut events, "taskCompleted");
+        assert_eq!(failed["requestId"], "1");
         assert_eq!(failed["ok"], false, "open in a missing directory must fail");
         assert!(!failed["error"].as_str().unwrap().is_empty());
-
-        let handle = opened["result"]["value"]["handle"].clone();
-        let closed = call(&serde_json::json!({"op":"close", "handle":handle}).to_string());
-        assert_eq!(closed["ok"], true);
-
-        let rejected = call(&serde_json::json!({"op":"status", "handle":handle}).to_string());
-        assert_eq!(rejected["ok"], false);
-        assert!(
-            rejected["error"]
-                .as_str()
-                .unwrap()
-                .contains("client_closed")
+        wait_for(&wakes, runtime, &mut events, "runtimeClosed");
+        let status =
+            CString::new(r#"{"type":"task","requestId":"2","command":{"kind":"status"}}"#).unwrap();
+        let mut error = std::ptr::null_mut();
+        assert_eq!(
+            unsafe { super::axton_mobile_runtime_submit(runtime, status.as_ptr(), &mut error) },
+            1
         );
+        assert_eq!(taken(error), "client_closed");
+        super::axton_mobile_runtime_detach(runtime);
+        drop(unsafe { Box::from_raw(context) });
+
+        let malformed = CString::new("{").unwrap();
+        let mut error = std::ptr::null_mut();
+        let refused = unsafe {
+            super::axton_mobile_runtime_open(
+                malformed.as_ptr(),
+                Some(wake),
+                std::ptr::null_mut(),
+                &mut error,
+            )
+        };
+        assert_eq!(refused, 0);
+        assert!(taken(error).contains("EOF"));
+        let mut error = std::ptr::null_mut();
+        assert_eq!(
+            unsafe { super::axton_mobile_runtime_submit(runtime, malformed.as_ptr(), &mut error) },
+            1
+        );
+        assert!(taken(error).contains("EOF"));
+        let mut error = std::ptr::null_mut();
+        assert_eq!(
+            unsafe { super::axton_mobile_runtime_submit(runtime, std::ptr::null(), &mut error) },
+            1
+        );
+        assert_eq!(taken(error), "null input");
+        // Freeing null is allowed.
+        unsafe { super::axton_mobile_free(std::ptr::null_mut()) };
     }
 }

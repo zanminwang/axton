@@ -6,9 +6,9 @@
 //! The runtime publishes each observer's state as an
 //! [`Event::ObserverChanged`] snapshot, emitted only when it differs from the
 //! last one emitted for that observer. Snapshots are published at the end of
-//! the unit that changed them - after its [`Event::Changed`] and its task
-//! completions - and, for transport facts, right after the effect result that
-//! reported them.
+//! the unit that changed them - after its commit and its task completions -
+//! and, for transport facts, right after the effect result that reported
+//! them.
 //!
 //! **Subscription status.** One observer per persistent subscription
 //! identity, registered by `scopeSubscribe`. Its `connection` is projected
@@ -35,10 +35,9 @@
 //! not failure and has no timeout.
 //!
 //! **Watches.** `watch {model, spec}` runs the query on the committed reader,
-//! answers its observer id and publishes the rows; after every commit
-//! ([`Event::Changed`]) every watch re-runs - the coarse rule the SDKs used,
-//! with no query dependency tracking - and publishes only a result that
-//! differs from the last one it published. A re-run that fails is reported
+//! answers its observer id and publishes the rows; after every commit every
+//! watch re-runs - a coarse rule, with no query dependency tracking - and
+//! publishes only a result that differs from the last one it published. A re-run that fails is reported
 //! and the watch stays. A callback transaction's writes are invisible to a
 //! watch until they commit: nothing re-runs while the session is open.
 use super::*;
@@ -150,11 +149,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     /// `scopeSubscribe {scope}`: register durable intent, and observe the
     /// identity the commit answered with. Repeated calls for one identity
     /// answer the same observer.
-    pub(super) fn subscribe_scope(
-        &mut self,
-        command: &Value,
-    ) -> std::result::Result<Value, String> {
-        let scope = command["scope"].as_str().ok_or("scope must be string")?;
+    pub(super) fn subscribe_scope(&mut self, scope: &str) -> std::result::Result<Value, String> {
         let state = self
             .client
             .ensure_subscription(scope)
@@ -194,12 +189,12 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     pub(super) fn bootstrap_scope(
         &mut self,
         request_id: &str,
-        command: &Value,
+        command: &Command,
     ) -> Option<std::result::Result<Value, String>> {
         let generation = self.client.generation();
-        let answered = commands::execute(&mut self.client, &mut self.lanes, command)
+        let answered = commands::execute(&mut self.client, command)
             .and_then(|value| Ok(serde_json::from_value::<BootstrapState>(value)?));
-        self.changed_since(generation);
+        self.committed_since(generation);
         let state = match answered {
             Ok(state) => state,
             Err(e) => return Some(Err(e.to_string())),
@@ -335,37 +330,34 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
 
     /// An ordinary command committed a removal: the identities it removed are
     /// closed and their Scopes' acknowledgement is forgotten.
-    pub(super) fn removed(&mut self, kind: &str, command: &Value, value: &Value) {
-        match kind {
-            "scopeUnsubscribe" => {
-                let (Some(scope), Some(id)) = (
-                    command["scope"].as_str(),
-                    command["subscriptionId"].as_u64(),
-                ) else {
-                    return;
-                };
-                self.close_registration(id, crate::SUBSCRIPTION_CLOSED);
+    pub(super) fn removed(&mut self, command: &Command, value: &Value) {
+        match command {
+            Command::ScopeUnsubscribe {
+                scope,
+                subscription_id,
+            } => {
+                self.close_registration(*subscription_id, crate::SUBSCRIPTION_CLOSED);
                 // Nothing went: another registration is this Scope's current
                 // one, and the acknowledgement it may hold is not this one's.
                 if value["removed"] == true {
                     self.forget(scope);
                 }
             }
-            "channel" if command["subscribed"] == false => {
-                let Some(scope) = command["channel"].as_str() else {
-                    return;
-                };
+            Command::Channel {
+                channel,
+                subscribed: false,
+            } => {
                 let ids: Vec<u64> = self
                     .observers
                     .registrations
                     .iter()
-                    .filter(|(_, r)| r.scope == scope)
+                    .filter(|(_, r)| &r.scope == channel)
                     .map(|(id, _)| *id)
                     .collect();
                 for id in ids {
                     self.close_registration(id, crate::SUBSCRIPTION_CLOSED);
                 }
-                self.forget(scope);
+                self.forget(channel);
             }
             _ => {}
         }
@@ -500,12 +492,15 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
 
     /// `watch {model, spec: {filter?}}`: run the query now and publish its
     /// rows after the task's completion.
-    pub(super) fn watch(&mut self, command: &Value) -> std::result::Result<Value, String> {
-        let model = command["model"].as_str().ok_or("model must be string")?;
-        let filter = match command.get("spec").map(|spec| spec.get("filter")) {
-            None | Some(None) | Some(Some(Value::Null)) => json!({}),
-            Some(Some(filter)) => filter.clone(),
-        };
+    pub(super) fn watch(
+        &mut self,
+        model: &str,
+        spec: Option<&WatchSpec>,
+    ) -> std::result::Result<Value, String> {
+        let filter = spec
+            .and_then(|spec| spec.filter.clone())
+            .filter(|filter| !filter.is_null())
+            .unwrap_or_else(|| json!({}));
         let rows = self
             .client
             .query(model, &filter)
@@ -524,11 +519,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         Ok(json!({"observerId": id.to_string()}))
     }
     /// `unwatch {observerId}`: nothing more is published for it.
-    pub(super) fn unwatch(&mut self, command: &Value) -> std::result::Result<Value, String> {
-        let id = command["observerId"]
-            .as_str()
-            .ok_or("observerId must be string")?;
-        if let Ok(id) = id.parse::<u64>() {
+    pub(super) fn unwatch(&mut self, observer_id: &str) -> std::result::Result<Value, String> {
+        if let Ok(id) = observer_id.parse::<u64>() {
             self.observers.watches.remove(&id);
         }
         Ok(Value::Null)

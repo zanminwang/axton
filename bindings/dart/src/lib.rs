@@ -1,39 +1,7 @@
-//! C ABI of the Dart SDK: `axton_call` on its worker isolate, and the
-//! runtime actor's open/submit/drain/detach.
-use axton_binding::{RuntimeHost, ffi};
-use serde_json::json;
-use std::{
-    ffi::{CStr, CString, c_char, c_void},
-    sync::{Mutex, OnceLock},
-};
-static HOST: OnceLock<Mutex<RuntimeHost>> = OnceLock::new();
-/// # Safety
-/// input must point to a valid NUL-terminated UTF-8 string for the duration of the call.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn axton_call(input: *const c_char) -> *mut c_char {
-    let result = std::panic::catch_unwind(|| {
-        if input.is_null() {
-            return Err("null input".to_string());
-        }
-        let text = unsafe { CStr::from_ptr(input) }
-            .to_str()
-            .map_err(|e| e.to_string())?;
-        let request = serde_json::from_str(text).map_err(|e| e.to_string())?;
-        HOST.get_or_init(|| Mutex::new(RuntimeHost::default()))
-            .lock()
-            .map_err(|_| "runtime poisoned".to_string())?
-            .call(request)
-            .map_err(|e| e.to_string())
-    });
-    let value = match result {
-        Ok(Ok(value)) => json!({"ok":true,"result":value}),
-        Ok(Err(error)) => json!({"ok":false,"error":error}),
-        Err(_) => json!({"ok":false,"error":"runtime panic"}),
-    };
-    CString::new(value.to_string())
-        .expect("JSON escapes NUL")
-        .into_raw()
-}
+//! C ABI of the Dart SDK: the runtime actor's open/submit/drain/detach
+//! ([#134](https://github.com/zanminwang/axton/issues/134)).
+use axton_binding::ffi;
+use std::ffi::{c_char, c_void};
 /// Open a Rust-owned client runtime
 /// ([#134](https://github.com/zanminwang/axton/issues/134)). Answers the
 /// runtime id, or 0 with `*error_out` set (freed with [`axton_free`]). `wake`
@@ -75,12 +43,12 @@ pub extern "C" fn axton_runtime_drain(runtime: u64) -> *mut c_char {
 pub extern "C" fn axton_runtime_detach(runtime: u64) {
     ffi::detach(runtime)
 }
+/// Free a string the `axton_runtime` functions returned.
+///
 /// # Safety
-/// output must be a pointer returned by axton_call or the axton_runtime
-/// functions, freed exactly once.
+/// `output` must be null or a pointer returned by those functions, freed
+/// exactly once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn axton_free(output: *mut c_char) {
-    if !output.is_null() {
-        drop(unsafe { CString::from_raw(output) });
-    }
+    unsafe { ffi::free(output) }
 }

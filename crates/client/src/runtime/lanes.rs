@@ -3,21 +3,19 @@
 //! ([#134](https://github.com/zanminwang/axton/issues/134);
 //! [Controller](../../../../docs/engineering/architecture/client/connection/controller/README.md)).
 //!
-//! The engines are the ones the host loops drove: `ConnectionDriver` decides
-//! when the push lane syncs and how it backs off, `SyncCycle` freezes and
-//! settles one batch at a time, and `DownlinkWorker` owns delivery, its
-//! sessions, its catch-up and Bootstrap requests. What the host loops did
-//! around them - executing their actions, sleeping, reporting, refreshing
-//! credentials on 401, aborting on pause - is done here, and the host only
-//! executes the effects.
+//! Three engines decide: `ConnectionDriver` when the push lane syncs and how
+//! it backs off, `SyncCycle` freezing and settling one batch at a time, and
+//! `DownlinkWorker` delivery, its sessions, its catch-up and Bootstrap
+//! requests. Everything around them - executing their actions, waiting,
+//! reporting, refreshing credentials on 401, aborting on pause - is done
+//! here; the host only executes the effects.
 use super::effects::{EffectKind, Waiter};
 use super::*;
 use crate::{
     ClientStore, ConnectionAction, ConnectionDriver, DownlinkAction, DownlinkWorker, SyncCycle,
 };
 
-/// The engines behind the lanes. The former host-driven commands reach them
-/// too while they remain (`commands`).
+/// The engines behind the lanes.
 #[derive(Default)]
 pub(super) struct Lanes {
     pub(super) cycle: SyncCycle,
@@ -25,10 +23,10 @@ pub(super) struct Lanes {
     pub(super) downlink: DownlinkWorker,
 }
 
-/// Direct calls default to this deadline, as the SDKs' `directTimeoutMs` did.
+/// The deadline of a direct call when `connect` names none.
 const DIRECT_TIMEOUT_MS: u64 = 30_000;
 const DIRECT_TIMEOUT_MAX: u64 = 2_147_483_647;
-pub(super) const ALREADY_ACTIVE: &str = "connection already active";
+const ALREADY_ACTIVE: &str = "connection already active";
 
 /// A runtime-owned connection: what `connect` asked for and the lanes' host
 /// work in flight.
@@ -83,23 +81,17 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     /// both lanes. Refused while a connection is active.
     pub(super) fn connect(
         &mut self,
-        command: &Value,
+        direct_timeout_ms: Option<u64>,
+        refresh: bool,
         now: u64,
     ) -> std::result::Result<Value, String> {
         if self.connection.is_some() {
             return Err(ALREADY_ACTIVE.into());
         }
-        let timeout = match command.get("directTimeoutMs") {
-            None | Some(Value::Null) => DIRECT_TIMEOUT_MS,
-            Some(value) => value
-                .as_u64()
-                .filter(|t| (1..=DIRECT_TIMEOUT_MAX).contains(t))
-                .ok_or("directTimeoutMs must be an integer from 1 to 2147483647")?,
-        };
-        let refresh = match command.get("refreshAuth") {
-            None | Some(Value::Null) => false,
-            Some(Value::Bool(refresh)) => *refresh,
-            Some(_) => return Err("refreshAuth must be bool".into()),
+        let timeout = match direct_timeout_ms {
+            None => DIRECT_TIMEOUT_MS,
+            Some(timeout) if (1..=DIRECT_TIMEOUT_MAX).contains(&timeout) => timeout,
+            Some(_) => return Err("directTimeoutMs must be an integer from 1 to 2147483647".into()),
         };
         self.connection = Some(Connection {
             timeout,
@@ -122,16 +114,19 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         Ok(Value::Null)
     }
 
-    /// `connection {event}` while the runtime owns the connection: the four
-    /// controls. The host-driven lifecycle events are refused.
+    /// `connection {event}`: the four controls of the runtime-owned
+    /// connection. Without one they change nothing.
     pub(super) fn control(
         &mut self,
-        command: &Value,
+        event: ConnectionEvent,
         now: u64,
     ) -> std::result::Result<Value, String> {
-        match command["event"].as_str().unwrap_or_default() {
-            "pause" => self.pause_lanes(now),
-            "resume" => {
+        if self.connection.is_none() {
+            return Ok(Value::Null);
+        }
+        match event {
+            ConnectionEvent::Pause => self.pause_lanes(now),
+            ConnectionEvent::Resume => {
                 self.lanes.connection.resume(now);
                 self.enqueue_downlink(DownlinkEvent::Resume);
                 if let Some(connection) = &mut self.connection {
@@ -139,9 +134,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 }
                 self.wake_push();
             }
-            "wake" => self.wake_lanes(),
-            "stop" => self.stop_lanes(),
-            _ => return Err(ALREADY_ACTIVE.into()),
+            ConnectionEvent::Wake => self.wake_lanes(),
+            ConnectionEvent::Stop => self.stop_lanes(),
         }
         Ok(Value::Null)
     }
@@ -353,7 +347,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         }
         let generation = self.client.generation();
         let next = self.lanes.cycle.next(&mut self.client);
-        self.changed_since(generation);
+        self.committed_since(generation);
         match next {
             Ok(Some(action)) => {
                 let effect = self.issue_effect(
@@ -415,7 +409,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     pub(super) fn push_receipt(&mut self, body: String, now: u64, entropy: u64) {
         let generation = self.client.generation();
         let applied = self.lanes.cycle.complete(&mut self.client, body.as_bytes());
-        self.changed_since(generation);
+        self.committed_since(generation);
         match applied {
             Ok(report) => {
                 self.settled(&report);
@@ -475,7 +469,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             self.lanes
                 .downlink
                 .handle(&mut self.client, DownlinkEvent::Next, now, entropy);
-        self.changed_since(generation);
+        self.committed_since(generation);
         match pumped {
             Ok(actions) => {
                 let waits = actions

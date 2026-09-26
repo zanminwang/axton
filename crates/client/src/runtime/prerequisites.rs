@@ -27,15 +27,11 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     pub(super) fn run_prerequisites(
         &mut self,
         request_id: &str,
-        command: &Value,
+        handlers: Vec<String>,
     ) -> Option<std::result::Result<Value, String>> {
         if self.prerequisites.is_some() {
             return Some(Err(ALREADY_RUNNING.into()));
         }
-        let handlers: Vec<String> = match serde_json::from_value(command["handlers"].clone()) {
-            Ok(handlers) => handlers,
-            Err(e) => return Some(Err(format!("handlers must be an array of names: {e}"))),
-        };
         self.prerequisites = Some(Loop {
             request_id: request_id.to_string(),
             handlers,

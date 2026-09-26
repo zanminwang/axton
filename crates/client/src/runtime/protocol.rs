@@ -23,22 +23,32 @@
 //! only from the matching [`Event::TaskCompleted`]. A duplicate active request
 //! id is a protocol error reported through [`Diagnostic::Protocol`]; it never
 //! executes a second time and never touches the first route.
-use crate::Report;
-use serde::{Deserialize, Serialize};
+//!
+//! Commands are typed: a task carries a [`Command`] and a callback's command a
+//! [`TransactionCommand`], each one `{kind, …}` object. An envelope that does
+//! not decode at all is a [`Diagnostic::Protocol`] report, since nothing in it
+//! can be routed. An envelope that decodes but whose command does not - an
+//! unknown `kind`, a missing or mistyped field - is still admitted under its
+//! request id and completes that request with the decoding error, in its
+//! turn, so no SDK waiter is left without an answer.
+use crate::{Mutation, QuerySpec, Readiness, RecordKey, Report};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 /// What an SDK sends to its runtime.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Input {
-    /// One complete unit of application work. `command` is a `{kind, …}`
-    /// object; the kinds are the runtime's command set
-    /// ([`super::commands`]). A `transaction` task asks for an application
-    /// callback: the runtime answers with an [`Operation::Callback`] effect and
-    /// completes the task only after the callback's result committed or
-    /// rolled back.
+    /// One complete unit of application work. A [`Command::Transaction`]
+    /// asks for an application callback: the runtime answers with an
+    /// [`Operation::Callback`] effect and completes the task only after the
+    /// callback's result committed or rolled back.
     #[serde(rename_all = "camelCase")]
-    Task { request_id: String, command: Value },
+    Task {
+        request_id: String,
+        #[serde(deserialize_with = "command")]
+        command: Command,
+    },
     /// A command of the application callback that owns `transaction_id`:
     /// reads, writes, and `savepoint` / `release` / `rollbackSavepoint`.
     /// `scope` names the innermost open savepoint the command runs in, or is
@@ -55,7 +65,8 @@ pub enum Input {
         transaction_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scope: Option<String>,
-        command: Value,
+        #[serde(deserialize_with = "transaction_command")]
+        command: TransactionCommand,
     },
     /// The application callback of `effect_id` finished. `ok` commits the
     /// transaction (the SDK retains the callback's own return value in
@@ -87,6 +98,303 @@ pub enum Input {
     /// rolls back, every effect is cancelled, observers end, then
     /// [`Event::RuntimeClosed`] is the last event.
     Close,
+}
+
+/// The command of one task: everything an SDK asks of its runtime outside an
+/// application callback. Reads run on the committed state; every write owns
+/// its own local transaction; the lifecycles (`connect`, `invoke`,
+/// `runPrerequisites`, `transaction`, `scopeBootstrap`, `watch`) are decided
+/// by the runtime. A counter the engine validates (`version` of a durable
+/// call, `subscriptionId`, `ordinal`, `sequence`) must be a positive safe
+/// integer and is refused otherwise.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Command {
+    // --- Reads ---
+    /// One record, or `null`.
+    Read { key: RecordKey },
+    /// The rows of `model` matching `filter` (every row when absent).
+    Query {
+        model: String,
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        filter: Option<Value>,
+    },
+    /// A read-only SQL statement over the committed state.
+    Sql { sql: String, parameters: Vec<Value> },
+    #[serde(rename_all = "camelCase")]
+    QuerySpec { model: String, query: QuerySpec },
+    /// The record a relation of `key` points at, or `null`.
+    Related { key: RecordKey, relation: String },
+    /// The records of `source` whose `relation` points at `key`.
+    Referencing {
+        key: RecordKey,
+        source: String,
+        relation: String,
+    },
+    /// `status()`: the client's sync state.
+    Status,
+    /// One record's pending mutations and retained rejections.
+    RecordStatus { key: RecordKey },
+    /// The prerequisite tasks and their states.
+    Tasks,
+
+    // --- Writes, each in its own local transaction ---
+    /// Queue a mutation; answers its ordinal.
+    Enqueue { mutation: Mutation },
+    /// Apply one local-only operation.
+    Direct { operation: crate::Operation },
+    /// Subscribe or unsubscribe a Channel.
+    Channel { channel: String, subscribed: bool },
+    /// Submit a durable Action call; answers `{callId, ordinal}`. `store` is
+    /// the call's store policy, beside its arguments, never inside them.
+    SubmitAction {
+        name: String,
+        #[serde(deserialize_with = "counter")]
+        version: u64,
+        args: Value,
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        store: Option<Value>,
+    },
+    /// Record a prerequisite task's readiness.
+    Readiness { key: String, state: Readiness },
+    /// Drop a queued call or mutation; its call completes as `dropped`.
+    Drop {
+        #[serde(deserialize_with = "counter")]
+        ordinal: u64,
+    },
+    /// Dismiss a retained rejection.
+    Dismiss {
+        #[serde(deserialize_with = "counter")]
+        ordinal: u64,
+    },
+    /// Discard the saved Query once results of one argument set.
+    InvalidateQueryOnce {
+        name: String,
+        #[serde(deserialize_with = "counter")]
+        version: u64,
+        args: Value,
+    },
+    /// Leave an incompatible replica behind for a fresh file; refused while
+    /// unsent work remains unless `discardPending`.
+    #[serde(rename_all = "camelCase")]
+    Rebuild {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        discard_pending: Option<bool>,
+    },
+
+    // --- Protocol seams for tests and tools; the lanes never use them ---
+    /// Freeze the next push batch; answers its body or `null`.
+    Freeze,
+    /// Settle batch `sequence` with `receipt`.
+    Ack {
+        #[serde(deserialize_with = "counter")]
+        sequence: u64,
+        receipt: Value,
+    },
+    /// Apply one pull page.
+    Pull { page: Value },
+
+    // --- Scope and Bootstrap ---
+    /// Register durable intent to follow `scope`; answers the stored state
+    /// and the observer publishing its status.
+    ScopeSubscribe { scope: String },
+    /// The stored state of `scope`, or `null`.
+    ScopeState { scope: String },
+    /// Register (or retry) the durable load of one identity and wait for the
+    /// run it answered with.
+    #[serde(rename_all = "camelCase")]
+    ScopeBootstrap {
+        scope: String,
+        #[serde(deserialize_with = "counter")]
+        subscription_id: u64,
+    },
+    /// The stored run of one identity's load.
+    #[serde(rename_all = "camelCase")]
+    ScopeBootstrapState {
+        scope: String,
+        #[serde(deserialize_with = "counter")]
+        subscription_id: u64,
+    },
+    /// Remove exactly the registration `subscriptionId` names.
+    #[serde(rename_all = "camelCase")]
+    ScopeUnsubscribe {
+        scope: String,
+        #[serde(deserialize_with = "counter")]
+        subscription_id: u64,
+    },
+
+    // --- Runtime-owned lifecycles ---
+    /// Run an application callback in one local transaction.
+    Transaction,
+    /// Record the connection intent and start both lanes. `directTimeoutMs`
+    /// bounds one direct call (1 to 2147483647, 30000 when absent).
+    #[serde(rename_all = "camelCase")]
+    Connect {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direct_timeout_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refresh_auth: Option<bool>,
+    },
+    /// Control the runtime-owned connection; a no-op without one.
+    Connection { event: ConnectionEvent },
+    /// A direct Query or Mutation call; with `once`, a Query answered from
+    /// the saved result when there is one (`refresh` fetches anyway).
+    Invoke {
+        name: String,
+        version: u64,
+        args: Value,
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        store: Option<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        once: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refresh: Option<bool>,
+    },
+    /// Run the prerequisite tasks these handlers can take until none is left.
+    RunPrerequisites { handlers: Vec<String> },
+    /// Observe a local query; answers the observer id.
+    Watch {
+        model: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        spec: Option<WatchSpec>,
+    },
+    /// Stop publishing a watch.
+    #[serde(rename_all = "camelCase")]
+    Unwatch { observer_id: String },
+
+    /// Never on the wire: a command that did not decode. Its request is
+    /// completed with `error`, the decoding failure.
+    #[serde(skip)]
+    Malformed { error: String },
+}
+
+/// What a `watch` observes: the rows of its model matching `filter` (every
+/// row when absent).
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct WatchSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Value>,
+}
+
+/// The controls of the runtime-owned connection.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectionEvent {
+    /// Abandon lane I/O without backoff and schedule nothing until `resume`.
+    Pause,
+    Resume,
+    /// Look for work now.
+    Wake,
+    /// End the connection: lane I/O is abandoned and direct calls still
+    /// waiting on the network fail as unavailable.
+    Stop,
+}
+
+/// A command of the application callback that owns a transaction: reads and
+/// writes inside its session, and its savepoints. `release` and
+/// `rollbackSavepoint` name the scope they close, or the innermost one when
+/// `scope` is absent.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TransactionCommand {
+    Read {
+        key: RecordKey,
+    },
+    Query {
+        model: String,
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        filter: Option<Value>,
+    },
+    Sql {
+        sql: String,
+        parameters: Vec<Value>,
+    },
+    QuerySpec {
+        model: String,
+        query: QuerySpec,
+    },
+    Related {
+        key: RecordKey,
+        relation: String,
+    },
+    Referencing {
+        key: RecordKey,
+        source: String,
+        relation: String,
+    },
+    Enqueue {
+        mutation: Mutation,
+    },
+    Direct {
+        operation: crate::Operation,
+    },
+    Channel {
+        channel: String,
+        subscribed: bool,
+    },
+    /// Open a savepoint; answers `{scope}`, the token its commands name.
+    Savepoint,
+    Release {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<String>,
+    },
+    RollbackSavepoint {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<String>,
+    },
+    /// Never on the wire: a command that did not decode. Its request fails
+    /// with `error` and, like any failed command, poisons the transaction.
+    #[serde(skip)]
+    Malformed {
+        error: String,
+    },
+}
+
+/// A task's command, or [`Command::Malformed`] with why it did not decode.
+fn command<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Command, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    Ok(
+        serde_json::from_value(value).unwrap_or_else(|e| Command::Malformed {
+            error: e.to_string(),
+        }),
+    )
+}
+/// A callback's command, or [`TransactionCommand::Malformed`].
+fn transaction_command<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<TransactionCommand, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    Ok(
+        serde_json::from_value(value).unwrap_or_else(|e| TransactionCommand::Malformed {
+            error: e.to_string(),
+        }),
+    )
+}
+/// An optional field whose explicit `null` is kept apart from its absence:
+/// absent is `None`, `null` is `Some(Value::Null)`.
+fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(deserializer).map(Some)
+}
+/// A positive safe integer, refused as the engine refuses it.
+fn counter<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    crate::read_counter(&value, true).map_err(serde::de::Error::custom)
 }
 
 /// What one effect came to. `ok` with `value` for a success, otherwise
@@ -222,10 +530,6 @@ pub enum Event {
     /// outcome: records a delivery could not apply, a lane failure, or a
     /// bridge protocol violation.
     Report { diagnostic: Diagnostic },
-    /// A local transaction committed and touched these tables (framework
-    /// tables included). Watch observers re-run on it inside the runtime; the
-    /// SDKs need it for nothing and may ignore it.
-    Changed { tables: Vec<String> },
     /// The runtime is gone; nothing follows. The SDK drains it, releases its
     /// platform resources and detaches the carrier.
     RuntimeClosed,
@@ -323,53 +627,33 @@ mod tests {
     #[test]
     fn envelopes_round_trip_with_the_documented_spellings() {
         let inputs = [
-            (
-                json!({"type":"task","requestId":"42","command":{"kind":"read","key":{"model":"Todo","identity":{"id":"t"}}}}),
-                Input::Task {
-                    request_id: "42".into(),
-                    command: json!({"kind":"read","key":{"model":"Todo","identity":{"id":"t"}}}),
-                },
-            ),
-            (
-                json!({"type":"transactionCommand","requestId":"43","transactionId":"tx7","scope":"sp1","command":{"kind":"direct","operation":{}}}),
-                Input::TransactionCommand {
-                    request_id: "43".into(),
-                    transaction_id: "tx7".into(),
-                    scope: Some("sp1".into()),
-                    command: json!({"kind":"direct","operation":{}}),
-                },
-            ),
-            (
-                json!({"type":"callbackResult","effectId":"5","transactionId":"tx7","ok":false,"error":"boom"}),
-                Input::CallbackResult {
-                    effect_id: "5".into(),
-                    transaction_id: "tx7".into(),
-                    ok: false,
-                    error: Some("boom".into()),
-                },
-            ),
-            (
-                json!({"type":"effectResult","effectId":"101","outcome":{"ok":true,"value":{"event":"message","body":"{}"}}}),
-                Input::EffectResult {
-                    effect_id: "101".into(),
-                    outcome: EffectOutcome::success(json!({"event":"message","body":"{}"})),
-                },
-            ),
-            (
-                json!({"type":"effectResult","effectId":"102","outcome":{"ok":false,"error":{"message":"pull failed","status":401}}}),
-                Input::EffectResult {
-                    effect_id: "102".into(),
-                    outcome: EffectOutcome::failure("pull failed", Some(401)),
-                },
-            ),
-            (json!({"type":"close"}), Input::Close),
+            json!({"type":"task","requestId":"42","command":{"kind":"read","key":{"model":"Todo","identity":{"id":"t"}}}}),
+            json!({"type":"transactionCommand","requestId":"43","transactionId":"tx7","scope":"sp1","command":{"kind":"release","scope":"sp1"}}),
+            json!({"type":"callbackResult","effectId":"5","transactionId":"tx7","ok":false,"error":"boom"}),
+            json!({"type":"effectResult","effectId":"101","outcome":{"ok":true,"value":{"event":"message","body":"{}"}}}),
+            json!({"type":"effectResult","effectId":"102","outcome":{"ok":false,"error":{"message":"pull failed","status":401}}}),
+            json!({"type":"close"}),
         ];
-        for (wire, typed) in inputs {
-            assert_eq!(
-                serde_json::from_value::<Input>(wire.clone()).unwrap(),
-                typed
-            );
+        for wire in inputs {
+            let typed: Input = serde_json::from_value(wire.clone()).unwrap();
             assert_eq!(serde_json::to_value(&typed).unwrap(), wire);
+        }
+        match serde_json::from_value(inputs_task()).unwrap() {
+            Input::Task {
+                request_id,
+                command: Command::Read { key },
+            } => {
+                assert_eq!(request_id, "42");
+                assert_eq!(key.model, "Todo");
+            }
+            other => panic!("{other:?}"),
+        }
+        match serde_json::from_value(json!({"type":"effectResult","effectId":"102","outcome":{"ok":false,"error":{"message":"pull failed","status":401}}})).unwrap() {
+            Input::EffectResult { effect_id, outcome } => {
+                assert_eq!(effect_id, "102");
+                assert_eq!(outcome, EffectOutcome::failure("pull failed", Some(401)));
+            }
+            other => panic!("{other:?}"),
         }
         let events = [
             (
@@ -434,12 +718,6 @@ mod tests {
                 },
             ),
             (
-                json!({"type":"changed","tables":["Todo"]}),
-                Event::Changed {
-                    tables: vec!["Todo".into()],
-                },
-            ),
-            (
                 json!({"type":"taskCompleted","requestId":"44","ok":false,"value":null,"error":"no page","details":{"code":"bootstrap.request_rejected","message":"no page"}}),
                 Event::TaskCompleted {
                     request_id: "44".into(),
@@ -475,5 +753,66 @@ mod tests {
             assert_eq!(serde_json::to_value(&typed).unwrap(), wire);
         }
         assert!(serde_json::from_value::<Input>(json!({"type":"nope"})).is_err());
+    }
+
+    fn inputs_task() -> Value {
+        json!({"type":"task","requestId":"42","command":{"kind":"read","key":{"model":"Todo","identity":{"id":"t"}}}})
+    }
+
+    /// A command that does not decode still routes its request: the envelope
+    /// is admitted and the command carries the decoding error.
+    #[test]
+    fn a_malformed_command_keeps_its_request_id() {
+        let cases = [
+            (json!({"kind":"nope"}), "unknown variant `nope`"),
+            (json!({"read":true}), "missing field `kind`"),
+            (json!({"kind":"read"}), "missing field `key`"),
+            (
+                json!({"kind":"scopeUnsubscribe","scope":"book","subscriptionId":0}),
+                "invalid counter",
+            ),
+            (
+                json!({"kind":"connection","event":"start"}),
+                "unknown variant `start`",
+            ),
+        ];
+        for (command, error) in cases {
+            let wire = json!({"type":"task","requestId":"9","command":command});
+            match serde_json::from_value(wire).unwrap() {
+                Input::Task {
+                    request_id,
+                    command: Command::Malformed { error: got },
+                } => {
+                    assert_eq!(request_id, "9");
+                    assert!(got.contains(error), "{got} for {command}");
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        let wire = json!({"type":"transactionCommand","requestId":"10","transactionId":"tx1","command":{"kind":"invoke"}});
+        match serde_json::from_value(wire).unwrap() {
+            Input::TransactionCommand {
+                request_id,
+                command: TransactionCommand::Malformed { error },
+                ..
+            } => {
+                assert_eq!(request_id, "10");
+                assert!(error.contains("unknown variant `invoke`"), "{error}");
+            }
+            other => panic!("{other:?}"),
+        }
+        // An envelope without a routable request id is still refused whole.
+        assert!(
+            serde_json::from_value::<Input>(json!({"type":"task","command":{"kind":"status"}}))
+                .is_err()
+        );
+        // An explicit null option is kept apart from an absent one.
+        match serde_json::from_value(json!({"type":"task","requestId":"1","command":{"kind":"invoke","name":"N","version":1,"args":{},"store":null}})).unwrap() {
+            Input::Task {
+                command: Command::Invoke { store, .. },
+                ..
+            } => assert_eq!(store, Some(Value::Null)),
+            other => panic!("{other:?}"),
+        }
     }
 }

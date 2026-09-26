@@ -54,6 +54,22 @@ impl<S: ClientStore + 'static> Harness<S> {
         while self.runtime.step(NOW, ENTROPY) {}
         self.events()
     }
+    /// Step until an event matches: what it is observed with, and nothing
+    /// after it. The database can be inspected at that very point.
+    fn until(&mut self, matches: impl Fn(&Value) -> bool) -> Vec<Value> {
+        let mut events = self.events();
+        while !events.iter().any(&matches) {
+            assert!(
+                self.runtime.step(NOW, ENTROPY),
+                "never observed: {events:?}"
+            );
+            events.extend(self.events());
+        }
+        events
+    }
+    fn completed(&mut self, id: &str) -> Vec<Value> {
+        self.until(|e| e["type"] == "taskCompleted" && e["requestId"] == id)
+    }
     fn events(&mut self) -> Vec<Value> {
         self.runtime
             .take_events()
@@ -101,13 +117,6 @@ fn done(id: &str, value: Value) -> Value {
 fn failed(id: &str, error: &str) -> Value {
     json!({"type":"taskCompleted","requestId":id,"ok":false,"value":null,"error":error})
 }
-fn is_changed(event: &Value) -> bool {
-    event["type"] == "changed"
-        && event["tables"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("Entry"))
-}
 fn row(text: &str) -> Value {
     json!({"id":"e","text":text,"note":null})
 }
@@ -128,21 +137,38 @@ fn tasks_complete_in_order_to_their_own_request_and_a_duplicate_never_runs_twice
             json!({"type":"report","diagnostic":{"kind":"protocol","message":"duplicate request id 4"}})
         ]
     );
+    // A write's success is observed only once it committed.
+    assert_eq!(
+        h.completed("2"),
+        vec![done("1", Value::Null), done("2", Value::Null)]
+    );
+    assert_eq!(h.committed(), Some(row("hi")));
     let events = h.run();
-    assert_eq!(events.len(), 5, "{events:?}");
-    assert_eq!(events[0], done("1", Value::Null));
-    assert!(is_changed(&events[1]), "{events:?}");
-    assert_eq!(events[2], done("2", Value::Null));
-    assert_eq!(events[3]["requestId"], "3");
-    assert_eq!(events[3]["ok"], false);
-    assert!(!events[3]["error"].as_str().unwrap().is_empty());
-    assert_eq!(events[4], done("4", row("hi")));
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_eq!(events[0]["requestId"], "3");
+    assert_eq!(events[0]["ok"], false);
+    assert!(!events[0]["error"].as_str().unwrap().is_empty());
+    assert_eq!(events[1], done("4", row("hi")));
     // Nothing else ran: the duplicate's write never happened.
     assert_eq!(h.committed(), Some(row("hi")));
     // Once completed, an id no longer routes anything; the runtime is idle.
     assert!(!h.runtime.step(NOW, ENTROPY));
+    // A command that does not decode is still routed: its request fails
+    // with the decoding error in its turn, so no waiter is left behind.
     h.task("5", json!({"kind":"nope"}));
-    assert_eq!(h.run(), vec![failed("5", "unknown client command nope")]);
+    h.task("6", read("e"));
+    let events = h.run();
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_eq!(events[0]["requestId"], "5");
+    assert_eq!(events[0]["ok"], false);
+    assert!(
+        events[0]["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("unknown variant `nope`"),
+        "{events:?}"
+    );
+    assert_eq!(events[1], done("6", row("hi")));
 }
 
 #[test]
@@ -163,11 +189,10 @@ fn a_callback_transaction_owns_the_writer_until_its_result_commits() {
     // Nothing is committed yet: the committed reader does not see the row.
     assert_eq!(h.committed(), None);
     h.callback(&a, true, None);
-    let events = h.run();
-    assert_eq!(events.len(), 3, "{events:?}");
-    assert!(is_changed(&events[0]), "{events:?}");
-    assert_eq!(events[1], done("1", Value::Null));
-    assert_eq!(events[2], done("2", row("hi")));
+    // The parent succeeds only once the callback's writes committed.
+    assert_eq!(h.completed("1"), vec![done("1", Value::Null)]);
+    assert_eq!(h.committed(), Some(row("hi")));
+    assert_eq!(h.run(), vec![done("2", row("hi"))]);
     // After the result the transaction is closed to its own token too.
     h.command("6", &a.transaction, None, read("e"));
     assert_eq!(h.run(), vec![failed("6", "transaction_closed")]);
@@ -245,9 +270,7 @@ fn savepoint_scopes_admit_only_the_innermost_open_scope() {
         vec![done("6", Value::Null), done("7", Value::Null)]
     );
     h.callback(&a, true, None);
-    let events = h.run();
-    assert!(is_changed(&events[0]), "{events:?}");
-    assert_eq!(events[1], done("1", Value::Null));
+    assert_eq!(h.run(), vec![done("1", Value::Null)]);
     assert_eq!(h.committed(), Some(row("outer")));
 
     // A failure caught at the top level still poisons the commit.
@@ -462,9 +485,7 @@ fn a_failed_commit_fails_the_task_and_lets_no_success_or_change_escape() {
     h.command("7", &c.transaction, None, create("e", "later"));
     assert_eq!(h.run(), vec![done("7", Value::Null)]);
     h.callback(&c, true, None);
-    let events = h.run();
-    assert!(is_changed(&events[0]), "{events:?}");
-    assert_eq!(events[1], done("6", Value::Null));
+    assert_eq!(h.run(), vec![done("6", Value::Null)]);
     assert_eq!(h.committed(), Some(row("later")));
 }
 
@@ -537,9 +558,7 @@ fn a_direct_apply_that_fails_to_commit_fails_the_call_and_lets_nothing_escape() 
         "{events:?}"
     );
     assert!(
-        !events
-            .iter()
-            .any(|e| e["type"] == "changed" || e["type"] == "callCompleted"),
+        !events.iter().any(|e| e["type"] == "callCompleted"),
         "{events:?}"
     );
     assert_eq!(h.runtime.client().generation(), generation);
@@ -549,8 +568,8 @@ fn a_direct_apply_that_fails_to_commit_fails_the_call_and_lets_nothing_escape() 
     let (effect, body) = http_effect(&h.run());
     h.submit(json!({"type":"effectResult","effectId":effect,"outcome":answer(&body)}))
         .unwrap();
-    let events = h.run();
-    assert!(events.iter().any(|e| e["type"] == "changed"));
+    let events = h.completed("2");
+    assert_eq!(h.committed().unwrap()["text"], "server", "committed first");
     assert!(events.contains(&done(
         "2",
         json!({"outcome":{"status":"succeeded","result":null}})
@@ -606,11 +625,13 @@ fn drop_and_ack_announce_their_completions_as_call_completed() {
         "ack",
         json!({"kind":"ack","sequence":push["batchSequence"],"receipt":receipt}),
     );
-    let events = h.run();
-    let changed = position(&events, |e| e["type"] == "changed");
+    // The call's outcome is announced once the receipt committed.
+    let mut events = h.until(|e| e["type"] == "callCompleted");
+    assert_eq!(h.runtime.client().pending_count().unwrap(), 0);
+    events.extend(h.run());
     let announced = position(&events, |e| e["type"] == "callCompleted");
     let answered = position(&events, |e| e["requestId"] == "ack");
-    assert!(changed < announced && announced < answered, "{events:?}");
+    assert!(announced < answered, "{events:?}");
     assert_eq!(
         events[announced],
         json!({"type":"callCompleted","callId":sent["callId"],"outcome":{"status":"succeeded","result":null}})

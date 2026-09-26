@@ -303,8 +303,8 @@ fn transaction_isolation_and_closed_handles_match_the_session_contract() {
     );
     assert_eq!(c.completed("2")["ok"], true);
     assert_eq!(c.completed("3")["value"]["text"], "hi");
-    // Uncommitted work publishes no change.
-    assert!(c.seen.iter().all(|e| e["type"] != "changed"));
+    // Uncommitted work publishes nothing beyond its commands' answers.
+    assert!(c.seen.is_empty(), "{:?}", c.seen);
     c.submit(json!({"type":"callbackResult","effectId":effect["effectId"],"transactionId":tx,"ok":false,"error":"rolled back"}));
     assert_eq!(c.completed("1")["error"], "rolled back");
     c.task("4", read("e"));
@@ -343,13 +343,6 @@ fn transaction_isolation_and_closed_handles_match_the_session_contract() {
     assert!(c.seen.iter().all(|e| e["type"] != "taskCompleted"));
     c.submit(
         json!({"type":"callbackResult","effectId":effect["effectId"],"transactionId":tx,"ok":true}),
-    );
-    let changed = c.until(|e| e["type"] == "changed");
-    assert!(
-        changed["tables"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("Entry"))
     );
     assert_eq!(c.completed("3")["ok"], true);
     assert_eq!(c.completed("sync0")["ok"], true);
@@ -457,13 +450,9 @@ fn observer_snapshots_arrive_after_the_commit_they_describe() {
     carrier.task("1", create("e"));
     let events = carrier.through(|e| e["type"] == "observerChanged");
     let kinds: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["taskCompleted", "observerChanged"], "{events:?}");
     assert_eq!(
-        kinds,
-        ["changed", "taskCompleted", "observerChanged"],
-        "{events:?}"
-    );
-    assert_eq!(
-        events[2]["snapshot"]["rows"],
+        events[1]["snapshot"]["rows"],
         json!([{"id":"e","text":"hi","note":null}])
     );
 
@@ -472,12 +461,12 @@ fn observer_snapshots_arrive_after_the_commit_they_describe() {
     let kinds: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
     assert_eq!(
         kinds,
-        ["changed", "taskCompleted", "observerChanged"],
+        ["taskCompleted", "observerChanged"],
         "the registration commits; the watch re-runs to an equal result: {events:?}"
     );
-    let subscription = events[1]["value"]["observerId"].clone();
-    assert_eq!(events[2]["observerId"], subscription);
-    assert_eq!(events[2]["snapshot"]["status"]["connection"], "offline");
+    let subscription = events[0]["value"]["observerId"].clone();
+    assert_eq!(events[1]["observerId"], subscription);
+    assert_eq!(events[1]["snapshot"]["status"]["connection"], "offline");
 
     carrier.submit(json!({"type":"close"}));
     let events = carrier.through(|e| e["type"] == "runtimeClosed");

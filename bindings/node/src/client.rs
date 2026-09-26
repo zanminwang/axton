@@ -1,20 +1,10 @@
-use napi::{Error,Result};
-use napi_derive::napi;
-use std::sync::{Mutex,OnceLock};
-use axton_binding::RuntimeHost;
-static HOST:OnceLock<Mutex<RuntimeHost>>=OnceLock::new();
-#[napi]
-pub async fn client_call(request:String)->Result<String>{
- let value=serde_json::from_str(&request).map_err(|e|Error::from_reason(e.to_string()))?;
- let result=HOST.get_or_init(||Mutex::new(RuntimeHost::default())).lock().map_err(|_|Error::from_reason("runtime poisoned"))?.call(value).map_err(|e|Error::from_reason(e.to_string()))?;
- Ok(result.to_string())
-}
-
-// The Rust-owned client runtime (#134): admission, drain and a wake that only
-// schedules the SDK's drain. No call here waits for a task, and none holds a
-// process-wide lock during database work: each client runs on its own actor.
+//! The Rust-owned client runtime (#134): admission, drain and a wake that only
+//! schedules the SDK's drain. No call here waits for a task, and none holds a
+//! process-wide lock during database work: each client runs on its own actor.
 use axton_binding::actor;
 use napi::bindgen_prelude::{Status, Unknown};
+use napi::{Error, Result};
+use napi_derive::napi;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 
 /// `(runtimeId) => void`, weak so a pending wake never keeps the event loop

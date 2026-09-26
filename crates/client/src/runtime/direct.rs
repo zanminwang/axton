@@ -20,7 +20,7 @@
 //! after [`Event::RuntimeClosed`].
 use super::effects::{EffectKind, Ready, Waiter};
 use super::*;
-use crate::{ActionCallOptions, ActionStore, ClientStore, QueryOnce, QueryOnceOptions};
+use crate::{ActionCallOptions, ClientStore, QueryOnce, QueryOnceOptions};
 
 pub(super) const UNAVAILABLE: &str = "action.unavailable";
 pub(super) const EXECUTION_UNKNOWN: &str = "action.execution_unknown";
@@ -51,12 +51,14 @@ pub(super) struct Directs {
     joined: BTreeMap<String, Vec<String>>,
 }
 
-fn flag(command: &Value, name: &str) -> std::result::Result<bool, String> {
-    match command.get(name) {
-        None | Some(Value::Null) => Ok(false),
-        Some(Value::Bool(value)) => Ok(*value),
-        Some(_) => Err(format!("{name} must be bool")),
-    }
+/// One `invoke` as the task named it.
+pub(super) struct Invocation<'a> {
+    pub(super) name: &'a str,
+    pub(super) version: u64,
+    pub(super) args: &'a Value,
+    pub(super) store: &'a Option<Value>,
+    pub(super) once: bool,
+    pub(super) refresh: bool,
 }
 
 impl<S: ClientStore + 'static> ClientRuntime<S> {
@@ -65,9 +67,9 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     pub(super) fn invoke(
         &mut self,
         request_id: &str,
-        command: &Value,
+        invocation: Invocation<'_>,
     ) -> Option<std::result::Result<Value, String>> {
-        match self.begin_invoke(request_id, command) {
+        match self.begin_invoke(request_id, invocation) {
             Ok(Some(value)) => Some(Ok(value)),
             Ok(None) => None,
             Err(error) => Some(Err(error)),
@@ -76,19 +78,17 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     fn begin_invoke(
         &mut self,
         request_id: &str,
-        command: &Value,
+        invocation: Invocation<'_>,
     ) -> std::result::Result<Option<Value>, String> {
-        let name = command["name"].as_str().ok_or("name must be string")?;
-        let version = command["version"]
-            .as_u64()
-            .ok_or("version must be a non-negative integer")?;
-        let args = &command["args"];
-        let store = match command.get("store") {
-            None => ActionStore::All,
-            Some(store) => ActionStore::from_wire(store).map_err(|e| e.to_string())?,
-        };
-        let once = flag(command, "once")?;
-        let refresh = flag(command, "refresh")?;
+        let Invocation {
+            name,
+            version,
+            args,
+            store,
+            once,
+            refresh,
+        } = invocation;
+        let store = commands::options(store).map_err(|e| e.to_string())?.store;
         if refresh && !once {
             return Err(INVALID_OPTIONS.into());
         }
@@ -126,7 +126,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                     .any(|call| call.flight.as_deref() == Some(flight_id.as_str()));
                 if !fetching {
                     // A flight this runtime is not fetching belongs to a
-                    // replaced replica or to the former host-driven path.
+                    // replaced replica.
                     return Err(EXECUTION_UNKNOWN.into());
                 }
                 self.directs
@@ -336,7 +336,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 .client
                 .apply_action_response_bytes(call.body.as_bytes(), response.as_bytes()),
         };
-        self.changed_since(generation);
+        self.committed_since(generation);
         let outcome = match applied {
             Ok(report) => {
                 self.settled(&report);

@@ -41,7 +41,8 @@ const CLOSED: &str = "client_closed";
 /// What the mailbox carries: an admitted input, or an envelope that did not
 /// decode, reported in order with the runtime's own events.
 enum Mail {
-    Input(Input),
+    /// Boxed: a command carries a whole mutation or query.
+    Input(Box<Input>),
     Malformed(String),
 }
 
@@ -169,7 +170,7 @@ pub fn submit(runtime: u64, message: Value) -> std::result::Result<(), String> {
         return Err(CLOSED.into());
     }
     let mail = match serde_json::from_value::<Input>(message) {
-        Ok(input) => Mail::Input(input),
+        Ok(input) => Mail::Input(Box::new(input)),
         Err(e) => Mail::Malformed(BridgeError::Malformed(e.to_string()).to_string()),
     };
     sender.send(mail).map_err(|_| CLOSED.to_string())
@@ -214,7 +215,7 @@ pub fn detach(runtime: u64) {
     if let Some(handle) = handle {
         // A thread that already exited has dropped its mailbox; either way
         // the last sender goes with the handle.
-        let _ = handle.sender.send(Mail::Input(Input::Close));
+        let _ = handle.sender.send(Mail::Input(Box::new(Input::Close)));
     }
 }
 
@@ -357,7 +358,7 @@ fn admit(runtime: &mut ClientRuntime<SqliteStore>, mail: Mail, outbox: &Outbox) 
             let (now, entropy) = facts();
             // After close nothing is admitted; `runtimeClosed` tells the SDK
             // to settle whatever it still routes.
-            let _ = runtime.receive(input, now, entropy);
+            let _ = runtime.receive(*input, now, entropy);
         }
         Mail::Malformed(message) => {
             flush(runtime, outbox);

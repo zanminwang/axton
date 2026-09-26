@@ -1,8 +1,5 @@
 #import <Foundation/Foundation.h>
 
-char *axton_mobile_call(const char *input);
-void axton_mobile_free(char *output);
-
 // The Rust-owned client runtime (#134). Strings returned here, including an
 // `error_out` message, are freed with axton_mobile_free. `wake` runs on a
 // runtime thread with `context`; keep `context` alive until
@@ -12,3 +9,4 @@ uint64_t axton_mobile_runtime_open(const char *request_json, axton_wake wake, vo
 int32_t axton_mobile_runtime_submit(uint64_t runtime, const char *message_json, char **error_out);
 char *axton_mobile_runtime_drain(uint64_t runtime);
 void axton_mobile_runtime_detach(uint64_t runtime);
+void axton_mobile_free(char *output);

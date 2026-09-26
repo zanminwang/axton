@@ -27,28 +27,26 @@
 //! `now` (milliseconds) and `entropy` are facts the actor supplies on every
 //! call; deterministic tests pass their own.
 //!
-//! A unit that committed queues [`Event::Changed`] before its own
-//! [`Event::TaskCompleted`], so an SDK that resolves the task and re-queries at
-//! once has already heard about the change it is about to read. The observers
-//! publish what the unit changed last, as [`Event::ObserverChanged`]
-//! snapshots: a watch's rows are always rows the unit committed.
+//! The observers publish what a unit changed at its end, after its task
+//! completions, as [`Event::ObserverChanged`] snapshots: a watch's rows are
+//! always rows the unit committed, and a status describes what is committed.
 //!
 //! # Scheduling and transaction ownership
 //!
-//! Ordinary tasks form one FIFO. The first `transaction` task to run opens the
-//! session (`begin_session`), allocates a `transactionId` and a callback
-//! effect, and parks: from then on every ordinary task waits, whether it reads
-//! or writes, because it must not see or join the open session. The callback's
-//! own commands arrive as [`Input::TransactionCommand`]s bearing that id and
-//! run on a continuation lane ahead of the parked queue, each completing its
-//! own request. Nested savepoints keep a stack of runtime-issued `scope`
-//! tokens; a command names the innermost open scope or fails without joining,
-//! and a `release` / `rollbackSavepoint` pops only the top. Failures are
-//! tracked as the SDK transaction objects track them today: a failed command
-//! poisons the unit unless the savepoint it ran in rolls back, a
-//! wrong-scope command is a structural failure, and the [`Input::CallbackResult`]
-//! then commits (`ok` with nothing outstanding, no unreleased savepoint and no
-//! recorded failure) or rolls back and fails the parent with the first failure.
+//! Ordinary tasks form one FIFO. The first [`Command::Transaction`] to run
+//! opens the session (`begin_session`), allocates a `transactionId` and a
+//! callback effect, and parks: from then on every ordinary task waits, whether
+//! it reads or writes, because it must not see or join the open session. The
+//! callback's own [`TransactionCommand`]s arrive as
+//! [`Input::TransactionCommand`]s bearing that id and run on a continuation
+//! lane ahead of the parked queue, each completing its own request. Nested
+//! savepoints keep a stack of runtime-issued `scope` tokens; a command names
+//! the innermost open scope or fails without joining, and a `release` /
+//! `rollbackSavepoint` pops only the top. A failed command poisons the unit
+//! unless the savepoint it ran in rolls back, a wrong-scope command is a
+//! structural failure, and the [`Input::CallbackResult`] then commits (`ok`
+//! with nothing outstanding, no unreleased savepoint and no recorded failure)
+//! or rolls back and fails the parent with the first failure.
 //! A transaction command that arrives after the callback result, or that names
 //! a transaction that is not open, fails with `transaction_closed`.
 //!
@@ -74,7 +72,7 @@
 //! turn - in the order they were admitted, so neither starves. Each unit holds
 //! at most one local transaction and none is held across an effect: prepare,
 //! effect and apply are three units. Every ordinary task or continuation that
-//! committed wakes both lanes, as the SDKs' `work`/`channels` events did.
+//! committed wakes both lanes.
 //!
 //! # Module layout
 //!
@@ -92,13 +90,9 @@
 //! - `prerequisites`: the prerequisite loop over application handlers.
 //! - `observers`: subscription status, Bootstrap waiters and local watches,
 //!   published as snapshots.
-//! - `commands`: the command set: the local reads, writes, Scope, status and
-//!   sync commands executed against the client. The former host-driven lane
-//!   and split direct-call commands (`connection` lifecycle events,
-//!   `downlink`, `startSync`, `next`, `complete`, `prepareAction`,
-//!   `applyActionResponse`, `queryOnce`, …) still execute for one more
-//!   checkpoint of #134 and are refused while a runtime-owned connection is
-//!   active where they would drive its lanes.
+//! - `commands`: the commands executed directly against the client: local
+//!   reads and writes, Scope and Bootstrap registrations, the sync state and
+//!   the protocol seams (`freeze`, `ack`, `pull`).
 mod commands;
 mod direct;
 mod effects;
@@ -273,19 +267,12 @@ impl<S: ClientStore> ClientRuntime<S> {
             },
         });
     }
-    /// Queue [`Event::Changed`] when a unit committed since `generation`.
-    fn changed_since(&mut self, generation: u64) {
+    /// When a unit committed since `generation`, the watches re-run before
+    /// the unit ends.
+    fn committed_since(&mut self, generation: u64) {
         if self.client.generation() != generation {
-            self.changed();
+            self.observers.stale = true;
         }
-    }
-    /// Queue [`Event::Changed`] for the last commit; the watches re-run
-    /// before the unit ends.
-    fn changed(&mut self) {
-        self.observers.stale = true;
-        self.events.push(Event::Changed {
-            tables: self.client.last_changed().iter().cloned().collect(),
-        });
     }
     fn report(&mut self, diagnostic: Diagnostic) {
         self.events.push(Event::Report { diagnostic });

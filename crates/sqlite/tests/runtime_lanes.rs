@@ -1,8 +1,8 @@
 //! The runtime owns the operation lifecycles
-//! ([#134](https://github.com/zanminwang/axton/issues/134), checkpoints 2 and
-//! 3): the connection lanes, the Downlink worker, direct calls, Query once,
-//! prerequisites, rebuild fencing, and the observers - subscription status,
-//! Bootstrap waiters and local watches - over a real SQLite store. The test is
+//! ([#134](https://github.com/zanminwang/axton/issues/134)): the connection
+//! lanes, the Downlink worker, direct calls, Query once, prerequisites,
+//! rebuild fencing, and the observers - subscription status, Bootstrap
+//! waiters and local watches - over a real SQLite store. The test is
 //! the host: it answers every effect the runtime asks for, with a fixed
 //! clock that a fired timer advances. No sleeps, no threads.
 mod common;
@@ -104,17 +104,20 @@ impl Host {
     /// One step at a time until `id` completes: what the task's completion is
     /// observed with, and nothing after it.
     fn until(&mut self, id: &str) -> Vec<Value> {
+        self.until_event(|e| e["type"] == "taskCompleted" && e["requestId"] == id)
+    }
+    /// One step at a time until an event matches: the database can be
+    /// inspected at the very point it is observed.
+    fn until_event(&mut self, matches: impl Fn(&Value) -> bool) -> Vec<Value> {
         let mut events = self.take();
-        loop {
-            if events
-                .iter()
-                .any(|e| e["type"] == "taskCompleted" && e["requestId"] == id)
-            {
-                return events;
-            }
-            assert!(self.runtime.step(self.now, ENTROPY), "{id} never completed");
+        while !events.iter().any(&matches) {
+            assert!(
+                self.runtime.step(self.now, ENTROPY),
+                "never observed: {events:?}"
+            );
             events.extend(self.take());
         }
+        events
     }
     fn take(&mut self) -> Vec<Value> {
         let events: Vec<Value> = self
@@ -250,11 +253,6 @@ fn position(events: &[Value], matches: impl Fn(&Value) -> bool) -> usize {
         .position(matches)
         .unwrap_or_else(|| panic!("not found in {events:?}"))
 }
-fn changes(events: &[Value], table: &str) -> bool {
-    events
-        .iter()
-        .any(|e| e["type"] == "changed" && e["tables"].as_array().unwrap().contains(&json!(table)))
-}
 fn errors(events: &[Value]) -> Vec<String> {
     events
         .iter()
@@ -321,12 +319,22 @@ fn connect_starts_both_lanes_and_the_worker_streams_catches_up_and_applies() {
         h.run()
             .contains(&failed("again", "connection already active"))
     );
-    // The legacy host-driven lane commands cannot drive the owned lanes.
+    // The host cannot drive the lanes: there is no command for it.
     h.task("start", json!({"kind":"connection","event":"start"}));
     h.task("pump", json!({"kind":"downlink","event":"next"}));
     let events = h.run();
-    assert!(events.contains(&failed("start", "connection already active")));
-    assert!(events.contains(&failed("pump", "connection already active")));
+    assert!(
+        h.completion(&events, "start")["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("unknown variant `start`")
+    );
+    assert!(
+        h.completion(&events, "pump")["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("unknown variant `downlink`")
+    );
 
     h.task("subscribe", json!({"kind":"scopeSubscribe","scope":"book"}));
     let events = h.run();
@@ -347,12 +355,12 @@ fn connect_starts_both_lanes_and_the_worker_streams_catches_up_and_applies() {
     );
     assert_eq!(connections(&events), ["connecting"]);
 
-    // The handshake commits the first boundary: `changed`, then the status.
+    // The handshake commits the first boundary before the status says so.
     h.answer(&socket, json!({"ok":true,"value":{"event":"opened"}}));
     h.frame(&socket, &ack(&[("book", 0)]));
-    let events = h.run();
-    let committed = position(&events, |e| e["type"] == "changed");
-    assert!(committed < position(&events, |e| e["type"] == "observerChanged"));
+    let mut events = h.until_event(|e| e["type"] == "observerChanged");
+    assert_eq!(h.client().cursor("book").unwrap(), Some(0));
+    events.extend(h.run());
     assert_eq!(
         statuses(&events),
         [
@@ -364,7 +372,6 @@ fn connect_starts_both_lanes_and_the_worker_streams_catches_up_and_applies() {
     // A streamed page applies in one transaction; the status is unchanged.
     h.frame(&socket, &page(0, 1, "e", "first"));
     let events = h.run();
-    assert!(changes(&events, "Entry"));
     assert_eq!(statuses(&events), Vec::<Value>::new());
     assert_eq!(h.text("e"), Some(json!("first")));
 
@@ -378,15 +385,16 @@ fn connect_starts_both_lanes_and_the_worker_streams_catches_up_and_applies() {
     );
     assert_eq!(connections(&events), ["catching-up"]);
     h.frame(&socket, &page(1, 2, "e", "queued"));
-    assert!(
-        !changes(&h.run(), "Entry"),
+    h.run();
+    assert_eq!(
+        h.text("e"),
+        Some(json!("first")),
         "nothing applies while a catch-up is out"
     );
     // Its answer overlaps the queued page: applied once, the queued page is
     // covered, and the gap still does not connect, so one more catch-up runs.
     h.ok(&pull, &page(1, 3, "e", "incoming overlap"));
     let events = h.run();
-    assert!(changes(&events, "Entry"));
     assert_eq!(connections(&events), ["live", "catching-up"]);
     let (_, body) = h.http("pull");
     assert_eq!(
@@ -424,13 +432,12 @@ fn a_direct_call_waits_without_the_writer_and_succeeds_only_after_its_apply_comm
     assert!(!events.iter().any(|e| e["requestId"] == "call"));
     // The answer: its apply commits, then the call's completion, then the task.
     h.ok(&http, &renamed(&body, "server"));
-    let events = h.until("call");
-    let applied = position(&events, |e| {
-        e["type"] == "changed" && e["tables"].as_array().unwrap().contains(&json!("Entry"))
-    });
+    let mut events = h.until_event(|e| e["type"] == "callCompleted");
+    assert_eq!(h.text("e"), Some(json!("server")), "committed first");
+    events.extend(h.run());
     let completed = position(&events, |e| e["type"] == "callCompleted");
     let success = position(&events, |e| e["requestId"] == "call");
-    assert!(applied < completed && completed < success, "{events:?}");
+    assert!(completed < success, "{events:?}");
     assert_eq!(
         events[success],
         done(
@@ -453,8 +460,7 @@ fn a_direct_call_waits_without_the_writer_and_succeeds_only_after_its_apply_comm
     let generation = h.client().generation();
     h.ok(&http, &echoed(&body, "hi"));
     let events = h.run();
-    assert_eq!(h.client().generation(), generation);
-    assert!(!events.iter().any(|e| e["type"] == "changed"), "{events:?}");
+    assert_eq!(h.client().generation(), generation, "nothing committed");
     assert_eq!(
         events.last().unwrap(),
         &done(
@@ -506,10 +512,10 @@ fn the_push_lane_freezes_sends_settles_and_backs_off_with_one_shared_refresh() {
     );
     // The receipt settles in one transaction; the call's outcome follows it.
     h.ok(&push, &receipt(&client_id, &body));
-    let events = h.run();
-    let settled = position(&events, |e| e["type"] == "changed");
+    let mut events = h.until_event(|e| e["type"] == "callCompleted");
+    assert_eq!(h.client().pending_count().unwrap(), 0, "settled first");
+    events.extend(h.run());
     let outcome = position(&events, |e| e["type"] == "callCompleted");
-    assert!(settled < outcome);
     assert_eq!(
         events[outcome],
         json!({"type":"callCompleted","callId":call,"outcome":{"status":"succeeded","result":null}})
@@ -862,6 +868,7 @@ fn query_once_is_decided_fetched_joined_and_released_by_the_runtime() {
     h.task("joined", echo(json!({"once":true})));
     h.run();
     let (http, body) = h.http("action");
+    let generation = h.client().generation();
     h.ok(&http, &echoed(&body, "hi"));
     let events = h.run();
     let outcome = json!({"outcome":{"status":"succeeded","result":{"label":"hi"}}});
@@ -873,7 +880,7 @@ fn query_once_is_decided_fetched_joined_and_released_by_the_runtime() {
         h.completion(&events, "joined"),
         &done("joined", outcome.clone())
     );
-    assert!(changes(&events, "axton_query_cache"), "the result is saved");
+    assert_ne!(h.client().generation(), generation, "the result is saved");
     // A hit: no effect, no write.
     let generation = h.client().generation();
     h.task("cached", echo(json!({"once":true})));
@@ -904,9 +911,13 @@ fn query_once_is_decided_fetched_joined_and_released_by_the_runtime() {
         .unwrap();
     let transaction = effect["operation"]["transactionId"].clone();
     h.submit(json!({"type":"transactionCommand","requestId":"inside","transactionId":transaction,"command":echo(json!({"once":true}))}));
+    let events = h.run();
     assert!(
-        h.run()
-            .contains(&failed("inside", "unsupported transaction command"))
+        h.completion(&events, "inside")["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("unknown variant `invoke`"),
+        "{events:?}"
     );
     h.submit(json!({"type":"callbackResult","effectId":effect["effectId"],"transactionId":transaction,"ok":true}));
     h.run();
@@ -947,9 +958,10 @@ fn prerequisites_run_as_effects_and_every_outcome_wakes_the_push_lane() {
     assert_eq!(op["key"], key("a"));
     assert_eq!(op["arguments"], json!({"id":"a"}));
     // A failing handler keeps its reason; the loop goes on.
+    let generation = h.client().generation();
     h.fail(&first, "disk full", None);
-    let events = h.run();
-    assert!(changes(&events, "axton_client"));
+    h.run();
+    assert_ne!(h.client().generation(), generation, "the outcome committed");
     let (second, op) = h.one("prerequisite", None);
     assert_eq!(op["key"], key("b"));
     h.task("tasks", json!({"kind":"tasks"}));
@@ -1081,7 +1093,6 @@ fn a_rebuild_fences_old_lane_io_and_reopens_in_the_same_intent() {
     let socket = h.socket();
     assert_ne!(socket, old_socket);
     assert_eq!(sockets(&events).len(), 1);
-    assert!(changes(&events, "Entry"));
     // Old answers change nothing.
     let cursors = h.client().subscriptions().unwrap();
     let generation = h.client().generation();
@@ -1202,11 +1213,10 @@ fn inbound_work_admitted_after_an_ordinary_task_runs_after_it() {
     // frame instead of applying it: the record keeps its retained content and
     // a fresh session is asked for.
     assert_eq!(h.text("live"), Some(json!("first")));
-    assert!(!changes(&events[..unsubscribed], "Entry"), "{events:?}");
     assert!(!sockets(&events).is_empty(), "{events:?}");
 }
 
-// --- Observers (checkpoint 3) ----------------------------------------------
+// --- Observers ---------------------------------------------------------------
 
 /// The snapshots one observer published, in order.
 fn snapshots(events: &[Value], observer: &Value) -> Vec<Value> {
@@ -1291,15 +1301,17 @@ fn subscription_status_follows_the_lanes_and_a_removal_closes_it_once() {
         "an open socket is not live yet"
     );
     h.frame(&socket, &ack(&[("book", 0)]));
-    let events = h.run();
-    assert!(
-        position(&events, |e| e["type"] == "changed")
-            < position(&events, |e| e["type"] == "observerChanged")
+    let events = h.until_event(|e| e["type"] == "observerChanged");
+    assert_eq!(
+        h.client().cursor("book").unwrap(),
+        Some(0),
+        "the boundary committed before the status"
     );
     assert_eq!(
         statuses(&events),
         [status("ready", "live", "not-requested")]
     );
+    assert_eq!(h.run(), Vec::<Value>::new());
 
     // A gap asks for a catch-up: catching-up until it answers.
     h.frame(&socket, &page(5, 6, "e", "gap"));
@@ -1405,12 +1417,20 @@ fn bootstrap_waiters_answer_after_the_completion_commit_and_share_the_run() {
     // Delivery reaches the barrier: the completion commits, then both calls
     // answer, then the status says so.
     h.frame(&socket, &page(7, 9, "e", "delivered"));
-    let events = h.run();
-    let committed = position(&events, |e| e["type"] == "changed");
+    let mut events = h.until("first");
+    assert_eq!(
+        h.client()
+            .bootstrap_state("book", subscription)
+            .unwrap()
+            .state,
+        BootstrapPhase::Complete,
+        "the completion committed first"
+    );
+    events.extend(h.run());
     let first = position(&events, |e| *e == done("first", Value::Null));
     let second = position(&events, |e| *e == done("second", Value::Null));
     let published = position(&events, |e| e["observerId"] == observer);
-    assert!(committed < first && first < second && second < published);
+    assert!(first < second && second < published);
     assert_eq!(phases(&events), ["complete"]);
 
     // A call after completion answers locally: no effect, no commit, no
@@ -1653,7 +1673,7 @@ fn watches_re_run_after_commits_and_publish_only_what_changed() {
     h.task("other", create("f", "second"));
     let events = h.run();
     assert!(
-        position(&events, |e| e["type"] == "changed")
+        position(&events, |e| e["requestId"] == "other")
             < position(&events, |e| e["observerId"] == all)
     );
     assert_eq!(
@@ -1662,9 +1682,10 @@ fn watches_re_run_after_commits_and_publish_only_what_changed() {
     );
     assert_eq!(snapshots(&events, &one), Vec::<Value>::new());
     // A commit that touches no Model re-runs both and publishes nothing.
+    let generation = h.client().generation();
     h.task("scope", json!({"kind":"scopeSubscribe","scope":"book"}));
     let events = h.run();
-    assert!(events.iter().any(|e| e["type"] == "changed"));
+    assert_ne!(h.client().generation(), generation);
     assert!(snapshots(&events, &all).is_empty() && snapshots(&events, &one).is_empty());
 
     // A callback's write is not visible until it commits.
@@ -1741,6 +1762,5 @@ fn a_response_in_hand_survives_stop_but_not_close() {
     let events = h.run();
     assert!(events.contains(&failed("closing", "action.unavailable")));
     assert_eq!(events.last().unwrap(), &json!({"type":"runtimeClosed"}));
-    assert!(!changes(&events, "Entry"));
     assert_eq!(h.text("e"), Some(json!("server")));
 }

@@ -2,11 +2,10 @@
 //! stack, failure accounting and callback effect
 //! ([#134](https://github.com/zanminwang/axton/issues/134)).
 //!
-//! The accounting mirrors the SDK transaction objects: a failed command
-//! poisons the unit unless the savepoint it ran in rolls back, a command in
-//! the wrong scope is a structural failure no rollback clears, and the
-//! callback's result decides commit or rollback only once every submitted
-//! command has run.
+//! A failed command poisons the unit unless the savepoint it ran in rolls
+//! back, a command in the wrong scope is a structural failure no rollback
+//! clears, and the callback's result decides commit or rollback only once
+//! every submitted command has run.
 use super::*;
 use crate::ClientStore;
 use std::collections::VecDeque;
@@ -38,7 +37,7 @@ pub(super) struct Continuation {
     pub(super) request_id: String,
     pub(super) transaction_id: String,
     pub(super) scope: Option<String>,
-    pub(super) command: Value,
+    pub(super) command: TransactionCommand,
 }
 
 impl<S: ClientStore + 'static> ClientRuntime<S> {
@@ -130,31 +129,30 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             return Err(CLOSED.into());
         };
         let top = open.scopes.last().map(|s| s.token.clone());
-        let kind = command.command["kind"].as_str().unwrap_or_default();
-        let popped = match kind {
-            "release" | "rollbackSavepoint" => Some(
-                command
-                    .command
-                    .get("scope")
-                    .map_or(top.clone(), |named| named.as_str().map(str::to_owned)),
-            ),
+        // `release` / `rollbackSavepoint` close the scope they name, the
+        // innermost one when they name none; either way it must be open.
+        let closes = match &command.command {
+            TransactionCommand::Release { scope }
+            | TransactionCommand::RollbackSavepoint { scope } => {
+                Some(scope.clone().or_else(|| top.clone()))
+            }
             _ => None,
         };
         let in_scope = command.scope == top
-            && popped
+            && closes
                 .as_ref()
                 .is_none_or(|named| named.is_some() && *named == top);
         if !in_scope {
             open.structural.get_or_insert_with(|| INVALID_SCOPE.into());
             return Err(INVALID_SCOPE.into());
         }
-        let outcome = match kind {
-            "savepoint" => self.savepoint(),
-            "release" => {
+        let outcome = match &command.command {
+            TransactionCommand::Savepoint => self.savepoint(),
+            TransactionCommand::Release { .. } => {
                 self.pop_scope();
                 self.client.session_release().map(|()| Value::Null)
             }
-            "rollbackSavepoint" => {
+            TransactionCommand::RollbackSavepoint { .. } => {
                 let restored = self.pop_scope();
                 self.client.session_rollback_savepoint().map(|()| {
                     if let Some(open) = &mut self.transaction {
@@ -227,7 +225,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 let generation = self.client.generation();
                 // A failed commit has already rolled back inside the client.
                 let committed = self.client.commit_session().map_err(|e| e.to_string());
-                self.changed_since(generation);
+                self.committed_since(generation);
                 committed.map(|()| Value::Null)
             }
         };

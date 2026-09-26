@@ -6,6 +6,24 @@ fn list<'a>(v: &'a Value, k: &str) -> Result<&'a Vec<Value>, String> {
 fn named<'a>(items: &'a [Value], name: &Value) -> Option<&'a Value> {
     items.iter().find(|item| item["name"] == *name)
 }
+/// A field as a retained contract sees it: creation defaults are client
+/// policy for fresh creates, not part of any backend read or input shape,
+/// so they are projected out of snapshots and ignored when comparing them.
+pub(crate) fn without_creation_policy(field: &Value) -> Value {
+    let mut field = field.clone();
+    if let Some(object) = field.as_object_mut() {
+        object.remove("createDefault");
+    }
+    field
+}
+fn shapes(fields: &[Value]) -> Vec<Value> {
+    fields.iter().map(without_creation_policy).collect()
+}
+/// The retained field named like `field`, compared by shape only.
+fn same_shape(fields: &[Value], field: &Value) -> Option<bool> {
+    named(fields, &field["name"])
+        .map(|next| without_creation_policy(next) == without_creation_policy(field))
+}
 /// Retain the complete kind, input and output contract of each published operation.
 /// Output changes always require a new operation version; input compatibility
 /// follows the existing mutation operand rules.
@@ -300,8 +318,8 @@ fn capture(config: &Value, mutation: &Value) -> Result<Value, String> {
             model["name"].as_str().unwrap().into(),
             json!(fields.iter().map(|f| f["name"].clone()).collect::<Vec<_>>()),
         );
-        let selected: Vec<_> = fields
-            .iter()
+        let selected: Vec<_> = shapes(fields)
+            .into_iter()
             .filter(|f| {
                 identity.contains(&f["name"])
                     || used.iter().any(|s| {
@@ -312,7 +330,6 @@ fn capture(config: &Value, mutation: &Value) -> Result<Value, String> {
                                     .is_none_or(|a| a.contains(&f["name"])))
                     })
             })
-            .cloned()
             .collect();
         for field in &selected {
             if field["type"]["kind"] == "enum" {
@@ -407,7 +424,7 @@ fn compatible(old: &Value, new: &Value) -> Result<bool, String> {
             return Ok(false);
         }
         for field in list(model, "fields")? {
-            if named(list(next, "fields")?, &field["name"]) != Some(field) {
+            if same_shape(list(next, "fields")?, field) != Some(true) {
                 return Ok(false);
             }
         }
@@ -508,7 +525,7 @@ fn capture_model(config: &Value, model: &Value) -> Result<Value, String> {
         "name": model["name"],
         "version": model["version"],
         "identity": model["identity"],
-        "fields": fields,
+        "fields": shapes(fields),
         "enums": enums,
     }))
 }
@@ -523,7 +540,7 @@ fn model_break(old: &Value, new: &Value) -> Result<Option<String>, String> {
                     field["name"]
                 )));
             }
-            Some(next) if next != field => {
+            Some(next) if without_creation_policy(next) != without_creation_policy(field) => {
                 return Ok(Some(format!(
                     "changing the type of field {}",
                     field["name"]

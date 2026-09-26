@@ -74,7 +74,10 @@ pub fn schema(v: &Validated) -> Value {
                 .filter(|f| f["type"]["kind"] == "enum")
                 .filter_map(|f| f["type"]["name"].as_str()).collect();
             let retained_enums: Vec<_> = enums.iter().filter(|e| e["name"].as_str().is_some_and(|n| used.contains(n))).cloned().collect();
-            json!({"name":m.name,"version":m.version,"identity":m.identity,"fields":model["fields"],"enums":retained_enums})
+            // A read contract describes complete backend values; creation
+            // policy stays on the current client Model descriptor only.
+            let fields: Vec<Value> = model["fields"].as_array().unwrap().iter().map(crate::history::without_creation_policy).collect();
+            json!({"name":m.name,"version":m.version,"identity":m.identity,"fields":fields,"enums":retained_enums})
         }).collect::<Vec<_>>(),
         "requirements": requirements(v),
         "prerequisites": prerequisites(v),

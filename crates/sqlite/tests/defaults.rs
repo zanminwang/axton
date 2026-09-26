@@ -413,3 +413,114 @@ fn servers_and_loaders_never_synthesize_defaults() {
     assert!(schema.normalize_state("Todo", &state).is_err());
     assert!(schema.validate_state("Todo", &state).is_err());
 }
+
+fn open_at(path: &std::path::Path, schema: Schema) -> Client<SqliteStore> {
+    Client::open_at(path, schema, Box::new(|p| SqliteStore::open(p)), false).unwrap()
+}
+
+fn with_fields(edit: impl FnOnce(&mut Vec<Value>)) -> Schema {
+    let mut value = serde_json::to_value(schema()).unwrap();
+    edit(value["models"][0]["fields"].as_array_mut().unwrap());
+    Schema::from_value(value).unwrap()
+}
+
+#[test]
+fn a_default_only_change_opens_in_place_and_rewrites_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut client = open_at(&path, schema());
+    client
+        .submit_action("Add", 1, json!({"todo":{"title":"queued"}}))
+        .unwrap();
+    client
+        .transaction(|tx| tx.direct(local_create(json!({"title":"local"}))))
+        .unwrap();
+    let before = rows(&mut client);
+    let args = client
+        .read_sql("SELECT args FROM axton_mutation", &[])
+        .unwrap();
+    let bytes = client.freeze().unwrap().unwrap();
+    drop(client);
+    // Change a literal, switch a nullable field to a generator and remove now().
+    let changed = with_fields(|fields| {
+        fields[1]["createDefault"] = json!({"kind":"literal","value":"changed"});
+        fields[6]["createDefault"] = json!({"kind":"uuid"});
+        fields[5].as_object_mut().unwrap().remove("createDefault");
+    });
+    let mut client = open_at(&path, changed);
+    assert!(!client.schema_state().rebuilt);
+    assert!(client.schema_state().pending.is_none());
+    assert_eq!(rows(&mut client), before, "existing rows are not rewritten");
+    assert_eq!(
+        client
+            .read_sql("SELECT args FROM axton_mutation", &[])
+            .unwrap(),
+        args
+    );
+    assert_eq!(
+        client.freeze().unwrap().unwrap(),
+        bytes,
+        "frozen bytes unchanged"
+    );
+    // New creates follow the new policy; a removed default is required again.
+    assert!(
+        client
+            .transaction(|tx| tx.direct(local_create(json!({}))))
+            .unwrap_err()
+            .to_string()
+            .contains("missing state field createdAt")
+    );
+    client
+        .transaction(|tx| {
+            tx.direct(local_create(
+                json!({"createdAt":"2026-01-01T00:00:00.000Z"}),
+            ))
+        })
+        .unwrap();
+    let fresh = rows(&mut client)
+        .into_iter()
+        .find(|r| !before.contains(r))
+        .unwrap();
+    assert_eq!(fresh["title"], "changed");
+    assert_uuid_v4(&fresh["note"]);
+}
+
+#[test]
+fn a_creation_default_never_backfills_a_new_required_column() {
+    let dir = tempfile::tempdir().unwrap();
+    let rank = |extra: Value| {
+        with_fields(move |fields| {
+            let mut field =
+                json!({"name":"rank","type":{"kind":"scalar","name":"int"},"nullable":false});
+            field
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            fields.push(field);
+        })
+    };
+    // Only the pre-existing internal default may fill historical rows in place.
+    let path = dir.path().join("internal");
+    let mut client = open_at(&path, schema());
+    client
+        .transaction(|tx| tx.direct(local_create(json!({"title":"old"}))))
+        .unwrap();
+    drop(client);
+    let mut client = open_at(&path, rank(json!({"default":3})));
+    assert!(!client.schema_state().rebuilt);
+    assert_eq!(rows(&mut client)[0]["rank"], 3);
+    // A source @default is creation policy: the old file is left behind, and
+    // no row is given a default, generated id or creation time it never had.
+    let path = dir.path().join("policy");
+    let mut client = open_at(&path, schema());
+    client
+        .transaction(|tx| tx.direct(local_create(json!({"title":"old"}))))
+        .unwrap();
+    drop(client);
+    let mut client = open_at(
+        &path,
+        rank(json!({"createDefault":{"kind":"literal","value":3}})),
+    );
+    assert!(client.schema_state().rebuilt);
+    assert!(rows(&mut client).is_empty());
+}

@@ -2,6 +2,118 @@
   "actions": [
     {
       "input": {
+        "enums": [
+          {
+            "name": "Mood",
+            "values": [
+              "calm",
+              "busy"
+            ]
+          }
+        ],
+        "models": [
+          {
+            "fields": [
+              {
+                "name": "id",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "uuid"
+                }
+              },
+              {
+                "name": "body",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              },
+              {
+                "name": "mood",
+                "nullable": false,
+                "type": {
+                  "kind": "enum",
+                  "name": "Mood"
+                }
+              },
+              {
+                "name": "createdAt",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "dateTime"
+                }
+              },
+              {
+                "name": "tag",
+                "nullable": true,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "identity": [
+              "id"
+            ],
+            "name": "Note"
+          }
+        ]
+      },
+      "inputs": [
+        {
+          "cardinality": "single",
+          "kind": "model",
+          "model": "Note",
+          "name": "note",
+          "operation": "create"
+        }
+      ],
+      "kind": "mutation",
+      "name": "AddNote",
+      "outputEnums": [],
+      "outputs": [
+        {
+          "cardinality": "single",
+          "kind": "model",
+          "model": "Note",
+          "modelReadVersion": 1,
+          "name": "note",
+          "source": {
+            "inputIdentity": "note"
+          }
+        },
+        {
+          "cardinality": "single",
+          "handlerType": {
+            "fields": [
+              {
+                "name": "id",
+                "type": {
+                  "kind": "scalar",
+                  "name": "uuid"
+                }
+              }
+            ],
+            "kind": "identity",
+            "model": "Note"
+          },
+          "kind": "model",
+          "model": "Note",
+          "modelReadVersion": 1,
+          "name": "saved",
+          "source": "handlerIdentity"
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 1
+    },
+    {
+      "input": {
         "enums": [],
         "models": [
           {
@@ -522,9 +634,68 @@
   "deprecations": [],
   "inverses": [],
   "loaders": [
-    "Todo"
+    "Todo",
+    "Note"
   ],
   "models": [
+    {
+      "enums": [
+        {
+          "name": "Mood",
+          "values": [
+            "calm",
+            "busy"
+          ]
+        }
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "uuid"
+          }
+        },
+        {
+          "name": "body",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "mood",
+          "nullable": false,
+          "type": {
+            "kind": "enum",
+            "name": "Mood"
+          }
+        },
+        {
+          "name": "createdAt",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "dateTime"
+          }
+        },
+        {
+          "name": "tag",
+          "nullable": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "identity": [
+        "id"
+      ],
+      "name": "Note",
+      "version": 1
+    },
     {
       "enums": [],
       "fields": [
@@ -557,6 +728,118 @@
   "requirements": [],
   "schema": {
     "actions": [
+      {
+        "input": {
+          "enums": [
+            {
+              "name": "Mood",
+              "values": [
+                "calm",
+                "busy"
+              ]
+            }
+          ],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "body",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "mood",
+                  "nullable": false,
+                  "type": {
+                    "kind": "enum",
+                    "name": "Mood"
+                  }
+                },
+                {
+                  "name": "createdAt",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                },
+                {
+                  "name": "tag",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Note"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Note",
+            "name": "note",
+            "operation": "create"
+          }
+        ],
+        "kind": "mutation",
+        "name": "AddNote",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "model",
+            "model": "Note",
+            "modelReadVersion": 1,
+            "name": "note",
+            "source": {
+              "inputIdentity": "note"
+            }
+          },
+          {
+            "cardinality": "single",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Note"
+            },
+            "kind": "model",
+            "model": "Note",
+            "modelReadVersion": 1,
+            "name": "saved",
+            "source": "handlerIdentity"
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      },
       {
         "input": {
           "enums": [],
@@ -1077,7 +1360,15 @@
       }
     ],
     "clientPolicies": [],
-    "enums": [],
+    "enums": [
+      {
+        "name": "Mood",
+        "values": [
+          "calm",
+          "busy"
+        ]
+      }
+    ],
     "models": [
       {
         "fields": [
@@ -1105,11 +1396,138 @@
         "relations": [],
         "unique": [],
         "version": 1
+      },
+      {
+        "fields": [
+          {
+            "createDefault": {
+              "kind": "uuid"
+            },
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "uuid"
+            }
+          },
+          {
+            "createDefault": {
+              "kind": "literal",
+              "value": ""
+            },
+            "name": "body",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "createDefault": {
+              "kind": "literal",
+              "value": "calm"
+            },
+            "name": "mood",
+            "nullable": false,
+            "type": {
+              "kind": "enum",
+              "name": "Mood"
+            }
+          },
+          {
+            "createDefault": {
+              "kind": "now"
+            },
+            "name": "createdAt",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "createDefault": {
+              "kind": "literal",
+              "value": "inbox"
+            },
+            "name": "tag",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Note",
+        "relations": [],
+        "unique": [],
+        "version": 1
       }
     ],
     "prerequisites": [],
     "requirements": [],
     "resultModels": [
+      {
+        "enums": [
+          {
+            "name": "Mood",
+            "values": [
+              "calm",
+              "busy"
+            ]
+          }
+        ],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "uuid"
+            }
+          },
+          {
+            "name": "body",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "mood",
+            "nullable": false,
+            "type": {
+              "kind": "enum",
+              "name": "Mood"
+            }
+          },
+          {
+            "name": "createdAt",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "name": "tag",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Note",
+        "version": 1
+      },
       {
         "enums": [],
         "fields": [

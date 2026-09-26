@@ -380,3 +380,65 @@ test("store:false cannot suppress authority a Mutation's own changes require", a
     assert.equal((await client.models.todo.get({ id: "retitle-b" }))?.title, "retitleq durable", "the durable route applies the same required authority");
   } finally { await client?.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test("create defaults are generated once by the client and reach both routes unchanged", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "axton-action-defaults-"));
+  const path = join(directory, "client.sqlite");
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const wire = (note: { id: string; body: string; mood: string; createdAt: Date; tag: string | null }) => ({ ...note, createdAt: note.createdAt.toISOString() });
+  const stored = async (id: string) => (await fixture.pool.query("SELECT id,body,mood,created_at AS \"createdAt\",tag FROM action_e2e_note WHERE id=$1", [id])).rows[0];
+  let client: GeneratedClient | undefined;
+  try {
+    // Durable, offline: the optimistic row, the persisted intent and the frozen
+    // batch share the values generated at submission.
+    client = await GeneratedClient.open({ path });
+    await client.mutations.addNote({ note: { body: "queued" } });
+    const [optimistic] = await client.models.note.query();
+    assert.ok(optimistic);
+    assert.match(optimistic.id, uuid);
+    assert.ok(Math.abs(optimistic.createdAt.getTime() - Date.now()) < 60_000, "client wall clock");
+    assert.deepEqual({ body: optimistic.body, mood: optimistic.mood, tag: optimistic.tag }, { body: "queued", mood: "calm", tag: "inbox" });
+    const frozen = await client.client.freeze();
+    assert.ok(frozen);
+    assert.deepEqual(JSON.parse(frozen).mutations[0].args.note, wire(optimistic), "frozen intent carries the optimistic values");
+    assert.match(JSON.parse(frozen).mutations[0].args.note.createdAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/, "UTC at millisecond precision");
+    await client.close();
+    client = await GeneratedClient.open({ path });
+    assert.deepEqual(await client.models.note.query(), [optimistic], "reopen regenerates nothing");
+    assert.equal(await client.client.freeze(), frozen, "the frozen batch is byte-identical after reopen");
+    const handled = fixture.handlerCalls;
+    const first = await post("mutations", frozen);
+    const replayed = await post("mutations", frozen);
+    assert.deepEqual(replayed.completions, first.completions, "a retried batch replays the stored outcome");
+    assert.equal(fixture.handlerCalls, handled + 1, "the handler ran once");
+    await client.client.acknowledge(JSON.parse(frozen).batchSequence, replayed);
+    assert.deepEqual(fixture.notes.at(-1), optimistic, "the durable handler received the client's values");
+    assert.deepEqual(await stored(optimistic.id), wire(optimistic));
+    assert.deepEqual(await client.models.note.get({ id: optimistic.id }), optimistic, "settled authority agrees");
+
+    // Direct: the request carries the generated values; explicit null wins.
+    await client.connect(server());
+    const direct = await client.mutations.call.addNote({ note: { tag: null, mood: "busy" } });
+    assert.match(direct.saved.id, uuid);
+    assert.notEqual(direct.saved.id, optimistic.id, "each fresh create generates its own id");
+    assert.deepEqual({ body: direct.saved.body, mood: direct.saved.mood, tag: direct.saved.tag }, { body: "", mood: "busy", tag: null });
+    assert.deepEqual(fixture.notes.at(-1), direct.saved, "the direct handler received exactly what the Loader returned");
+    assert.deepEqual(await stored(direct.saved.id), wire(direct.saved));
+    assert.deepEqual(await client.models.note.get({ id: direct.saved.id }), direct.saved, "direct authority applied locally");
+
+    // Durable online: the Loader snapshot equals the optimistic row it settles.
+    const call = await client.mutations.addNote({ note: {} });
+    const before = (await client.models.note.query()).find((note) => note.id !== optimistic.id && note.id !== direct.saved.id);
+    assert.ok(before);
+    const outcome = await call.wait();
+    assert.equal(outcome.error, null);
+    assert.deepEqual(outcome.result!.saved, before, "returned snapshot agrees with the optimistic create");
+
+    // Local-only create fills defaults too and never reaches the backend.
+    const handledLocal = fixture.handlerCalls;
+    await client.models.note.create({ body: "local" });
+    const localNote = (await client.models.note.query({ where: { body: "local" } }))[0];
+    assert.match(localNote!.id, uuid);
+    assert.equal(fixture.handlerCalls, handledLocal);
+  } finally { await client?.close(); await rm(directory, { recursive: true, force: true }); }
+});

@@ -1,6 +1,66 @@
 {
   "formatVersion": 1,
   "models": {
+    "Note": {
+      "1": {
+        "enums": [
+          {
+            "name": "Mood",
+            "values": [
+              "calm",
+              "busy"
+            ]
+          }
+        ],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "uuid"
+            }
+          },
+          {
+            "name": "body",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "mood",
+            "nullable": false,
+            "type": {
+              "kind": "enum",
+              "name": "Mood"
+            }
+          },
+          {
+            "name": "createdAt",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "name": "tag",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Note",
+        "version": 1
+      }
+    },
     "Todo": {
       "1": {
         "enums": [],

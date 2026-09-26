@@ -61,6 +61,41 @@ Dart output imports `package:axton/axton.dart`. Commit the history used to gener
 
 TypeScript omission leaves a patch field unchanged; null clears a nullable field. Dart uses `Present<T>` to distinguish supplied values from omission. Generated TypeScript is intended for `exactOptionalPropertyTypes`.
 
+### Creation defaults
+
+```text
+enum Status { open closed }
+model Todo {
+  id String @default(uuid())
+  title String @default("")
+  done Boolean @default(false)
+  priority Int @default(0)
+  status Status @default(open)
+  createdAt DateTime @default(now())
+  note String? @default("inbox")
+  @@id(id)
+}
+```
+
+`@default(value)` on a stored Model field supplies the value when a fresh create omits that field. It applies to a local `create` (inside a transaction too) and to the `Model.create` operands of a Mutation on either route, including optional and list operands. It never applies to updates, deletes, reads, Loader records, server data or migrations: an update that omits a field leaves it unchanged, and a Loader record missing a required field is still an error.
+
+| Default | Allowed on | Value |
+| --- | --- | --- |
+| `"text"` | `String`, `UUID`, `DateTime` | Normalized like any value of the field: a UUID is lowercased, a date-time becomes UTC with milliseconds |
+| `true` / `false` | `Bool` / `Boolean` | The boolean |
+| A number, such as `0`, `-1.5` or `1e3` | `Int` (safe integers), `Float` | The number |
+| An enum value name, such as `open` | Enum fields | That enum value |
+| `uuid()` | `String`, `UUID` | A new lowercase UUID v4 |
+| `now()` | `DateTime` | The client's current UTC time, to the millisecond |
+
+An explicit value always wins, and an explicit `null` for a nullable field stays `null`; it never requests the default. A nullable field may have a non-null default. `@default(null)`, defaults on list or relation fields, on operation inputs or outputs, unknown functions, function arguments and values the field type rejects are compile errors.
+
+The client generates `uuid()` and `now()` values once, before the create is written locally or sent, so the local row, the queued call, every retry and the backend handler see the same values; reopening the app regenerates nothing. `now()` is the device clock and is not a trusted server timestamp; set server-side times in your handler. To know an identity before submitting, supply it yourself.
+
+Generated create inputs make only defaulted fields optional: `TodoCreate` in TypeScript, and in Dart `TodoCreate` (a defaulted nullable field takes `Present(...)`, so omission and an explicit null differ) or any complete `Todo`, both accepted as `TodoCreateInput`. Full `Todo` records and backend handler arguments stay complete: handlers receive the expanded values.
+
+A default is creation policy, not stored data. Adding, changing or removing one needs no version bump and rewrites no existing rows or queued calls. It never fills historical records: adding a required field still needs a new `@@version` even with a default, and the local database is rebuilt for it.
+
 ## Relations
 
 ```text

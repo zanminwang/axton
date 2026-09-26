@@ -21,6 +21,11 @@ export interface TodoPatch {
  title?: string;
  note?: string | null;
 }
+export interface TodoCreate {
+ id: string;
+ title: string;
+ note: string | null;
+}
 export function decodeTodo(row:Record<string,unknown>):Todo { return {
  id: row.id as string,
  title: row.title as string,
@@ -46,12 +51,20 @@ export function encodeTodoWhere(value:Partial<Todo>):Record<string,unknown> { re
  ...(value.title !== undefined ? { title: value.title } : {}),
  ...(value.note !== undefined ? { note: value.note == null ? null : value.note } : {}),
 }; }
+export function encodeTodoCreate(value:TodoCreate):Record<string,unknown> { return {
+ id: value.id,
+ title: value.title,
+ note: value.note == null ? null : value.note,
+}; }
+export function encodeTodoCreateIdentity(value:TodoCreate):Record<string,unknown> { return {
+ id: value.id,
+}; }
 export class TodoModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:TodoIdentity):Promise<Todo|null> { const row=await this.port.read('Todo',encodeTodoIdentity(identity)); return row===null ? null : decodeTodo(row); }
  async query(options:{where?:Partial<Todo>;orderBy?:{field:'id' | 'title' | 'note';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Todo[]> { return (await this.port.querySpec('Todo',{filter:encodeTodoWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeTodo); }
 }
 export class TodoTxModel<P extends WritePort=WritePort> extends TodoModel<P> {
- create(value:Todo):Promise<void> { return this.port.direct({model:'Todo',op:'create',identity:encodeTodoIdentity(value),values:encodeTodoPatch(value)}); }
+ create(value:TodoCreate):Promise<void> { return this.port.direct({model:'Todo',op:'create',identity:encodeTodoCreateIdentity(value),values:encodeTodoPatch(value)}); }
  update(identity:TodoIdentity, patch:TodoPatch):Promise<void> { return this.port.direct({model:'Todo',op:'update',identity:encodeTodoIdentity(identity),values:encodeTodoPatch(patch)}); }
  delete(identity:TodoIdentity):Promise<void> { return this.port.direct({model:'Todo',op:'delete',identity:encodeTodoIdentity(identity)}); }
 }
@@ -60,7 +73,6 @@ export class TodoLiveModel extends TodoTxModel<LivePort> {
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:TodoIdentity):Promise<SyncState> { return (await this.port.syncState('Todo',encodeTodoIdentity(identity))) as SyncState; }
 }
-export type TodoCreate = Todo;
 export type TodoUpdate<K extends keyof TodoPatch = keyof TodoPatch> = TodoIdentity & Partial<Pick<TodoPatch, K>>;
 export type TodoDelete = TodoIdentity;
 export interface AddTodoInput {
@@ -108,7 +120,7 @@ export interface UpdateTodoOutput {
  todo: Todo;
 }
 function encodeAddTodoInput(args:AddTodoInput):Record<string,unknown> { return {
- todo: encodeTodo(args.todo),
+ todo: encodeTodoCreate(args.todo),
 }; }
 function decodeAddTodoOutput(value:unknown):AddTodoOutput { const row=value as Record<string,unknown>; return {
  todo: decodeTodo(row.todo as Record<string,unknown>),

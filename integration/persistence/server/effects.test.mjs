@@ -41,16 +41,15 @@ test('membership declarations keep their order and repeats; the engine reduces t
  assert.deepEqual(effects.settlement().changes,[],'membership alone declares no change');
 });
 
-test('a touch keeps one change per record, after the private seeds',()=>{
+test('a touch keeps one change per record, in first-declaration order',()=>{
  const effects=fresh();
- effects.seed({model:'Todo',identity:{id:'seeded'}});
+ effects.touch.todo({id:'first'});
  effects.touch.todo({id:'x'});
- effects.touch.todo({id:'seeded'});
+ effects.touch.todo({id:'first'});
  effects.touch.todo({id:'x',title:'ignored'});
  assert.deepEqual(effects.settlement(),{changes:[
-  {model:'Todo',identity:{id:'seeded'}},{model:'Todo',identity:{id:'x'}},
+  {model:'Todo',identity:{id:'first'}},{model:'Todo',identity:{id:'x'}},
  ],memberships:[]});
- assert.equal('seed' in effects.touch,false,'seed is not a Model');
 });
 
 test('only identity fields are copied, and Date components are encoded at the call',()=>{
@@ -221,7 +220,6 @@ test('closing refuses every later declaration, including through escaped handles
  assert.throws(()=>channel.remove([Todo({id:'B'})]),closed);
  assert.throws(()=>touch.todo({id:'B'}),closed);
  assert.throws(()=>effects.channel('c'),closed);
- assert.throws(()=>effects.seed({model:'Todo',identity:{id:'B'}}),closed);
  const expected={changes:[{model:'Todo',identity:{id:'A'}}],memberships:[add('c','Todo',{id:'A'})]};
  const settled=effects.settlement();
  assert.deepEqual(settled,expected);

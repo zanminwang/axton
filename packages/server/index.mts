@@ -709,15 +709,10 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
                 ? (raw as any[]).map((item) => shape(slot, item))
                 : shape(slot, raw);
           }
-          // The change set starts with every record the operations target,
-          // in slot order.
+          // The engine derives the records the operations target and adds
+          // them to the change set itself; `changes` carries only the
+          // handler's own `touch` declarations.
           const effects = createEffects();
-          for (const slot of entry.slots) {
-            const raw = req.arguments[slot.name] as any;
-            for (const item of slot.cardinality === "list" ? raw : [raw])
-              if (item !== null && item !== undefined)
-                effects.seed({ model: slot.model, identity: item.identity });
-          }
           try {
             await entry.handler({
               input,

@@ -29,7 +29,12 @@ const storedStamp = (n: unknown): number => {
   return number;
 };
 
-/** The one channel-name rule, as `check_channel` in crates/core states it. */
+/**
+ * A Channel name is a string that is non-empty after JS `trim()`. The engine
+ * applies its own check (`check_channel` in crates/core, Rust `trim()`) at
+ * settlement; the two trims differ on a few code points such as U+FEFF and
+ * U+0085, so this is a guard, not the same rule.
+ */
 const channelName = (channel: unknown): string => {
   if (typeof channel !== "string" || channel.trim() === "")
     throw new Error(`Invalid membership channel ${JSON.stringify(channel)}`);

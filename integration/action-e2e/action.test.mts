@@ -372,7 +372,7 @@ test("a direct Mutation resolves after the backend commits and its authority app
   } finally { await client?.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("explicit extra touches are distributed but are not caller authority; outputs follow store", async () => {
+test("explicit extra touches are stamped once and are not caller authority; outputs follow store", async () => {
   const directory = await mkdtemp(join(tmpdir(), "axton-mutation-store-"));
   let client: GeneratedClient | undefined;
   try {

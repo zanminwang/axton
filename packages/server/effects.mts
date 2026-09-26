@@ -49,8 +49,6 @@ export interface EffectCollector {
   readonly touch: RuntimeTouch;
   /** Selects a Channel by name. Creates nothing: the name is only validated. */
   channel(name: string): RuntimeChannel;
-  /** A legacy slot operand the change set starts with. Never handed to application code. */
-  seed(record: RecordRef): void;
   /** Owned copies of the declarations, readable after `close`. */
   settlement(): SettlementEffects;
   /** Refuses every later declaration, through any handle. Idempotent. */
@@ -319,6 +317,9 @@ export function effectsFor(
     Object.freeze(touch);
     const channel = (name: string): RuntimeChannel => {
       assertOpen("channel");
+      // Non-empty after JS `trim()`. The engine applies its own check
+      // (`check_channel`, Rust `trim()`) at settlement; the two trims differ
+      // on a few code points such as U+FEFF and U+0085.
       if (typeof name !== "string" || name.trim() === "")
         throw new Error("channel: a Channel name must be a nonblank string");
       const label = `channel(${JSON.stringify(name)})`;
@@ -360,11 +361,6 @@ export function effectsFor(
     return Object.freeze({
       touch: touch as RuntimeTouch,
       channel,
-      seed(record: RecordRef) {
-        assertOpen("seed");
-        const { model, identity } = reference(record, "seed");
-        change(model, identity);
-      },
       settlement: (): SettlementEffects => ({
         changes: [...changes],
         memberships: [...memberships],

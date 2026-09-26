@@ -67,11 +67,13 @@ async function replay(requests,{reject=false,fail=false,onError}={}){
   database:{transaction:body=>body({}),persistence:()=>fakePersistence(seen)},
   authenticate:()=>'alice',
   onError,
-  // The seeded change set (the update slot's t-1) plus one touch, both added
-  // to one Channel and the target to another: the fixture's settlement.
+  // Two touches (the update slot's t-1, which the engine also targets on its
+  // own, and t-2), both added to one Channel and the target to another: the
+  // fixture's settlement.
   mutations:{async send(){return {message:'sent'};}},
   handlers:{async edit({input,channel,touch}){
    handled.push(input);
+   touch.task(input.task.identity);
    touch.task({id:'t-2'});
    channel('shared').add([{model:'Task',identity:input.task.identity},{model:'Task',identity:{id:'t-2'}}]);
    channel('other').task.add(input.task.identity);

@@ -131,8 +131,14 @@ pub struct ClientRuntime<S: ClientStore> {
     inbox: VecDeque<DownlinkEvent>,
     directs: direct::Directs,
     prerequisites: Option<prerequisites::Loop>,
-    /// Whether the next step prefers a lane unit over an ordinary task.
-    lane_turn: bool,
+    /// Admissions so far: ordinary tasks and effect results are numbered in
+    /// arrival order, and lane work is scheduled by that order too.
+    admitted: u64,
+    /// The admission count when lane work was first seen ready; `None` while
+    /// nothing is ready. An ordinary task admitted before it runs first, one
+    /// admitted after it waits: the arrival order of foreground and inbound
+    /// work is preserved, and neither starves the other.
+    lane_since: Option<u64>,
     /// The one counter behind `transactionId`, `scope` and `effectId`: every
     /// identity the runtime issues is fresh for its lifetime.
     issued: u64,
@@ -176,7 +182,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             inbox: VecDeque::new(),
             directs: direct::Directs::default(),
             prerequisites: None,
-            lane_turn: false,
+            admitted: 0,
+            lane_since: None,
             issued: 0,
             events: vec![],
             lifecycle: Lifecycle::Open,

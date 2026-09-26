@@ -17,6 +17,8 @@ pub(super) struct Tasks {
 pub(super) struct Queued {
     pub(super) request_id: String,
     pub(super) command: Value,
+    /// Its admission number, which orders it against lane work.
+    seq: u64,
 }
 impl Tasks {
     /// Route `request_id`; false when it is already routed, which the SDK's
@@ -48,9 +50,11 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 command,
             } => {
                 if self.admit(&request_id) {
+                    let seq = self.admission();
                     self.tasks.queue.push_back(Queued {
                         request_id,
                         command,
+                        seq,
                     });
                 }
             }
@@ -76,7 +80,12 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 error,
             } => self.callback_result(&effect_id, &transaction_id, ok, error),
             Input::EffectResult { effect_id, outcome } => {
-                self.effect_result(effect_id, outcome, now, entropy)
+                self.effect_result(effect_id, outcome, now, entropy);
+                // Inbound work takes its place in the arrival order now, so an
+                // ordinary task admitted after it waits its turn.
+                if self.lane_ready() && self.lane_since.is_none() {
+                    self.lane_since = Some(self.admitted);
+                }
             }
             Input::Close => self.lifecycle = Lifecycle::Closing,
         }
@@ -98,21 +107,33 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         if self.transaction.is_some() {
             return self.step_transaction();
         }
-        let ordinary = !self.tasks.queue.is_empty();
-        let lane = self.lane_ready();
-        let run_lane = match (ordinary, lane) {
-            (false, false) => return false,
-            (true, false) => false,
-            (false, true) => true,
-            (true, true) => self.lane_turn,
-        };
-        self.lane_turn = !run_lane;
-        if run_lane {
-            self.lane_unit(now, entropy);
+        let head = self.tasks.queue.front().map(|task| task.seq);
+        let lane_since = if self.lane_ready() {
+            Some(*self.lane_since.get_or_insert(self.admitted))
         } else {
-            self.ordinary_unit(now);
+            self.lane_since = None;
+            None
+        };
+        // Admission order decides: lane work runs when it was ready before
+        // the oldest ordinary task arrived, otherwise that task goes first.
+        // After a lane unit the lane re-enters the order behind everything
+        // admitted so far, as the host loops' re-queued pump did.
+        match (head, lane_since) {
+            (None, None) => return false,
+            (Some(_), None) => self.ordinary_unit(now),
+            (Some(head), Some(since)) if head <= since => self.ordinary_unit(now),
+            (_, Some(_)) => {
+                self.lane_since = None;
+                self.lane_unit(now, entropy);
+            }
         }
         true
+    }
+    /// Number one admission. Exhaustion is not reachable in practice; saturate
+    /// rather than wrap so the order never inverts.
+    pub(super) fn admission(&mut self) -> u64 {
+        self.admitted = self.admitted.saturating_add(1);
+        self.admitted
     }
     fn lane_ready(&self) -> bool {
         !self.ready.is_empty()
@@ -156,6 +177,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         let Some(Queued {
             request_id,
             command,
+            ..
         }) = self.tasks.queue.pop_front()
         else {
             return;

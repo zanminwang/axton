@@ -1147,3 +1147,63 @@ fn a_stopped_lane_stays_stopped_through_a_rebuild_until_connect() {
     h.connect(false);
     h.socket();
 }
+
+/// Arrival order is kept between foreground and inbound work: a frame that
+/// arrives after the application asked to unsubscribe is not applied ahead of
+/// that request, however the units interleave with an open transaction. The
+/// SDK queues used to guarantee this by accident; the runtime guarantees it by
+/// admission order.
+#[test]
+fn inbound_work_admitted_after_an_ordinary_task_runs_after_it() {
+    let mut h = host();
+    h.connect(false);
+    let (socket, _) = h.streaming(0);
+    h.frame(&socket, &page(0, 1, "live", "first"));
+    h.run();
+    assert_eq!(h.text("live"), Some(json!("first")));
+    // A callback holds the writer; the application asks to drop the Scope
+    // while it is open, and only then does an obsolete frame arrive.
+    h.task("tx", json!({"kind":"transaction"}));
+    let events = h.run();
+    let callback = events
+        .iter()
+        .find(|e| e["type"] == "effect" && e["operation"]["kind"] == "callback")
+        .unwrap();
+    let (effect, transaction) = (
+        callback["effectId"].as_str().unwrap().to_string(),
+        callback["operation"]["transactionId"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    );
+    h.task(
+        "unsubscribe",
+        json!({"kind":"channel","channel":"book","subscribed":false}),
+    );
+    h.task(
+        "resubscribe",
+        json!({"kind":"scopeSubscribe","scope":"book"}),
+    );
+    h.frame(&socket, &page(1, 2, "live", "obsolete"));
+    assert!(
+        h.run().is_empty(),
+        "nothing runs while the callback holds the writer"
+    );
+    h.submit(
+        json!({"type":"callbackResult","effectId":effect,"transactionId":transaction,"ok":true}),
+    );
+    let events = h.run();
+    let unsubscribed = position(&events, |e| {
+        e["type"] == "taskCompleted" && e["requestId"] == "unsubscribe"
+    });
+    let resubscribed = position(&events, |e| {
+        e["type"] == "taskCompleted" && e["requestId"] == "resubscribe"
+    });
+    assert!(unsubscribed < resubscribed);
+    // The membership change made the session stale, so the worker dropped the
+    // frame instead of applying it: the record keeps its retained content and
+    // a fresh session is asked for.
+    assert_eq!(h.text("live"), Some(json!("first")));
+    assert!(!changes(&events[..unsubscribed], "Entry"), "{events:?}");
+    assert!(!signals(&events, "opened").is_empty(), "{events:?}");
+}

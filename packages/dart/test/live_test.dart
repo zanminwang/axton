@@ -517,14 +517,14 @@ void main() {
         await remove;
         await restore;
         await until(() => handshakes.length >= 2);
-        // Unsubscribing retains the downloaded record. Whether the frame that
-        // arrived behind the transaction is dropped is the runtime's
-        // scheduling: it admits the frame at once and, after the callback
-        // commits, may pump the Downlink worker before the membership tasks
-        // queued earlier (#134 checkpoint 2), so the page is not asserted.
+        // Unsubscribing retains the downloaded record, and the obsolete frame
+        // that arrived behind the transaction is dropped, not applied: the
+        // runtime keeps the arrival order between the membership tasks and the
+        // inbound frame, so the worker sees the frame after the session it
+        // belonged to became stale.
         expect(
           (await client.read('Entry', {'id': 'live'}))?['text'],
-          anyOf('first', 'obsolete'),
+          'first',
         );
         expect(handshakes.last.containsKey('cursors'), isFalse);
         // The resubscribed channel restarts at cursor 0, but the record is

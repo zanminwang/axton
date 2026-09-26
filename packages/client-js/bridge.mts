@@ -26,7 +26,12 @@ export type EffectOutcome =
   | { ok: false; error: { message: string; status?: number } };
 
 export type BridgeEventType =
-  "callCompleted" | "observerChanged" | "report" | "changed" | "cancelEffect";
+  | "callCompleted"
+  | "observerChanged"
+  | "report"
+  | "changed"
+  | "cancelEffect"
+  | "laneSignal";
 
 type Route = {
   resolve(value: any): void;
@@ -341,6 +346,7 @@ export class Bridge {
       case "report":
       case "changed":
       case "cancelEffect":
+      case "laneSignal":
         return this.#emit(event.type, event);
     }
   }

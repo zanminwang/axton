@@ -171,8 +171,6 @@ export type SubscriptionCommands = {
   remove(scope: string, subscriptionId: number): Promise<boolean>;
   /** Remove whatever registration a Scope name has, in one command, so calls for one Scope keep their order. */
   removeScope(scope: string): Promise<void>;
-  /** A committed membership change: wake the lanes, as every commit does. */
-  committed(): void;
   /** Report an observer's exception the way the host reports an uncaught one. */
   report(error: unknown): void;
 };
@@ -193,12 +191,14 @@ type Lane = {
   acknowledged: Set<string>;
 };
 
-/** The load commands of one identity, bound by the registry, and the wake a commit owes the lanes. */
+/**
+ * The load commands of one identity, bound by the registry. The runtime wakes
+ * its lanes after every commit, so a registration owes them nothing.
+ */
 type BootstrapLoad = {
   /** Register the run, or explicitly retry a failed one; answers what is stored. */
   request(): Promise<BootstrapRun>;
   read(): Promise<BootstrapRun>;
-  committed(): void;
 };
 /** One caller of `bootstrap()`, attached to the run the command answered with. */
 type Waiter = {
@@ -403,12 +403,8 @@ class Handle implements Subscription {
       // through a closed subscription however the two raced.
       throw refusedAsClosed(error) ? subscriptionClosed() : error;
     }
-    // A closed client or handle takes nothing further, not even the wake: the
-    // controller it would go through is closed too.
+    // A closed client or handle takes nothing further.
     if (this.closed) throw this.#closedError();
-    // The commit wakes the lanes the way a membership change does; without it
-    // the registered run waits for the next commit or reconnection.
-    this.#load.committed();
     const waiting = new Promise<void>((resolve, reject) => {
       this.#waiters.push({ run: run.run, resolve, reject });
     });
@@ -499,7 +495,6 @@ export class Subscriptions {
     const existing = this.#handles.get(state.subscriptionId);
     if (existing) {
       existing.apply(state);
-      this.#commands.committed();
       return existing;
     }
     const handle = new Handle(
@@ -512,15 +507,12 @@ export class Subscriptions {
           this.#commands.requestBootstrap(state.scope, state.subscriptionId),
         read: () =>
           this.#commands.bootstrapState(state.scope, state.subscriptionId),
-        committed: () => this.#commands.committed(),
       },
     );
     this.#handles.set(state.subscriptionId, handle);
     // A task of this identity may already be running from before this handle:
     // read what is committed for it, so its status needs no new transition.
     handle.observe();
-    // The lane learns of committed membership from Rust; it is only woken here.
-    this.#commands.committed();
     return handle;
   }
   /**
@@ -537,7 +529,6 @@ export class Subscriptions {
         handle.close("removed");
       }
     this.#forget(scope);
-    this.#commands.committed();
   }
   async #removeIdentity(scope: string, subscriptionId: number): Promise<void> {
     const removed = await this.#commands.remove(scope, subscriptionId);
@@ -548,10 +539,7 @@ export class Subscriptions {
     }
     // Nothing went: another registration is this Scope's current one, and the
     // acknowledgement it may hold is not this handle's to forget.
-    if (removed) {
-      this.#forget(scope);
-      this.#commands.committed();
-    }
+    if (removed) this.#forget(scope);
   }
   /**
    * The open session's handshake covered the registration that just went, not

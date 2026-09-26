@@ -1,6 +1,7 @@
-// Query once through the real native runtime (#158): Rust decides Cached /
-// Join / Fetch; this host executes direct I/O, shares one flight per
-// decision and decodes an independent result for every caller.
+// Query once through the real native runtime (#158, #134): Rust decides
+// Cached / Join / Fetch, runs the one request of a flight and completes every
+// joined caller; this host executes the request effect and decodes an
+// independent result for every caller.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -154,8 +155,8 @@ const once = (client, project = "p", options = {}) =>
   });
 
 test("concurrent once callers share one request and decode independent results", async () => {
-  // The native reply that carries a Fetch decision also starts another
-  // caller at that very moment: it must join the registered flight.
+  // The native batch that asks for the fetched flight's request also starts
+  // another caller at that very moment: it must join the registered flight.
   let racing;
   let client;
   const wrapped = {
@@ -166,7 +167,9 @@ test("concurrent once callers share one request and decode independent results",
       const batch = native.runtimeDrain(runtimeId);
       const fetched = JSON.parse(batch).some(
         (event) =>
-          event.type === "taskCompleted" && event.value?.decision === "fetch",
+          event.type === "effect" &&
+          event.operation.kind === "http" &&
+          event.operation.route === "action",
       );
       if (fetched && !racing) racing = once(client);
       return batch;

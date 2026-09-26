@@ -443,12 +443,14 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
     "cancelEffect",
     "changed",
     "effect",
+    "laneSignal",
     "observerChanged",
     "report",
     "runtimeClosed",
     "taskCompleted",
   ]);
   const operations = new Set();
+  const lanes = new Set();
   for (const event of envelopes.events) {
     switch (event.type) {
       case "taskCompleted":
@@ -487,6 +489,10 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
       case "changed":
         assert.ok(event.tables.every((table) => typeof table === "string"));
         break;
+      case "laneSignal":
+        assert.equal(typeof event.signal.lane, "string");
+        lanes.add(event.signal.lane);
+        break;
       case "runtimeClosed":
         assert.deepEqual(Object.keys(event), ["type"]);
         break;
@@ -499,6 +505,18 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
     "refreshAuth",
     "socket",
     "timer",
+  ]);
+  // Every DownlinkSignal the subscription projection understands.
+  assert.deepEqual([...lanes].sort(), [
+    "acknowledged",
+    "bootstrap",
+    "changed",
+    "ended",
+    "opened",
+    "paused",
+    "requests",
+    "resumed",
+    "stopped",
   ]);
 });
 
@@ -546,7 +564,13 @@ test("the bridge dispatches every fixture event and answers effects it has no ha
   });
   assert.equal(opened.clientId, "c");
   const seen = [];
-  for (const type of ["callCompleted", "observerChanged", "report", "changed"])
+  for (const type of [
+    "callCompleted",
+    "observerChanged",
+    "report",
+    "changed",
+    "laneSignal",
+  ])
     bridge.on(type, (event) => seen.push(event.type));
   const handled = [];
   bridge.onEffect("timer", (effectId, operation) =>
@@ -565,6 +589,7 @@ test("the bridge dispatches every fixture event and answers effects it has no ha
     "report",
     "report",
     "changed",
+    ...Array(9).fill("laneSignal"),
   ]);
   assert.deepEqual(handled, [["7", 250]]);
   const answered = submitted.filter((input) => input.type !== "callbackResult");

@@ -733,7 +733,7 @@ test("the store option travels beside args on both routes and is validated befor
     runtimeOpen: (request, wake) => binding.runtimeOpen(request, wake),
     runtimeSubmit(runtimeId, message) {
       const { command } = JSON.parse(message);
-      if (command?.kind === "submitAction" || command?.kind === "prepareAction")
+      if (command?.kind === "submitAction" || command?.kind === "invoke")
         sent.push(command);
       binding.runtimeSubmit(runtimeId, message);
     },

@@ -340,6 +340,11 @@ impl DownlinkWorker {
                 // frontend, and every barrier is re-evaluated before any I/O.
                 self.loading.restart(now);
                 self.reopened = true;
+                // A new connection has its own error callback: to the
+                // application it is a reopen, so an unchanged defect is
+                // announced to it again. Only an explicit connect starts a
+                // lane, so this cannot flood.
+                self.reported.clear();
             }
             DownlinkEvent::Stop => {
                 self.end(None);

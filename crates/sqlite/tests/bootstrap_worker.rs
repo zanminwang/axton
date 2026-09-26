@@ -1295,3 +1295,26 @@ fn an_issue_a_failed_pump_dropped_is_reported_by_the_next_one() {
     assert!(undecodable(reported[0]), "{reported:?}");
     assert_eq!(lane.send(DownlinkEvent::Wake), vec![], "and only once");
 }
+
+/// The application hears about ledger issues through the error callback of one
+/// connection, so an unchanged defect is announced again to the next one: a
+/// stop and a later start on the same client report it once more, and only
+/// once.
+#[test]
+fn an_unchanged_issue_is_reported_again_after_a_stop_and_a_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    let mut raw = SqliteStore::open(dir.path().join("db")).unwrap();
+    lane.saved("bad", 100);
+    lane.intend("bad");
+    tamper(&mut raw, "bad", "bootstrap_cursor='x'");
+
+    let first = lane.send(DownlinkEvent::Start);
+    assert_eq!(issues(&first), vec![("bad", NOT_A_NUMBER)], "{first:?}");
+    lane.send(DownlinkEvent::Stop);
+
+    let second = lane.send(DownlinkEvent::Start);
+    assert_eq!(issues(&second), vec![("bad", NOT_A_NUMBER)], "{second:?}");
+    let woken = lane.send(DownlinkEvent::Wake);
+    assert_eq!(issues(&woken), vec![], "{woken:?}");
+}

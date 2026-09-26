@@ -573,7 +573,7 @@ void main() {
         onError: reported.add,
         report: signals.add,
       );
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await _eventually(() => reported.isNotEmpty, 'the ledger issue');
       expect(reported, hasLength(1), reason: 'one error for one issue');
       expect(reported.single, isA<StateError>());
       expect(
@@ -751,6 +751,15 @@ void main() {
       await lane.close();
     },
   );
+}
+
+/// Poll [condition] until it holds or five seconds pass.
+Future<void> _eventually(bool Function() condition, String what) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) fail('$what timed out');
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
 }
 
 /// A downlink network whose pages answer only when the lane abandons them: the

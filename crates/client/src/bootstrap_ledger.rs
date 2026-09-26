@@ -284,7 +284,8 @@ impl<S: ClientStore> Engine<'_, S> {
             let rows = self.rows(
                 &format!(
                     "SELECT {COLUMNS} FROM axton_subscription \
-                     WHERE bootstrap_state='catching_up' AND bootstrap_barrier IS NOT NULL \
+                     WHERE starting_cursor IS NOT NULL \
+                       AND bootstrap_state='catching_up' AND bootstrap_barrier IS NOT NULL \
                        AND cursor IS NOT NULL AND cursor >= bootstrap_barrier \
                        AND channel IN ({named}) ORDER BY channel"
                 ),

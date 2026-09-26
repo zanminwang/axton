@@ -485,11 +485,12 @@ impl<S: ClientStore> Client<S> {
     /// not catching up, or is still behind its barrier, contributes nothing.
     /// An empty list names no Scope and settles nothing.
     ///
-    /// Which Scopes are settleable is decided by one committed scan in bounded
-    /// chunks, barrier and delivery cursor included, so a run still short of
-    /// its barrier opens no transaction at all: waiting out a barrier must not
-    /// commit an empty write - and bump the client generation - once per
-    /// delivered page. The names are a set, however many there are, and a
+    /// Which Scopes are settleable is decided by committed reads, in chunks of
+    /// at most 900 names, barrier and delivery cursor included - each chunk is
+    /// its own read, with no snapshot across them, which the write's own fence
+    /// makes harmless - so a run still short of its barrier opens no
+    /// transaction at all: waiting out a barrier must not commit an empty
+    /// write - and bump the client generation - once per delivered page. The names are a set, however many there are, and a
     /// candidate whose stored row cannot be decoded is left out, so it
     /// supplies no completion evidence and cannot hold the others open; the
     /// Downlink worker reports the candidates it left out
@@ -498,8 +499,8 @@ impl<S: ClientStore> Client<S> {
         Ok(self.settle_bootstrap_barriers_scan(scopes)?.0)
     }
     /// [`Client::settle_bootstrap_barriers`] with an issue for every candidate
-    /// it left out because its row cannot be decoded. The committed scan
-    /// decides which channels enter the write - only a candidate whose whole
+    /// it left out because its row cannot be decoded. The committed reads
+    /// decide which channels enter the write - only a candidate whose whole
     /// row decoded does, so a damaged one is never written - and whether a
     /// write is worth opening at all; an empty set reads and writes nothing.
     /// The write then re-reads and fences each healthy candidate itself.

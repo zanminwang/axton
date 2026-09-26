@@ -23,7 +23,7 @@ const database = prisma(db, { retries: 3, timeout: 20_000 });
 
 ## Apply the migration
 
-Apply [migration.sql](https://github.com/zanminwang/axton/blob/main/packages/postgres/migration.sql) to your database with your deployment's migration process before accepting sync traffic. It creates the tables prefixed `axton_` (`axton_client`, `axton_channel`, `axton_record`, `axton_invalidation`) and nothing else: your business tables and the database itself are yours to create. The [getting-started runner](../getting-started.md) handles a disposable database for the example.
+Apply [migration.sql](https://github.com/zanminwang/axton/blob/main/packages/postgres/migration.sql) to your database with your deployment's migration process before accepting sync traffic. It creates the tables prefixed `axton_` (`axton_client`, `axton_call`, `axton_channel`, `axton_record`, `axton_invalidation`, `axton_membership`) and nothing else: your business tables and the database itself are yours to create. The [getting-started runner](../getting-started.md) handles a disposable database for the example.
 
 ## The driver interface
 

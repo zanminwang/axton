@@ -19,6 +19,7 @@ The host operations the engine may issue:
 | `savepoint`, `rollback`, `release` | [Persistence](persistence.md) | isolate one mutation's effects |
 | `claim`, `saveReceipt`, `head`, `scan` | [Persistence](persistence.md) | client rows, receipts and the invalidation table |
 | `advanceStamp`, `ensureStamp`, `publish` | [Persistence](persistence.md) | record stamps and channel cursors ([Publish](engine/publish.md)) |
+| `lockRecord`, `memberships`, `setMembership` | [Persistence](persistence.md) | record guards and persistent Channel membership |
 
 Each operation is one variant of `HostRequest` with one response type, defined once in [server/host.rs](../../../../crates/server/src/host.rs) and restated for TypeScript in [server/host-contract.mts](../../../../packages/server/host-contract.mts) (section 9). [fixtures/protocol/host-operations.json](../../../../fixtures/protocol/host-operations.json) carries one example of every request and every response variant, and both hosts are tested against it.
 
@@ -65,6 +66,9 @@ Code: the operation contract in [server/host.rs](../../../../crates/server/src/h
 | `advanceStamp` | `model`, `identityKey` | `Stamped(u64)`: the record's next stamp, 1 for a record without one |
 | `ensureStamp` | `model`, `identityKey` | `Stamped(u64)`: the record's current stamp, initialized at 1 only when it has none |
 | `publish` | `channel`, `model`, `identity`, `identityKey`, `stamp` | `Published { cursor, stamp }`; refused unless `stamp` is the record's current one |
+| `lockRecord` | `model`, `identityKey` | `Locked = Option<Stamped>`: the unchanged stamp, `null` when the record has no row |
+| `memberships` | `model`, `identityKey` | `Memberships(BTreeSet<String>)`: unique Channel names valid under `check_channel`, held in byte order |
+| `setMembership` | `channel` (valid under `check_channel`), `model`, `identityKey`, `present: bool` | unit |
 
 `HostRequest` derives `Serialize`/`Deserialize` with `#[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]` and `deny_unknown_fields`; each response is a struct or enum with `deny_unknown_fields`. The engine constructs requests as enum values and decodes responses into these types, so a malformed response fails at the boundary, naming the operation and the offending field, instead of somewhere later with `unwrap`.
 
@@ -75,7 +79,7 @@ The code it fails with is the one that operation already used (`invalid_code` in
 | `storage.invalid` | `claim`, `saveReceipt`, `scan` |
 | `handler.invalid` | `handle` |
 | `loader.invalid` | `load` (a malformed answer) |
-| `host.invalid` | `head`, `savepoint`, `rollback`, `release`, `advanceStamp`, `ensureStamp`, `publish` |
+| `host.invalid` | `head`, `savepoint`, `rollback`, `release`, `advanceStamp`, `ensureStamp`, `publish`, `lockRecord`, `memberships`, `setMembership` |
 
 **How each side consumes it.**
 

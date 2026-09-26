@@ -63,6 +63,9 @@ export type EffectModel = {
   fields?: readonly { name: string; type?: unknown }[];
 };
 
+/** A configured enum descriptor, as the compiled schema's `enums` holds it. */
+export type EffectEnum = { name: string; values?: readonly string[] };
+
 export function lowerFirst(name: string): string {
   return name.charAt(0).toLowerCase() + name.slice(1);
 }
@@ -76,20 +79,75 @@ type Entry = {
 };
 const INVALID = Symbol("invalid");
 
-/** Encodes one identity component as the engine receives it, or answers INVALID. */
+/**
+ * The engine's UUID rule (`crates/core/src/schema.rs`): the 36-character
+ * hyphenated form, RFC 4122 variant, version 1 to 8; either case.
+ */
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/**
+ * RFC 3339 with 'T' at index 10 and a zone, as the engine parses it. Leap
+ * seconds and fractions beyond nanoseconds are refused: a declaration may be
+ * stricter than the engine, never more lenient.
+ */
+const ZONED =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:[Zz]|[+-](\d{2}):(\d{2}))$/;
+/** Whether `text` is a date-time the engine accepts: a zoned RFC 3339 date-time with real calendar fields. */
+function zoned(text: string): boolean {
+  const parts = ZONED.exec(text);
+  if (!parts) return false;
+  const [year, month, day, hour, minute, second] = parts
+    .slice(1, 7)
+    .map(Number) as [number, number, number, number, number, number];
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days =
+    month === 2 ? (leap ? 29 : 28) : [4, 6, 9, 11].includes(month) ? 30 : 31;
+  const offset =
+    parts[7] === undefined || (Number(parts[7]) < 24 && Number(parts[8]) < 60);
+  return (
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= days &&
+    hour < 24 &&
+    minute < 60 &&
+    second < 60 &&
+    offset
+  );
+}
+
+/**
+ * Encodes one identity component as the engine receives it, or answers
+ * INVALID. Every rule matches the engine's, so a declaration the collector
+ * accepts is never refused when the engine resolves it.
+ */
 function component(
   model: string,
   field: string,
   type: unknown,
+  enums: ReadonlyMap<string, readonly string[]>,
 ): [expected: string, encode: (value: unknown) => unknown] {
   const { kind, name } = (type ?? {}) as { kind?: unknown; name?: unknown };
-  if (kind === "enum")
-    return ["an enum value", (v) => (typeof v === "string" ? v : INVALID)];
+  if (kind === "enum") {
+    const values = typeof name === "string" ? enums.get(name) : undefined;
+    if (!values)
+      throw new Error(
+        `${model} identity field ${field} names an enum the configuration does not declare`,
+      );
+    return [
+      `one of ${values.join(", ")}`,
+      (v) => (typeof v === "string" && values.includes(v) ? v : INVALID),
+    ];
+  }
   if (kind === "scalar")
     switch (name) {
       case "string":
-      case "uuid":
         return ["a string", (v) => (typeof v === "string" ? v : INVALID)];
+      case "uuid":
+        return [
+          "a UUID (36 characters, RFC 4122 variant, version 1 to 8)",
+          (v) => (typeof v === "string" && UUID.test(v) ? v : INVALID),
+        ];
       case "boolean":
         return ["a boolean", (v) => (typeof v === "boolean" ? v : INVALID)];
       case "int":
@@ -106,17 +164,16 @@ function component(
         // A decoded Date is encoded now; a wire string (a legacy slot
         // identity) passes through for the engine to canonicalize.
         return [
-          "a valid Date or an ISO date-time string",
-          (v) =>
-            v instanceof Date
-              ? Number.isNaN(v.getTime())
-                ? INVALID
-                : v.toISOString()
-              : typeof v === "string" &&
-                  /^\d{4}-\d{2}-\d{2}T/.test(v) &&
-                  !Number.isNaN(Date.parse(v))
-                ? v
-                : INVALID,
+          "a valid Date or a zoned RFC 3339 date-time string",
+          (v) => {
+            const text =
+              v instanceof Date
+                ? Number.isNaN(v.getTime())
+                  ? undefined
+                  : v.toISOString()
+                : v;
+            return typeof text === "string" && zoned(text) ? text : INVALID;
+          },
         ];
     }
   throw new Error(
@@ -133,8 +190,12 @@ function define(target: object, key: string, value: unknown): void {
  * with supported types, and its lower-first accessor must be unique and
  * neither `add` nor `remove`, which a Channel reserves for mixed lists.
  */
-function entriesOf(models: readonly EffectModel[]): Entry[] {
+function entriesOf(
+  models: readonly EffectModel[],
+  enums: readonly EffectEnum[],
+): Entry[] {
   const owners = new Map<string, string>();
+  const values = new Map(enums.map((en) => [en.name, en.values ?? []]));
   return models.map((model) => {
     const name = model?.name;
     if (typeof name !== "string" || name === "")
@@ -160,7 +221,7 @@ function entriesOf(models: readonly EffectModel[]): Entry[] {
         throw new Error(
           `${name} identity field ${field} is not one of its fields`,
         );
-      return [field, ...component(name, field, declared.type)] as const;
+      return [field, ...component(name, field, declared.type, values)] as const;
     });
     const snapshot = (value: unknown, caller: string): Identity => {
       if (value === null || typeof value !== "object")
@@ -186,13 +247,15 @@ function entriesOf(models: readonly EffectModel[]): Entry[] {
 }
 
 /**
- * Validates `models` once and answers a factory of callback-scoped
- * collectors. A malformed configuration throws here, at startup.
+ * Validates `models` (and the `enums` their identities use) once and answers
+ * a factory of callback-scoped collectors. A malformed configuration throws
+ * here, at startup.
  */
 export function effectsFor(
   models: readonly EffectModel[],
+  enums: readonly EffectEnum[] = [],
 ): () => EffectCollector {
-  const entries = entriesOf(models);
+  const entries = entriesOf(models, enums);
   const byName = new Map(entries.map((entry) => [entry.name, entry]));
   /** Resolves one explicit reference; a raw identity names no Model and fails. */
   const reference = (
@@ -314,6 +377,9 @@ export function effectsFor(
 }
 
 /** One collector over `models`, validating them first. */
-export function createEffects(models: readonly EffectModel[]): EffectCollector {
-  return effectsFor(models)();
+export function createEffects(
+  models: readonly EffectModel[],
+  enums: readonly EffectEnum[] = [],
+): EffectCollector {
+  return effectsFor(models, enums)();
 }

@@ -17,6 +17,7 @@ const external=(backendLike,name,records)=>backendLike.transaction(({channel,tou
 const run=prismaDriver(db).transaction;
 const schema={enums:[],models:[{name:'Task',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'string'},nullable:false},{name:'title',type:{kind:'scalar',name:'string'},nullable:false}]}]};
 const config={schema,mutations:[{name:'edit',version:1,slots:[{name:'task',model:'Task',operation:'update',cardinality:'single',allowedPatchFields:['title']}]}]};
+const ticketModel={name:'Ticket',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'uuid'},nullable:false}]};
 const authenticate=async req=>req.headers.authorization==='Bearer alice'?'alice':null;
 let called=0,prepared=0,lastInput,lastHandles;const loaderCalls=[];
 const write=(tx,id,title)=>tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET title=$2',id,title);
@@ -292,13 +293,35 @@ test('a nonfinite loader value fails its record rather than clearing to null',as
  assert.ok(page.changes.every(c=>c.error==='loader.failed'&&c.state===null));
  assert.ok(errors.some(m=>/nonfinite/.test(m)),errors.join('; '));
 });
-test('backend.transaction rolls the business write back when a declaration or the settlement is refused',async()=>{
+test('backend.transaction rolls the business write back when a declaration is refused',async()=>{
  await assert.rejects(()=>backend.transaction(async({tx,channel})=>{await tx.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('external','bad')");channel('shared').add([{model:'Unknown',identity:{id:'x'}}]);}),/unknown Model Unknown/);
  assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='external'")).length,0);
- // A declaration checks that a UUID component is a string; the engine checks its format when it settles.
- const tickets=createBackend({config:{mutations:[],schema:{enums:[],models:[{name:'Ticket',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'uuid'},nullable:false}]}]}},database:database(),authenticate,handlers:{},loaders:{async ticket({ids}){return ids.map(()=>null)}}});
- await assert.rejects(()=>tickets.transaction(async({tx,touch})=>{await tx.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('external','bad')");touch.ticket({id:'not-a-uuid'});}),/UUID/);
+ // A malformed UUID is refused at the declaration, by the engine's own rule, before anything settles.
+ const tickets=createBackend({config:{mutations:[],schema:{enums:[],models:[ticketModel]}},database:database(),authenticate,handlers:{},loaders:{async ticket({ids}){return ids.map(()=>null)}}});
+ let declared=false;
+ await assert.rejects(()=>tickets.transaction(async({tx,touch})=>{await tx.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('external','bad')");try{touch.ticket({id:'not-a-uuid'});}finally{declared=true;}}),/Ticket identity field id must be a UUID/);
+ assert.ok(declared,'the refusal was synchronous, inside the body');
  assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='external'")).length,0);
+});
+test('a malformed UUID declared in a push rejects only its mutation; well-formed identities settle beside it',async()=>{
+ // The accepted forms are the engine's: were the collector more lenient, the
+ // engine would refuse the settlement and abort the whole delivery.
+ const errors=[];
+ const slot={name:'Slot',identity:['at'],fields:[{name:'at',type:{kind:'scalar',name:'dateTime'},nullable:false}]};
+ const slots={'uuid-a':'2026-01-01T00:00:00.123456789+05:30','uuid-b':'2026-03-01T00:00:00Z','uuid-c':'2024-02-29T00:00:00z'};
+ const mixed=createBackend({config:{...config,schema:{enums:[],models:[...schema.models,ticketModel,slot]}},database:database(),authenticate,onError:e=>errors.push(e.message),handlers:{async edit({input,tx,touch}){
+  const {identity,patch}=input.task;await write(tx,identity.id,patch.title);
+  touch.ticket({id:patch.title});touch.slot({at:slots[identity.id]});
+ }},loaders:{task:readTasks,async ticket({ids}){return ids.map(()=>null)},async slot({ids}){return ids.map(()=>null)}}});
+ const receipt=JSON.parse(await mixed.push('alice',push('uuid-batch',1,[mutation(1,'123e4567-e89b-42d3-a456-426614174000','uuid-a'),mutation(2,'not-a-uuid','uuid-b'),mutation(3,'123E4567-E89B-82D3-B456-426614174001','uuid-c')])));
+ assert.deepEqual(receipt.rejections,[{ordinal:2,code:'handler.failed'}]);
+ assert.equal(errors.length,1);assert.match(errors[0],/Ticket identity field id must be a UUID/);
+ assert.deepEqual(receipt.records.map(r=>r.identity.id),['uuid-a','uuid-c'],'the unrelated mutations commit');
+ assert.deepEqual((await db.$queryRawUnsafe("SELECT id FROM business_task WHERE id LIKE 'uuid-%' ORDER BY id")).map(r=>r.id),['uuid-a','uuid-c']);
+ assert.deepEqual((await db.$queryRawUnsafe("SELECT model, identity_key FROM axton_record WHERE model IN ('Ticket','Slot') ORDER BY model, identity_key")).map(r=>[r.model,r.identity_key]),[
+  ['Slot','{"at":"2024-02-29T00:00:00.000Z"}'],['Slot','{"at":"2025-12-31T18:30:00.123Z"}'],
+  ['Ticket','{"id":"123e4567-e89b-42d3-a456-426614174000"}'],['Ticket','{"id":"123e4567-e89b-82d3-b456-426614174001"}'],
+ ],'the engine canonicalized each accepted identity');
 });
 test('repeatable-read runner keeps head, scan, and loader coherent across concurrent publication',async()=>{
  await external(backend,'snapshot',[{model:'Task',identity:{id:'a'}}]);let changed=false;

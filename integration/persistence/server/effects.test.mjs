@@ -119,6 +119,32 @@ test('missing, null, malformed and unknown references fail at the call',()=>{
  assert.deepEqual(effects.settlement(),empty,'nothing failed half-way into the declarations');
 });
 
+test('UUID, enum and date-time components follow the engine rules at the declaration',()=>{
+ const effects=createEffects([...models,
+  {name:'Ticket',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'uuid'},nullable:false}]},
+  {name:'Tag',identity:['kind'],fields:[{name:'kind',type:{kind:'enum',name:'Kind'},nullable:false}]},
+ ],[{name:'Kind',values:['a','b']}]);
+ const channel=effects.channel('c');
+ // 36 characters, hyphenated, RFC 4122 variant, version 1 to 8.
+ for(const id of ['not-a-uuid','123e4567e89b42d3a456426614174000','{123e4567-e89b-42d3-a456-426614174000}','urn:uuid:123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-02d3-a456-426614174000','123e4567-e89b-92d3-a456-426614174000','123e4567-e89b-42d3-c456-426614174000','123e4567-e89b-42d3-a456-42661417400g']){
+  assert.throws(()=>effects.touch.ticket({id}),/Ticket identity field id must be a UUID/,id);
+  assert.throws(()=>channel.ticket.add({id}),/Ticket identity field id must be a UUID/,id);
+  assert.throws(()=>channel.add([{model:'Ticket',identity:{id}}]),/Ticket identity field id must be a UUID/,id);
+ }
+ // An enum component is one of its enum's values, exactly.
+ for(const kind of ['c','A',''])assert.throws(()=>effects.touch.tag({kind}),/Tag identity field kind must be one of a, b/,kind);
+ assert.throws(()=>channel.tag.remove({kind:'c'}),/one of a, b/);
+ // A date-time string is zoned RFC 3339 with real calendar fields; a Date must encode to one.
+ for(const at of ['2026-01-01T00:00:00','2026-01-01 00:00:00Z','2026-01-01t00:00:00Z','2026-13-01T00:00:00Z','2026-02-29T00:00:00Z','2026-04-31T00:00:00Z','2026-01-01T24:00:00Z','2026-01-01T00:60:00Z','2026-01-01T00:00:00+0100','2026-01-01T00:00:00+24:00','2026-01-01T00:00:00.1234567890Z','26-01-01T00:00:00Z',new Date('+010000-01-01T00:00:00Z')])
+  assert.throws(()=>effects.touch.moment({at}),/Moment identity field at must be a valid Date or a zoned RFC 3339 date-time string/,String(at));
+ assert.throws(()=>channel.add([Todo({id:'A'}),{model:'Ticket',identity:{id:'not-a-uuid'}}]),/UUID/);
+ assert.deepEqual(effects.settlement(),empty,'no refused declaration appended an intent');
+ effects.touch.ticket({id:'123E4567-E89B-82D3-B456-426614174000'});
+ effects.touch.tag({kind:'b'});
+ for(const at of ['2024-02-29T00:00:00Z','2026-01-01T00:00:00.123456789+05:30','2026-01-01T00:00:00z'])effects.touch.moment({at});
+ assert.equal(effects.settlement().changes.length,5);
+});
+
 test('a mixed call with a later invalid element appends nothing, even when caught',()=>{
  const effects=fresh();
  const channel=effects.channel('c');
@@ -177,6 +203,7 @@ test('a malformed runtime config is refused: duplicate accessors and the reserve
  assert.throws(()=>createEffects([model('remove')]),/Model remove generates the accessor remove, which a Channel reserves/);
  assert.throws(()=>createEffects([{name:'Todo',fields:[]}]),/Model Todo/);
  assert.throws(()=>createEffects([{name:'Todo',identity:['id'],fields:[]}]),/Todo identity field id/);
+ assert.throws(()=>createEffects([{name:'Tag',identity:['kind'],fields:[{name:'kind',type:{kind:'enum',name:'Kind'}}]}]),/Tag identity field kind names an enum the configuration does not declare/);
 });
 
 test('closing refuses every later declaration, including through escaped handles; settlement stays readable',()=>{

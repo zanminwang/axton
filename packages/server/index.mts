@@ -486,6 +486,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     options.onError ?? ((error) => console.error(error));
   const descriptor = options.config as {
     schema?: {
+      enums?: { name: string; values?: string[] }[];
       models?: {
         name: string;
         version?: number;
@@ -534,7 +535,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
   });
   native.validateConfig(config);
   // Refuses Models whose accessors collide or take a Channel's add/remove.
-  const createEffects = effectsFor(schemaModels);
+  const createEffects = effectsFor(schemaModels, descriptor.schema?.enums);
   // Every retained model read contract; a config without `models` retains each
   // model at the schema's own version, as the engine does.
   const retainedModels = new Map<string, number[]>();

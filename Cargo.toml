@@ -15,5 +15,6 @@ thiserror = "2"
 serde_jcs = "0.1"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"
 rusqlite = { version = "0.38", features = ["bundled"] }
 tempfile = "3"

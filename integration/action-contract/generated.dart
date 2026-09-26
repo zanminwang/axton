@@ -732,18 +732,25 @@ class DirectMutations {
  Future<SendEmailOutput> sendEmail({required String to, required String subject, required String body, SendEmailStore? store}) => client.invokeDirectAction<SendEmailOutput>('SendEmail', 1, {'to': _dartActionEncode(to), 'subject': _dartActionEncode(subject), 'body': _dartActionEncode(body)}, (_) {}, store: store);
  Future<StateListOutput> stateList({StateListStore? store}) => client.invokeDirectAction<StateListOutput>('StateList', 2, {}, (value) { final row = (value as Map).cast<String,dynamic>(); return StateListOutput(states: (row['states'] as List).map((e) => Status.values.byName(e as String)).toList()); }, store: store);
 }
-/// Queries resolve with the backend result (direct); [enqueue] accepts them durably.
+/// Queries resolve with the backend result (direct); `once` reuses a saved complete result, [enqueue] accepts them durably and [invalidate] discards saved results.
 class Queries {
  final Client client; Queries(this.client);
  late final QueuedQueries enqueue = QueuedQueries(client);
- Future<FindTodosOutput> findTodos({required String text, required String? cursor, FindTodosStore? store}) => client.invokeDirectAction<FindTodosOutput>('FindTodos', 1, {'text': _dartActionEncode(text), 'cursor': _dartActionEncode(cursor)}, (value) { final row = (value as Map).cast<String,dynamic>(); return FindTodosOutput(todos: (row['todos'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList(), nextCursor: row['nextCursor'] == null ? null : row['nextCursor'] as String); }, store: store);
- Future<GetTodosOutput> getTodos({GetTodosStore? store}) => client.invokeDirectAction<GetTodosOutput>('GetTodos', 2, {}, (value) { final row = (value as Map).cast<String,dynamic>(); return GetTodosOutput(todos: (row['todos'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList()); }, store: store);
+ late final QueryInvalidations invalidate = QueryInvalidations(client);
+ Future<FindTodosOutput> findTodos({required String text, required String? cursor, FindTodosStore? store, bool once = false, bool refresh = false}) => client.invokeQuery<FindTodosOutput>('FindTodos', 1, {'text': _dartActionEncode(text), 'cursor': _dartActionEncode(cursor)}, (value) { final row = (value as Map).cast<String,dynamic>(); return FindTodosOutput(todos: (row['todos'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList(), nextCursor: row['nextCursor'] == null ? null : row['nextCursor'] as String); }, store: store, once: once, refresh: refresh);
+ Future<GetTodosOutput> getTodos({GetTodosStore? store, bool once = false, bool refresh = false}) => client.invokeQuery<GetTodosOutput>('GetTodos', 2, {}, (value) { final row = (value as Map).cast<String,dynamic>(); return GetTodosOutput(todos: (row['todos'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList()); }, store: store, once: once, refresh: refresh);
 }
 /// Queries accepted durably; each reads when it executes.
 class QueuedQueries {
  final Client client; QueuedQueries(this.client);
  Future<Call<FindTodosOutput>> findTodos({required String text, required String? cursor, FindTodosStore? store}) => client.invokeAction<FindTodosOutput>('FindTodos', 1, {'text': _dartActionEncode(text), 'cursor': _dartActionEncode(cursor)}, (value) { final row = (value as Map).cast<String,dynamic>(); return FindTodosOutput(todos: (row['todos'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList(), nextCursor: row['nextCursor'] == null ? null : row['nextCursor'] as String); }, store: store);
  Future<Call<GetTodosOutput>> getTodos({GetTodosStore? store}) => client.invokeAction<GetTodosOutput>('GetTodos', 2, {}, (value) { final row = (value as Map).cast<String,dynamic>(); return GetTodosOutput(todos: (row['todos'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList()); }, store: store);
+}
+/// Discards the saved `once` results of one Query argument set, for every store policy.
+class QueryInvalidations {
+ final Client client; QueryInvalidations(this.client);
+ Future<void> findTodos({required String text, required String? cursor}) => client.invalidateQuery('FindTodos', 1, {'text': _dartActionEncode(text), 'cursor': _dartActionEncode(cursor)});
+ Future<void> getTodos() => client.invalidateQuery('GetTodos', 2, {});
 }
 class LiveModels { final Client port; LiveModels(this.port);
  late final TodoLiveModel todo = TodoLiveModel(port);

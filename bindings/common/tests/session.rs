@@ -1003,3 +1003,91 @@ fn action_store_option_travels_beside_args_on_both_routes() {
     assert_eq!(frozen["mutations"][0]["store"], false);
     assert_eq!(frozen["mutations"][0]["args"], json!({"store":"biz"}));
 }
+
+/// Query once through the native command boundary: Rust decides Cached,
+/// Join or Fetch; the host executes the exact prepared body and finishes or
+/// fails the flight. The transaction guard holds for hits and invalidation.
+#[test]
+fn query_once_commands_decide_cache_join_and_fetch_under_the_transaction_guard() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let schema = json!({"enums":[],"models":[],"actions":[
+        {"name":"Echo","version":1,"kind":"query","inputs":[{"kind":"value","name":"label","type":{"kind":"scalar","name":"string"},"nullable":false}],
+         "outputs":[{"name":"label","kind":"value","type":{"kind":"scalar","name":"string"},"cardinality":"single","source":"handlerValue"}]},
+        {"name":"Ping","version":1,"inputs":[],"outputs":[]}]});
+    let id = host
+        .call(json!({"op":"open","path":dir.path().join("db"),"schema":schema}))
+        .unwrap()["value"]["handle"]
+        .clone();
+    let once = |host: &mut RuntimeHost, extra: Value| {
+        let mut request =
+            json!({"op":"queryOnce","handle":id,"name":"Echo","version":1,"args":{"label":"hi"}});
+        for (k, v) in extra.as_object().unwrap() {
+            request[k] = v.clone();
+        }
+        host.call(request)
+    };
+    let fetch = once(&mut host, json!({})).unwrap()["value"].clone();
+    assert_eq!(fetch["decision"], "fetch");
+    let flight = fetch["flightId"].clone();
+    let body: Value = serde_json::from_str(fetch["body"].as_str().unwrap()).unwrap();
+    assert_eq!(body["call"]["callId"], fetch["callId"]);
+    assert_eq!(body["call"]["name"], "Echo");
+    assert!(
+        body["call"].get("once").is_none(),
+        "no cache control reaches the wire"
+    );
+    let join = once(&mut host, json!({})).unwrap()["value"].clone();
+    assert_eq!(join, json!({"decision":"join","flightId":flight}));
+    let finished = host.call(json!({"op":"finishQueryOnce","handle":id,"flightId":flight,"response":{"completion":{"callId":fetch["callId"],"outcome":{"status":"succeeded","result":{"label":"hi"}}},"records":[]}})).unwrap();
+    assert_eq!(
+        finished["value"]["completions"][0]["callId"],
+        fetch["callId"]
+    );
+    let cached = once(&mut host, json!({})).unwrap();
+    assert_eq!(
+        cached["value"],
+        json!({"decision":"cached","result":{"label":"hi"}})
+    );
+    assert_eq!(cached["changed"], false, "a hit commits nothing");
+    // Refresh fetches; releasing it keeps the snapshot.
+    let refresh = once(&mut host, json!({"refresh":true})).unwrap()["value"].clone();
+    assert_eq!(refresh["decision"], "fetch");
+    let released = host
+        .call(json!({"op":"failQueryOnce","handle":id,"flightId":refresh["flightId"]}))
+        .unwrap();
+    assert_eq!(released["value"], json!({"released":true}));
+    assert_eq!(
+        once(&mut host, json!({})).unwrap()["value"]["decision"],
+        "cached"
+    );
+    assert!(once(&mut host, json!({"refresh":"yes"})).is_err());
+    assert!(once(&mut host, json!({"store":7})).is_err());
+    assert!(
+        host.call(json!({"op":"queryOnce","handle":id,"name":"Ping","version":1,"args":{}}))
+            .is_err(),
+        "a Mutation has no once route"
+    );
+    // The application transaction guard covers hits and invalidation.
+    host.call(json!({"op":"begin","handle":id})).unwrap();
+    assert!(once(&mut host, json!({})).is_err());
+    assert!(
+        host.call(json!({"op":"invalidateQueryOnce","handle":id,"name":"Echo","version":1,"args":{"label":"hi"}}))
+            .is_err()
+    );
+    host.call(json!({"op":"rollback","handle":id})).unwrap();
+    let invalidated = host
+        .call(json!({"op":"invalidateQueryOnce","handle":id,"name":"Echo","version":1,"args":{"label":"hi"}}))
+        .unwrap();
+    assert_eq!(invalidated["value"], Value::Null);
+    assert_eq!(
+        once(&mut host, json!({})).unwrap()["value"]["decision"],
+        "fetch"
+    );
+    // A closed runtime's flights match nothing.
+    host.call(json!({"op":"close","handle":id})).unwrap();
+    assert!(
+        host.call(json!({"op":"failQueryOnce","handle":id,"flightId":flight}))
+            .is_err()
+    );
+}

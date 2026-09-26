@@ -423,6 +423,226 @@ class Client implements WritePort, MutatePort {
     }
   }
 
+  /// Execute a direct Query. Without [once] it is exactly
+  /// [invokeDirectAction]: a fresh request that reads and writes no
+  /// snapshot. With [once], Rust decides: a saved result is decoded without
+  /// any request or Model write, an active request is joined, or a new one
+  /// is executed and its successful result saved with its authority.
+  /// [refresh] (only with [once]) always requests and replaces on success.
+  Future<T> invokeQuery<T>(
+    String name,
+    int version,
+    Map<String, dynamic> args,
+    T Function(dynamic) decode, {
+    CallStore? store,
+    bool once = false,
+    bool refresh = false,
+  }) async {
+    if (refresh && !once) {
+      throw CallError(
+        'action.invalid_options',
+        execution: 'rejected',
+        cause: ArgumentError('refresh requires once: true'),
+      );
+    }
+    if (!once) {
+      return invokeDirectAction<T>(name, version, args, decode, store: store);
+    }
+    late final String outcome;
+    try {
+      outcome = await _queryOnce(name, version, args, refresh, store);
+    } catch (error) {
+      throw _publicActionError(error);
+    }
+    return _decodeOutcome(jsonDecode(outcome) as Map, decode);
+  }
+
+  /// Discard the saved once results of one Query argument set, every store
+  /// variant, in a local transaction. Needs no network; an older request
+  /// still in flight cannot save its result afterwards.
+  Future<void> invalidateQuery(
+    String name,
+    int version,
+    Map<String, dynamic> args,
+  ) async {
+    try {
+      if (_activeTxToken != null &&
+          identical(Zone.current[_txZoneKey], _activeTxToken)) {
+        throw StateError('transaction_active');
+      }
+      await _exclusive(
+        () => _send({
+          'op': 'invalidateQueryOnce',
+          'name': name,
+          'version': version,
+          'args': args,
+        }),
+      );
+    } catch (error) {
+      throw _publicActionError(error);
+    }
+  }
+
+  T _decodeOutcome<T>(Map outcome, T Function(dynamic) decode) {
+    if (outcome['status'] != 'succeeded') {
+      throw CallError(
+        outcome['code'] as String? ?? 'action.failed',
+        execution: outcome['execution'] as String? ?? 'rejected',
+      );
+    }
+    try {
+      return decode(outcome['result']);
+    } catch (error) {
+      throw CallError('action.observation_failed', cause: error);
+    }
+  }
+
+  /// Active once flights by Rust flight ID; removed at their terminal step.
+  /// Each holds only the raw outcome text; every caller decodes its own copy.
+  final _queryFlights = <String, Completer<String>>{};
+
+  Future<String> _queryOnce(
+    String name,
+    int version,
+    Map<String, dynamic> args,
+    bool refresh,
+    CallStore? store,
+  ) async {
+    final wire = store?.toWire();
+    if (_activeTxToken != null &&
+        identical(Zone.current[_txZoneKey], _activeTxToken)) {
+      throw StateError('transaction_active');
+    }
+    // The decision and the flight registration share one exclusive step, so
+    // a later decision that joins this flight always finds it.
+    late final RuntimeConnection connection;
+    late final String body;
+    String? fetched;
+    final flight = await _exclusive<Object>(() async {
+      final decided =
+          (await _send({
+                'op': 'queryOnce',
+                'name': name,
+                'version': version,
+                'args': args,
+                'refresh': refresh,
+                if (wire != null) 'store': wire,
+              }))
+              as Map<String, dynamic>;
+      final flightId = decided['flightId'] as String?;
+      switch (decided['decision']) {
+        case 'cached':
+          return jsonEncode({
+            'status': 'succeeded',
+            'result': decided['result'],
+          });
+        case 'join':
+          final joined = _queryFlights[flightId];
+          if (joined == null) {
+            throw ActionTransportException('action.execution_unknown');
+          }
+          return joined;
+      }
+      final current = _connection;
+      if (current == null || !current.directAvailable || _closing != null) {
+        await _send({'op': 'failQueryOnce', 'flightId': flightId});
+        throw ActionTransportException('action.unavailable');
+      }
+      final completer = Completer<String>();
+      // Settled callers observe it; an unobserved failure is not an error.
+      completer.future.ignore();
+      _queryFlights[flightId!] = completer;
+      connection = current;
+      body = decided['body'] as String;
+      fetched = flightId;
+      return completer;
+    });
+    if (flight is String) return flight;
+    final completer = flight as Completer<String>;
+    if (fetched != null) {
+      unawaited(_runQueryFlight(fetched!, body, connection, completer));
+    }
+    return completer.future;
+  }
+
+  /// Execute one fetched flight and settle every caller joined to it.
+  Future<void> _runQueryFlight(
+    String flightId,
+    String body,
+    RuntimeConnection connection,
+    Completer<String> flight,
+  ) async {
+    void fail(Object error) {
+      if (!flight.isCompleted) flight.completeError(error);
+    }
+
+    Future<void> release(Object error) async {
+      try {
+        await _exclusive(() async {
+          if (!identical(_queryFlights[flightId], flight)) return;
+          _queryFlights.remove(flightId);
+          await _send({'op': 'failQueryOnce', 'flightId': flightId});
+        });
+      } catch (_) {}
+      fail(error);
+    }
+
+    late final String response;
+    try {
+      response = await connection.requestAction(body);
+    } on ActionTransportException catch (error) {
+      return release(error);
+    } catch (error) {
+      return release(
+        ActionTransportException('action.execution_unknown', error),
+      );
+    }
+    late final Map<String, dynamic> applied;
+    try {
+      applied =
+          (await _exclusive(() async {
+                if (!identical(_connection, connection) ||
+                    !connection.directAvailable ||
+                    _closing != null) {
+                  throw ActionTransportException('action.execution_unknown');
+                }
+                final parsed = jsonDecode(response);
+                // Rust retires the flight on every outcome of this command.
+                _queryFlights.remove(flightId);
+                return await _send({
+                  'op': 'finishQueryOnce',
+                  'flightId': flightId,
+                  'response': parsed,
+                });
+              }))
+              as Map<String, dynamic>;
+    } catch (error) {
+      final mapped = error is ActionTransportException
+          ? error
+          : ActionTransportException('action.execution_unknown', error);
+      if (identical(_queryFlights[flightId], flight)) return release(mapped);
+      return fail(mapped);
+    }
+    final completions = (applied['completions'] as List)
+        .cast<Map<String, dynamic>>();
+    _deliverCompletions(completions);
+    for (final report in applied['reports'] as List<dynamic>) {
+      try {
+        _directOnError?.call(
+          AxtonReport.fromJson(report as Map<String, dynamic>),
+        );
+      } catch (error, stack) {
+        Zone.current.handleUncaughtError(error, stack);
+      }
+    }
+    if (completions.isEmpty) {
+      return fail(const CallError('action.observation_failed'));
+    }
+    if (!flight.isCompleted) {
+      flight.complete(jsonEncode(completions.first['outcome']));
+    }
+  }
+
   Future<int> _submitMutation(Map<String, dynamic> mutation) =>
       _exclusive(() async {
         await _send({'op': 'begin'});
@@ -842,6 +1062,12 @@ class Client implements WritePort, MutatePort {
 
   Future<void> _finishClose() async {
     _actionObservers.close();
+    for (final flight in _queryFlights.values) {
+      if (!flight.isCompleted) {
+        flight.completeError(const CallError('client.closed'));
+      }
+    }
+    _queryFlights.clear();
     _subscriptions.close();
     await _started?.future;
     await _connection?.close();

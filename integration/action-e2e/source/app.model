@@ -12,3 +12,7 @@ mutation SendEmail(to String, subject String, body String) { messageId String }
 @version(2) query SearchTodos(query String?) { todos Todo[] first Todo? count Int labels String[] hint String? }
 // Retitles the matching Todos and returns them: explicit outputs that overlap its own changes.
 mutation RetitleTodos(query String, title String) { todos Todo[] first Todo? }
+// Query once (#158): Model plus scalar, list and date metadata; and a
+// parameterless scalar-only Query.
+query TodoPage(query String?) { todos Todo[] count Int asOf DateTime next String? }
+query CountTodos() { count Int }

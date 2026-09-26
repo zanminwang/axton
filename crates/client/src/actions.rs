@@ -1,9 +1,10 @@
 //! Durable Action submission. The intent is persisted independently of its
 //! inferred optimistic Model operations.
+use crate::query_cache::QueryCacheKey;
 use crate::{ApplyReport, Client, ClientStore, Mutation, Operation, OperationKind};
 use axton_core::{
-    ActionInputDescriptor, ActionIntent, ActionStore, DirectActionRequest, DirectActionResponse,
-    Result, invalid, normalize_action_args,
+    ActionInputDescriptor, ActionIntent, ActionOutcome, ActionStore, DirectActionRequest,
+    DirectActionResponse, Result, invalid, normalize_action_args,
 };
 use serde_json::Value;
 
@@ -64,14 +65,36 @@ impl<S: ClientStore> Client<S> {
         bytes: &[u8],
     ) -> Result<ApplyReport> {
         let response = DirectActionResponse::decode(bytes, request, &self.schema)?;
-        if response.records.is_empty() {
+        self.apply_direct_response(response, None)
+    }
+    /// Apply a validated direct response: its authority under the stamp
+    /// rules and, for a Query once call that succeeded, its result snapshot
+    /// fenced by the generation the request saw, all in one local
+    /// transaction. A response with nothing to write opens none.
+    pub(crate) fn apply_direct_response(
+        &mut self,
+        response: DirectActionResponse,
+        snapshot: Option<(&QueryCacheKey, Option<&str>)>,
+    ) -> Result<ApplyReport> {
+        let result = match (&response.completion.outcome, snapshot) {
+            (ActionOutcome::Succeeded { result }, Some(snapshot)) => Some((result, snapshot)),
+            _ => None,
+        };
+        if response.records.is_empty() && result.is_none() {
             let mut report = ApplyReport::default();
-            report.completions.push(response.completion);
+            report.completions.push(response.completion.clone());
             return Ok(report);
         }
         self.write(|engine| {
-            let mut report = engine.apply_records(&response.records)?;
-            report.completions.push(response.completion);
+            let mut report = if response.records.is_empty() {
+                ApplyReport::default()
+            } else {
+                engine.apply_records(&response.records)?
+            };
+            if let Some((result, (key, generation))) = result {
+                engine.save_query_result(key, generation, result)?;
+            }
+            report.completions.push(response.completion.clone());
             Ok(report)
         })
     }

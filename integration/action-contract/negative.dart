@@ -66,3 +66,14 @@ Future<void> routeMisuse(GeneratedClient client) async {
   queued.hashCode;
   direct.hashCode;
 }
+
+Future<void> onceMisuse(GeneratedClient client) async {
+  await client.mutations.ping(once: true); // Mutations have no once control
+  await client.mutations.call.ping(once: true); // direct Mutations have no once control
+  await client.queries.enqueue.getTodos(once: true); // queued Queries have no once control
+  await client.queries.enqueue.getTodos(refresh: true); // queued Queries have no refresh control
+  await client.queries.invalidate.getTodos(store: const GetTodosStore.none()); // invalidation takes business args only
+  await client.queries.invalidate.addTodo(todo: created, gone: [], status: null, tags: []); // only Queries are invalidated
+  final GetTodosOutput nothing = await client.queries.invalidate.getTodos(); // invalidation returns no value
+  nothing.hashCode;
+}

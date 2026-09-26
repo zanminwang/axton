@@ -16,6 +16,7 @@ pub const FRAMEWORK_TABLES: &[&str] = &[
     "axton_mutation_dependency",
     "axton_mutation_prerequisite",
     "axton_rejection",
+    "axton_query_cache",
 ];
 
 /// Framework tables an earlier layout kept and this one cannot open in place:
@@ -138,6 +139,12 @@ CREATE TABLE IF NOT EXISTS axton_mutation_prerequisite (
 CREATE TABLE IF NOT EXISTS axton_rejection (
   ordinal INTEGER PRIMARY KEY, name TEXT NOT NULL, code TEXT NOT NULL, detail TEXT
 );
+CREATE TABLE IF NOT EXISTS axton_query_cache (
+  key TEXT PRIMARY KEY, contract TEXT NOT NULL, name TEXT NOT NULL,
+  version INTEGER NOT NULL, args TEXT NOT NULL, store TEXT NOT NULL,
+  generation TEXT NOT NULL, result TEXT
+);
+CREATE INDEX IF NOT EXISTS axton_query_cache_arguments ON axton_query_cache (contract, name, version, args);
 ";
 
 /// What an existing file was laid out by, decided before anything is written.

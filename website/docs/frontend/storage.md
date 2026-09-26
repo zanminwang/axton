@@ -40,10 +40,12 @@ Unsubscribing stops that channel's synchronization and removes nothing: cached r
 
 A subscription and its receive position are stored in the local database, so they survive a restart: reopening resumes from the saved position instead of starting over. A rebuilt local database ([change the schema](#change-the-schema)) keeps the channel names you subscribed to but not their positions, so each one starts again at the position the server acknowledges next.
 
+Results saved by [`once` Query calls](client-api.md#reuse-a-query-result-with-once) are stored in the same local database and are reused offline and after a restart. They are keyed by the compiled client schema: a schema change starts a new set and removes the previous one when the database opens, and a rebuilt database starts with none. They are scoped to the database file, not to a user: open a separate database for each backend, account or tenant, or delete it when the signed-in identity changes. Remove saved results with `client.queries.invalidate.<name>(args)`; nothing expires them automatically.
+
 Receipts and pull changes carry a per-record stamp. A newer stamp replaces the record's authoritative state; a delayed lower stamp cannot overwrite it, whichever path delivers it. Deletions apply across channels, and the deleted record's stamp is kept so older content cannot resurrect it. See [how state moves](../concepts.md) for the relationship between records, channels and pending writes.
 
 ## Storage size
 
-Cached records, queued calls, rejection details and backend receipts persist. Client business results held by live `Call` handles are memory-only. The runtime does not impose a cache-size limit or automatically expire these entries. Backend call outcomes are retained without TTL or automatic pruning; backend invalidations compact by channel/Model/identity, but distinct identities still consume space.
+Cached records, queued calls, rejection details, saved `once` Query results and backend receipts persist. Client business results held by live `Call` handles are memory-only. Saved `once` results have no size limit; your application bounds them through the argument sets it uses and `invalidate`. The runtime does not impose a cache-size limit or automatically expire these entries. Backend call outcomes are retained without TTL or automatic pruning; backend invalidations compact by channel/Model/identity, but distinct identities still consume space.
 
 Measure database size, pending work and synchronization lag with your application's working set. Local reads, including read-only SQL, use on-disk SQLite tables. They do not copy the full record set into a separate query projection.

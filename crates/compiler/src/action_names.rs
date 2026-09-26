@@ -154,10 +154,12 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
         "MutationHandlerCall",
         "MutationHandlers",
         "Mutations",
+        "OnceOptions",
         "Queries",
         "QueryContext",
         "QueryHandlerCall",
         "QueryHandlers",
+        "QueryInvalidations",
         "QueuedQueries",
     ] {
         add(helper.into(), "operation helper".into())?;

@@ -66,6 +66,14 @@ async function clientContract(client: GeneratedClient) {
   await client.queries.enqueue.getTodos({}, { store: true });
   await client.mutations.call.ping({}, { store: false });
   await client.mutations.deleteTodo({ todo: deletion }, { store: true });
+  // once reuses a saved complete result; refresh replaces it; invalidate discards it.
+  const cachedTodos: FindTodosOutput = await client.queries.findTodos({ text: 'x', cursor: null }, { once: true });
+  await client.queries.findTodos({ text: 'x', cursor: null }, { once: true, refresh: true, store: false });
+  await client.queries.findTodos({ text: 'x', cursor: null }, { once: false });
+  await client.queries.getTodos({}, { once: true, store: { todos: false } });
+  const invalidated: void = await client.queries.invalidate.findTodos({ text: 'x', cursor: null });
+  await client.queries.invalidate.getTodos({});
+  void [cachedTodos, invalidated];
   // Creation defaults (#27): create inputs may omit defaulted fields, locally and in Mutations.
   const draft: NoteCreate = { memo: null };
   await client.models.note.create(draft);

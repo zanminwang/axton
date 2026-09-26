@@ -278,6 +278,53 @@ impl RuntimeHost {
                         )?;
                         json!({"callId":prepared.call.call_id,"body":String::from_utf8(prepared.encode()?).map_err(|_|invalid("utf8"))?})
                     }
+                    // Query once (#158): Rust decides and fences; the host
+                    // executes the prepared body and fans the outcome out.
+                    "queryOnce" => {
+                        let refresh = match request.get("refresh") {
+                            None | Some(Value::Null) => false,
+                            Some(Value::Bool(refresh)) => *refresh,
+                            _ => return Err(invalid("refresh must be bool")),
+                        };
+                        let decision = e.client.begin_query_once(
+                            text(&request, "name")?,
+                            read_counter(&request["version"], true)?,
+                            &request["args"],
+                            &QueryOnceOptions {
+                                store: action_options(&request)?.store,
+                                refresh,
+                            },
+                        )?;
+                        match decision {
+                            QueryOnce::Cached { result } => {
+                                json!({"decision":"cached","result":result})
+                            }
+                            QueryOnce::Join { flight_id } => {
+                                json!({"decision":"join","flightId":flight_id})
+                            }
+                            QueryOnce::Fetch { flight_id, request } => {
+                                json!({"decision":"fetch","flightId":flight_id,"callId":request.call.call_id,"body":String::from_utf8(request.encode()?).map_err(|_|invalid("utf8"))?})
+                            }
+                        }
+                    }
+                    "finishQueryOnce" => {
+                        let response = serde_json::to_vec(&request["response"])?;
+                        serde_json::to_value(
+                            e.client
+                                .finish_query_once(text(&request, "flightId")?, &response)?,
+                        )?
+                    }
+                    "failQueryOnce" => {
+                        json!({"released":e.client.fail_query_once(text(&request, "flightId")?)})
+                    }
+                    "invalidateQueryOnce" => {
+                        e.client.invalidate_query_once(
+                            text(&request, "name")?,
+                            read_counter(&request["version"], true)?,
+                            &request["args"],
+                        )?;
+                        Value::Null
+                    }
                     "applyActionResponse" => {
                         let body = text(&request, "body")?;
                         let response = serde_json::to_vec(&request["response"])?;

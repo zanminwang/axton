@@ -60,6 +60,18 @@ test("generated operation codecs retain null, lists, omitted patches and DateTim
             : { todo: null, echoed: "2026-01-01T00:00:00.000Z" },
       );
     },
+    async invokeQuery(
+      name: string,
+      version: number,
+      args: object,
+      decode: (value: unknown) => unknown,
+    ) {
+      calls.push({ name, version, args: args as Record<string, unknown> });
+      return decode({ todo: null });
+    },
+    async invalidateQuery(name: string, version: number, args: object) {
+      calls.push({ name, version, args: args as Record<string, unknown> });
+    },
   };
   const mutations = makeMutations(port);
   const queries = makeQueries(port);
@@ -288,6 +300,19 @@ test("every generated route forwards store options beside encoded args", async (
       seen.push({ name, args, options });
       return decode({ todo: null });
     },
+    async invokeQuery(
+      name: string,
+      _version: number,
+      args: object,
+      decode: (value: unknown) => unknown,
+      options?: unknown,
+    ) {
+      seen.push({ name, args, options });
+      return decode({ todo: null });
+    },
+    async invalidateQuery(name: string, _version: number, args: object) {
+      seen.push({ name, args, options: "invalidate" });
+    },
   };
   const mutations = makeMutations(port);
   const queries = makeQueries(port);
@@ -307,4 +332,18 @@ test("every generated route forwards store options beside encoded args", async (
   });
   assert.deepEqual(seen[3]?.options, { store: { todo: true } });
   assert.equal(seen[4]?.options, undefined);
+  // once controls reach only the direct Query route; invalidation carries
+  // the same encoded business args and nothing else.
+  await queries.find({ at }, { once: true, refresh: true, store: false });
+  assert.deepEqual(seen[5], {
+    name: "Find",
+    args: { at: at.toISOString() },
+    options: { once: true, refresh: true, store: false },
+  });
+  assert.equal(await queries.invalidate.find({ at }), undefined);
+  assert.deepEqual(seen[6], {
+    name: "Find",
+    args: { at: at.toISOString() },
+    options: "invalidate",
+  });
 });

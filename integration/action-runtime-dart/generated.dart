@@ -294,16 +294,22 @@ class DirectMutations {
  Future<PingOutput> ping({PingStore? store}) => client.invokeDirectAction<PingOutput>('Ping', 1, {}, (_) {}, store: store);
  Future<TouchOutput> touch({required NoteCreateInput note, TouchChangedUpdate? changed, TouchStore? store}) => client.invokeDirectAction<TouchOutput>('Touch', 1, {'note': _dartActionEncode(note), if (changed != null) 'changed': _dartActionEncode(changed)}, (value) { final row = (value as Map).cast<String,dynamic>(); return TouchOutput(note: Note.fromRecord((row['note'] as Map).cast<String,dynamic>()), changed: row['changed'] == null ? null : Note.fromRecord((row['changed'] as Map).cast<String,dynamic>()), stamp: DateTime.parse(row['stamp'] as String)); }, store: store);
 }
-/// Queries resolve with the backend result (direct); [enqueue] accepts them durably.
+/// Queries resolve with the backend result (direct); `once` reuses a saved complete result, [enqueue] accepts them durably and [invalidate] discards saved results.
 class Queries {
  final Client client; Queries(this.client);
  late final QueuedQueries enqueue = QueuedQueries(client);
- Future<NowOutput> now({required DateTime at, NowStore? store}) => client.invokeDirectAction<NowOutput>('Now', 1, {'at': _dartActionEncode(at)}, (value) { final row = (value as Map).cast<String,dynamic>(); return NowOutput(at: DateTime.parse(row['at'] as String)); }, store: store);
+ late final QueryInvalidations invalidate = QueryInvalidations(client);
+ Future<NowOutput> now({required DateTime at, NowStore? store, bool once = false, bool refresh = false}) => client.invokeQuery<NowOutput>('Now', 1, {'at': _dartActionEncode(at)}, (value) { final row = (value as Map).cast<String,dynamic>(); return NowOutput(at: DateTime.parse(row['at'] as String)); }, store: store, once: once, refresh: refresh);
 }
 /// Queries accepted durably; each reads when it executes.
 class QueuedQueries {
  final Client client; QueuedQueries(this.client);
  Future<Call<NowOutput>> now({required DateTime at, NowStore? store}) => client.invokeAction<NowOutput>('Now', 1, {'at': _dartActionEncode(at)}, (value) { final row = (value as Map).cast<String,dynamic>(); return NowOutput(at: DateTime.parse(row['at'] as String)); }, store: store);
+}
+/// Discards the saved `once` results of one Query argument set, for every store policy.
+class QueryInvalidations {
+ final Client client; QueryInvalidations(this.client);
+ Future<void> now({required DateTime at}) => client.invalidateQuery('Now', 1, {'at': _dartActionEncode(at)});
 }
 class LiveModels { final Client port; LiveModels(this.port);
  late final NoteLiveModel note = NoteLiveModel(port);

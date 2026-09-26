@@ -10,7 +10,7 @@ fn generated_actions_bind_to_shared_runtime_and_backend() {
     let model = axton_compiler::typescript(&descriptor);
     let client = axton_compiler::client_typescript(&descriptor, "@axton/client");
     let backend = axton_compiler::backend_typescript(&descriptor, "@axton/server");
-    assert!(model.contains("import type { Call, CallOptions } from './client.ts'"));
+    assert!(model.contains("import type { Call, CallOptions, OnceOptions } from './client.ts'"));
     assert!(client.contains("type CallOutcome"));
     assert!(client.contains("readonly mutations:"));
     assert!(client.contains("readonly queries:"));
@@ -1031,7 +1031,7 @@ fn action_typescript_emits_flattened_operands_for_generated_client() {
     assert!(ts.contains("export interface AddTodoInput"), "{ts}");
     assert!(ts.contains("label: string | null;"), "{ts}");
     assert!(
-        ts.contains("import type { Call, CallOptions } from './client.ts'"),
+        ts.contains("import type { Call, CallOptions, OnceOptions } from './client.ts'"),
         "{ts}"
     );
     assert!(!ts.contains("makeActions"), "{ts}");
@@ -1041,7 +1041,7 @@ fn action_typescript_emits_flattened_operands_for_generated_client() {
         "{ts}"
     );
     assert!(
-        ts.contains("export function makeQueries(port:CallPort) { return {\n enqueue: {\n }\n}; }"),
+        ts.contains("export function makeQueries(port:CallPort) { return {\n enqueue: {\n },\n invalidate: {\n }\n}; }"),
         "{ts}"
     );
     assert!(!ts.contains("class GeneratedClient {"), "{ts}");
@@ -1396,13 +1396,14 @@ fn action_store_options_name_only_explicit_model_outputs_in_both_languages() {
     );
     let client = axton_compiler::client_typescript(&v, "@axton/client");
     assert!(client.contains("type CallOptions"), "{client}");
-    // Both routes of each kind take the same typed options.
+    // Both routes of each kind take the same typed store options; the
+    // direct Query route adds its once controls.
     assert!(
         ts.contains("  open: (args:OpenInput, options?:OpenOptions):Promise<Call<OpenOutput>> => port.invokeAction('Open',1,"),
         "{ts}"
     );
     assert!(
-        ts.contains(" open: (args:OpenInput, options?:OpenOptions):Promise<OpenOutput> => port.invokeDirectAction('Open',1,"),
+        ts.contains(" open: (args:OpenInput, options?:OpenOptions & OnceOptions):Promise<OpenOutput> => port.invokeQuery('Open',1,"),
         "{ts}"
     );
     let dart = axton_compiler::dart(&v);
@@ -1421,7 +1422,7 @@ fn action_store_options_name_only_explicit_model_outputs_in_both_languages() {
     );
     // A business input named store keeps its name; the selector moves aside.
     assert!(
-        dart.contains("Future<OpenOutput> open({required String store, OpenStore? outputStore})"),
+        dart.contains("Future<OpenOutput> open({required String store, OpenStore? outputStore, bool once = false, bool refresh = false})"),
         "{dart}"
     );
     assert!(
@@ -1626,7 +1627,7 @@ fn a_kind_change_at_a_new_version_registers_each_version_under_its_own_kind() {
         "{ts}"
     );
     assert!(
-        ts.contains(" find: (args:FindInput, options?:FindOptions):Promise<FindOutput> => port.invokeDirectAction('Find',2,"),
+        ts.contains(" find: (args:FindInput, options?:FindOptions & OnceOptions):Promise<FindOutput> => port.invokeQuery('Find',2,"),
         "{ts}"
     );
     let dart = axton_compiler::dart(&retained);
@@ -1639,4 +1640,110 @@ fn a_kind_change_at_a_new_version_registers_each_version_under_its_own_kind() {
         "{dart}"
     );
     axton_compiler::check_action_names(&retained).unwrap();
+}
+
+#[test]
+fn direct_queries_generate_once_options_and_typed_invalidators() {
+    let v = compile("model Todo { id String title String @@id(id) } query GetTodos(projectId String) { todos Todo[] total Int } query Ping() mutation Rename(todo Todo.update)").unwrap();
+    let ts = axton_compiler::typescript(&v);
+    for expected in [
+        "import type { Call, CallOptions, OnceOptions } from './client.ts'",
+        "invokeQuery<T>(name:string,version:number,args:object,decode:(value:unknown)=>T,options?:CallOptions&OnceOptions):Promise<T>;",
+        "invalidateQuery(name:string,version:number,args:object):Promise<void>;",
+        "export function makeQueries(port:CallPort) { return {\n getTodos: (args:GetTodosInput, options?:GetTodosOptions & OnceOptions):Promise<GetTodosOutput> => port.invokeQuery('GetTodos',1,encodeGetTodosInput(args),decodeGetTodosOutput,options),\n ping: (args:PingInput, options?:PingOptions & OnceOptions):Promise<PingOutput> => port.invokeQuery('Ping',1,encodePingInput(args),decodePingOutput,options),\n enqueue: {\n  getTodos: (args:GetTodosInput, options?:GetTodosOptions):Promise<Call<GetTodosOutput>> => port.invokeAction(",
+        " invalidate: {\n  getTodos: (args:GetTodosInput):Promise<void> => port.invalidateQuery('GetTodos',1,encodeGetTodosInput(args)),\n  ping: (args:PingInput):Promise<void> => port.invalidateQuery('Ping',1,encodePingInput(args)),\n }\n}; }",
+    ] {
+        assert!(ts.contains(expected), "missing {expected}: {ts}");
+    }
+    // Mutation routes keep the store-only options and the generic methods.
+    let mutations = &ts[ts.find("export function makeMutations").unwrap()
+        ..ts.find("export function makeQueries").unwrap()];
+    assert!(!mutations.contains("OnceOptions"), "{mutations}");
+    assert!(!mutations.contains("invokeQuery"), "{mutations}");
+    let client = axton_compiler::client_typescript(&v, "@axton/client");
+    assert!(client.contains("type OnceOptions"), "{client}");
+    let dart = axton_compiler::dart(&v);
+    let class = |name: &str| {
+        let start = dart.find(&format!("\nclass {name} {{")).unwrap();
+        let end = dart[start + 1..].find("\n}\n").unwrap();
+        dart[start..start + 1 + end].to_string()
+    };
+    let queries = class("Queries");
+    assert!(
+        queries.contains("Future<GetTodosOutput> getTodos({required String projectId, GetTodosStore? store, bool once = false, bool refresh = false}) => client.invokeQuery<GetTodosOutput>('GetTodos', 1, {'projectId': _dartActionEncode(projectId)}, "),
+        "{queries}"
+    );
+    assert!(
+        queries.contains("store: store, once: once, refresh: refresh);"),
+        "{queries}"
+    );
+    assert!(
+        queries.contains(
+            "Future<PingOutput> ping({PingStore? store, bool once = false, bool refresh = false})"
+        ),
+        "{queries}"
+    );
+    assert!(
+        queries.contains("late final QueryInvalidations invalidate = QueryInvalidations(client);"),
+        "{queries}"
+    );
+    let invalidations = class("QueryInvalidations");
+    assert!(
+        invalidations.contains("Future<void> getTodos({required String projectId}) => client.invalidateQuery('GetTodos', 1, {'projectId': _dartActionEncode(projectId)});"),
+        "{invalidations}"
+    );
+    assert!(
+        invalidations.contains("Future<void> ping() => client.invalidateQuery('Ping', 1, {});"),
+        "{invalidations}"
+    );
+    for route in ["QueuedQueries", "Mutations", "DirectMutations"] {
+        let body = class(route);
+        assert!(!body.contains("once"), "{route}: {body}");
+        assert!(!body.contains("invokeQuery"), "{route}: {body}");
+    }
+}
+
+#[test]
+fn once_controls_take_collision_safe_dart_names_beside_business_inputs() {
+    let v =
+        compile("query Find(once Boolean, refresh Boolean, store String, callOnce Int) { n Int }")
+            .unwrap();
+    let dart = axton_compiler::dart(&v);
+    assert!(
+        dart.contains("Future<FindOutput> find({required bool once, required bool refresh, required String store, required int callOnce, FindStore? outputStore, bool callOnce$ = false, bool callRefresh = false}) => client.invokeQuery<FindOutput>('Find', 1, "),
+        "{dart}"
+    );
+    assert!(
+        dart.contains("store: outputStore, once: callOnce$, refresh: callRefresh);"),
+        "{dart}"
+    );
+    assert!(
+        dart.contains("Future<void> find({required bool once, required bool refresh, required String store, required int callOnce}) => client.invalidateQuery('Find', 1, "),
+        "{dart}"
+    );
+}
+
+#[test]
+fn invalidate_is_reserved_in_the_query_namespace_only() {
+    for (source, needle) in [
+        (
+            "query Invalidate()",
+            "1:1: Query name Invalidate is reserved",
+        ),
+        (
+            "query invalidate()",
+            "1:1: Query name invalidate is reserved",
+        ),
+    ] {
+        let error = compile(source).unwrap_err();
+        assert!(error.starts_with(needle), "{source}: {error}");
+    }
+    compile("mutation Invalidate()").unwrap();
+    for helper in ["OnceOptions", "QueryInvalidations"] {
+        let error = compile(&format!(
+            "model {helper} {{ id String @@id(id) }} query Ping()"
+        ))
+        .unwrap_err();
+        assert!(error.contains("operation helper"), "{helper}: {error}");
+    }
 }

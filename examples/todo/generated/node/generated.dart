@@ -289,14 +289,19 @@ class DirectMutations {
  Future<AddTodoOutput> addTodo({required TodoCreateInput todo, AddTodoStore? store}) => client.invokeDirectAction<AddTodoOutput>('AddTodo', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return AddTodoOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, store: store);
  Future<SetTodoDoneOutput> setTodoDone({required SetTodoDoneTodoUpdate todo, SetTodoDoneStore? store}) => client.invokeDirectAction<SetTodoDoneOutput>('SetTodoDone', 1, {'todo': _dartActionEncode(todo)}, (value) { final row = (value as Map).cast<String,dynamic>(); return SetTodoDoneOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, store: store);
 }
-/// Queries resolve with the backend result (direct); [enqueue] accepts them durably.
+/// Queries resolve with the backend result (direct); `once` reuses a saved complete result, [enqueue] accepts them durably and [invalidate] discards saved results.
 class Queries {
  final Client client; Queries(this.client);
  late final QueuedQueries enqueue = QueuedQueries(client);
+ late final QueryInvalidations invalidate = QueryInvalidations(client);
 }
 /// Queries accepted durably; each reads when it executes.
 class QueuedQueries {
  final Client client; QueuedQueries(this.client);
+}
+/// Discards the saved `once` results of one Query argument set, for every store policy.
+class QueryInvalidations {
+ final Client client; QueryInvalidations(this.client);
 }
 class LiveModels { final Client port; LiveModels(this.port);
  late final UserLiveModel user = UserLiveModel(port);

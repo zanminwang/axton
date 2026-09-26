@@ -184,6 +184,21 @@ void main() {
         expect((queuedOutcome as CallSuccess<NowOutput>).result.at, at);
         expect(pumps, 3);
         expect((await client.syncState())['pending'], 0);
+        // `once` saves the complete result; equal args hit it with no request.
+        final NowOutput first = await client.queries.now(at: at, once: true);
+        expect(directs, 4);
+        final NowOutput hit = await client.queries.now(
+          at: at.toLocal(),
+          once: true,
+        );
+        expect(hit.at, first.at);
+        expect(directs, 4);
+        await client.queries.now(at: at, once: true, refresh: true);
+        expect(directs, 5);
+        await client.queries.invalidate.now(at: at);
+        await client.queries.now(at: at, once: true);
+        expect(directs, 6);
+        expect((await client.syncState())['pending'], 0);
       } finally {
         await connection.close();
         await served.cancel();

@@ -1,6 +1,6 @@
 import * as actionBackend from "./backend.ts";
 import type { Call, GeneratedClient } from "./client.ts";
-import type { AddTodoInput, AddTodoOutput, Note, NoteCreate, Todo, TodoIdentity, TodoUpdate, ProjectIdentity, PingOutput } from './generated.ts';
+import type { AddTodoInput, AddTodoOutput, FindTodosOutput, Note, NoteCreate, Todo, TodoIdentity, TodoUpdate, ProjectIdentity, PingOutput } from './generated.ts';
 import type { AddNotesInput as AddNotesHandlerInput, AddTodoHandlerOutput, AddTodoV1Input, AddTodoV1HandlerOutput, FindTodosHandlerOutput, LinkHandlerOutput, PingHandlerOutput, QueryContext, RemoveTodoHandlerOutput, Mutations, Queries, StateListHandlerOutput, StateListV1HandlerOutput } from './backend.ts';
 
 declare const client: GeneratedClient;
@@ -132,6 +132,27 @@ client.mutations.call.ping({}, { store: {} });
 client.queries.findTodos({ text: 'x', cursor: null }, { store: { nextCursor: false } });
 // @ts-expect-error Queued Query store maps reject unknown outputs.
 client.queries.enqueue.findTodos({ text: 'x', cursor: null }, { store: { missing: true } });
+// @ts-expect-error Mutations accept no once control.
+client.mutations.addTodo(input, { once: true });
+// @ts-expect-error Direct Mutations accept no once control.
+client.mutations.call.ping({}, { once: true });
+// @ts-expect-error Queued Queries accept no once control.
+client.queries.enqueue.findTodos({ text: 'x', cursor: null }, { once: true });
+// @ts-expect-error Queued Queries accept no refresh control.
+client.queries.enqueue.getTodos({}, { refresh: true });
+// @ts-expect-error refresh requires once.
+client.queries.findTodos({ text: 'x', cursor: null }, { refresh: true });
+// @ts-expect-error once is a boolean.
+client.queries.getTodos({}, { once: 'yes' });
+// @ts-expect-error Invalidation takes business args only.
+client.queries.invalidate.getTodos({}, { store: false });
+// @ts-expect-error Invalidation validates its args like the Query.
+client.queries.invalidate.findTodos({ text: 'x' });
+// @ts-expect-error Only Queries have saved results to invalidate.
+client.queries.invalidate.addTodo(input);
+// @ts-expect-error Invalidation resolves with no value.
+const invalidatedValue: Promise<FindTodosOutput> = client.queries.invalidate.findTodos({ text: 'x', cursor: null });
+void invalidatedValue;
 // Creation defaults (#27): only client create inputs admit omission.
 // @ts-expect-error A field without a creation default is still required.
 const missingMemo: NoteCreate = {};

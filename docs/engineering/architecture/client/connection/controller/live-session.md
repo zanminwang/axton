@@ -15,11 +15,11 @@ A live session is one socket attempt of the [Downlink worker](downlink-worker.md
 | `generation()` | What the open session subscribed under, so a committed subscription change invalidates it. |
 | `acknowledge(ack)` | Handshake order: the first acknowledgement of the session, for exactly the channels it subscribed (`ack.confirms`). Anything else is `invalid live subscription acknowledgement`. |
 | `streamed()`, `acknowledged()` | Whether a streamed page is in order; a page before the acknowledgement is `live page before acknowledgement`. |
-| `close()` | The epoch of the socket the host closes, if one is open. |
+| `close()` | The epoch of the socket the host closes, if one is open. After a replica rebuild the worker discards it: the host's `reset` abandons that socket instead ([Downlink worker](downlink-worker.md)). |
 
 ## 5. Building Block View
 
-- **Epoch.** Every session has one, allocated by the session and never reused. An I/O event names the epoch it belongs to, so whatever an abandoned socket still delivers is ignored and the host does not need to know why a session ended. HTTP answers are fenced by the worker's request id instead ([Downlink worker](downlink-worker.md)).
+- **Epoch.** Every session has one, allocated by the session and never reused: the counter lives as long as the worker, survives a replica rebuild, and fails rather than wrap past the safe integer range. An I/O event names the epoch it belongs to, so whatever an abandoned socket still delivers is ignored and the host does not need to know why a session ended. HTTP answers are fenced by the worker's request id instead ([Downlink worker](downlink-worker.md)).
 - **Handshake order.** Exactly one acknowledgement, first, for exactly the subscribed channels; pages only after it. Both refusals are protocol violations the worker turns into `close {reason}` plus a retry with backoff.
 - **What it does not own.** Page application, the frame queue, cursors, pull building, the retry schedule and Bootstrap progress all belong to the worker ([#150](https://github.com/zanminwang/axton/issues/150)).
 

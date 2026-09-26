@@ -4,7 +4,6 @@ import 'dart:io';
 
 import 'package:axton/axton.dart';
 import 'package:axton/src/bridge.dart';
-import 'package:axton/src/subscriptions.dart' show DownlinkSignal;
 import 'package:test/test.dart';
 
 /// A fresh temporary file with the Entry schema, opened through the real
@@ -311,6 +310,10 @@ void main() {
           expect(event['ok'], isA<bool>());
           expect(event.containsKey('value'), isTrue);
           if (event['ok'] == false) expect(event['error'], isA<String>());
+          // A failure's machine-readable reason, when it has one.
+          if (event.containsKey('details')) {
+            expect((event['details'] as Map)['code'], isA<String>());
+          }
         case 'effect':
           expect(event['effectId'], isA<String>());
           final operation = event['operation'] as Map<String, dynamic>;
@@ -331,15 +334,6 @@ void main() {
           expect((event['diagnostic'] as Map)['kind'], isA<String>());
         case 'changed':
           expect((event['tables'] as List).cast<String>(), isNotEmpty);
-        case 'laneSignal':
-          // The subscription projection's signal, decoded as the SDK does.
-          final json = event['signal'] as Map<String, dynamic>;
-          final signal = DownlinkSignal.fromJson(json);
-          expect(signal.lane, json['lane']);
-          expect(signal.epoch, json['epoch']);
-          expect(signal.outstanding, json['outstanding']);
-          expect(signal.scopes, json['scopes'] ?? isEmpty);
-          expect(signal.run, json['run']);
         case 'runtimeClosed':
           break;
         default:
@@ -354,7 +348,6 @@ void main() {
       'observerChanged',
       'report',
       'changed',
-      'laneSignal',
       'runtimeClosed',
     });
   });
@@ -389,6 +382,71 @@ void main() {
       }
     },
   );
+
+  test(
+    'an observer claimed at its task completion hears the snapshot of the same batch',
+    () async {
+      final bridge = await fixture.bridge();
+      try {
+        final heard = <Map<String, dynamic>>[];
+        String? claimed;
+        final value = await bridge.task(
+          {'kind': 'scopeSubscribe', 'scope': 'book'},
+          onValue: (value) {
+            claimed = (value as Map)['observerId'] as String;
+            expect(heard, isEmpty, reason: 'claimed before its first snapshot');
+            bridge.listen(claimed!, heard.add);
+          },
+        );
+        expect((value as Map)['observerId'], claimed);
+        expect(heard, hasLength(1), reason: 'the first snapshot was not lost');
+        expect(heard.single['kind'], 'subscription');
+        expect((heard.single['status'] as Map)['connection'], 'offline');
+        // The runtime's close ends the observer with its terminal snapshot.
+        await bridge.close();
+        expect(heard, hasLength(2));
+        expect(heard.last['closed'], isTrue);
+      } finally {
+        await bridge.close();
+      }
+    },
+  );
+
+  test('a failure with a code carries it beside the message', () async {
+    final bridge = await fixture.bridge();
+    try {
+      await expectLater(
+        bridge.task({
+          'kind': 'scopeBootstrap',
+          'scope': 'book',
+          'subscriptionId': 99,
+        }),
+        throwsA(
+          isA<TaskFailure>()
+              .having(
+                (e) => e.message,
+                'message',
+                startsWith('subscription.closed'),
+              )
+              .having((e) => e.details, 'details', {
+                'code': 'subscription.closed',
+              }),
+        ),
+      );
+      await expectLater(
+        bridge.task({'kind': 'nope'}),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e is TaskFailure ? e.details : null,
+            'details',
+            isNull,
+          ),
+        ),
+      );
+    } finally {
+      await bridge.close();
+    }
+  });
 
   test('a malformed envelope is reported and completes nothing', () async {
     final bridge = await fixture.bridge();

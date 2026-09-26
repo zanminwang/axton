@@ -3,11 +3,12 @@
 ///
 /// A [Bridge] submits complete tasks through the C ABI
 /// (`axton_runtime_open/submit/drain/detach`), answers the effects the
-/// runtime asks for, and delivers each `taskCompleted` to the waiter that
-/// submitted it. It holds maps and platform resources only: task progression,
-/// database scheduling and retry stay in Rust, whose actor thread owns SQLite,
-/// so admission and drain never block on the database and everything runs on
-/// the calling isolate.
+/// runtime asks for, delivers each `taskCompleted` to the waiter that
+/// submitted it and each `observerChanged` snapshot to the observer claimed
+/// at its task's completion. It holds maps and platform resources only: task
+/// progression, observer projection, database scheduling and retry stay in
+/// Rust, whose actor thread owns SQLite, so admission and drain never block on
+/// the database and everything runs on the calling isolate.
 ///
 /// The actor wakes the bridge through one process-wide
 /// `NativeCallable.listener`: Rust calls it from its own thread under the
@@ -151,13 +152,18 @@ class _Abi {
 
 /// One submitted input awaiting its `taskCompleted`.
 class _Route {
-  _Route([this.run, this.zone]);
+  _Route({this.run, this.onValue}) : zone = Zone.current;
   final completer = Completer<dynamic>();
 
-  /// The transaction callback of a `transaction` task, and the zone it was
-  /// submitted from, where it runs.
+  /// The transaction callback of a `transaction` task.
   final Future<void> Function(String transactionId)? run;
-  final Zone? zone;
+
+  /// Runs with the value of a successful completion while it is dispatched,
+  /// before any later event: where an observer is claimed.
+  final void Function(dynamic value)? onValue;
+
+  /// The zone the task was submitted from, where [run] and [onValue] run.
+  final Zone zone;
 
   /// What the callback threw, rethrown as it was when the task fails.
   Object? thrown;
@@ -239,8 +245,38 @@ abstract interface class RuntimeHost {
   void stopHandling(String kind, EffectHandler handler);
 }
 
+/// A task failure the runtime gave a machine-readable reason: `details` is
+/// the `taskCompleted` object whose `code` callers map to their public error
+/// instead of matching the message. It is a [StateError] carrying the
+/// engine's message, like every other task failure.
+class TaskFailure extends StateError {
+  TaskFailure(super.message, this.details);
+  final Map<String, dynamic> details;
+}
+
+/// What observer handles need from a runtime: a task whose completion claims
+/// the observer it names, and the snapshots of claimed observers. The
+/// [Bridge] is one; tests drive handles through a fake.
+abstract interface class ObserverHost {
+  /// Submit [command]; [onValue] runs with a successful value while its
+  /// completion is dispatched, before any later event of the same batch.
+  Future<dynamic> task(
+    Map<String, dynamic> command, {
+    void Function(dynamic value)? onValue,
+  });
+
+  /// Deliver every `observerChanged` snapshot of [observerId] to [listener],
+  /// in the zone that listened, until a terminal (`closed`) snapshot, which is
+  /// delivered and then ends the listener, or [unlisten].
+  void listen(
+    String observerId,
+    void Function(Map<String, dynamic> snapshot) listener,
+  );
+  void unlisten(String observerId);
+}
+
 /// The SDK side of one Rust-owned client runtime.
-class Bridge implements RuntimeHost {
+class Bridge implements RuntimeHost, ObserverHost {
   Bridge._(this._abi, this.runtimeId);
 
   final _Abi _abi;
@@ -274,13 +310,13 @@ class Bridge implements RuntimeHost {
   /// after the commit that decided it.
   void Function(String callId, dynamic outcome)? onCallCompleted;
 
-  /// `observerChanged`; no runtime emits it before the later checkpoints of
-  /// #134.
-  void Function(String observerId, dynamic snapshot)? onObserverChanged;
-
-  /// `laneSignal`: transport state of the connection lanes for the
-  /// subscription status projection.
-  void Function(Map<String, dynamic> signal)? onLaneSignal;
+  /// Claimed observers by id, with the zone each listened from. An observer
+  /// is claimed while the completion of the task that named it is dispatched
+  /// ([ObserverHost.task]'s `onValue`), and the runtime publishes its first
+  /// snapshot after that completion, so no snapshot has to be buffered: one
+  /// for an observer nobody claims (a cancelled watch) is dropped.
+  final _observers =
+      <String, (Zone, void Function(Map<String, dynamic> snapshot))>{};
 
   /// Effect handlers by operation kind, and the effects they hold by id.
   final _handlers = <String, EffectHandler>{};
@@ -363,10 +399,26 @@ class Bridge implements RuntimeHost {
 
   /// Submit one task and answer its value, or throw its error as a
   /// [StateError] carrying the engine's message (`client_closed` once the
-  /// runtime is gone).
+  /// runtime is gone) - a [TaskFailure] when the runtime gave a code.
+  /// [onValue] runs with a successful value while the completion is
+  /// dispatched, before any later event; if it throws, the task fails with
+  /// what it threw.
   @override
-  Future<dynamic> task(Map<String, dynamic> command) =>
-      _route(_Route(), (id) => taskEnvelope(id, command));
+  Future<dynamic> task(
+    Map<String, dynamic> command, {
+    void Function(dynamic value)? onValue,
+  }) => _route(_Route(onValue: onValue), (id) => taskEnvelope(id, command));
+
+  @override
+  void listen(
+    String observerId,
+    void Function(Map<String, dynamic> snapshot) listener,
+  ) {
+    if (!_detached) _observers[observerId] = (Zone.current, listener);
+  }
+
+  @override
+  void unlisten(String observerId) => _observers.remove(observerId);
 
   @override
   void handleEffects(String kind, EffectHandler handler) =>
@@ -387,7 +439,7 @@ class Bridge implements RuntimeHost {
   /// committed; otherwise throws what [run] threw, or the runtime's reason.
   Future<void> transaction(Future<void> Function(String transactionId) run) =>
       _route(
-        _Route(run, Zone.current),
+        _Route(run: run),
         (id) => taskEnvelope(id, const {'kind': 'transaction'}),
       );
 
@@ -511,12 +563,10 @@ class Bridge implements RuntimeHost {
       case 'callCompleted':
         onCallCompleted?.call(event['callId'] as String, event['outcome']);
       case 'observerChanged':
-        onObserverChanged?.call(
+        _observe(
           event['observerId'] as String,
-          event['snapshot'],
+          event['snapshot'] as Map<String, dynamic>,
         );
-      case 'laneSignal':
-        onLaneSignal?.call(event['signal'] as Map<String, dynamic>);
       case 'runtimeClosed':
         _terminate();
     }
@@ -528,14 +578,40 @@ class Bridge implements RuntimeHost {
     if (route == null) return;
     _release();
     if (event['ok'] == true) {
-      route.completer.complete(event['value']);
+      final value = event['value'];
+      final onValue = route.onValue;
+      if (onValue != null) {
+        try {
+          route.zone.runUnary(onValue, value);
+        } catch (error, stack) {
+          route.completer.completeError(error, stack);
+          return;
+        }
+      }
+      route.completer.complete(value);
     } else if (route.thrown != null) {
       route.completer.completeError(route.thrown!, route.stack);
     } else {
+      final message = event['error'] as String? ?? 'task failed';
+      final details = event['details'];
       route.completer.completeError(
-        StateError(event['error'] as String? ?? 'task failed'),
+        details is Map<String, dynamic>
+            ? TaskFailure(message, details)
+            : StateError(message),
       );
     }
+  }
+
+  /// One `observerChanged`: to the observer's listener, in its zone; an
+  /// exception there reaches that zone and changes nothing else. Nothing
+  /// follows a terminal snapshot, so its listener is removed.
+  void _observe(String observerId, Map<String, dynamic> snapshot) {
+    final observer = snapshot['closed'] == true
+        ? _observers.remove(observerId)
+        : _observers[observerId];
+    if (observer == null) return;
+    final (zone, listener) = observer;
+    zone.runUnaryGuarded(listener, snapshot);
   }
 
   void _effect(String effectId, Map<String, dynamic> operation) {
@@ -575,7 +651,7 @@ class Bridge implements RuntimeHost {
     }
     // Application code runs after this batch is dispatched, in the zone the
     // transaction was submitted from; the task completes only from Rust.
-    route.zone!.scheduleMicrotask(() {
+    route.zone.scheduleMicrotask(() {
       Future<void>.sync(() => run(transactionId)).then(
         (_) => _submitQuietly(
           callbackResultEnvelope(effectId, transactionId, ok: true),
@@ -608,6 +684,8 @@ class Bridge implements RuntimeHost {
       effect.cancel();
     }
     _handlers.clear();
+    // Every observer's terminal snapshot came before `runtimeClosed`.
+    _observers.clear();
     final remaining = _routes.values.toList();
     _routes.clear();
     for (final route in remaining) {

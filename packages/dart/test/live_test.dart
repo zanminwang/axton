@@ -522,10 +522,7 @@ void main() {
         // runtime keeps the arrival order between the membership tasks and the
         // inbound frame, so the worker sees the frame after the session it
         // belonged to became stale.
-        expect(
-          (await client.read('Entry', {'id': 'live'}))?['text'],
-          'first',
-        );
+        expect((await client.read('Entry', {'id': 'live'}))?['text'], 'first');
         expect(handshakes.last.containsKey('cursors'), isFalse);
         // The resubscribed channel restarts at cursor 0, but the record is
         // retained at stamp 1: the fresh session's pages need newer stamps.
@@ -1685,6 +1682,7 @@ void moreTests() {
       final errors = <Object>[];
       var allowPush = false;
       var breakReceipt = false;
+      var acknowledged = 0;
       final stamps = FakeStamps()..next = 10;
       Future<void> until(FutureOr<bool> Function() check) async {
         final deadline = DateTime.now().add(const Duration(seconds: 5));
@@ -1701,6 +1699,7 @@ void moreTests() {
           sockets.add(socket);
           socket.listen((message) {
             socket.add(ack(jsonDecode(message as String) as Map));
+            acknowledged++;
           });
           return;
         }
@@ -1744,7 +1743,9 @@ void moreTests() {
           ),
           onError: errors.add,
         );
-        await until(() => sockets.length == 1);
+        // A page before the acknowledgement is a protocol violation: the
+        // server streams only once it acknowledged the handshake.
+        await until(() => acknowledged == 1);
         sockets.first.add(
           jsonEncode({
             'cursors': {'scope': range(0, 1)},

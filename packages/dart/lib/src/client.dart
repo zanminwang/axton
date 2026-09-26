@@ -5,7 +5,6 @@ import 'live.dart';
 import 'port.dart';
 import 'subscriptions.dart';
 import 'dart:async';
-import 'dart:convert';
 
 /// Typed generated model APIs delegate to this generic native client.
 class Client implements WritePort, MutatePort {
@@ -18,7 +17,6 @@ class Client implements WritePort, MutatePort {
   bool _connecting = false;
   Completer<void>? _started;
   Future<void>? _closing;
-  final _changes = StreamController<void>.broadcast();
   final _completions = StreamController<Map<String, dynamic>>.broadcast(
     sync: true,
   );
@@ -63,59 +61,9 @@ class Client implements WritePort, MutatePort {
     );
   }
 
-  /// Subscription handles by persistent identity, and the status they publish.
-  late final Subscriptions _subscriptions = Subscriptions(
-    SubscriptionCommands(
-      subscribe: (scope) async => SubscriptionState.fromRecord(
-        (await _bridge.task({'kind': 'scopeSubscribe', 'scope': scope}))
-            as Map<String, dynamic>,
-      ),
-      state: (scope) async {
-        final state = await _bridge.task({
-          'kind': 'scopeState',
-          'scope': scope,
-        });
-        return state == null
-            ? null
-            : SubscriptionState.fromRecord(state as Map<String, dynamic>);
-      },
-      remove: (scope, subscriptionId) async =>
-          ((await _bridge.task({
-                'kind': 'scopeUnsubscribe',
-                'scope': scope,
-                'subscriptionId': subscriptionId,
-              }))
-              as Map<String, dynamic>)['removed'] ==
-          true,
-      removeScope: (scope) async {
-        await _bridge.task({
-          'kind': 'channel',
-          'channel': scope,
-          'subscribed': false,
-        });
-      },
-      // Registration and the state read of one identity's durable load: local
-      // tasks Rust runs in submission order, so calls for one Scope keep their
-      // order ([#151](https://github.com/zanminwang/axton/issues/151)).
-      requestBootstrap: (scope, subscriptionId) async =>
-          BootstrapRun.fromRecord(
-            (await _bridge.task({
-                  'kind': 'scopeBootstrap',
-                  'scope': scope,
-                  'subscriptionId': subscriptionId,
-                }))
-                as Map<String, dynamic>,
-          ),
-      bootstrapState: (scope, subscriptionId) async => BootstrapRun.fromRecord(
-        (await _bridge.task({
-              'kind': 'scopeBootstrapState',
-              'scope': scope,
-              'subscriptionId': subscriptionId,
-            }))
-            as Map<String, dynamic>,
-      ),
-    ),
-  );
+  /// Subscription handles by persistent identity, and the status the runtime
+  /// publishes for them.
+  late final Subscriptions _subscriptions = Subscriptions(_bridge);
 
   /// The Scope surface the generated `scopes` facade delegates to, with no
   /// logic of its own.
@@ -124,17 +72,13 @@ class Client implements WritePort, MutatePort {
   final Object _txZoneKey = Object();
   Object? _activeTxToken;
   Client._(this._bridge, this.clientId) {
-    _bridge.changed.listen((_) {
-      if (!_changes.isClosed) _changes.add(null);
-    });
     // What the runtime reports goes to the connection's `onError`.
     _bridge.reports.listen((diagnostic) => _connection?.report(diagnostic));
-    // Durable, direct and abandoned calls, after the commit that decided them.
+    // Durable, direct and abandoned calls, after the commit that decided
+    // them - including those a drop, a receipt or a page settled.
     _bridge.onCallCompleted = (callId, outcome) => _deliverCompletions([
       {'callId': callId, 'outcome': outcome},
     ]);
-    _bridge.onLaneSignal = (signal) =>
-        _subscriptions.signal(DownlinkSignal.fromJson(signal));
   }
   static Future<Client> open({
     required String path,
@@ -499,11 +443,9 @@ class Client implements WritePort, MutatePort {
         refreshAuth: refreshAuth,
         directTimeout: directTimeout,
         onClosed: () {
-          _subscriptions.detach();
           if (identical(_connection, connection)) _connection = null;
         },
       );
-      _subscriptions.attach();
       _connection = connection;
       return connection;
     } finally {
@@ -539,17 +481,15 @@ class Client implements WritePort, MutatePort {
   /// it with a receipt, apply one page. The connection never uses them.
   Future<String?> freeze() async =>
       await _bridge.task({'kind': 'freeze'}) as String?;
+
+  /// The runtime announces every completion the receipt settled as
+  /// `callCompleted`.
   Future<void> acknowledge(int sequence, Map<String, dynamic> receipt) async {
-    final applied =
-        (await _bridge.task({
-              'kind': 'ack',
-              'sequence': sequence,
-              'receipt': receipt,
-            }))
-            as Map<String, dynamic>;
-    _deliverCompletions(
-      (applied['completions'] as List).cast<Map<String, dynamic>>(),
-    );
+    await _bridge.task({
+      'kind': 'ack',
+      'sequence': sequence,
+      'receipt': receipt,
+    });
   }
 
   Future<Map<String, dynamic>> applyPull(Map<String, dynamic> page) async =>
@@ -581,10 +521,8 @@ class Client implements WritePort, MutatePort {
               'discardPending': discardPending,
             }))
             as Map<String, dynamic>;
-    // The replica that answered every handle is gone: no handle from before
-    // it names a registration of the file this client now reads. The runtime
-    // already completed every abandoned call.
-    _subscriptions.rebuilt();
+    // The runtime ended every handle of the replica left behind and completed
+    // every abandoned call before this completion.
     return report;
   }
 
@@ -595,65 +533,96 @@ class Client implements WritePort, MutatePort {
     await _bridge.task({'kind': 'readiness', 'key': key, 'state': state});
   }
 
+  /// The runtime announces the dropped call's completion as `callCompleted`.
   Future<void> drop(int ordinal) async {
-    final result =
-        (await _bridge.task({'kind': 'drop', 'ordinal': ordinal}))
-            as Map<String, dynamic>;
-    // The `drop` command answers its completions instead of emitting them.
-    _deliverCompletions(
-      (result['completions'] as List).cast<Map<String, dynamic>>(),
-    );
+    await _bridge.task({'kind': 'drop', 'ordinal': ordinal});
   }
 
   Future<void> dismissRejection(int ordinal) async {
     await _bridge.task({'kind': 'dismiss', 'ordinal': ordinal});
   }
 
+  /// The rows of [model] matching [where]: the committed result when the
+  /// stream is listened to, then every different result after a commit. The
+  /// runtime runs, re-runs and compares the query; this stream only delivers
+  /// what it publishes. A query that fails ends the stream with its error; a
+  /// later re-run that fails is reported to the connection's `onError` and the
+  /// watch stays. Cancelling unwatches; closing the client completes it.
   Stream<List<Map<String, dynamic>>> watch(
     String model, {
     Map<String, dynamic> where = const {},
-  }) {
-    return Stream<List<Map<String, dynamic>>>.multi((sink) {
-      String? previous;
-      bool cancelled = false;
-      Future<void> pending = Future<void>.value();
-      void refresh() {
-        pending = pending.then((_) async {
-          if (cancelled) return;
-          try {
-            final rows = await query(model, where: where);
-            final value = jsonEncode(rows);
-            if (!cancelled && value != previous) {
-              previous = value;
-              sink.add(rows);
-            }
-          } catch (e, st) {
-            if (!cancelled) sink.addError(e, st);
-          }
-        });
+  }) => Stream<List<Map<String, dynamic>>>.multi((sink) {
+    String? observer;
+    var cancelled = false;
+    void deliver(Map<String, dynamic> snapshot) {
+      // The terminal snapshot carries the rows already delivered.
+      if (snapshot['closed'] == true) {
+        observer = null;
+        sink.close();
+        return;
       }
+      sink.add((snapshot['rows'] as List).cast<Map<String, dynamic>>());
+    }
 
-      final sub = _changes.stream.listen((_) => refresh(), onDone: sink.close);
-      refresh();
-      sink.onCancel = () async {
-        cancelled = true;
-        await sub.cancel();
-      };
-    });
+    _bridge
+        .task(
+          {
+            'kind': 'watch',
+            'model': model,
+            'spec': {'filter': where},
+          },
+          onValue: (value) {
+            final id = (value as Map)['observerId'] as String;
+            // Cancelled before the runtime named the observer.
+            if (cancelled) {
+              unawaited(_unwatch(id));
+              return;
+            }
+            observer = id;
+            _bridge.listen(id, deliver);
+          },
+        )
+        .then<void>(
+          (_) {},
+          onError: (Object error, StackTrace stack) {
+            if (cancelled) return;
+            sink.addError(error, stack);
+            sink.close();
+          },
+        );
+    sink.onCancel = () {
+      cancelled = true;
+      final id = observer;
+      observer = null;
+      if (id == null) return null;
+      _bridge.unlisten(id);
+      return _unwatch(id);
+    };
+  });
+
+  /// Stop the runtime publishing [observerId]; a closed runtime already did.
+  Future<void> _unwatch(String observerId) async {
+    try {
+      await _bridge.task({'kind': 'unwatch', 'observerId': observerId});
+    } on StateError catch (error) {
+      if (error.message != 'client_closed') rethrow;
+    }
   }
 
   Future<void> close() => _closing ??= _finishClose();
 
   Future<void> _finishClose() async {
     _actionObservers.close();
-    _subscriptions.close();
+    // The runtime stops every handle and watch with a terminal snapshot before
+    // it announces its end.
+    _subscriptions.closing();
     await _started?.future;
     await _connection?.close();
     try {
       await _bridge.close();
     } finally {
       _closed = true;
-      await _changes.close();
+      _subscriptions.close();
       await _completions.close();
     }
   }

@@ -440,6 +440,124 @@ void main() {
       }
     },
   );
+
+  // Local watch: the runtime runs the query, re-runs it after every commit and
+  // publishes only a different result; the stream delivers what it publishes
+  // (#134).
+  group('local watch', () {
+    late Fixture fixture;
+    late Client client;
+    setUp(() async {
+      fixture = await Fixture.create('axton-dart-watch-');
+      client = await fixture.open();
+      await seed(client);
+    });
+    tearDown(() async {
+      await client.close();
+      await fixture.dispose();
+    });
+
+    List<String?> texts(List<Map<String, dynamic>> rows) =>
+        rows.map((row) => row['text'] as String?).toList();
+
+    test(
+      'delivers the committed rows, then each different result, until cancelled',
+      () async {
+        final seen = <List<String?>>[];
+        final watching = client
+            .watch('Entry')
+            .listen((rows) => seen.add(texts(rows)));
+        await _eventually(() => seen.isNotEmpty, 'the initial snapshot');
+        expect(seen, [
+          ['hello'],
+        ]);
+        // A commit that changes nothing this query reads is not a new result.
+        await client.direct(update('hello'));
+        await client.direct(update('world'));
+        await _eventually(() => seen.length == 2, 'the changed result');
+        await pumpEventQueue();
+        expect(seen, [
+          ['hello'],
+          ['world'],
+        ], reason: 'an equal result is suppressed');
+        await watching.cancel();
+        await client.direct(update('again'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(seen, hasLength(2), reason: 'a cancelled watch hears nothing');
+      },
+    );
+
+    test('a filtered watch sees only its own rows', () async {
+      final seen = <List<String?>>[];
+      final watching = client
+          .watch('Entry', where: {'text': 'other'})
+          .listen((rows) => seen.add(texts(rows)));
+      await _eventually(() => seen.isNotEmpty, 'the initial snapshot');
+      expect(seen.single, isEmpty);
+      await client.direct(update('other'));
+      await _eventually(() => seen.length == 2, 'the matching row');
+      expect(seen.last, ['other']);
+      await watching.cancel();
+    });
+
+    test(
+      'a throwing listener is reported and later results still arrive',
+      () async {
+        final seen = <List<String?>>[];
+        final reported = <Object>[];
+        late StreamSubscription<List<Map<String, dynamic>>> watching;
+        runZonedGuarded(() {
+          watching = client.watch('Entry').listen((rows) {
+            seen.add(texts(rows));
+            if (seen.length == 1) throw StateError('listener failed');
+          });
+        }, (error, _) => reported.add(error));
+        await _eventually(() => seen.isNotEmpty, 'the initial snapshot');
+        await client.direct(update('after'));
+        await _eventually(() => seen.length == 2, 'the next result');
+        expect(seen.last, ['after']);
+        expect(reported, [
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'listener failed',
+          ),
+        ]);
+        expect(await text(client), 'after', reason: 'the commit stands');
+        await watching.cancel();
+      },
+    );
+
+    test('closing the client completes every watch', () async {
+      final seen = <List<String?>>[];
+      final done = Completer<void>();
+      client
+          .watch('Entry')
+          .listen((rows) => seen.add(texts(rows)), onDone: done.complete);
+      await _eventually(() => seen.isNotEmpty, 'the initial snapshot');
+      await client.close();
+      await done.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => fail('the watch did not complete'),
+      );
+      expect(seen, [
+        ['hello'],
+      ], reason: 'the terminal snapshot repeats no result');
+    });
+
+    test('a watch whose query fails reports it and ends', () async {
+      final errors = <Object>[];
+      final done = Completer<void>();
+      client
+          .watch('Missing')
+          .listen((_) {}, onError: errors.add, onDone: done.complete);
+      await done.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => fail('the failed watch did not end'),
+      );
+      expect(errors, [isA<StateError>()]);
+    });
+  });
 }
 
 /// Poll [condition] until it holds or five seconds pass.

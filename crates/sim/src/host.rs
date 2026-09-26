@@ -199,23 +199,57 @@ impl MemHost {
             .membership
             .contains_key(&encoded(key))
     }
-    /// One business change to `key`, distributed to `channels`: the stamp advances
-    /// once and every channel is invalidated at that same stamp. This is what
-    /// `axton_server::publish` does for an external notification.
+    /// One business change to `key`, distributed to `channels` by low-level
+    /// publication: the stamp advances once, the record is enrolled in every
+    /// channel it is not yet a member of (a scan answers members only), and
+    /// every channel is invalidated at that same stamp. Other memberships are
+    /// left alone and not published to, so a change can reach a subset.
     pub fn notify(&self, key: &RecordKey, channels: &[&str]) {
         let mut s = self.0.lock().unwrap();
         let stamp = advance(&mut s.tables, key);
         for c in channels {
+            set_stored_membership(&mut s.tables, c, key, true).expect("stamped record");
             publish_at(&mut s.tables, c, key, stamp).expect("current stamp");
         }
     }
     /// Republish `key` on `channel` at its current stamp, initializing the stamp at 1
-    /// only if the record has none: a channel learning of an existing record, which
-    /// never advances its version.
+    /// only if the record has none and enrolling it first: a channel learning of an
+    /// existing record, which never advances its version.
     pub fn ensure_publish(&self, key: &RecordKey, channel: &str) {
         let mut s = self.0.lock().unwrap();
         let stamp = ensure(&mut s.tables, key);
+        set_stored_membership(&mut s.tables, channel, key, true).expect("stamped record");
         publish_at(&mut s.tables, channel, key, stamp).expect("current stamp");
+    }
+    /// One application transaction outside any push (`backend.transaction`):
+    /// apply `writes` to the business rows, then settle `changes` and the
+    /// ordered membership intents through `axton_server::settle_external`.
+    /// A failure rolls every table back, business rows included.
+    pub fn transact(
+        &self,
+        writes: &[(RecordKey, Option<Value>)],
+        changes: Vec<RecordRef>,
+        memberships: Vec<MembershipIntent>,
+    ) -> Result<(), String> {
+        self.transaction(|| {
+            {
+                let mut s = self.0.lock().unwrap();
+                for (key, state) in writes {
+                    match state {
+                        Some(v) => s.tables.records.insert(encoded(key), v.clone()),
+                        None => s.tables.records.remove(&encoded(key)),
+                    };
+                }
+            }
+            let settlement = json!({"changes": changes, "memberships": memberships});
+            block_on(axton_server::settle_external(
+                &crate::schema::config(),
+                &settlement,
+                self,
+            ))
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        })
     }
     pub fn set_state(&self, key: &RecordKey, state: Option<Value>) {
         let mut s = self.0.lock().unwrap();
@@ -850,11 +884,18 @@ impl Host for MemHost {
                     after,
                     limit,
                 } => {
+                    // `SQL.SCAN`: only rows whose record is still a member of
+                    // the channel, filtered before the limit, so removed
+                    // positions are holes no page returns or counts.
                     let mut rows: Vec<&Invalidation> = s
                         .tables
                         .invalidations
                         .iter()
-                        .filter(|((c, _), row)| *c == channel && row.cursor > after)
+                        .filter(|((c, record), row)| {
+                            *c == channel
+                                && row.cursor > after
+                                && s.tables.memberships.contains(&(record.clone(), c.clone()))
+                        })
                         .map(|(_, row)| row)
                         .collect();
                     rows.sort_by_key(|row| row.cursor);
@@ -1394,8 +1435,9 @@ mod tests {
             &entry_key("e1"),
             Some(json!({"id":"e1","text":"in b","note":null})),
         );
-        // Published on a channel outside its membership: the content is the same on
-        // every delivery path, membership only decides where it is routed.
+        // Published on a channel outside its routing (`notify` enrolls it there
+        // first): the content is the same on every delivery path, membership
+        // only decides where it is distributed.
         host.notify(&entry_key("e1"), &["a", "b"]);
         let page_a = pull(&host, "a", 0);
         assert_eq!(page_a.changes.len(), 1);

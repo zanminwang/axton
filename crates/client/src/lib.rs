@@ -12,6 +12,7 @@ mod mutate;
 mod policies;
 mod push;
 pub mod query;
+pub mod query_cache;
 pub mod queue;
 pub mod rows;
 pub mod schema_store;
@@ -25,6 +26,7 @@ pub use connection::*;
 pub use downlink_worker::*;
 pub use live::*;
 pub use query::{Direction, QueryOrder, QuerySpec};
+pub use query_cache::{QueryCacheEntry, QueryCacheKey, QueryOnce, QueryOnceOptions};
 pub use store::*;
 pub use subscriptions::{Initialization, SubscriptionState};
 pub use transport::*;
@@ -205,6 +207,10 @@ pub struct Client<S: ClientStore> {
     pulls: PullLedger,
     schema_state: SchemaState,
     origin: Option<Origin<S>>,
+    /// Fingerprint of `schema` partitioning saved Query results.
+    query_contract: String,
+    /// Active Query once requests of this runtime; memory-only.
+    query_flights: query_cache::QueryFlights,
 }
 
 /// Where a client opened through [`Client::open_at`] came from: the path the
@@ -355,10 +361,12 @@ impl<S: ClientStore> Client<S> {
         }
         store.execute_batch(ddl::FRAMEWORK_DDL)?;
         ddl::add_framework_columns(&mut store)?;
+        let query_contract = query_cache::contract_fingerprint(&schema)?;
         store.begin()?;
         let opened = (|| {
             ddl::reconcile(&mut store, &schema)?;
             schema_store::write_descriptor(&mut store, &schema)?;
+            query_cache::prune(&mut store, &query_contract)?;
             let row = store.query("SELECT client_id, generation FROM axton_client", &[])?;
             let (client_id, generation) = match row.rows.first() {
                 Some(r) => (
@@ -401,6 +409,8 @@ impl<S: ClientStore> Client<S> {
             pulls: PullLedger::default(),
             schema_state: SchemaState::default(),
             origin: None,
+            query_contract,
+            query_flights: Default::default(),
         })
     }
     /// Open the database the application names by `path`, choosing the file

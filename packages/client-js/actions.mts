@@ -28,6 +28,39 @@ export type CallOutcome<T> =
 export type CallOptions<K extends string = string> = {
   store?: boolean | Partial<Record<K, boolean>>;
 };
+/**
+ * Direct Query controls, kept apart from business args and never sent to the
+ * backend. `once` reuses the complete result saved by an earlier successful
+ * `once` call with equal arguments and store policy, or saves this one; the
+ * snapshot is persisted even with `store: false`. `refresh` (only with
+ * `once`) always requests and replaces the snapshot on success.
+ */
+export type OnceOptions =
+  { once?: false; refresh?: false } | { once: true; refresh?: boolean };
+/** Invocation options of a direct Query: store policy plus once controls. */
+export type QueryOptions<K extends string = string> = CallOptions<K> &
+  OnceOptions;
+const invalidOptions = (message: string) =>
+  new CallError("action.invalid_options", "rejected", Error(message));
+/** Mutations and `enqueue` accept no once controls, even from dynamic callers. */
+export function assertCallOptions(options: unknown): void {
+  const value = options as { once?: unknown; refresh?: unknown } | undefined;
+  if (value?.once !== undefined || value?.refresh !== undefined)
+    throw invalidOptions("once and refresh apply only to direct Queries");
+}
+/** Validate a direct Query's once controls before any I/O. */
+export function onceControls(options: unknown): {
+  once: boolean;
+  refresh: boolean;
+} {
+  const value = options as { once?: unknown; refresh?: unknown } | undefined;
+  const once = value?.once ?? false;
+  const refresh = value?.refresh ?? false;
+  if (typeof once !== "boolean" || typeof refresh !== "boolean")
+    throw invalidOptions("once and refresh must be booleans");
+  if (refresh && !once) throw invalidOptions("refresh requires once: true");
+  return { once, refresh };
+}
 export interface Call<T> {
   readonly status: CallStatus;
   wait(): Promise<CallOutcome<T>>;

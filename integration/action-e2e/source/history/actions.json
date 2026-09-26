@@ -61,6 +61,34 @@
         "version": 1
       }
     },
+    "CountTodos": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [],
+        "kind": "query",
+        "name": "CountTodos",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "count",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "int"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      }
+    },
     "DeleteTodo": {
       "1": {
         "input": {
@@ -453,6 +481,88 @@
             "cardinality": "single",
             "kind": "value",
             "name": "messageId",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      }
+    },
+    "TodoPage": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "query",
+            "nullable": true,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "kind": "query",
+        "name": "TodoPage",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "list",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "todos",
+            "source": "handlerIdentity"
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "count",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "int"
+            }
+          },
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "asOf",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "cardinality": "optional",
+            "kind": "value",
+            "name": "next",
             "source": "handlerValue",
             "type": {
               "kind": "scalar",

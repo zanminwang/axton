@@ -8,6 +8,8 @@ export async function createFixture() {
   let handlerCalls = 0;
   let loaderCalls = 0;
   let queryCalls = 0;
+  const onceCalls = { todoPage: 0, countTodos: 0 };
+  let failQueries = false;
   const mutations: Mutations<PgClient> = {
     async addTodo({ ctx, args }) {
       handlerCalls++;
@@ -53,6 +55,17 @@ export async function createFixture() {
         return { todos: rows.map((row) => ({ id: String(row.id) })), first: rows[0] ? { id: String(rows[0].id) } : null, count: rows.length, labels: rows.map((row) => String(row.id)), hint: args.query };
       },
     },
+    // Each execution has a distinct asOf, so a reused result is observable.
+    async todoPage({ ctx, args }) {
+      onceCalls.todoPage++;
+      if (failQueries) throw new CallRejected("query.down");
+      const rows = (await ctx.tx.query("SELECT id FROM action_e2e_todo WHERE ($1::text IS NULL OR title ILIKE '%' || $1 || '%') ORDER BY id", [args.query])).rows;
+      return { todos: rows.map((row) => ({ id: String(row.id) })), count: rows.length, asOf: new Date(Date.UTC(2026, 0, 1, 0, 0, onceCalls.todoPage)), next: rows.length ? `after:${rows[rows.length - 1].id}` : null };
+    },
+    async countTodos({ ctx }) {
+      onceCalls.countTodos++;
+      return { count: Number((await ctx.tx.query("SELECT COUNT(*)::int AS n FROM action_e2e_todo")).rows[0].n) };
+    },
   };
   const loaders: Loaders<PgClient> = {
     async todo({ ids, tx }) {
@@ -73,6 +86,9 @@ export async function createFixture() {
     get handlerCalls() { return handlerCalls; },
     get queryCalls() { return queryCalls; },
     get loaderCalls() { return loaderCalls; },
+    /** Real handler executions of the once-test Queries. */
+    onceCalls,
+    set failQueries(value: boolean) { failQueries = value; },
     async initialize() {
       const migration = await readFile(new URL("../../packages/postgres/migration.sql", import.meta.url), "utf8");
       for (const sql of migration.split(";").map((statement) => statement.trim()).filter(Boolean)) await pool.query(sql);

@@ -105,16 +105,22 @@ class DirectMutations {
  final Client client; DirectMutations(this.client);
  Future<PingOutput> ping({PingStore? store}) => client.invokeDirectAction<PingOutput>('Ping', 1, {}, (_) {}, store: store);
 }
-/// Queries resolve with the backend result (direct); [enqueue] accepts them durably.
+/// Queries resolve with the backend result (direct); `once` reuses a saved complete result, [enqueue] accepts them durably and [invalidate] discards saved results.
 class Queries {
  final Client client; Queries(this.client);
  late final QueuedQueries enqueue = QueuedQueries(client);
- Future<ClockOutput> clock({required DateTime at, ClockStore? store}) => client.invokeDirectAction<ClockOutput>('Clock', 2, {'at': _dartActionEncode(at)}, (value) { final row = (value as Map).cast<String,dynamic>(); return ClockOutput(at: DateTime.parse(row['at'] as String)); }, store: store);
+ late final QueryInvalidations invalidate = QueryInvalidations(client);
+ Future<ClockOutput> clock({required DateTime at, ClockStore? store, bool once = false, bool refresh = false}) => client.invokeQuery<ClockOutput>('Clock', 2, {'at': _dartActionEncode(at)}, (value) { final row = (value as Map).cast<String,dynamic>(); return ClockOutput(at: DateTime.parse(row['at'] as String)); }, store: store, once: once, refresh: refresh);
 }
 /// Queries accepted durably; each reads when it executes.
 class QueuedQueries {
  final Client client; QueuedQueries(this.client);
  Future<Call<ClockOutput>> clock({required DateTime at, ClockStore? store}) => client.invokeAction<ClockOutput>('Clock', 2, {'at': _dartActionEncode(at)}, (value) { final row = (value as Map).cast<String,dynamic>(); return ClockOutput(at: DateTime.parse(row['at'] as String)); }, store: store);
+}
+/// Discards the saved `once` results of one Query argument set, for every store policy.
+class QueryInvalidations {
+ final Client client; QueryInvalidations(this.client);
+ Future<void> clock({required DateTime at}) => client.invalidateQuery('Clock', 2, {'at': _dartActionEncode(at)});
 }
 class LiveModels { final Client port; LiveModels(this.port);
 

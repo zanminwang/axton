@@ -568,6 +568,26 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 }
             }
             DownlinkAction::Bootstrap(state) => self.observe_run(state),
+            // The replica was rebuilt: the runtime already cancelled the old
+            // replica's lane effects when it reset the worker; whatever is
+            // still held for it goes now, before the worker opens or requests
+            // anything for the new one (#162).
+            DownlinkAction::Reset => {
+                if let Some((_, epoch)) = self
+                    .connection
+                    .as_ref()
+                    .and_then(|c| c.downlink.socket.clone())
+                {
+                    self.abandon_session(epoch);
+                }
+                self.cancel_lane_effects(false);
+            }
+            // A stored Bootstrap row the ledger cannot decode: the application
+            // hears about the contained registration once per unchanged
+            // defect; no status transition accompanies it (#163).
+            DownlinkAction::LedgerIssue { channel, message } => {
+                self.error(format!("bootstrap ledger {channel}: {message}"));
+            }
             DownlinkAction::Wake { .. } => self.wake_push(),
             DownlinkAction::Report { reports } => self.report(Diagnostic::Records { reports }),
             DownlinkAction::Changed { scopes } => self.scopes_changed(&scopes),

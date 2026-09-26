@@ -417,7 +417,12 @@ impl RuntimeHost {
                             .unwrap_or(false);
                         let report = e.client.rebuild(discard)?;
                         e.cycle = SyncCycle::default();
-                        e.downlink = DownlinkWorker::default();
+                        // Reset in place, never replaced: the lane keeps the
+                        // application's running, paused or stopped intent,
+                        // and its epoch and request ids keep growing, so
+                        // nothing the old replica's I/O still delivers
+                        // matches the new one's (#162).
+                        e.downlink.reset_for_rebuild();
                         json!({"oldFile":report.old_file,"newFile":report.new_file,"reason":report.reason,"leftPending":report.left_pending,"leftDirect":report.left_direct,"abandonedCalls":abandoned_json(&report.abandoned_calls)})
                     }
                     _ => return Err(invalid(format!("unknown client command {op}"))),

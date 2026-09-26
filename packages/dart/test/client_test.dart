@@ -345,4 +345,108 @@ void main() {
       }
     },
   );
+
+  /// A rebuild resets the worker behind a connected lane that is asleep with no
+  /// timer; the client wakes it once the native rebuild answered, so the
+  /// carried Channel is subscribed again without another `connect` or `start`.
+  /// The TypeScript twin is `a rebuild wakes the sleeping downlink lane without
+  /// another start` ([#162](https://github.com/zanminwang/axton/issues/162)).
+  test(
+    'a rebuild wakes the sleeping downlink lane without another start',
+    () async {
+      final fixture = await Fixture.create('axton-dart-rebuild-wake-');
+      final breaking =
+          jsonDecode(jsonEncode(fixture.schema)) as Map<String, dynamic>;
+      (breaking['models'][0]['fields'] as List).add({
+        'name': 'due',
+        'nullable': false,
+        'type': {'kind': 'scalar', 'name': 'string'},
+      });
+      // Sockets are accepted and never acknowledged, and HTTP never answers: once
+      // it opened its socket, the lane has nothing to do until it is woken.
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final handshakes = <Map<String, dynamic>>[];
+      final sockets = <WebSocket>[];
+      final closed = <Completer<void>>[];
+      final served = server.listen((request) async {
+        if (!WebSocketTransformer.isUpgradeRequest(request)) return;
+        final socket = await WebSocketTransformer.upgrade(request);
+        final done = Completer<void>();
+        sockets.add(socket);
+        closed.add(done);
+        socket.listen(
+          (message) => handshakes.add(
+            jsonDecode(message as String) as Map<String, dynamic>,
+          ),
+          onDone: done.complete,
+          onError: (Object _) {},
+        );
+      });
+      Client? client;
+      RuntimeConnection? connection;
+      try {
+        client = await fixture.open();
+        await client.subscribe('scope');
+        // Unsent work keeps the incompatible file open, so the rebuild happens
+        // with this client - and its lane - already connected.
+        await client.mutate({
+          'name': 'Create',
+          'operations': [
+            {
+              'model': 'Entry',
+              'op': 'create',
+              'identity': {'id': 'e'},
+              'values': {'text': 'A', 'note': null},
+            },
+          ],
+        });
+        await client.close();
+        client = await Client.open(
+          path: fixture.path,
+          schema: breaking,
+          libraryPath: Platform.environment['AXTON_LIBRARY']!,
+        );
+        final reported = <Object>[];
+        connection = await client.connect(
+          SyncServer(url: 'http://127.0.0.1:${server.port}', token: () => 't'),
+          onError: reported.add,
+        );
+        await _eventually(() => handshakes.length == 1, 'the first handshake');
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(handshakes, hasLength(1), reason: 'the lane sleeps until woken');
+        await client.rebuild(discardPending: true);
+        await _eventually(
+          () => handshakes.length == 2,
+          'the carried Channel subscribed again after the rebuild',
+        );
+        expect(handshakes[1]['channels'], ['scope']);
+        await closed[0].future.timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => fail('the old socket was not abandoned'),
+        );
+        expect(closed[1].isCompleted, isFalse, reason: 'the new socket stays');
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(handshakes, hasLength(2), reason: 'one session per wake');
+        expect(reported, isEmpty);
+      } finally {
+        await connection?.close();
+        await client?.close();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await served.cancel();
+        await server.close(force: true);
+        await fixture.dispose();
+      }
+    },
+  );
+}
+
+/// Poll [condition] until it holds or five seconds pass.
+Future<void> _eventually(bool Function() condition, String what) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) fail('$what timed out');
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
 }

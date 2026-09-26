@@ -77,13 +77,61 @@ import {
   ActionRegistry,
   CallError,
   actionError,
+  assertCallOptions,
+  onceControls,
   type Call,
   type CallOptions,
+  type QueryOptions,
 } from "./actions.mts";
 
-/** The native command field for an Action's store option, beside its args. */
+/**
+ * The native command field for an Action's store option, beside its args.
+ * Once controls never reach this seam: Mutations and `enqueue` refuse them.
+ */
 function storeOption(options?: CallOptions): { store?: unknown } {
+  assertCallOptions(options);
   return options?.store === undefined ? {} : { store: options.store };
+}
+type DirectOutcome = {
+  status: string;
+  result?: unknown;
+  code?: string;
+  execution?: string;
+};
+/** Decode one caller's result from a terminal direct outcome. */
+function decodeOutcome<T>(
+  outcome: DirectOutcome | undefined,
+  decode: (value: unknown) => T,
+): T {
+  if (!outcome) throw new CallError("action.observation_failed");
+  if (outcome.status === "failed")
+    throw new CallError(
+      outcome.code ?? "action.failed",
+      outcome.execution === "rejected" ? "rejected" : "unknown",
+    );
+  try {
+    return decode(outcome.result);
+  } catch (cause) {
+    throw new CallError("action.observation_failed", "unknown", cause);
+  }
+}
+/**
+ * One active once request shared by every caller Rust joins to it. It holds
+ * the raw outcome text only until settlement; each caller parses and decodes
+ * its own copy, so no caller can mutate another's result.
+ */
+class QueryFlight {
+  readonly promise: Promise<string>;
+  resolve!: (outcome: string) => void;
+  reject!: (error: unknown) => void;
+  constructor() {
+    this.promise = new Promise((resolve, reject) => {
+      this.resolve = resolve;
+      this.reject = reject;
+    });
+    // Settled callers observe it; an unobserved rejection is not an error.
+    this.promise.catch(() => {});
+  }
 }
 /** Report an application callback's failure without changing what was committed. */
 function reportActionCallbackError(error: unknown): void {
@@ -117,6 +165,8 @@ export function createClient<
     #directOnError: ((error: unknown) => void) | undefined;
     #completionListeners = new Set<(completion: any) => void>();
     #actions = new ActionRegistry();
+    /** Active once flights by Rust flight ID; removed at their terminal step. */
+    #queryFlights = new Map<string, QueryFlight>();
     #connecting = false;
     #started: Promise<void> | undefined;
     #closing: Promise<void> | undefined;
@@ -312,18 +362,176 @@ export function createClient<
       } catch (error) {
         throw actionError(error);
       }
-      const outcome = applied.completions[0]?.outcome;
-      if (!outcome) throw new CallError("action.observation_failed");
-      if (outcome.status === "failed")
-        throw new CallError(
-          outcome.code ?? "action.failed",
-          outcome.execution === "rejected" ? "rejected" : "unknown",
-        );
+      return decodeOutcome(applied.completions[0]?.outcome, decode);
+    }
+    /**
+     * Execute a direct Query. Without `once` it is exactly
+     * [`invokeDirectAction`]: a fresh request that reads and writes no
+     * snapshot. With `once`, Rust decides: a saved result is decoded without
+     * any request or Model write, an active request is joined, or a new one
+     * is executed and its successful result saved with its authority.
+     */
+    async invokeQuery<T>(
+      name: string,
+      version: number,
+      args: object,
+      decode: (value: unknown) => T,
+      options?: QueryOptions,
+    ): Promise<T> {
+      const { once, refresh } = onceControls(options);
+      const call: CallOptions =
+        options?.store === undefined ? {} : { store: options.store };
+      if (!once)
+        return this.invokeDirectAction(name, version, args, decode, call);
+      let outcome: string;
       try {
-        return decode(outcome.result);
-      } catch (cause) {
-        throw new CallError("action.observation_failed", "unknown", cause);
+        outcome = await this.#queryOnce(name, version, args, refresh, call);
+      } catch (error) {
+        throw actionError(error);
       }
+      return decodeOutcome(JSON.parse(outcome), decode);
+    }
+    /**
+     * Discard the saved once results of one Query argument set, every store
+     * variant, in a local transaction. Needs no network; an older request
+     * still in flight cannot save its result afterwards.
+     */
+    async invalidateQuery(
+      name: string,
+      version: number,
+      args: object,
+    ): Promise<void> {
+      try {
+        if (this.#activePublicTx?.inCallback())
+          throw Error("transaction_active");
+        await this.#exclusive(() =>
+          this.#send({ op: "invalidateQueryOnce", name, version, args }),
+        );
+      } catch (error) {
+        throw actionError(error);
+      }
+    }
+    /** The raw outcome text of a once call: cached, joined or fetched. */
+    async #queryOnce(
+      name: string,
+      version: number,
+      args: object,
+      refresh: boolean,
+      options: CallOptions,
+    ): Promise<string> {
+      if (this.#activePublicTx?.inCallback()) throw Error("transaction_active");
+      // The decision and the flight registration share one exclusive step,
+      // so a later decision that joins this flight always finds it.
+      const decision = await this.#exclusive(async () => {
+        const decided = await this.#send({
+          op: "queryOnce",
+          name,
+          version,
+          args,
+          refresh,
+          ...storeOption(options),
+        });
+        if (decided.decision === "cached")
+          return {
+            cached: JSON.stringify({
+              status: "succeeded",
+              result: decided.result,
+            }),
+          };
+        if (decided.decision === "join") {
+          const flight = this.#queryFlights.get(decided.flightId);
+          if (!flight) throw directFailure("action.execution_unknown");
+          return { flight };
+        }
+        const direct = this.#direct;
+        if (!direct) {
+          await this.#send({ op: "failQueryOnce", flightId: decided.flightId });
+          throw directFailure("action.unavailable");
+        }
+        const flight = new QueryFlight();
+        this.#queryFlights.set(decided.flightId, flight);
+        return {
+          flight,
+          fetch: {
+            flightId: decided.flightId as string,
+            body: decided.body as string,
+            direct,
+          },
+        };
+      });
+      if (decision.cached !== undefined) return decision.cached;
+      if (decision.fetch)
+        void this.#runQueryFlight(decision.fetch, decision.flight);
+      return decision.flight.promise;
+    }
+    /** Execute one fetched flight and settle every caller joined to it. */
+    async #runQueryFlight(
+      fetch: { flightId: string; body: string; direct: DirectConnection },
+      flight: QueryFlight,
+    ): Promise<void> {
+      const { flightId, body, direct } = fetch;
+      /** Release the Rust flight and fail its callers. */
+      const release = async (error: unknown) => {
+        await this.#exclusive(async () => {
+          if (this.#queryFlights.get(flightId) !== flight) return;
+          this.#queryFlights.delete(flightId);
+          await this.#send({ op: "failQueryOnce", flightId });
+        }).catch(() => {});
+        flight.reject(error);
+      };
+      let response: string;
+      try {
+        response = await direct.requestAction(body);
+      } catch (error) {
+        return release(
+          (error as { code?: string })?.code
+            ? error
+            : Object.assign(directFailure("action.execution_unknown"), {
+                cause: error,
+              }),
+        );
+      }
+      let applied: { completions: any[]; reports: ReportDetails[] };
+      try {
+        applied = await this.#exclusive(async () => {
+          if (this.#direct !== direct)
+            throw directFailure("action.execution_unknown");
+          const parsed = JSON.parse(response);
+          // Rust retires the flight on every outcome of this command.
+          this.#queryFlights.delete(flightId);
+          return this.#send({
+            op: "finishQueryOnce",
+            flightId,
+            response: parsed,
+          });
+        });
+      } catch (error) {
+        if (this.#queryFlights.get(flightId) === flight)
+          return release(
+            (error as { code?: string })?.code
+              ? error
+              : Object.assign(directFailure("action.execution_unknown"), {
+                  cause: error,
+                }),
+          );
+        return flight.reject(
+          (error as { code?: string })?.code
+            ? error
+            : Object.assign(directFailure("action.execution_unknown"), {
+                cause: error,
+              }),
+        );
+      }
+      this.#deliverCompletions(applied.completions);
+      for (const report of applied.reports)
+        try {
+          this.#directOnError?.(new AxtonReport(report));
+        } catch (error) {
+          reportActionCallbackError(error);
+        }
+      const outcome = applied.completions[0]?.outcome;
+      if (outcome) flight.resolve(JSON.stringify(outcome));
+      else flight.reject(new CallError("action.observation_failed"));
     }
     /** Internal Action seam: register after local commit, synchronously before waking work. */
     submitAction(
@@ -742,6 +950,9 @@ export function createClient<
     }
     close(): Promise<void> {
       this.#actions.close();
+      for (const flight of this.#queryFlights.values())
+        flight.reject(new CallError("client.closed"));
+      this.#queryFlights.clear();
       this.#subscriptions.close();
       return (this.#closing ??= this.#finishClose());
     }

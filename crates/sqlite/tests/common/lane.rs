@@ -147,11 +147,19 @@ impl Lane {
             "an enqueue decides nothing: the pump answers"
         );
     }
-    /// One bounded pump: at most one page application.
+    /// One bounded pump: at most one page application, and at most one sleep.
+    /// Both host loops sleep the last `wait` of a pump, so a pump that asked
+    /// for two would silently discard the earlier - and shorter - one.
     pub fn pump(&mut self) -> Vec<DownlinkAction> {
-        self.worker
+        let actions = self
+            .worker
             .handle(&mut self.client, DownlinkEvent::Next, self.now, 500)
-            .unwrap()
+            .unwrap();
+        assert!(
+            actions.iter().filter(|a| waiting(a)).count() <= 1,
+            "one pump asks for one sleep: {actions:?}"
+        );
+        actions
     }
     /// The host loop: pump until the worker waits or has nothing left, in order.
     pub fn drain(&mut self) -> Vec<DownlinkAction> {

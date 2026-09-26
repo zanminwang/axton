@@ -904,3 +904,81 @@ fn a_pause_keeps_the_slot_and_a_resume_clears_the_deferral() {
     let (_, next) = only(&lane.send(DownlinkEvent::Resume));
     assert_eq!(next.after, 40, "the next page follows the resume");
 }
+
+/// A load is scheduled independently of the live socket: with the socket deep
+/// in its reconnect backoff, HTTP still works, so page follows page on the
+/// load's own clock and the lane's one sleep is the earlier of the two
+/// schedules - never the socket's when the load wants a pump sooner.
+#[test]
+fn the_socket_backoff_never_paces_the_historical_pages() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lane = Lane::new(dir.path());
+    // A boundary committed by an earlier session, so the interval is bounded
+    // without this lane ever getting a handshake.
+    lane.saved("a", 100);
+    // Every socket is refused, so the driver climbs to its 30 s cap.
+    let mut actions = lane.send(DownlinkEvent::Start);
+    let mut socket = 0;
+    for _ in 0..8 {
+        let (epoch, _) = opened(&actions[0]);
+        let closed = lane.send(DownlinkEvent::Closed { epoch });
+        socket = wait(closed.last().expect("the lane retries its socket"));
+        if socket >= 20_000 {
+            break;
+        }
+        lane.now += socket;
+        actions = lane.drain();
+    }
+    assert!(
+        socket >= 20_000,
+        "the socket is far into its backoff: {socket}"
+    );
+    // The first page goes out while the socket is waiting: a load rides on the
+    // lane, not on the session.
+    let asked = lane.register("a");
+    let (first, request) = only(&asked);
+    assert_eq!((request.after, request.until), (0, 100));
+    // The page commits, and the next one is asked for in the same host loop:
+    // no sleep comes between the commit and the request that follows it.
+    let applied = lane.answer(first, historical("a", 0, 40, 100, 130, vec![]));
+    let state = announced(&applied[0]);
+    assert_eq!(
+        (state.state, state.cursor),
+        (BootstrapPhase::Loading, 40),
+        "the first page committed: {applied:?}"
+    );
+    let (second, next) = only(&applied);
+    let issued = applied
+        .iter()
+        .position(|action| matches!(action, DownlinkAction::Request { .. }))
+        .expect("the next page");
+    assert_eq!((next.after, next.until), (40, 100));
+    assert!(
+        applied.iter().take(issued).all(|action| !waiting(action)),
+        "the socket's backoff must not delay the next page: {applied:?}"
+    );
+    // And a load the transport deferred sleeps on its own 250 ms backoff, not
+    // on the socket's: one sleep for the lane, and it is the earlier one.
+    let deferred = lane.send(DownlinkEvent::Failed {
+        request: second,
+        reason: Some("offline".into()),
+        status: None,
+    });
+    let sleeps: Vec<u64> = deferred.iter().filter(|a| waiting(a)).map(wait).collect();
+    assert_eq!(
+        sleeps.len(),
+        1,
+        "one sleep for the whole lane: {deferred:?}"
+    );
+    assert!(
+        (200..=250).contains(&sleeps[0]) && sleeps[0] < socket,
+        "the lane sleeps on the load's due, not the socket's {socket}: {deferred:?}"
+    );
+    lane.now += sleeps[0];
+    let (_, again) = only(&lane.drain());
+    assert_eq!(
+        (again.after, again.until),
+        (40, 100),
+        "the deferred page went out on its own schedule, with the socket still waiting"
+    );
+}

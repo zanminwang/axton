@@ -177,12 +177,11 @@ impl Loading {
         };
     }
     /// A transport failure: hold the next attempt back, keeping the run.
-    fn defer(&mut self, now: u64, entropy: u64) -> u64 {
+    fn defer(&mut self, now: u64, entropy: u64) {
         let delay = ConnectionDriver::backoff(self.attempt, entropy);
         self.attempt = self.attempt.saturating_add(1);
         self.due = now.saturating_add(delay);
         self.dirty = true;
-        delay
     }
     /// The request answered: the transport works, and the ledger may have more.
     fn answered(&mut self, now: u64) {
@@ -513,14 +512,50 @@ impl DownlinkWorker {
         self.flush(&mut actions);
         self.barriers(client, &mut actions)?;
         self.historical(client, now, entropy, committed, &mut actions)?;
+        // The two schedules are read together and answered with one sleep: the
+        // load's next attempt is its own, so the socket's backoff must never
+        // hold a page back ([#151](https://github.com/zanminwang/axton/issues/151)).
+        let load = self.load_due(now);
+        let mut socket = None;
         if !self.session.open() {
             match self.driver.next(now) {
                 ConnectionAction::Sync => self.begin(client, now, &mut actions)?,
-                ConnectionAction::Wait { millis } => actions.push(DownlinkAction::Wait { millis }),
+                ConnectionAction::Wait { millis } => socket = Some(millis),
                 ConnectionAction::Idle => {}
             }
         }
+        self.rest(load, socket, &mut actions);
         Ok(actions)
+    }
+
+    /// When the historical schedule next wants a pump, in millis from `now`:
+    /// `None` when it wants none - a page is in flight, nothing became
+    /// schedulable, or the lane is paused or stopped - and zero when it is due
+    /// already, which is the one case that asks for no sleep at all.
+    fn load_due(&self, now: u64) -> Option<u64> {
+        if !self.driver.active() || self.bootstrap.is_some() || !self.loading.dirty {
+            return None;
+        }
+        Some(self.loading.due.saturating_sub(now))
+    }
+
+    /// The lane's one sleep: the earlier of the two schedules, so neither work
+    /// class waits on the other's. The socket's is answered whatever else this
+    /// pump found, because with no session open nothing else will wake it; the
+    /// load's alone is answered only when the pump gave the host nothing else
+    /// to do, so a deferred page never delays work already queued. A schedule
+    /// that is due now asks for no sleep: the host pumps again as soon as the
+    /// actions come back.
+    fn rest(&self, load: Option<u64>, socket: Option<u64>, actions: &mut Vec<DownlinkAction>) {
+        let millis = match (load, socket) {
+            (Some(load), Some(socket)) => load.min(socket),
+            (None, Some(socket)) => socket,
+            (Some(load), None) if actions.is_empty() => load,
+            _ => return,
+        };
+        if millis > 0 || actions.is_empty() {
+            actions.push(DownlinkAction::Wait { millis });
+        }
     }
 
     /// Consume the queues: every control event, which a page that cannot apply
@@ -663,9 +698,9 @@ impl DownlinkWorker {
             Loaded::Failed { status, reason } => {
                 if !status.is_some_and(refused) {
                     // Offline or interrupted: the run is untouched and the same
-                    // page is asked for again once the backoff has passed.
-                    let millis = self.loading.defer(now, entropy);
-                    self.sleep(millis, actions);
+                    // page is asked for again once the backoff has passed
+                    // ([`DownlinkWorker::load_due`] carries it to the sleep).
+                    self.loading.defer(now, entropy);
                     return Ok(false);
                 }
                 self.loading.answered(now);
@@ -771,16 +806,6 @@ impl DownlinkWorker {
         Ok(true)
     }
 
-    /// Ask the host to sleep until the next page is due - but only when this
-    /// pump gave it nothing else to do, so a deferred load never holds back
-    /// work the host would otherwise pump for at once. A paused lane sleeps on
-    /// nothing: `resume` clears the deferral.
-    fn sleep(&self, millis: u64, actions: &mut Vec<DownlinkAction>) {
-        if self.driver.active() && actions.is_empty() {
-            actions.push(DownlinkAction::Wait { millis });
-        }
-    }
-
     /// Ask for one historical page when none is in flight: the next run in the
     /// rotation, from the progress it committed, bounded by its own origin. The
     /// read that picks it is closed before the action leaves, so no transaction
@@ -796,8 +821,8 @@ impl DownlinkWorker {
         if self.bootstrap.is_some() || !self.driver.active() || !self.loading.dirty {
             return Ok(());
         }
+        // A deferred page stays deferred; the pump answers for the sleep.
         if self.loading.due > now {
-            self.sleep(self.loading.due - now, actions);
             return Ok(());
         }
         let Some(task) = client.bootstrap_schedule(self.loading.rotation.as_deref())? else {

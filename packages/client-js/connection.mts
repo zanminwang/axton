@@ -193,6 +193,13 @@ export type DownlinkAction =
   | { type: "open"; epoch: number; subscribe: string }
   | { type: "close"; epoch: number; reason: string | null }
   /**
+   * The replica was rebuilt and the worker forgot everything it had in flight:
+   * abandon the socket and every page, catch-up and bootstrap alike. It comes
+   * first in its batch and replaces a `close`, so it never reaches the session
+   * the batch opens next ([#162](https://github.com/zanminwang/axton/issues/162)).
+   */
+  | { type: "reset" }
+  /**
    * `POST /sync/pull`. An ordinary catch-up belongs to the open session, so the
    * session's cancellation abandons it and its failure ends the session. A
    * `bootstrap` page belongs to the lane: it outlives the session, its failure
@@ -437,6 +444,17 @@ export async function startDownlinkLane(
             });
           },
         );
+        return;
+      }
+      case "reset": {
+        // A local abort, as `pause` is: whatever the old I/O still answers is
+        // the application's failure no more, and the worker ignores it by epoch
+        // and request id.
+        if (session) abandon(session);
+        session = undefined;
+        outstanding = 0;
+        loading.abort();
+        loading = new AbortController();
         return;
       }
       case "close": {

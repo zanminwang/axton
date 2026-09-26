@@ -895,6 +895,10 @@ export function createClient<
           // The replica that answered every handle is gone: no handle from
           // before it names a registration of the file this client now reads.
           this.#subscriptions.rebuilt();
+          // The worker was reset for the new replica: wake a lane asleep on
+          // the old one, so it abandons that I/O and serves the carried
+          // Channels without another `connect` (#162).
+          this.#events.emit("channels");
           this.#deliverCompletions(
             (value.abandonedCalls ?? []).map(
               (abandoned: { callId: string; frozen: boolean }) => ({

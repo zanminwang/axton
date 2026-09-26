@@ -990,6 +990,10 @@ class Client implements WritePort, MutatePort {
         // The replica that answered every handle is gone: no handle from before
         // it names a registration of the file this client now reads.
         _subscriptions.rebuilt();
+        // The worker was reset for the new replica: wake a lane asleep on the
+        // old one, so it abandons that I/O and serves the carried Channels
+        // without another `connect` (#162).
+        _channels.add(null);
         _deliverCompletions(
           (report['abandonedCalls'] as List).map((abandoned) {
             final call = abandoned as Map<String, dynamic>;

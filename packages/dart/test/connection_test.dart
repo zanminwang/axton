@@ -3,7 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:axton/axton.dart';
 import 'package:axton/src/connection.dart' show DownlinkLane;
-import 'package:axton/src/live.dart' show ServerSession;
+import 'package:axton/src/live.dart' show ServerSession, SocketEvents;
+import 'package:axton/src/subscriptions.dart' show DownlinkSignal;
 import 'package:test/test.dart';
 
 void main() {
@@ -595,6 +596,117 @@ void main() {
       await lane.close();
     },
   );
+
+  /// After a replica rebuild the worker's first pump answers `reset` before any
+  /// new session: the lane abandons the old socket and every page in flight as
+  /// a local abort, sends no `close` that could reach the new socket, reports
+  /// nothing to the application, and later pages ride a fresh cancellation.
+  /// The TypeScript twin is `a downlink reset abandons the old socket and every
+  /// page before the new session opens`
+  /// ([#162](https://github.com/zanminwang/axton/issues/162)).
+  test(
+    'a downlink reset abandons the old socket and every page before the new session opens',
+    () async {
+      const body =
+          '{"mode":"bootstrap","channel":"a","models":{},"after":0,"until":7}';
+      final reported = <Object>[];
+      final events = <Map<String, dynamic>>[];
+      final signals = <DownlinkSignal>[];
+      final script = <List<dynamic>>[
+        [
+          {'type': 'open', 'epoch': 1, 'subscribe': '{}'},
+        ],
+        [
+          {
+            'type': 'request',
+            'request': 2,
+            'body': '{"cursors":{}}',
+            'bootstrap': false,
+          },
+          {'type': 'request', 'request': 3, 'body': body, 'bootstrap': true},
+        ],
+        <dynamic>[],
+      ];
+      final network = _ResettableSession();
+      final lane = await DownlinkLane.start(
+        command: (event) async {
+          events.add(event);
+          if (event['event'] != 'next') return const [];
+          return script.isEmpty ? const [] : script.removeAt(0);
+        },
+        network: network,
+        wakePush: () {},
+        onError: reported.add,
+        report: signals.add,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(network.sockets, hasLength(1), reason: 'the old session opened');
+      expect(network.pages, hasLength(2), reason: 'both pages are in flight');
+      script.add([
+        {'type': 'reset'},
+        {'type': 'open', 'epoch': 4, 'subscribe': '{}'},
+        {'type': 'request', 'request': 5, 'body': body, 'bootstrap': true},
+      ]);
+      await lane.wake();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(
+        network.sockets[0].cancelled,
+        isTrue,
+        reason: 'the old socket is abandoned',
+      );
+      expect(
+        network.pages[0].cancelled,
+        isTrue,
+        reason: 'the old catch-up is abandoned',
+      );
+      expect(
+        network.pages[1].cancelled,
+        isTrue,
+        reason: 'the old bootstrap page is abandoned',
+      );
+      expect(network.sockets, hasLength(2), reason: 'the new session opened');
+      expect(
+        network.sockets[1].cancelled,
+        isFalse,
+        reason: 'the reset never reaches the new socket',
+      );
+      expect(
+        network.pages[2].cancelled,
+        isFalse,
+        reason: 'a later page rides a fresh cancellation',
+      );
+      // Old callbacks racing the abort: none is the application's failure, and
+      // none ends the new session.
+      network.sockets[0].on!.closed(StateError('late close'), null);
+      network.pages[0].answer.completeError(StateError('late catch-up'));
+      network.pages[1].answer.completeError(StateError('late bootstrap'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(
+        reported,
+        isEmpty,
+        reason: 'a local abort is not an application failure',
+      );
+      expect(
+        events.where((e) => e['event'] == 'closed'),
+        isEmpty,
+        reason: 'the reset replaces a close: the worker forgot the old session',
+      );
+      expect(network.sockets[1].cancelled, isFalse);
+      final ended = signals.indexWhere(
+        (s) => s.lane == 'ended' && s.epoch == 1,
+      );
+      final opened = signals.indexWhere(
+        (s) => s.lane == 'opened' && s.epoch == 4,
+      );
+      expect(ended, greaterThanOrEqualTo(0));
+      expect(
+        ended,
+        lessThan(opened),
+        reason: 'the old session ends before the new one opens',
+      );
+      await lane.close();
+    },
+  );
 }
 
 /// A downlink network whose pages answer only when the lane abandons them: the
@@ -619,3 +731,32 @@ class _ScriptedSession extends ServerSession {
 }
 
 String _token() => 'secret';
+
+/// One socket or page the scripted network below handed out.
+class _Held {
+  _Held(Future<void> cancellation, this.on) {
+    unawaited(cancellation.then((_) => cancelled = true));
+  }
+  final SocketEvents? on;
+  bool cancelled = false;
+  final answer = Completer<String>();
+}
+
+/// A downlink network that holds every socket and page, however long after
+/// the lane cancels one, and records the cancellation: the uncooperative
+/// scripted host of the reset test above.
+class _ResettableSession extends ServerSession {
+  _ResettableSession()
+    : super(SyncServer(url: 'http://127.0.0.1:1', token: _token));
+  final sockets = <_Held>[];
+  final pages = <_Held>[];
+  @override
+  void open(String subscribe, Future<void> cancellation, SocketEvents on) =>
+      sockets.add(_Held(cancellation, on));
+  @override
+  Future<String> pull(String body, Future<void> cancellation) {
+    final page = _Held(cancellation, null);
+    pages.add(page);
+    return page.answer.future;
+  }
+}

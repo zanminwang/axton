@@ -306,7 +306,7 @@ test("client close waits for in-flight connection setup and remains idempotent",
 
 const settled = () => new Promise((r) => setTimeout(r, 10));
 /** A downlink lane over a scripted worker: every event is recorded, `next` answers the queued actions. */
-const downlinkLane = (answers, network = {}, options = {}) => {
+const downlinkLane = (answers, network = {}, options = {}, report) => {
   const events = [];
   const lane = startDownlinkLane(
     async (event) => {
@@ -316,6 +316,7 @@ const downlinkLane = (answers, network = {}, options = {}) => {
     { push: async () => "{}", open() {}, ...network },
     options,
     () => {},
+    report,
   );
   return { events, lane, pumps: () => events.filter((e) => e.event === "next").length };
 };
@@ -549,4 +550,177 @@ test("pausing the downlink lane abandons its bootstrap page without reporting it
     "the old pause abandoned nothing of the resumed page",
   );
   await downlink.close();
+});
+
+/**
+ * After a replica rebuild the worker's first pump answers `reset` before any new
+ * session: the host abandons the old socket and every page in flight, catch-up
+ * and bootstrap alike, as a local abort - no `close` that could reach the new
+ * socket, nothing reported to the application - and later pages ride a fresh
+ * cancellation ([#162](https://github.com/zanminwang/axton/issues/162)).
+ */
+test("a downlink reset abandons the old socket and every page before the new session opens", async () => {
+  const reported = [];
+  const signals = [];
+  const sockets = [];
+  const pulls = [];
+  const body = '{"mode":"bootstrap","channel":"a","models":{},"after":0,"until":7}';
+  const script = [
+    [{ type: "open", epoch: 1, subscribe: "{}" }],
+    [
+      { type: "request", request: 2, body: '{"cursors":{}}', bootstrap: false },
+      { type: "request", request: 3, body, bootstrap: true },
+    ],
+    [],
+  ];
+  const { events, lane } = downlinkLane(
+    script,
+    {
+      // An uncooperative transport: a page answers only when the test says so,
+      // however long after its cancellation.
+      push: (kind, pushed, signal) => {
+        const pull = { body: pushed, signal };
+        pulls.push(pull);
+        return new Promise((resolve, reject) => Object.assign(pull, { resolve, reject }));
+      },
+      open: (subscribe, signal, on) => sockets.push({ subscribe, signal, on }),
+    },
+    { onError: (error) => reported.push(error) },
+    (signal) => signals.push(signal),
+  );
+  const downlink = await lane;
+  await settled();
+  assert.equal(sockets.length, 1, "the old session opened");
+  assert.equal(pulls.length, 2, "a catch-up and a bootstrap page are in flight");
+  script.push([
+    { type: "reset" },
+    { type: "open", epoch: 4, subscribe: "{}" },
+    { type: "request", request: 5, body, bootstrap: true },
+  ]);
+  await downlink.wake();
+  await settled();
+  assert.ok(sockets[0].signal.aborted, "the old socket is abandoned");
+  assert.ok(pulls[0].signal.aborted, "the old catch-up is abandoned");
+  assert.ok(pulls[1].signal.aborted, "the old bootstrap page is abandoned");
+  assert.equal(sockets.length, 2, "the new session opened after the reset");
+  assert.equal(sockets[1].signal.aborted, false, "the reset never reaches the new socket");
+  assert.equal(pulls[2].signal.aborted, false, "a later page rides a fresh cancellation");
+  // Old callbacks racing the abort: none is the application's failure, and none
+  // ends the new session.
+  sockets[0].on.closed(Error("late close"));
+  pulls[0].reject(Error("late catch-up failure"));
+  pulls[1].reject(Error("late bootstrap failure"));
+  await settled();
+  assert.deepEqual(reported, [], "a local abort is not an application failure");
+  assert.ok(
+    !events.some((e) => e.event === "closed"),
+    "the reset replaces a close: the worker already forgot the old session",
+  );
+  assert.equal(sockets[1].signal.aborted, false);
+  const ended = signals.findIndex((s) => s.lane === "ended" && s.epoch === 1);
+  const opened = signals.findIndex((s) => s.lane === "opened" && s.epoch === 4);
+  assert.ok(ended >= 0 && ended < opened, "the old session ends before the new one opens");
+  await downlink.close();
+});
+
+/**
+ * A rebuild resets the worker behind a connected lane that is asleep with no
+ * timer; the SDK wakes it once the native rebuild answered, so the carried
+ * Channel is subscribed again without another `connect` or `start`
+ * ([#162](https://github.com/zanminwang/axton/issues/162)).
+ */
+test("a rebuild wakes the sleeping downlink lane without another start", async () => {
+  const { createClient } = await import("../../../packages/client-js/runtime.mts");
+  const { Transaction } = await import("../../../packages/client-js/transaction.mts");
+  const { createRequire } = await import("node:module");
+  const { mkdtemp, rm, readFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const native = createRequire(import.meta.url)("../../../bindings/node/axton-node.node");
+  const directory = await mkdtemp(join(tmpdir(), "axton-rebuild-wake-"));
+  const path = join(directory, "client.sqlite");
+  const schema = JSON.parse(
+    await readFile(new URL("../../../fixtures/schemas/entry.json", import.meta.url), "utf8"),
+  );
+  const breaking = structuredClone(schema);
+  breaking.models[0].fields.push({ name: "due", nullable: false, type: { kind: "scalar", name: "string" } });
+  /** Every lane command and rebuild, with what the downlink worker answered. */
+  const log = [];
+  const sockets = [];
+  const Client = createClient(
+    {
+      async clientCall(request) {
+        const { op, event } = JSON.parse(request);
+        const answer = await native.clientCall(request);
+        if (op === "downlink")
+          log.push({ op, event, actions: JSON.parse(answer).value });
+        else if (op === "connection" || op === "rebuild") log.push({ op, event });
+        return answer;
+      },
+    },
+    Transaction,
+    () => ({
+      // The unsent mutation's push never answers; closing abandons it.
+      push: (kind, body, signal) =>
+        new Promise((_, reject) =>
+          signal?.addEventListener("abort", () => reject(Error("connection_closed")), { once: true }),
+        ),
+      open: (subscribe, signal) => sockets.push({ subscribe: JSON.parse(subscribe), signal }),
+    }),
+  );
+  let client;
+  let connection;
+  try {
+    client = await Client.open({ path, schema });
+    await client.subscribe("scope");
+    // Unsent work keeps the incompatible file open, so the rebuild happens
+    // with this client - and its lane - already connected.
+    await client.mutate({ name: "Create", operations: [{ model: "Entry", op: "create", identity: { id: "e" }, values: { text: "A", note: null } }] });
+    await client.close();
+    client = await Client.open({ path, schema: breaking });
+    const reported = [];
+    connection = await client.connect(
+      { url: "http://unused", token: "token" },
+      { onError: (error) => reported.push(error) },
+    );
+    await settled();
+    // The lane opened its socket and is asleep with no timer: nothing but a
+    // wake pumps it again.
+    assert.equal(sockets.length, 1);
+    const downlink = log.filter((entry) => entry.op === "downlink");
+    assert.deepEqual(downlink.at(-1), { op: "downlink", event: "next", actions: [] });
+    const asleep = log.length;
+    await settled();
+    assert.equal(log.length, asleep, "the lane sleeps until woken");
+    // A refused rebuild reset nothing, so it wakes nothing.
+    await assert.rejects(client.rebuild(), /unsent/);
+    await settled();
+    assert.ok(
+      !log.slice(asleep).some((entry) => entry.op === "downlink"),
+      "no lane command follows a refused rebuild",
+    );
+    log.splice(asleep);
+    await client.rebuild({ discardPending: true });
+    await settled();
+    const after = log.slice(asleep);
+    assert.equal(after[0].op, "rebuild", "the wake is serialized after the native rebuild");
+    const pump = after.find((entry) => entry.op === "downlink" && entry.event === "next");
+    assert.ok(pump, "the rebuild woke the lane");
+    assert.equal(pump.actions[0].type, "reset", "the old I/O is abandoned first");
+    assert.equal(pump.actions[1]?.type, "open", "the carried Channel is subscribed again");
+    assert.ok(pump.actions[1].epoch > 1, "under a fresh epoch");
+    assert.ok(
+      !after.some((entry) => entry.event === "start"),
+      "no lane was started again",
+    );
+    assert.ok(sockets[0].signal.aborted, "the old socket is abandoned");
+    assert.equal(sockets.length, 2);
+    assert.deepEqual(sockets[1].subscribe.channels, ["scope"]);
+    assert.equal(sockets[1].signal.aborted, false, "the new socket stays open");
+    assert.deepEqual(reported, []);
+  } finally {
+    await connection?.close();
+    await client?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });

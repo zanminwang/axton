@@ -61,6 +61,8 @@ export type ClientSyncState = {
   schema: SchemaState;
 };
 import { strictJson, type QuerySpec, type RecordValue } from "./values.mts";
+import { Bridge, reportCallbackError, type NativeCarrier } from "./bridge.mts";
+export type { NativeCarrier } from "./bridge.mts";
 import type { ServerOptions, ServerConnection } from "./live.mts";
 import { Events } from "./events.mts";
 import {
@@ -137,17 +139,14 @@ class QueryFlight {
   }
 }
 /** Report an application callback's failure without changing what was committed. */
-function reportActionCallbackError(error: unknown): void {
-  if (typeof globalThis.reportError === "function") {
-    globalThis.reportError(error);
-  } else {
-    setTimeout(() => {
-      throw error;
-    }, 0);
-  }
-}
+const reportActionCallbackError = reportCallbackError;
 
-/** Hosts share the Rust action executor and supply only their carrier, transaction scope and network. */
+/**
+ * Hosts share the Rust-owned client runtime and supply only their carrier,
+ * transaction scope and network. Every command is a task of that runtime
+ * ([#134](https://github.com/zanminwang/axton/issues/134)): it queues,
+ * schedules and completes them; this class adapts them to typed APIs.
+ */
 export function createClient<
   Tx extends {
     finish(): Promise<void>;
@@ -156,8 +155,10 @@ export function createClient<
     direct(operation: object): Promise<void>;
   },
 >(
-  native: { clientCall(request: string): Promise<string> },
-  Transaction: new (send: (request: RecordValue) => Promise<any>) => Tx,
+  native: NativeCarrier,
+  Transaction: new (
+    send: (command: RecordValue, scope?: string) => Promise<any>,
+  ) => Tx,
   createServerConnection: (options: ServerOptions) => ServerConnection,
 ) {
   return class Client {
@@ -173,42 +174,51 @@ export function createClient<
     #connecting = false;
     #started: Promise<void> | undefined;
     #closing: Promise<void> | undefined;
-    #handle: number;
+    #bridge: Bridge;
     #closed = false;
-    #tail: Promise<unknown> = Promise.resolve();
     #activePublicTx: Tx | undefined;
     #events = new Events();
     /** Subscription handles by persistent identity, and the status they publish. */
     #subscriptions = new Subscriptions({
       subscribe: (scope) =>
-        this.#exclusive(() =>
-          this.#send({ op: "scopeSubscribe", scope }),
-        ) as Promise<SubscriptionState>,
+        this.#bridge.task({
+          kind: "scopeSubscribe",
+          scope,
+        }) as Promise<SubscriptionState>,
       state: (scope) =>
-        this.#exclusive(() =>
-          this.#send({ op: "scopeState", scope }),
-        ) as Promise<SubscriptionState | null>,
-      // Registration and the state read of one identity's durable load: local
-      // commands on the same serialized path, so calls for one Scope keep their
+        this.#bridge.task({
+          kind: "scopeState",
+          scope,
+        }) as Promise<SubscriptionState | null>,
+      // Registration and the state read of one identity's durable load: tasks
+      // of the runtime's one ordinary queue, so calls for one Scope keep their
       // order ([#151](https://github.com/zanminwang/axton/issues/151)).
       requestBootstrap: (scope, subscriptionId) =>
-        this.#exclusive(() =>
-          this.#send({ op: "scopeBootstrap", scope, subscriptionId }),
-        ) as Promise<BootstrapRun>,
+        this.#bridge.task({
+          kind: "scopeBootstrap",
+          scope,
+          subscriptionId,
+        }) as Promise<BootstrapRun>,
       bootstrapState: (scope, subscriptionId) =>
-        this.#exclusive(() =>
-          this.#send({ op: "scopeBootstrapState", scope, subscriptionId }),
-        ) as Promise<BootstrapRun>,
+        this.#bridge.task({
+          kind: "scopeBootstrapState",
+          scope,
+          subscriptionId,
+        }) as Promise<BootstrapRun>,
       remove: async (scope, subscriptionId) =>
         (
-          await this.#exclusive(() =>
-            this.#send({ op: "scopeUnsubscribe", scope, subscriptionId }),
-          )
+          await this.#bridge.task({
+            kind: "scopeUnsubscribe",
+            scope,
+            subscriptionId,
+          })
         ).removed === true,
       removeScope: async (scope) => {
-        await this.#exclusive(() =>
-          this.#send({ op: "channel", channel: scope, subscribed: false }),
-        );
+        await this.#bridge.task({
+          kind: "channel",
+          channel: scope,
+          subscribed: false,
+        });
       },
       // A committed membership change wakes the lanes; Rust decides what it
       // means for the socket.
@@ -219,9 +229,11 @@ export function createClient<
       report: reportActionCallbackError,
     });
     readonly clientId: string;
-    private constructor(handle: number, id: string) {
-      this.#handle = handle;
+    private constructor(bridge: Bridge, id: string) {
+      this.#bridge = bridge;
       this.clientId = id;
+      // A committed local transaction: watchers re-run their queries.
+      bridge.on("changed", () => this.#events.emit("change"));
     }
     static async open(options: {
       path: string;
@@ -230,75 +242,59 @@ export function createClient<
       /** Rebuild at once when the schema is incompatible, leaving unsent work in the old file. */
       discardPending?: boolean;
     }) {
-      const result = JSON.parse(
-        await native.clientCall(strictJson({ op: "open", ...options })),
-      ).value;
-      return new Client(result.handle, result.clientId);
+      const { bridge, opened } = await Bridge.open(native, options);
+      return new Client(bridge, opened.clientId);
     }
-    #exclusive<T>(body: () => Promise<T>): Promise<T> {
-      const work = this.#tail.then(body);
-      this.#tail = work.catch(() => {});
-      return work;
-    }
-    async #send(request: RecordValue): Promise<any> {
-      if (this.#closed) throw Error("client_closed");
-      const result = JSON.parse(
-        await native.clientCall(
-          strictJson({ ...request, handle: this.#handle }),
-        ),
-      );
-      if (result.changed) this.#events.emit("change");
-      return result.value;
-    }
-    transaction<T>(body: (tx: Tx) => Promise<T>) {
-      return this.#exclusive(async () => {
-        await this.#send({ op: "begin" });
-        const tx = new Transaction((request) => this.#send(request));
+    /**
+     * Run `body` as the callback of a local transaction the runtime owns. The
+     * callback's commands carry its capability; its return value stays here
+     * and is answered only after the runtime confirmed the commit.
+     */
+    async transaction<T>(body: (tx: Tx) => Promise<T>): Promise<T> {
+      let result!: T;
+      await this.#bridge.transaction(async (transactionId) => {
+        const tx = new Transaction((command, scope) =>
+          this.#bridge.transactionCommand(transactionId, scope, command),
+        );
         try {
           this.#activePublicTx = tx;
-          let result: T;
           try {
             result = await tx.runCallback(() => body(tx));
           } finally {
             this.#activePublicTx = undefined;
           }
           await tx.finish();
-          await this.#send({ op: "commit" });
-          this.#events.emit("work");
-          return result;
         } catch (error) {
+          // No unawaited command outlives the callback that issued it.
           await tx.finish().catch(() => {});
-          await this.#send({ op: "rollback" }).catch(() => {});
           throw error;
         }
       });
+      this.#events.emit("work");
+      return result;
     }
     read(model: string, identity: object): Promise<RecordValue | null> {
-      return this.#exclusive(() =>
-        this.#send({ op: "read", key: { model, identity } }),
-      );
+      return this.#bridge.task({ kind: "read", key: { model, identity } });
     }
     query(model: string, where: RecordValue = {}): Promise<RecordValue[]> {
-      return this.#exclusive(() =>
-        this.#send({ op: "query", model, filter: where }),
-      );
+      return this.#bridge.task({ kind: "query", model, filter: where });
     }
     readSql(sql: string, parameters: unknown[] = []): Promise<RecordValue[]> {
-      return this.#exclusive(() => this.#send({ op: "sql", sql, parameters }));
+      return this.#bridge.task({ kind: "sql", sql, parameters });
     }
     querySpec(model: string, query: QuerySpec = {}): Promise<RecordValue[]> {
-      return this.#exclusive(() =>
-        this.#send({ op: "querySpec", model, query }),
-      );
+      return this.#bridge.task({ kind: "querySpec", model, query });
     }
     related(
       model: string,
       identity: object,
       relation: string,
     ): Promise<RecordValue | null> {
-      return this.#exclusive(() =>
-        this.#send({ op: "related", key: { model, identity }, relation }),
-      );
+      return this.#bridge.task({
+        kind: "related",
+        key: { model, identity },
+        relation,
+      });
     }
     referencing(
       model: string,
@@ -306,14 +302,12 @@ export function createClient<
       source: string,
       relation: string,
     ): Promise<RecordValue[]> {
-      return this.#exclusive(() =>
-        this.#send({
-          op: "referencing",
-          key: { model, identity },
-          source,
-          relation,
-        }),
-      );
+      return this.#bridge.task({
+        kind: "referencing",
+        key: { model, identity },
+        source,
+        relation,
+      });
     }
     mutate(mutation: object): Promise<number> {
       if (this.#activePublicTx?.inCallback())
@@ -418,9 +412,12 @@ export function createClient<
       try {
         if (this.#activePublicTx?.inCallback())
           throw Error("transaction_active");
-        await this.#exclusive(() =>
-          this.#send({ op: "invalidateQueryOnce", name, version, args }),
-        );
+        await this.#bridge.task({
+          kind: "invalidateQueryOnce",
+          name,
+          version,
+          args,
+        });
       } catch (error) {
         throw actionError(error);
       }
@@ -434,49 +431,46 @@ export function createClient<
       options: CallOptions,
     ): Promise<string> {
       if (this.#activePublicTx?.inCallback()) throw Error("transaction_active");
-      // The decision and the flight registration share one exclusive step,
-      // so a later decision that joins this flight always finds it.
-      const decision = await this.#exclusive(async () => {
-        const decided = await this.#send({
-          op: "queryOnce",
-          name,
-          version,
-          args,
-          refresh,
-          ...storeOption(options),
-        });
-        if (decided.decision === "cached")
-          return {
-            cached: JSON.stringify({
-              status: "succeeded",
-              result: decided.result,
-            }),
-          };
-        if (decided.decision === "join") {
-          const flight = this.#queryFlights.get(decided.flightId);
-          if (!flight) throw directFailure("action.execution_unknown");
-          return { flight };
-        }
-        const direct = this.#direct;
-        if (!direct) {
-          await this.#send({ op: "failQueryOnce", flightId: decided.flightId });
-          throw directFailure("action.unavailable");
-        }
-        const flight = new QueryFlight();
-        this.#queryFlights.set(decided.flightId, flight);
-        return {
-          flight,
-          fetch: {
-            flightId: decided.flightId as string,
-            body: decided.body as string,
-            direct,
-          },
-        };
+      // A decision that joins a flight completes after the decision that
+      // fetches it: the runtime runs tasks in order and the bridge dispatches
+      // their completions in order. Each caller registers or looks up its
+      // flight in the continuation of this one await, so a joining caller
+      // always finds the flight. Keep exactly one await before touching
+      // `#queryFlights` here; checkpoint 3 of #134 moves the flight into Rust.
+      const decided = await this.#bridge.task({
+        kind: "queryOnce",
+        name,
+        version,
+        args,
+        refresh,
+        ...storeOption(options),
       });
-      if (decision.cached !== undefined) return decision.cached;
-      if (decision.fetch)
-        void this.#runQueryFlight(decision.fetch, decision.flight);
-      return decision.flight.promise;
+      if (decided.decision === "cached")
+        return JSON.stringify({ status: "succeeded", result: decided.result });
+      if (decided.decision === "join") {
+        const flight = this.#queryFlights.get(decided.flightId);
+        if (!flight) throw directFailure("action.execution_unknown");
+        return flight.promise;
+      }
+      const direct = this.#direct;
+      if (!direct) {
+        await this.#bridge.task({
+          kind: "failQueryOnce",
+          flightId: decided.flightId,
+        });
+        throw directFailure("action.unavailable");
+      }
+      const flight = new QueryFlight();
+      this.#queryFlights.set(decided.flightId, flight);
+      void this.#runQueryFlight(
+        {
+          flightId: decided.flightId as string,
+          body: decided.body as string,
+          direct,
+        },
+        flight,
+      );
+      return flight.promise;
     }
     /** Execute one fetched flight and settle every caller joined to it. */
     async #runQueryFlight(
@@ -484,13 +478,19 @@ export function createClient<
       flight: QueryFlight,
     ): Promise<void> {
       const { flightId, body, direct } = fetch;
-      /** Release the Rust flight and fail its callers. */
+      /**
+       * Release the Rust flight and fail its callers. The flight stays
+       * registered until the release completed, so a caller the runtime
+       * joined to it before the release still finds it.
+       */
       const release = async (error: unknown) => {
-        await this.#exclusive(async () => {
-          if (this.#queryFlights.get(flightId) !== flight) return;
-          this.#queryFlights.delete(flightId);
-          await this.#send({ op: "failQueryOnce", flightId });
-        }).catch(() => {});
+        if (this.#queryFlights.get(flightId) === flight) {
+          await this.#bridge
+            .task({ kind: "failQueryOnce", flightId })
+            .catch(() => {});
+          if (this.#queryFlights.get(flightId) === flight)
+            this.#queryFlights.delete(flightId);
+        }
         flight.reject(error);
       };
       let response: string;
@@ -506,21 +506,26 @@ export function createClient<
         );
       }
       let applied: { completions: any[]; reports: ReportDetails[] };
+      let finishing = false;
       try {
-        applied = await this.#exclusive(async () => {
-          if (this.#direct !== direct)
-            throw directFailure("action.execution_unknown");
-          const parsed = JSON.parse(response);
-          // Rust retires the flight on every outcome of this command.
-          this.#queryFlights.delete(flightId);
-          return this.#send({
-            op: "finishQueryOnce",
+        if (this.#direct !== direct)
+          throw directFailure("action.execution_unknown");
+        const parsed = JSON.parse(response);
+        finishing = true;
+        try {
+          applied = await this.#bridge.task({
+            kind: "finishQueryOnce",
             flightId,
             response: parsed,
           });
-        });
+        } finally {
+          // Rust retires the flight on every outcome of this command; a
+          // caller joined before it still found the flight registered.
+          if (this.#queryFlights.get(flightId) === flight)
+            this.#queryFlights.delete(flightId);
+        }
       } catch (error) {
-        if (this.#queryFlights.get(flightId) === flight)
+        if (!finishing)
           return release(
             (error as { code?: string })?.code
               ? error
@@ -557,9 +562,9 @@ export function createClient<
     ): Promise<{ callId: string; ordinal: number }> {
       if (this.#activePublicTx?.inCallback())
         return Promise.reject(Error("transaction_active"));
-      return this.#exclusive(async () => {
-        const submitted = (await this.#send({
-          op: "submitAction",
+      return (async () => {
+        const submitted = (await this.#bridge.task({
+          kind: "submitAction",
           name,
           version,
           args,
@@ -568,7 +573,7 @@ export function createClient<
         onCommitted?.(submitted.callId, submitted.ordinal);
         this.#events.emit("work");
         return submitted;
-      });
+      })();
     }
     onActionCompletion(listener: (completion: any) => void): () => void {
       this.#completionListeners.add(listener);
@@ -585,7 +590,7 @@ export function createClient<
             reportActionCallbackError(error);
           }
     }
-    /** Direct network work never occupies the local exclusive queue. */
+    /** Direct network work holds no runtime task while it waits on the network. */
     async callAction(
       name: string,
       version: number,
@@ -595,15 +600,13 @@ export function createClient<
       if (this.#activePublicTx?.inCallback()) throw Error("transaction_active");
       const direct = this.#direct;
       if (!direct) throw directFailure("action.unavailable");
-      const prepared = (await this.#exclusive(() =>
-        this.#send({
-          op: "prepareAction",
-          name,
-          version,
-          args,
-          ...storeOption(options),
-        }),
-      )) as { callId: string; body: string };
+      const prepared = (await this.#bridge.task({
+        kind: "prepareAction",
+        name,
+        version,
+        args,
+        ...storeOption(options),
+      })) as { callId: string; body: string };
       let response: string;
       try {
         response = await direct.requestAction(prepared.body);
@@ -619,14 +622,10 @@ export function createClient<
         throw directFailure("action.execution_unknown");
       let applied: { completions: any[]; reports: ReportDetails[] };
       try {
-        applied = await this.#exclusive(() => {
-          if (this.#direct !== direct)
-            throw directFailure("action.execution_unknown");
-          return this.#send({
-            op: "applyActionResponse",
-            body: prepared.body,
-            response: JSON.parse(response),
-          });
+        applied = await this.#bridge.task({
+          kind: "applyActionResponse",
+          body: prepared.body,
+          response: JSON.parse(response),
         });
       } catch (error) {
         if ((error as { code?: string })?.code) throw error;
@@ -643,29 +642,14 @@ export function createClient<
         }
       return applied;
     }
-    #submitMutation(mutation: object): Promise<number> {
-      return this.#exclusive(async () => {
-        await this.#send({ op: "begin" });
-        try {
-          const ordinal = (await this.#send({
-            op: "enqueue",
-            mutation,
-          })) as number;
-          await this.#send({ op: "commit" });
-          this.#events.emit("work");
-          return ordinal;
-        } catch (error) {
-          try {
-            await this.#send({ op: "rollback" });
-          } catch (rollbackError) {
-            throw new AggregateError(
-              [error, rollbackError],
-              "mutation submission and rollback failed",
-            );
-          }
-          throw error;
-        }
-      });
+    /** One queued mutation; the runtime enqueues it in its own transaction. */
+    async #submitMutation(mutation: object): Promise<number> {
+      const ordinal = (await this.#bridge.task({
+        kind: "enqueue",
+        mutation,
+      })) as number;
+      this.#events.emit("work");
+      return ordinal;
     }
     /**
      * Register durable intent to follow `scope` and answer with its handle. It
@@ -728,14 +712,12 @@ export function createClient<
             : {}),
         };
         const control = (event: string) =>
-          this.#exclusive(() =>
-            this.#send({
-              op: "connection",
-              event,
-              now: Date.now(),
-              entropy: Math.floor(Math.random() * 0x100000000),
-            }),
-          );
+          this.#bridge.task({
+            kind: "connection",
+            event,
+            now: Date.now(),
+            entropy: Math.floor(Math.random() * 0x100000000),
+          });
         const connection = await startConnection(
           (event) => control(event),
           (t) => this.#runSync(t, options.onError),
@@ -744,14 +726,12 @@ export function createClient<
         );
         const streaming = await startDownlinkLane(
           (event) =>
-            this.#exclusive(() =>
-              this.#send({
-                op: "downlink",
-                ...event,
-                now: Date.now(),
-                entropy: Math.floor(Math.random() * 0x100000000),
-              }),
-            ),
+            this.#bridge.task({
+              kind: "downlink",
+              ...event,
+              now: Date.now(),
+              entropy: Math.floor(Math.random() * 0x100000000),
+            }),
           live,
           driverOptions,
           () => void connection.wake().catch(options.onError ?? (() => {})),
@@ -802,18 +782,15 @@ export function createClient<
     ): Promise<void> {
       if (this.#syncing) return this.#syncing;
       const run = async () => {
-        await this.#exclusive(() =>
-          this.#send({ op: "startSync", pushOnly: true }),
-        );
+        await this.#bridge.task({ kind: "startSync", pushOnly: true });
         for (;;) {
-          const action = await this.#exclusive(() =>
-            this.#send({ op: "next" }),
-          );
+          const action = await this.#bridge.task({ kind: "next" });
           if (action === null) return;
           const response = await transport(action.kind, action.body);
-          const applied = (await this.#exclusive(() =>
-            this.#send({ op: "complete", response: JSON.parse(response) }),
-          )) as { reports: ReportDetails[]; completions: any[] };
+          const applied = (await this.#bridge.task({
+            kind: "complete",
+            response: JSON.parse(response),
+          })) as { reports: ReportDetails[]; completions: any[] };
           this.#deliverCompletions(applied.completions);
           // What the receipt or page could not apply; the client stays
           // consistent and the application hears about each one.
@@ -838,9 +815,10 @@ export function createClient<
       const names = Object.keys(handlers);
       const run = async () => {
         for (;;) {
-          const task = await this.#exclusive(() =>
-            this.#send({ op: "task", handlers: names }),
-          );
+          const task = await this.#bridge.task({
+            kind: "task",
+            handlers: names,
+          });
           if (task === null) return;
           let error: string | null = null;
           try {
@@ -848,9 +826,7 @@ export function createClient<
           } catch (thrown) {
             error = reason(thrown);
           }
-          await this.#exclusive(() =>
-            this.#send({ op: "outcome", key: task.key, error }),
-          );
+          await this.#bridge.task({ kind: "outcome", key: task.key, error });
           this.#events.emit("work");
         }
       };
@@ -860,27 +836,27 @@ export function createClient<
       return this.#tasks;
     }
     freeze(): Promise<string | null> {
-      return this.#exclusive(() => this.#send({ op: "freeze" }));
+      return this.#bridge.task({ kind: "freeze" });
     }
-    acknowledge(sequence: number, receipt: object) {
-      return this.#exclusive(async () => {
-        const applied = await this.#send({ op: "ack", sequence, receipt });
-        this.#deliverCompletions(applied.completions);
-        return applied;
+    async acknowledge(sequence: number, receipt: object) {
+      const applied = await this.#bridge.task({
+        kind: "ack",
+        sequence,
+        receipt,
       });
+      this.#deliverCompletions(applied.completions);
+      return applied;
     }
     applyPull(page: object) {
-      return this.#exclusive(() => this.#send({ op: "pull", page }));
+      return this.#bridge.task({ kind: "pull", page });
     }
     /** The client's sync state, or one record's when `model` and `identity` are given. */
     syncState(): Promise<ClientSyncState>;
     syncState(model: string, identity: object): Promise<ModelSyncState>;
     syncState(model?: string, identity?: object) {
-      return this.#exclusive(() =>
-        model === undefined
-          ? this.#send({ op: "status" })
-          : this.#send({ op: "recordStatus", key: { model, identity } }),
-      );
+      return model === undefined
+        ? this.#bridge.task({ kind: "status" })
+        : this.#bridge.task({ kind: "recordStatus", key: { model, identity } });
     }
     /**
      * Leave an incompatible database behind and open a fresh file for the
@@ -890,8 +866,9 @@ export function createClient<
     rebuild(
       options: { discardPending?: boolean } = {},
     ): Promise<RebuildReport> {
-      return this.#exclusive(() =>
-        this.#send({ op: "rebuild", ...options }).then((value) => {
+      return this.#bridge
+        .task({ kind: "rebuild", ...options })
+        .then((value) => {
           // The replica that answered every handle is gone: no handle from
           // before it names a registration of the file this client now reads.
           this.#subscriptions.rebuilt();
@@ -910,31 +887,28 @@ export function createClient<
           this.#events.emit("change");
           this.#events.emit("work");
           return value;
-        }),
-      );
+        });
     }
     pendingTasks(): Promise<RecordValue[]> {
-      return this.#exclusive(() => this.#send({ op: "tasks" }));
+      return this.#bridge.task({ kind: "tasks" });
     }
     setReadiness(key: string, state: "ready" | "pending" | "failed") {
-      return this.#exclusive(() =>
-        this.#send({ op: "readiness", key, state }).then((value) => {
+      return this.#bridge
+        .task({ kind: "readiness", key, state })
+        .then((value) => {
           this.#events.emit("work");
           return value;
-        }),
-      );
+        });
     }
     drop(ordinal: number) {
-      return this.#exclusive(() =>
-        this.#send({ op: "drop", ordinal }).then((value) => {
-          this.#deliverCompletions(value.completions);
-          this.#events.emit("work");
-          return undefined;
-        }),
-      );
+      return this.#bridge.task({ kind: "drop", ordinal }).then((value) => {
+        this.#deliverCompletions(value.completions);
+        this.#events.emit("work");
+        return undefined;
+      });
     }
     dismissRejection(ordinal: number) {
-      return this.#exclusive(() => this.#send({ op: "dismiss", ordinal }));
+      return this.#bridge.task({ kind: "dismiss", ordinal });
     }
     watch(
       model: string,
@@ -973,15 +947,12 @@ export function createClient<
     async #finishClose(): Promise<void> {
       await this.#started;
       await this.#connection?.close();
-      await this.#exclusive(async () => {
-        if (this.#closed) return;
-        try {
-          await this.#send({ op: "close" });
-        } finally {
-          this.#closed = true;
-          this.#events.removeAllListeners();
-        }
-      });
+      try {
+        await this.#bridge.close();
+      } finally {
+        this.#closed = true;
+        this.#events.removeAllListeners();
+      }
     }
   };
 }

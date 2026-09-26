@@ -1,20 +1,28 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type RecordValue, type QuerySpec } from "./values.mts";
 export { strictJson, type RecordValue, type QuerySpec } from "./values.mts";
-/** Calls execute in submission order and cannot outlive the caller-owned transaction. */
+/** One open savepoint: the scope token the runtime issued for it, once known. */
+type Frame = { scope?: string };
+/**
+ * The commands of one application transaction callback. The runtime runs
+ * them in submission order inside the transaction it owns, and refuses them
+ * once the callback finished; this object keeps the language-side evidence:
+ * async-context ownership of savepoints, unawaited work and first failure.
+ */
 export class Transaction {
-  #send: (request: RecordValue) => Promise<any>;
+  #send: (command: RecordValue, scope?: string) => Promise<any>;
   #open = true;
+  /** Settles once every command submitted so far has settled. */
   #tail: Promise<unknown> = Promise.resolve();
   #pending = 0;
   #failure: unknown;
   #structural: unknown;
-  #context = new AsyncLocalStorage<symbol>();
+  #context = new AsyncLocalStorage<Frame>();
   #publicContext = new AsyncLocalStorage<symbol>();
   #publicToken = Symbol();
-  #active: symbol | undefined;
+  #active: Frame | undefined;
   #scopes = new Set<Promise<unknown>>();
-  constructor(send: (request: RecordValue) => Promise<any>) {
+  constructor(send: (command: RecordValue, scope?: string) => Promise<any>) {
     this.#send = send;
   }
   async runCallback<T>(body: () => Promise<T>): Promise<T> {
@@ -27,12 +35,16 @@ export class Transaction {
   inCallback(): boolean {
     return this.#publicContext.getStore() === this.#publicToken;
   }
-  #queue(request: RecordValue): Promise<any> {
+  /** Submit one command in the innermost open savepoint's scope. */
+  #queue(command: RecordValue): Promise<any> {
     this.#pending++;
-    const work = this.#tail.then(() =>
-      this.#send({ ...request, transaction: true }),
-    );
-    this.#tail = work.then(
+    let work: Promise<any>;
+    try {
+      work = this.#send(command, this.#active?.scope);
+    } catch (error) {
+      work = Promise.reject(error);
+    }
+    const settled = work.then(
       () => {
         this.#pending--;
       },
@@ -41,15 +53,16 @@ export class Transaction {
         this.#failure ??= error;
       },
     );
+    this.#tail = Promise.all([this.#tail, settled]);
     return work;
   }
-  #call(request: RecordValue): Promise<any> {
+  #call(command: RecordValue): Promise<any> {
     if (!this.#open) return Promise.reject(Error("transaction_closed"));
     if (this.#active && this.#context.getStore() !== this.#active) {
       this.#structural = Error("overlapping savepoint work");
       return Promise.reject(this.#structural);
     }
-    return this.#queue(request);
+    return this.#queue(command);
   }
   async finish(): Promise<void> {
     const outstanding = this.#pending > 0 || this.#scopes.size > 0;
@@ -60,23 +73,23 @@ export class Transaction {
     if (this.#failure) throw this.#failure;
   }
   read(model: string, identity: object): Promise<RecordValue | null> {
-    return this.#call({ op: "read", key: { model, identity } });
+    return this.#call({ kind: "read", key: { model, identity } });
   }
   query(model: string, where: RecordValue = {}): Promise<RecordValue[]> {
-    return this.#call({ op: "query", model, filter: where });
+    return this.#call({ kind: "query", model, filter: where });
   }
   readSql(sql: string, parameters: unknown[] = []): Promise<RecordValue[]> {
-    return this.#call({ op: "sql", sql, parameters });
+    return this.#call({ kind: "sql", sql, parameters });
   }
   querySpec(model: string, query: QuerySpec = {}): Promise<RecordValue[]> {
-    return this.#call({ op: "querySpec", model, query });
+    return this.#call({ kind: "querySpec", model, query });
   }
   related(
     model: string,
     identity: object,
     relation: string,
   ): Promise<RecordValue | null> {
-    return this.#call({ op: "related", key: { model, identity }, relation });
+    return this.#call({ kind: "related", key: { model, identity }, relation });
   }
   referencing(
     model: string,
@@ -85,14 +98,14 @@ export class Transaction {
     relation: string,
   ): Promise<RecordValue[]> {
     return this.#call({
-      op: "referencing",
+      kind: "referencing",
       key: { model, identity },
       source,
       relation,
     });
   }
   direct(operation: object) {
-    return this.#call({ op: "direct", operation });
+    return this.#call({ kind: "direct", operation });
   }
   savepoint<T>(body: () => Promise<T>): Promise<T> {
     if (!this.#open) return Promise.reject(Error("transaction_closed"));
@@ -101,11 +114,14 @@ export class Transaction {
       return Promise.reject(this.#structural);
     }
     const parent = this.#active;
-    const token = Symbol();
+    const token: Frame = {};
+    // Opened in the parent's scope; the runtime answers the new one.
+    const opened = this.#queue({ kind: "savepoint" });
     this.#active = token;
     const failure = this.#failure;
     const run = this.#context.run(token, async () => {
-      await this.#queue({ op: "savepoint" });
+      const scope = (await opened)?.scope;
+      if (typeof scope === "string") token.scope = scope;
       try {
         if (!this.#open) throw Error("transaction_closed");
         const value = await body();
@@ -117,7 +133,7 @@ export class Transaction {
         }
         if (this.#failure !== failure) throw this.#failure;
         if (this.#structural) throw this.#structural;
-        await this.#queue({ op: "release" });
+        await this.#queue({ kind: "release", ...scopeOf(token) });
         return value;
       } catch (error) {
         await this.#tail;
@@ -126,7 +142,7 @@ export class Transaction {
             this.#structural = Error("unawaited nested savepoint");
             throw this.#structural;
           }
-          await this.#queue({ op: "rollbackSavepoint" });
+          await this.#queue({ kind: "rollbackSavepoint", ...scopeOf(token) });
           this.#failure = failure;
         }
         throw error;
@@ -141,4 +157,9 @@ export class Transaction {
     );
     return run;
   }
+}
+
+/** The scope field of a savepoint's own `release` / `rollbackSavepoint`. */
+function scopeOf(frame: Frame): { scope?: string } {
+  return frame.scope === undefined ? {} : { scope: frame.scope };
 }

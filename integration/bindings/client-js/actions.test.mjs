@@ -645,15 +645,45 @@ test("close racing a committed submit still yields a terminal handle", async () 
   const gate = new Promise((resolve) => {
     release = resolve;
   });
+  // Hold every event from the committed submit's completion on until the
+  // gate opens, so close begins while the committed submit is unanswered.
+  const submits = new Set();
+  let held;
+  let gateOpen = false;
+  let wakeHeld;
+  void gate.then(() => {
+    gateOpen = true;
+    wakeHeld?.();
+  });
   const native = {
-    async clientCall(request) {
-      const result = await binding.clientCall(request);
-      if (JSON.parse(request).op === "submitAction") {
-        entered();
-        await gate;
-      }
-      return result;
+    runtimeOpen(request, wake) {
+      const runtimeId = binding.runtimeOpen(request, wake);
+      wakeHeld = () => wake(runtimeId);
+      return runtimeId;
     },
+    runtimeSubmit(runtimeId, message) {
+      const parsed = JSON.parse(message);
+      if (parsed.command?.kind === "submitAction")
+        submits.add(parsed.requestId);
+      binding.runtimeSubmit(runtimeId, message);
+    },
+    runtimeDrain(runtimeId) {
+      const batch = JSON.parse(binding.runtimeDrain(runtimeId));
+      if (
+        !held &&
+        batch.some(
+          (event) =>
+            event.type === "taskCompleted" && submits.has(event.requestId),
+        )
+      ) {
+        held = [];
+        entered();
+      }
+      if (!held) return JSON.stringify(batch);
+      held.push(...batch);
+      return JSON.stringify(gateOpen ? held.splice(0) : []);
+    },
+    runtimeDetach: (runtimeId) => binding.runtimeDetach(runtimeId),
   };
   const RaceClient = createClient(native, Transaction, () => {
     throw Error("network not configured");
@@ -700,12 +730,15 @@ test("the store option travels beside args on both routes and is validated befor
   };
   const sent = [];
   const native = {
-    clientCall(request) {
-      const parsed = JSON.parse(request);
-      if (parsed.op === "submitAction" || parsed.op === "prepareAction")
-        sent.push(parsed);
-      return binding.clientCall(request);
+    runtimeOpen: (request, wake) => binding.runtimeOpen(request, wake),
+    runtimeSubmit(runtimeId, message) {
+      const { command } = JSON.parse(message);
+      if (command?.kind === "submitAction" || command?.kind === "prepareAction")
+        sent.push(command);
+      binding.runtimeSubmit(runtimeId, message);
     },
+    runtimeDrain: (runtimeId) => binding.runtimeDrain(runtimeId),
+    runtimeDetach: (runtimeId) => binding.runtimeDetach(runtimeId),
   };
   const bodies = [];
   const StoreClient = createClient(native, Transaction, () => ({

@@ -159,12 +159,19 @@ test("concurrent once callers share one request and decode independent results",
   let racing;
   let client;
   const wrapped = {
-    async clientCall(request) {
-      const reply = await native.clientCall(request);
-      const parsed = JSON.parse(reply);
-      if (parsed.value?.decision === "fetch" && !racing) racing = once(client);
-      return reply;
+    runtimeOpen: (request, wake) => native.runtimeOpen(request, wake),
+    runtimeSubmit: (runtimeId, message) =>
+      native.runtimeSubmit(runtimeId, message),
+    runtimeDrain(runtimeId) {
+      const batch = native.runtimeDrain(runtimeId);
+      const fetched = JSON.parse(batch).some(
+        (event) =>
+          event.type === "taskCompleted" && event.value?.decision === "fetch",
+      );
+      if (fetched && !racing) racing = once(client);
+      return batch;
     },
+    runtimeDetach: (runtimeId) => native.runtimeDetach(runtimeId),
   };
   await harness(
     async ({ client: opened, state, deferred }) => {

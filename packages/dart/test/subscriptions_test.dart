@@ -5,7 +5,50 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:axton/axton.dart';
+// The registry itself, for the races only an exact command path can produce.
+import 'package:axton/src/subscriptions.dart'
+    show BootstrapRun, DownlinkSignal, SubscriptionCommands, Subscriptions;
 import 'package:test/test.dart';
+
+/// One stored run, as the native commands answer it.
+BootstrapRun stored({int run = 1, String state = 'requested'}) => BootstrapRun(
+  scope: 'scope',
+  subscriptionId: 1,
+  state: state,
+  run: run,
+  cursor: 0,
+);
+
+/// The registry driven straight through its command path: one registration,
+/// whose load commands the test supplies
+/// ([#151](https://github.com/zanminwang/axton/issues/151)).
+({Subscriptions subscriptions, List<void> woken}) registry({
+  Future<BootstrapRun> Function()? requestBootstrap,
+  Future<BootstrapRun> Function()? read,
+}) {
+  final woken = <void>[];
+  const state = SubscriptionState(
+    scope: 'scope',
+    subscriptionId: 1,
+    startingCursor: 0,
+    cursor: 0,
+  );
+  return (
+    subscriptions: Subscriptions(
+      SubscriptionCommands(
+        subscribe: (_) async => state,
+        state: (_) async => state,
+        remove: (_, _) async => true,
+        removeScope: (_) async {},
+        requestBootstrap: (_, _) =>
+            (requestBootstrap ?? () async => stored())(),
+        bootstrapState: (_, _) => (read ?? () async => stored())(),
+        committed: () => woken.add(null),
+      ),
+    ),
+    woken: woken,
+  );
+}
 
 /// The acknowledgement: every subscribed channel at `head`.
 String ack(Map sub, int head) => jsonEncode({
@@ -1002,6 +1045,135 @@ void main() {
       } finally {
         await fixture.close();
         await network.close();
+      }
+    },
+  );
+
+  test(
+    'a registration the engine refuses as closed rejects with subscription.closed',
+    () async {
+      // The removal committed between this command and the handle's own close,
+      // so the engine - not the handle - is what knows it is gone.
+      final refusal = StateError(
+        'subscription.closed: subscription 1 for scope is closed; '
+        'it has no bootstrap state',
+      );
+      final closed = registry(requestBootstrap: () async => throw refusal);
+      final subscription = await closed.subscriptions.subscribe('scope');
+      await expectLater(
+        subscription.bootstrap(),
+        throwsA(isA<SubscriptionClosedException>()),
+        reason: "the engine's text must not reach the caller",
+      );
+      // An unrelated engine failure is still the caller's to see, unchanged.
+      final other = StateError('the database is locked');
+      final locked = registry(requestBootstrap: () async => throw other);
+      final handle = await locked.subscriptions.subscribe('scope');
+      await expectLater(handle.bootstrap(), throwsA(same(other)));
+    },
+  );
+
+  test(
+    'a handle closed while its registration commits wakes no lane',
+    () async {
+      final gate = Completer<void>();
+      final closing = registry(
+        requestBootstrap: () async {
+          await gate.future;
+          return stored();
+        },
+      );
+      final subscription = await closing.subscriptions.subscribe('scope');
+      final pending = subscription.bootstrap().then<Object?>(
+        (_) => null,
+        onError: (Object error) => error,
+      );
+      closing.subscriptions.close();
+      final before = closing.woken.length;
+      gate.complete();
+      expect(await pending, isA<ClientClosedException>());
+      expect(
+        closing.woken,
+        hasLength(before),
+        reason: 'a closed client is not woken through its closed controller',
+      );
+    },
+  );
+
+  test(
+    'a waiter whose run was superseded is rejected, never completed by the newer one',
+    () async {
+      var answer = stored();
+      final retried = registry(
+        requestBootstrap: () async => answer,
+        read: () async => answer,
+      );
+      final subscription = await retried.subscriptions.subscribe('scope');
+      final first = subscription.bootstrap().then<Object?>(
+        (_) => null,
+        onError: (Object error) => error,
+      );
+      await until(
+        () async =>
+            subscription.status.bootstrap.phase == BootstrapPhase.loading,
+        'the registered run',
+      );
+      // A retry started run 2, so run 1's outcome can no longer be observed:
+      // the call it belongs to never completes from another run.
+      answer = stored(run: 2, state: 'loading');
+      final second = subscription.bootstrap().then<Object?>(
+        (_) => null,
+        onError: (Object error) => error,
+      );
+      expect(
+        await first,
+        isA<BootstrapSupersededException>(),
+        reason: 'run 1 must not complete from run 2',
+      );
+      // The newest run still settles the call that belongs to it.
+      var settled = false;
+      unawaited(second.then((_) => settled = true));
+      await until(() async {
+        retried.subscriptions.signal(
+          DownlinkSignal.bootstrap({
+            'scope': 'scope',
+            'subscriptionId': 1,
+            'state': 'complete',
+            'run': 2,
+            'cursor': 0,
+            'barrier': null,
+            'error': null,
+          }),
+        );
+        return settled;
+      }, 'run 2 settles the call that belongs to it');
+      expect(await second, isNull);
+      expect(
+        subscription.status.bootstrap,
+        const BootstrapStatus(phase: BootstrapPhase.complete),
+      );
+    },
+  );
+
+  test(
+    'unsubscribing a Scope while a bootstrap is submitted rejects it as closed',
+    () async {
+      final fixture = await Fixture.open();
+      try {
+        final subscription = await fixture.client.subscribe('scope');
+        // The removal and the registration are submitted in that order on the
+        // one serialized command path: whether the handle or the engine sees
+        // the closed registration first, the caller gets the same failure.
+        final removed = fixture.client.unsubscribe('scope');
+        final rejected = subscription.bootstrap().then<Object?>(
+          (_) => null,
+          onError: (Object error) => error,
+        );
+        await removed;
+        expect(await rejected, isA<SubscriptionClosedException>());
+        expect(subscription.status.active, isFalse);
+      } finally {
+        await fixture.close();
       }
     },
   );

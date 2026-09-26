@@ -98,6 +98,12 @@ fn a_closed_subscription_refuses_registration_and_observation() {
         c.bootstrap_state("a", state.subscription_id + 1)
             .expect_err("another identity"),
     ] {
+        // The stable prefix is the SDKs' only handle on this refusal: they
+        // raise their own `subscription.closed` for it.
+        assert!(
+            error.to_string().starts_with(SUBSCRIPTION_CLOSED),
+            "{error}"
+        );
         assert!(error.to_string().contains("is closed"), "{error}");
     }
 }

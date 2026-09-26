@@ -890,6 +890,12 @@ fn bootstrap_commands_register_read_and_schedule_one_page() {
         let error = host
             .call(json!({"op":op,"handle":id,"scope":"book","subscriptionId":99}))
             .expect_err("another identity");
+        // The refusal crosses the binding with its stable prefix intact: it is
+        // what both SDKs match to raise their own `subscription.closed`.
+        assert!(
+            error.to_string().starts_with("subscription.closed:"),
+            "{error}"
+        );
         assert!(error.to_string().contains("is closed"), "{error}");
         assert!(
             host.call(json!({"op":op,"handle":id,"scope":"absent","subscriptionId":1}))

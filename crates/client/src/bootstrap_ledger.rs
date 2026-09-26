@@ -7,7 +7,7 @@
 use crate::bootstrap::{BootstrapPhase, BootstrapState};
 use crate::engine::{Engine, as_u64};
 use crate::store::ClientStore;
-use crate::{BOOTSTRAP_MARK, BootstrapError, SubscriptionState};
+use crate::{BOOTSTRAP_MARK, BootstrapError, SUBSCRIPTION_CLOSED, SubscriptionState};
 use axton_core::{Result, invalid};
 use serde_json::{Value, json};
 
@@ -62,10 +62,15 @@ fn decode(row: &[Value]) -> Result<Loaded> {
     })
 }
 /// The error every call that names a registration this client no longer holds
-/// is refused with. The SDK maps it to `subscription.closed`.
+/// is refused with. It opens with the stable [`SUBSCRIPTION_CLOSED`] prefix,
+/// which is all a host has to go by - an engine error carries a message, not a
+/// code - and both SDKs raise their own `subscription.closed` for it rather
+/// than this text, so a `bootstrap()` that raced an unsubscribe fails the way
+/// a call through an already closed handle does.
 fn closed(scope: &str, subscription_id: u64) -> axton_core::Error {
     invalid(format!(
-        "subscription {subscription_id} for {scope} is closed; it has no bootstrap state"
+        "{SUBSCRIPTION_CLOSED}: subscription {subscription_id} for {scope} is closed; \
+         it has no bootstrap state"
     ))
 }
 

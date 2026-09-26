@@ -123,6 +123,31 @@ class BootstrapFailedException implements Exception {
   String toString() => '$code: $message';
 }
 
+/// A later run of the same registration was observed than the one this call is
+/// attached to: its own outcome can no longer be observed, and a waiter never
+/// completes from another run's, so a rapid retry cannot turn an earlier failed
+/// call into a success ([#151](https://github.com/zanminwang/axton/issues/151)).
+class BootstrapSupersededException implements Exception {
+  final String code = 'bootstrap.superseded';
+  final String scope;
+  const BootstrapSupersededException(this.scope);
+  @override
+  String toString() =>
+      'bootstrap.superseded: the bootstrap run of $scope this call waited for '
+      'was superseded';
+}
+
+/// The stable prefix the engine refuses a registration this client no longer
+/// holds with (`axton_client::SUBSCRIPTION_CLOSED`). An engine error carries a
+/// message and no code, so this is what a closed registration is recognized by;
+/// a `bootstrap()` that raced the removal then fails the way a call through an
+/// already closed handle does.
+const _closedRegistration = 'subscription.closed:';
+bool _refusedAsClosed(Object error) =>
+    (error is StateError ? error.message : '$error').contains(
+      _closedRegistration,
+    );
+
 /// One registration's durable load, as the native commands answer it and the
 /// worker announces it after every committed transition. `cursor` is how far
 /// the historical interval has been loaded and `barrier` the delivery position
@@ -443,6 +468,7 @@ class Subscription {
           );
       _settle(run.run, BootstrapFailedException(failure.code, failure.message));
     }
+    _supersede(run.run);
     final known = _run;
     if (known != null &&
         (run.run < known.run ||
@@ -451,6 +477,18 @@ class Subscription {
     }
     _run = run;
     _refresh();
+  }
+
+  /// Waiters of a run older than the one just observed. Their run is over and
+  /// its outcome is no longer observable, and an older call must never complete
+  /// from a newer run, so they are failed rather than left attached forever.
+  void _supersede(int run) {
+    final stale = _waiters.where((waiter) => waiter.run < run).toList();
+    if (stale.isEmpty) return;
+    _waiters.removeWhere((waiter) => waiter.run < run);
+    for (final waiter in stale) {
+      waiter.completer.completeError(BootstrapSupersededException(scope));
+    }
   }
 
   void _settle(int run, Object? error) {
@@ -483,14 +521,20 @@ class Subscription {
     final BootstrapRun run;
     try {
       run = await submitted;
-    } on Object {
+    } on Object catch (error) {
       if (_closed) throw _closedError();
+      // The removal committed between the command and this handle's close: the
+      // engine refused a registration that is gone, and this call is one
+      // through a closed subscription however the two raced.
+      if (_refusedAsClosed(error)) throw const SubscriptionClosedException();
       rethrow;
     }
+    // A closed client or handle takes nothing further, not even the wake: the
+    // controller it would go through is closed too.
+    if (_closed) throw _closedError();
     // The commit wakes the lanes the way a membership change does; without it
     // the registered run waits for the next commit or reconnection.
     _load.committed();
-    if (_closed) throw _closedError();
     final waiter = _Waiter(run.run);
     _waiters.add(waiter);
     _applyBootstrap(run);

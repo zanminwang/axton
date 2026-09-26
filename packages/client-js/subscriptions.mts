@@ -71,6 +71,28 @@ const clientClosed = () =>
 /** The stored failure of a run, as the waiters of that run are rejected with it. */
 const bootstrapFailed = (error: { code: string; message: string }) =>
   Object.assign(Error(error.message), { code: error.code });
+/**
+ * A later run of the same registration was observed than the one this call is
+ * attached to: its own outcome can no longer be observed, and a waiter never
+ * resolves from another run's, so a rapid retry cannot turn an earlier failed
+ * call into a success ([#151](https://github.com/zanminwang/axton/issues/151)).
+ */
+const bootstrapSuperseded = (scope: string) =>
+  Object.assign(
+    Error(`the bootstrap run of ${scope} this call waited for was superseded`),
+    { code: "bootstrap.superseded" as const },
+  );
+/**
+ * The stable prefix the engine refuses a registration this client no longer
+ * holds with (`axton_client::SUBSCRIPTION_CLOSED`). An engine error carries a
+ * message and no code, so this is what a closed registration is recognized by;
+ * a `bootstrap()` that raced the removal then fails the way a call through an
+ * already closed handle does.
+ */
+const CLOSED_REGISTRATION = "subscription.closed:";
+const refusedAsClosed = (error: unknown): boolean =>
+  typeof (error as { message?: unknown })?.message === "string" &&
+  (error as { message: string }).message.includes(CLOSED_REGISTRATION);
 
 /**
  * What the downlink lane tells the registry. It is transport state the lane
@@ -333,6 +355,7 @@ class Handle implements Subscription {
           },
         ),
       );
+    this.#supersede(run.run);
     const known = this.#run;
     if (
       known &&
@@ -343,6 +366,17 @@ class Handle implements Subscription {
       return;
     this.#run = run;
     this.refresh();
+  }
+  /**
+   * Waiters of a run older than the one just observed. Their run is over and
+   * its outcome is no longer observable, and an older call must never resolve
+   * from a newer run, so they are rejected rather than left attached forever.
+   */
+  #supersede(run: number): void {
+    const stale = this.#waiters.filter((waiter) => waiter.run < run);
+    if (stale.length === 0) return;
+    this.#waiters = this.#waiters.filter((waiter) => waiter.run >= run);
+    for (const waiter of stale) waiter.reject(bootstrapSuperseded(this.scope));
   }
   #settle(run: number, error: unknown): void {
     const settled = this.#waiters.filter((waiter) => waiter.run === run);
@@ -363,12 +397,18 @@ class Handle implements Subscription {
     try {
       run = await submitted;
     } catch (error) {
-      throw this.closed ? this.#closedError() : error;
+      if (this.closed) throw this.#closedError();
+      // The removal committed between the command and this handle's close: the
+      // engine refused a registration that is gone, and this call is one
+      // through a closed subscription however the two raced.
+      throw refusedAsClosed(error) ? subscriptionClosed() : error;
     }
+    // A closed client or handle takes nothing further, not even the wake: the
+    // controller it would go through is closed too.
+    if (this.closed) throw this.#closedError();
     // The commit wakes the lanes the way a membership change does; without it
     // the registered run waits for the next commit or reconnection.
     this.#load.committed();
-    if (this.closed) throw this.#closedError();
     const waiting = new Promise<void>((resolve, reject) => {
       this.#waiters.push({ run: run.run, resolve, reject });
     });

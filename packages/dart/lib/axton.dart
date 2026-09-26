@@ -24,6 +24,7 @@ export 'src/subscriptions.dart'
         BootstrapPhase,
         BootstrapError,
         BootstrapFailedException,
+        BootstrapSupersededException,
         ClientClosedException;
 export 'src/connection.dart'
     show

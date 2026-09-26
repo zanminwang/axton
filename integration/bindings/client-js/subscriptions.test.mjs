@@ -9,6 +9,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { WebSocketServer } from '../../../packages/server/node_modules/ws/wrapper.mjs';
 import * as runtime from '../../../packages/client-js/index.mts';
+// The registry itself, for the races only an exact command path can produce.
+import { Subscriptions } from '../../../packages/client-js/subscriptions.mts';
 
 async function openClient() {
  const dir = await mkdtemp(join(tmpdir(),'axton-subscriptions-'));
@@ -462,4 +464,89 @@ test('an observer that throws on a load transition is reported and changes nothi
    'the committed completion is what a later call resolves from');
   await connection.close();
  } finally { await fixture.close();globalThis.reportError=previous;await network.close(); }
+});
+
+/**
+ * The registry driven straight through its command path, so the races the real
+ * client only sometimes produces are exact here: a command that answers with
+ * the engine's closed refusal, a handle closed between the command and the
+ * registration, and a newer run observed than the one a call waits for
+ * ([#151](https://github.com/zanminwang/axton/issues/151)).
+ */
+const stored=(over={})=>({scope:'scope',subscriptionId:1,state:'requested',run:1,cursor:0,barrier:null,error:null,...over});
+function registry(over={}) {
+ const committed=[];
+ const commands={
+  subscribe:async()=>({scope:'scope',subscriptionId:1,startingCursor:0,cursor:0}),
+  state:async()=>({scope:'scope',subscriptionId:1,startingCursor:0,cursor:0}),
+  requestBootstrap:async()=>stored(),
+  bootstrapState:async()=>stored(),
+  remove:async()=>true,
+  removeScope:async()=>{},
+  committed:()=>committed.push(1),
+  report:()=>{},
+  ...over};
+ return {commands,committed,subscriptions:new Subscriptions(commands)};
+}
+
+test('a registration the engine refuses as closed rejects with subscription.closed', async()=>{
+ // The removal committed between this command and the handle's own close, so
+ // the engine - not the handle - is what knows the registration is gone.
+ const refusal=Error('subscription.closed: subscription 1 for scope is closed; it has no bootstrap state');
+ const {subscriptions}=registry({requestBootstrap:async()=>{throw refusal;}});
+ const subscription=await subscriptions.subscribe('scope');
+ const rejected=await subscription.bootstrap().then(()=>null,error=>error);
+ assert.equal(rejected?.code,'subscription.closed',`the engine's text must not reach the caller: ${rejected?.message}`);
+ assert.notEqual(rejected,refusal);
+ // An unrelated engine failure is still the caller's to see, unchanged.
+ const other=Error('the database is locked');
+ const second=registry({requestBootstrap:async()=>{throw other;}});
+ const handle=await second.subscriptions.subscribe('scope');
+ assert.equal(await handle.bootstrap().then(()=>null,error=>error),other);
+});
+
+test('a handle closed while its registration commits wakes no lane and rejects', async()=>{
+ const gate=Promise.withResolvers();
+ const {subscriptions,committed}=registry({requestBootstrap:async()=>{await gate.promise;return stored();}});
+ const subscription=await subscriptions.subscribe('scope');
+ const pending=subscription.bootstrap().then(()=>null,error=>error);
+ subscriptions.close();
+ const before=committed.length;
+ gate.resolve();
+ assert.equal((await pending)?.code,'client_closed');
+ assert.equal(committed.length,before,'a closed client is not woken through its closed controller');
+});
+
+test('a waiter whose run was superseded is rejected, never resolved by the newer one', async()=>{
+ let answer=stored();
+ const {subscriptions}=registry({requestBootstrap:async()=>answer,bootstrapState:async()=>answer});
+ const subscription=await subscriptions.subscribe('scope');
+ const first=subscription.bootstrap().then(()=>null,error=>error);
+ await until(async()=>subscription.status.bootstrap.phase==='loading','the registered run');
+ // A retry started run 2, so run 1's outcome can no longer be observed: the
+ // call it belongs to never resolves from another run, whatever that run does.
+ answer=stored({run:2,state:'loading'});
+ const second=subscription.bootstrap().then(()=>null,error=>error);
+ assert.equal((await first)?.code,'bootstrap.superseded','run 1 must not resolve from run 2');
+ // The newest run still settles its own waiter, as it always did.
+ let settled=false;void second.then(()=>{settled=true;});
+ await until(async()=>{subscriptions.signal({lane:'bootstrap',run:stored({run:2,state:'complete'})});return settled;},
+  'run 2 settles the call that belongs to it');
+ assert.equal(await second,null);
+ assert.deepEqual({...subscription.status.bootstrap},{phase:'complete',error:null});
+});
+
+test('unsubscribing a Scope while a bootstrap is submitted rejects it as closed', async()=>{
+ const fixture=await openClient();const {client}=fixture;
+ try {
+  const subscription=await client.subscribe('scope');
+  // The removal and the registration are submitted in that order on the one
+  // serialized command path: whether the handle or the engine sees the closed
+  // registration first, the caller gets the same code.
+  const removed=client.unsubscribe('scope');
+  const rejected=subscription.bootstrap().then(()=>null,error=>error);
+  await removed;
+  assert.equal((await rejected)?.code,'subscription.closed');
+  assert.equal(subscription.status.active,false);
+ } finally { await fixture.close(); }
 });

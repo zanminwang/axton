@@ -26,6 +26,12 @@ pub const PROTOCOL_INVALID: &str = "bootstrap.protocol_invalid";
 /// The stable code a request the server definitively refused fails with. A
 /// transport failure is not this: it keeps the run and is retried.
 pub const REQUEST_REJECTED: &str = "bootstrap.request_rejected";
+/// The stable prefix every refusal of a registration this client no longer
+/// holds carries. An engine error is a message, not a code, so this is what a
+/// host has to recognize it by: the SDKs match it and raise their own
+/// `subscription.closed` instead of the engine's text
+/// ([`crate::bootstrap_ledger`]).
+pub const SUBSCRIPTION_CLOSED: &str = "subscription.closed";
 /// At most this many record summaries are kept in a stored failure.
 pub const MAX_FAILURES: usize = 50;
 /// A stored failure message is cut to this many UTF-8 bytes.

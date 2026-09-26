@@ -765,3 +765,232 @@ fn backend_config_refuses_query_descriptors_with_model_operands() {
     .expect("a Query with a Model operand is not a valid backend config");
     assert!(error.to_string().contains("Model operand"), "{error}");
 }
+
+// Caller authority versus changed records (#140). Inputs are mandatory caller
+// authority; explicit outputs are independent Loader reads; extra touches are
+// changed records, never caller authority.
+mod support;
+use support::{Backend, authority, edit, reference};
+
+fn todo(id: &str, title: &str) -> Value {
+    json!({"id":id,"title":title})
+}
+
+/// Input Todo A is modified and same-name output `todo` selects Todo B: the
+/// receipt confirms A and `result.todo` is B's snapshot. Omitting the output
+/// fails the call; it is never filled from the input.
+#[test]
+fn an_input_and_a_same_name_output_are_independent_and_a_missing_output_never_falls_back() {
+    let backend = Backend::new();
+    backend.seed("Todo", "a", todo("a", "old"), None);
+    backend.seed("Todo", "b", todo("b", "other"), None);
+    backend.script(
+        "EditAndRead",
+        json!({"outputs":{"todo":{"id":"b"}},"changes":[],"memberships":[]}),
+    );
+    let receipt = support::push(
+        &backend,
+        1,
+        json!({"Todo":1}),
+        vec![edit(1, 1, "EditAndRead", "a", "typed")],
+    );
+    assert_eq!(receipt["rejections"], json!([]));
+    assert_eq!(
+        receipt["completions"][0]["outcome"]["result"],
+        json!({"todo":{"id":"b","title":"other"}})
+    );
+    let records = authority(&receipt);
+    assert!(
+        records.contains(&("Todo".into(), "a".into(), 1)),
+        "{records:?}"
+    );
+    let a = receipt["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["identity"]["id"] == "a")
+        .unwrap();
+    assert_eq!(a["state"], json!({"title":"typed"}));
+    // The handler omits its declared output: the call fails and rolls back.
+    backend.script(
+        "EditAndRead",
+        json!({"outputs":{},"changes":[],"memberships":[]}),
+    );
+    let receipt = support::push(
+        &backend,
+        2,
+        json!({"Todo":1}),
+        vec![edit(1, 2, "EditAndRead", "a", "lost")],
+    );
+    assert_eq!(
+        receipt["rejections"],
+        json!([{"ordinal":1,"code":"handler.invalid"}])
+    );
+    assert_eq!(receipt["records"], json!([]));
+    assert_eq!(backend.row("Todo", "a"), Some(todo("a", "typed")));
+    assert_eq!(
+        backend.stamp("Todo", "a"),
+        Some(1),
+        "the failed call's stamp rolled back"
+    );
+}
+
+/// An operation without outputs answers a null result on the wire (the
+/// generated SDK's `void`) and still carries its input authority.
+#[test]
+fn no_declared_outputs_answer_null_and_keep_input_authority() {
+    let backend = Backend::new();
+    backend.seed("Todo", "a", todo("a", "old"), Some(4));
+    let receipt = support::push(
+        &backend,
+        1,
+        json!({"Todo":1}),
+        vec![edit(1, 1, "Edit", "a", "typed")],
+    );
+    assert_eq!(receipt["completions"][0]["outcome"]["result"], Value::Null);
+    assert_eq!(authority(&receipt), [("Todo".into(), "a".into(), 5)]);
+    assert_eq!(receipt["records"][0]["state"], json!({"title":"typed"}));
+}
+
+/// An extra touch of a Model the caller never declared succeeds: the Project
+/// advances and fans out to its Channel, its Loader is not invoked for the
+/// caller, and it is absent from the caller's authority.
+#[test]
+fn an_extra_touch_of_an_undeclared_model_fans_out_without_caller_authority() {
+    let backend = Backend::new();
+    backend.seed("Todo", "a", todo("a", "old"), None);
+    backend.seed("Project", "p", json!({"id":"p","name":"P"}), Some(2));
+    backend.enroll("project:p", "Project", "p", 7);
+    backend.script(
+        "Edit",
+        json!({"outputs":{},"changes":[reference("Project","p")],"memberships":[]}),
+    );
+    let receipt = support::push(
+        &backend,
+        1,
+        json!({"Todo":1}),
+        vec![edit(1, 1, "Edit", "a", "typed")],
+    );
+    assert_eq!(receipt["rejections"], json!([]));
+    assert_eq!(authority(&receipt), [("Todo".into(), "a".into(), 1)]);
+    assert_eq!(backend.stamp("Project", "p"), Some(3));
+    assert_eq!(backend.head("project:p"), 8);
+    assert_eq!(
+        backend.invalidation("project:p", "Project", "p"),
+        Some((8, 3))
+    );
+    assert_eq!(
+        backend.loaded_models(),
+        ["Todo"],
+        "no Project read for the caller"
+    );
+}
+
+/// A touched Project the caller also selects as an explicit output is read
+/// as an actual output: at the one stamp settlement allocated, with the
+/// caller's declared version and the Loader's authorization. An undeclared
+/// version or a refusal rejects the call and rolls back the whole mutation.
+#[test]
+fn a_touched_output_is_an_actual_read_and_its_failure_rolls_back_the_mutation() {
+    let prepare = || {
+        let backend = Backend::new();
+        backend.seed("Todo", "a", todo("a", "old"), Some(1));
+        backend.seed("Project", "p", json!({"id":"p","name":"P"}), Some(2));
+        backend.enroll("project:p", "Project", "p", 7);
+        backend.script(
+            "EditAndReadProject",
+            json!({"outputs":{"project":{"id":"p"}},"changes":[reference("Project","p")],"memberships":[]}),
+        );
+        backend
+    };
+    let backend = prepare();
+    let receipt = support::push(
+        &backend,
+        1,
+        json!({"Todo":1,"Project":1}),
+        vec![edit(1, 1, "EditAndReadProject", "a", "typed")],
+    );
+    assert_eq!(receipt["rejections"], json!([]));
+    assert_eq!(
+        receipt["completions"][0]["outcome"]["result"],
+        json!({"project":{"id":"p","name":"P"}})
+    );
+    assert_eq!(
+        authority(&receipt),
+        [
+            ("Project".into(), "p".into(), 3),
+            ("Todo".into(), "a".into(), 2)
+        ]
+    );
+    assert_eq!(backend.count("advanceStamp"), 2);
+    assert_eq!(
+        backend.count("ensureStamp"),
+        0,
+        "the settled stamp is reused"
+    );
+    for (label, models, refuse, code) in [
+        (
+            "undeclared",
+            json!({"Todo":1}),
+            false,
+            "model_version_unsupported",
+        ),
+        (
+            "refused",
+            json!({"Todo":1,"Project":1}),
+            true,
+            "project.forbidden",
+        ),
+    ] {
+        let backend = prepare();
+        if refuse {
+            backend.refuse_load("Project", "p");
+        }
+        let before = backend.tables();
+        let receipt = support::push(
+            &backend,
+            1,
+            models,
+            vec![edit(1, 1, "EditAndReadProject", "a", "typed")],
+        );
+        assert_eq!(
+            receipt["rejections"],
+            json!([{"ordinal":1,"code":code}]),
+            "{label}"
+        );
+        assert_eq!(receipt["records"], json!([]), "{label}");
+        let after = backend.tables();
+        assert_eq!(
+            after.rows, before.rows,
+            "{label}: business write rolled back"
+        );
+        assert_eq!(after.stamps, before.stamps, "{label}: stamps rolled back");
+        assert_eq!(after.heads, before.heads, "{label}: positions rolled back");
+        assert_eq!(after.invalidations, before.invalidations, "{label}");
+    }
+}
+
+/// A touch of the input target itself and a repeated touch of another record
+/// deduplicate: one stamp per changed record, never two.
+#[test]
+fn a_duplicate_or_inferred_touch_allocates_one_stamp() {
+    let backend = Backend::new();
+    backend.seed("Todo", "a", todo("a", "old"), Some(1));
+    backend.seed("Project", "p", json!({"id":"p","name":"P"}), Some(6));
+    backend.script(
+        "Edit",
+        json!({"outputs":{},"changes":[
+            reference("Todo","a"),reference("Project","p"),reference("Project","p")],"memberships":[]}),
+    );
+    let receipt = support::push(
+        &backend,
+        1,
+        json!({"Todo":1}),
+        vec![edit(1, 1, "Edit", "a", "typed")],
+    );
+    assert_eq!(receipt["rejections"], json!([]));
+    assert_eq!(backend.count("advanceStamp"), 2);
+    assert_eq!(backend.stamp("Todo", "a"), Some(2));
+    assert_eq!(backend.stamp("Project", "p"), Some(7));
+    assert_eq!(authority(&receipt), [("Todo".into(), "a".into(), 2)]);
+}

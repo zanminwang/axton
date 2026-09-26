@@ -73,14 +73,12 @@ await backend.transaction(async ({ tx, changes, publish }) => {
 const started = await backend.listen({ port: 0, host: "127.0.0.1" });
 const target = new URL(started.url);
 
-/**
- * The rows seeded above were published before any phone had a subscription, so
- * subscribing does not deliver them
- * ([#150](https://github.com/zanminwang/axton/issues/150)). The app asks for
- * them with `subscription.bootstrap()`
- * ([#151](https://github.com/zanminwang/axton/issues/151)); this harness
- * republishes nothing.
- */
+// The rows seeded above were published before any phone had a subscription, so
+// subscribing does not deliver them
+// ([#150](https://github.com/zanminwang/axton/issues/150)). The app asks for
+// them with `subscription.bootstrap()`
+// ([#151](https://github.com/zanminwang/axton/issues/151)); this harness
+// republishes nothing: the seeded state arrives through the app's own load.
 
 async function proxy(dropFirstPush: boolean) {
   let online = true;

@@ -364,6 +364,7 @@ impl Sim {
         slot.receipts.clear();
         slot.pushes.clear();
         slot.crash_state = None;
+        slot.bootstrap_rotation = None;
         for generation in slot.generations.values_mut() {
             *generation += 1;
         }
@@ -597,6 +598,9 @@ impl Sim {
                     let slot = &self.clients[client];
                     let reopened = open(&slot.path, &slot.schema, false);
                     self.clients[client].client = Some(reopened);
+                    // The rotation is the worker's own memory, not durable state:
+                    // a reopened lane starts its turn-taking over.
+                    self.clients[client].bootstrap_rotation = None;
                     if let Some(before) = self.clients[client].crash_state.take() {
                         crate::invariants::no_pending_operation_is_lost_on_reopen(
                             self, client, &before,

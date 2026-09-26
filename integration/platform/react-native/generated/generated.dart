@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'package:axton/axton.dart';
 export 'package:axton/axton.dart' show RuntimeConnection, SyncServer, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, CallStore, Subscription, SubscriptionStatus, SubscriptionInitialization, SubscriptionConnection, SubscriptionClosedException, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException;
 class Present<T> { final T value; const Present(this.value); }
-final Map<String,dynamic> schema = jsonDecode(r'''{"actions":[],"clientPolicies":[{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","text","note"]},"name":"AddEntry","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"single","model":"Entry","name":"entry","operation":"create"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","text","note"]},"name":"Edit","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"allowedPatchFields":["text","note"],"cardinality":"single","model":"Entry","name":"entry","operation":"update"}],"version":1}],"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":1}]}''') as Map<String,dynamic>;
-class Entry {
+final Map<String,dynamic> schema = jsonDecode('{"actions":[],"clientPolicies":[{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","text","note"]},"name":"AddEntry","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"single","model":"Entry","name":"entry","operation":"create"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","text","note"]},"name":"Edit","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"allowedPatchFields":["text","note"],"cardinality":"single","model":"Entry","name":"entry","operation":"update"}],"version":1}],"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":1}]}') as Map<String,dynamic>;
+/// What a fresh create of Entry accepts: a complete [Entry], or a [EntryCreate] that may omit fields with creation defaults.
+abstract interface class EntryCreateInput { Map<String,dynamic> toCreateRecord(); }
+class Entry implements EntryCreateInput {
  final String id;
  final String text;
  final String? note;
@@ -19,6 +21,8 @@ class Entry {
  text: row['text'] as String,
  note: row['note'] == null ? null : row['note'] as String,
  );
+ @override
+ Map<String,dynamic> toCreateRecord() => toRecord();
  EntryIdentity get identity => EntryIdentity(id: id);
 }
 class EntryIdentity {
@@ -40,10 +44,22 @@ class EntryPatch {
  if (note != null) 'note': note!.value == null ? null : note!.value!,
  };
 }
-Map<String,dynamic> addEntry({required Entry entry}) { final operations=<Map<String,dynamic>>[];
+class EntryCreate implements EntryCreateInput {
+ final String id;
+ final String text;
+ final String? note;
+ const EntryCreate({required this.id,required this.text,required this.note});
+ @override
+ Map<String,dynamic> toCreateRecord() => {
+ 'id': id,
+ 'text': text,
+ 'note': note == null ? null : note!,
+ };
+}
+Map<String,dynamic> addEntry({required EntryCreateInput entry}) { final operations=<Map<String,dynamic>>[];
  for (final value in [entry]) {
- final state=value.toRecord(); for (final key in value.identity.toRecord().keys) { state.remove(key); }
- operations.add({'model':'Entry','op':'create','identity':value.identity.toRecord(),'values':state}); }
+ final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)};
+ operations.add({'model':'Entry','op':'create','identity':identity,'values':state}); }
  return {'name':'AddEntry','version':1,'operations':operations}; }
 final _addEntry = addEntry;
 class EditEntryUpdate {
@@ -84,12 +100,12 @@ class EntryLiveModel extends EntryTxModel { final Client client; EntryLiveModel(
  Future<SyncState> syncState(EntryIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Entry', identity.toRecord()));
 }
 class EntryTxModel extends EntryModel { final WritePort writer; EntryTxModel(this.writer) : super(writer);
- Future<void> create(Entry value) { final state=value.toRecord(); for (final key in value.identity.toRecord().keys) { state.remove(key); } return writer.direct({'model':'Entry','op':'create','identity':value.identity.toRecord(),'values':state}); }
+ Future<void> create(EntryCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Entry','op':'create','identity':identity,'values':state}); }
  Future<void> update(EntryIdentity identity, EntryPatch patch) => writer.direct({'model':'Entry','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
  Future<void> delete(EntryIdentity identity) => writer.direct({'model':'Entry','op':'delete','identity':identity.toRecord()});
 }
 class Mutate { final MutatePort port; Mutate(this.port);
- Future<int> addEntry({required Entry entry}) => port.mutate(_addEntry(entry:entry));
+ Future<int> addEntry({required EntryCreateInput entry}) => port.mutate(_addEntry(entry:entry));
  Future<int> edit({required EditEntryUpdate entry}) => port.mutate(_edit(entry:entry));
 }
 class LiveModels { final Client port; LiveModels(this.port);

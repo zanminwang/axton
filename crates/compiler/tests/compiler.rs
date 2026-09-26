@@ -822,8 +822,6 @@ fn rejects_model_and_enum_names_the_generated_client_uses() {
         "DirectMutations",
         "QueuedQueries",
         "CallPort",
-        "MutationContext",
-        "QueryContext",
         "CallRejected",
         // The shared call handle vocabulary every generated client re-exports.
         "Call",
@@ -843,13 +841,6 @@ fn rejects_model_and_enum_names_the_generated_client_uses() {
         "SubscriptionInitialization",
         "SubscriptionConnection",
         "SubscriptionClosedException",
-        // The backend declaration vocabulary ([#140](https://github.com/zanminwang/axton/issues/140)).
-        "Channel",
-        "Touch",
-        "ModelMembership",
-        "RecordRef",
-        "HandlerCall",
-        "TransactionCall",
     ] {
         let e = compile(&format!("model {name} {{ id UUID @@id(id) }}")).unwrap_err();
         assert!(e.contains("generated client"), "{name}: {e}");
@@ -858,6 +849,32 @@ fn rejects_model_and_enum_names_the_generated_client_uses() {
         ))
         .unwrap_err();
         assert!(e.contains("generated client"), "enum {name}: {e}");
+    }
+    // The generated backend's handler and publish vocabulary
+    // ([#140](https://github.com/zanminwang/axton/issues/140)): the diagnostic
+    // names the backend, which is where these types are declared.
+    for name in [
+        "MutationContext",
+        "QueryContext",
+        "Channel",
+        "Touch",
+        "ModelMembership",
+        "RecordRef",
+        "HandlerCall",
+        "TransactionCall",
+    ] {
+        let e = compile(&format!("model {name} {{ id UUID @@id(id) }}")).unwrap_err();
+        assert!(
+            e.contains(&format!(
+                "{name} is a type name the generated backend declares"
+            )),
+            "{name}: {e}"
+        );
+        let e = compile(&format!(
+            "enum {name} {{ a b }}\nmodel Other {{ id UUID @@id(id) }}"
+        ))
+        .unwrap_err();
+        assert!(e.contains("generated backend"), "enum {name}: {e}");
     }
     for name in [
         "Status",

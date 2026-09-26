@@ -579,8 +579,8 @@ fn validate_action_slot(
 }
 
 /// Check the declarations and resolve them into the typed schema.
-/// Top-level identifiers the generated TypeScript and Dart clients and the
-/// generated TypeScript backend, or the runtime packages they import, declare. A model or enum with one of these
+/// Top-level identifiers the generated TypeScript and Dart clients, or the
+/// runtime packages they import, declare. A model or enum with one of these
 /// names would collide with them in the generated file.
 const GENERATED_NAMES: &[&str] = &[
     "BootstrapError",
@@ -597,7 +597,6 @@ const GENERATED_NAMES: &[&str] = &[
     "CallStatus",
     "CallStore",
     "CallSuccess",
-    "Channel",
     "Channels",
     "Client",
     "ClientClosedException",
@@ -606,13 +605,10 @@ const GENERATED_NAMES: &[&str] = &[
     "DirectMutations",
     "GeneratedClient",
     "GeneratedTransaction",
-    "HandlerCall",
     "LiveModels",
     "LivePort",
-    "ModelMembership",
     "Mutate",
     "MutatePort",
-    "MutationContext",
     "MutationHandlerCall",
     "MutationHandlers",
     "MutationName",
@@ -620,13 +616,11 @@ const GENERATED_NAMES: &[&str] = &[
     "PendingMutation",
     "Present",
     "Queries",
-    "QueryContext",
     "QueryHandlerCall",
     "QueryHandlers",
     "QueuedQueries",
     "ReadPort",
     "RebuildReport",
-    "RecordRef",
     "Rejection",
     "RuntimeConnection",
     "Scopes",
@@ -637,11 +631,23 @@ const GENERATED_NAMES: &[&str] = &[
     "SubscriptionStatus",
     "SyncServer",
     "SyncState",
-    "Touch",
     "Transaction",
-    "TransactionCall",
     "TxModels",
     "WritePort",
+];
+
+/// Top-level type names the generated TypeScript backend declares for handler
+/// calls, Channel membership and touch. A model or enum with one of these names
+/// would collide with them in the generated backend file.
+const GENERATED_BACKEND_NAMES: &[&str] = &[
+    "Channel",
+    "HandlerCall",
+    "ModelMembership",
+    "MutationContext",
+    "QueryContext",
+    "RecordRef",
+    "Touch",
+    "TransactionCall",
 ];
 
 pub fn validate(d: &Declarations) -> Result<Validated, String> {
@@ -684,6 +690,12 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
             return Err(at(
                 *pos,
                 format!("{name} is a name the generated client uses; choose another"),
+            ));
+        }
+        if GENERATED_BACKEND_NAMES.contains(name) {
+            return Err(at(
+                *pos,
+                format!("{name} is a type name the generated backend declares; choose another"),
             ));
         }
     }

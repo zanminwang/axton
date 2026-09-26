@@ -57,6 +57,9 @@ pub(crate) struct LedgerScan<T> {
     pub issues: Vec<LedgerIssue>,
 }
 
+/// Why a row whose primary key is not text cannot be read at all.
+const KEY_NOT_TEXT: &str = "stored Scope name is not text";
+
 fn optional(value: &Value) -> Result<Option<u64>> {
     if value.is_null() {
         return Ok(None);
@@ -66,7 +69,7 @@ fn optional(value: &Value) -> Result<Option<u64>> {
 fn decode(row: &[Value]) -> Result<Loaded> {
     let scope = row[0]
         .as_str()
-        .ok_or_else(|| invalid("stored Scope name is not text"))?
+        .ok_or_else(|| invalid(KEY_NOT_TEXT))?
         .to_string();
     let subscription_id = as_u64(&row[1])?;
     let state = BootstrapState {
@@ -102,9 +105,7 @@ fn decode(row: &[Value]) -> Result<Loaded> {
 /// is not text names no channel to isolate, so it fails the whole read, as
 /// every SQL and store error before it already has.
 fn decode_keyed(row: &[Value]) -> Result<std::result::Result<Loaded, LedgerIssue>> {
-    let channel = row[0]
-        .as_str()
-        .ok_or_else(|| invalid("stored Scope name is not text"))?;
+    let channel = row[0].as_str().ok_or_else(|| invalid(KEY_NOT_TEXT))?;
     let error = match decode(row) {
         Ok(loaded) => return Ok(Ok(loaded)),
         Err(error) => error,
@@ -262,10 +263,10 @@ impl<S: ClientStore> Engine<'_, S> {
     ///
     /// The names are a set: duplicates are bound once, and the set is queried
     /// in chunks of [`SETTLE_CHUNK`] with no other value bound, so no input
-    /// outgrows the variable limit of any supported SQLite. Each candidate's
-    /// whole row is decoded here, before its name can reach a write: one that
-    /// cannot be is an issue and is left out, so it neither completes nor stops
-    /// the healthy candidates beside it
+    /// outgrows the variable limit of any supported SQLite, and an empty set
+    /// queries nothing. Each candidate's whole row is decoded here, before its
+    /// name can reach a write: one that cannot be is an issue and is left
+    /// out, so it neither completes nor stops the healthy candidates beside it
     /// ([#163](https://github.com/zanminwang/axton/issues/163)).
     pub(crate) fn settleable_scan(&mut self, channels: &[String]) -> Result<LedgerScan<String>> {
         let unique: Vec<&str> = channels

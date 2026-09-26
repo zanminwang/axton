@@ -276,8 +276,7 @@ impl<S: ClientStore> Client<S> {
     /// A stored row that cannot be decoded is skipped too, so it cannot stop
     /// every other run's pages; it is not repaired, and a named read of it
     /// ([`Client::bootstrap_state`], [`Client::bootstrap_tasks`]) still fails.
-    /// The account of what was skipped is the Downlink worker's to give, from
-    /// the crate's `bootstrap_schedule_scan`
+    /// The Downlink worker reports the rows it skipped to the application
     /// ([#163](https://github.com/zanminwang/axton/issues/163)).
     pub fn bootstrap_schedule(&mut self, rotation: Option<&str>) -> Result<Option<BootstrapTask>> {
         Ok(self.bootstrap_schedule_scan(rotation)?.0)
@@ -311,7 +310,7 @@ impl<S: ClientStore> Client<S> {
     /// re-evaluates before it issues any request. Like the schedule, it skips a
     /// row that cannot be decoded - which therefore never supplies completion
     /// evidence - so one damaged registration cannot hold every other reached
-    /// barrier open.
+    /// barrier open. The Downlink worker reports the rows it skipped.
     pub fn bootstrap_barriers(&mut self) -> Result<Vec<String>> {
         Ok(self.bootstrap_barriers_scan()?.0)
     }
@@ -486,31 +485,29 @@ impl<S: ClientStore> Client<S> {
     /// not catching up, or is still behind its barrier, contributes nothing.
     /// An empty list names no Scope and settles nothing.
     ///
-    /// Which Scopes are settleable is decided by one read on the committed
-    /// reader, barrier and delivery cursor included, so a run still short of
+    /// Which Scopes are settleable is decided by one committed scan in bounded
+    /// chunks, barrier and delivery cursor included, so a run still short of
     /// its barrier opens no transaction at all: waiting out a barrier must not
     /// commit an empty write - and bump the client generation - once per
-    /// delivered page. The names are a set, read in bounded chunks however many
-    /// there are, and a candidate whose stored row cannot be decoded is left
-    /// out, so it supplies no completion evidence and cannot hold the others
-    /// open; the Downlink worker gives the account of it from the crate's
-    /// `settle_bootstrap_barriers_scan`
+    /// delivered page. The names are a set, however many there are, and a
+    /// candidate whose stored row cannot be decoded is left out, so it
+    /// supplies no completion evidence and cannot hold the others open; the
+    /// Downlink worker reports the candidates it left out
     /// ([#163](https://github.com/zanminwang/axton/issues/163)).
     pub fn settle_bootstrap_barriers(&mut self, scopes: &[String]) -> Result<Vec<BootstrapState>> {
         Ok(self.settle_bootstrap_barriers_scan(scopes)?.0)
     }
     /// [`Client::settle_bootstrap_barriers`] with an issue for every candidate
-    /// it left out because its row cannot be decoded. The write re-reads and
-    /// fences each healthy candidate itself: the committed read only decides
-    /// whether a write is worth opening.
+    /// it left out because its row cannot be decoded. The committed scan
+    /// decides which channels enter the write - only a candidate whose whole
+    /// row decoded does, so a damaged one is never written - and whether a
+    /// write is worth opening at all; an empty set reads and writes nothing.
+    /// The write then re-reads and fences each healthy candidate itself.
     pub(crate) fn settle_bootstrap_barriers_scan(
         &mut self,
-        scopes: &[String],
+        channels: &[String],
     ) -> Result<(Vec<BootstrapState>, Vec<LedgerIssue>)> {
-        if scopes.is_empty() {
-            return Ok((vec![], vec![]));
-        }
-        let scan = self.view(|e| e.settleable_scan(scopes))?;
+        let scan = self.view(|e| e.settleable_scan(channels))?;
         if scan.rows.is_empty() {
             return Ok((vec![], scan.issues));
         }

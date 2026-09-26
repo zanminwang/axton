@@ -48,8 +48,9 @@ const optional = client.mutations.change({ at: new Date() });
 const identity = client.mutations.mark({
   moment: { at: new Date(), title: "changed" },
 });
-const removed: Promise<{ moment: { at: Date } }> =
-  client.mutations.call.removeMoment({ moment: { at: new Date() } });
+const removed: Promise<{ at: Date }> = client.mutations.call.removeMoment({
+  moment: { at: new Date() },
+});
 void [
   direct,
   queued,
@@ -99,6 +100,7 @@ const handlers: Mutations<Tx> = {
       ctx.changes.add(args.todo);
       ctx.publish({ channel: "todos", records: [args.todo] });
       return {
+        todo: { id: args.todo.id },
         echoed: new Date(args.when.getTime()),
         status: args.statuses[0]!,
       };
@@ -108,13 +110,14 @@ const handlers: Mutations<Tx> = {
       ctx.changes.add(args.todo);
       ctx.publish({ channel: "todos", records: [args.todo] });
       return {
+        todo: { id: args.todo.id },
         echoed: new Date(args.when.getTime()),
         status: args.statuses[0]!,
       };
     },
   },
   async change({ args }) {
-    return { echoed: args.at };
+    return { todo: args.todo ? { id: args.todo.id } : null, echoed: args.at };
   },
   async clear() {},
   async ping() {},
@@ -122,13 +125,18 @@ const handlers: Mutations<Tx> = {
     return { todo: null };
   },
   async mark() {},
-  async removeMoment() {},
+  async removeMoment({ args }) {
+    return { at: args.moment.at };
+  },
 };
 const loaders: Loaders<Tx> = {
   async todo({ ids, tx }) {
     return ids.map((id) => tx.rows.get(id.id) ?? null);
   },
   async moment({ ids }) {
+    return ids.map(() => null);
+  },
+  async pin({ ids }) {
     return ids.map(() => null);
   },
 };
@@ -159,7 +167,7 @@ void retained;
 
 // @ts-expect-error every retained Mutation version must be registered
 const missingVersion: Mutations<Tx>["put"] = {
-  v2: async () => ({ echoed: new Date(), status: "open" }),
+  v2: async () => ({ todo: { id: "one" }, echoed: new Date(), status: "open" }),
 };
 void missingVersion;
 

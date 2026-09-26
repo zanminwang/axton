@@ -35,12 +35,16 @@ test("generated backend decodes Date values and keeps canonical Model references
       identity: { at: new Date("2026-01-04T00:00:00.000Z") },
     });
     ctx.publish({ channel: "todos", records: [args.todo] });
-    return { echoed: new Date(args.when.getTime()), status: args.todo.status };
+    return {
+      todo: { id: args.todo.id },
+      echoed: new Date(args.when.getTime()),
+      status: args.todo.status,
+    };
   };
   const mutations: Mutations<Tx> = {
     put: { v1: put, v2: put },
     async change({ args }) {
-      return { echoed: args.at };
+      return { todo: null, echoed: args.at };
     },
     async clear() {},
     async ping() {},
@@ -48,7 +52,9 @@ test("generated backend decodes Date values and keeps canonical Model references
       return { todo: null };
     },
     async mark() {},
-    async removeMoment() {},
+    async removeMoment({ args }) {
+      return { at: args.moment.at };
+    },
   };
   const queries: Queries<Tx> = {
     find: {
@@ -63,6 +69,9 @@ test("generated backend decodes Date values and keeps canonical Model references
     },
     async moment({ ids }) {
       assert.equal(ids[0]?.at.getUTCFullYear(), 2026);
+      return ids.map(() => null);
+    },
+    async pin({ ids }) {
       return ids.map(() => null);
     },
   };
@@ -148,7 +157,7 @@ test("generated backend decodes Date values and keeps canonical Model references
   });
   await backend.action("alice", "{}");
   for (const handled of seen.slice(0, 2) as {
-    outputs: { echoed: string; status: string };
+    outputs: { todo: { id: string }; echoed: string; status: string };
     changes: { model: string; identity: Record<string, unknown> }[];
     memberships: {
       channel: string;
@@ -156,6 +165,7 @@ test("generated backend decodes Date values and keeps canonical Model references
       present: boolean;
     }[];
   }[]) {
+    assert.deepEqual(handled.outputs.todo, { id: "one" });
     assert.equal(handled.outputs.echoed, first);
     assert.equal(handled.outputs.status, "open");
     assert.deepEqual(
@@ -229,20 +239,31 @@ const loaders: Loaders<Tx> = {
   async moment({ ids }) {
     return ids.map(() => null);
   },
+  async pin({ ids }) {
+    return ids.map(() => null);
+  },
 };
 function mutationHandlers(): Mutations<Tx> {
   const none = async () => {};
   return {
     put: {
-      v1: async ({ args }) => ({ echoed: args.when, status: "open" }),
-      v2: async ({ args }) => ({ echoed: args.when, status: "open" }),
+      v1: async ({ args }) => ({
+        todo: { id: args.todo.id },
+        echoed: args.when,
+        status: "open",
+      }),
+      v2: async ({ args }) => ({
+        todo: { id: args.todo.id },
+        echoed: args.when,
+        status: "open",
+      }),
     },
-    change: async ({ args }) => ({ echoed: args.at }),
+    change: async ({ args }) => ({ todo: null, echoed: args.at }),
     clear: none,
     ping: none,
     find: async () => ({ todo: null }),
     mark: none,
-    removeMoment: none,
+    removeMoment: async ({ args }) => ({ at: args.moment.at }),
   };
 }
 

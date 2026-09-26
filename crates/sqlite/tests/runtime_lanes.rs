@@ -752,7 +752,11 @@ fn pause_abandons_lane_io_without_backoff_resume_asks_again_and_stop_is_final() 
     let (call, _) = h.http("action");
     h.task("stop", json!({"kind":"connection","event":"stop"}));
     let events = h.run();
-    assert!(events.contains(&failed("call", "action.unavailable")));
+    assert!(events.contains(&failed_with(
+        "call",
+        "action.unavailable",
+        json!({"code":"action.unavailable"})
+    )));
     assert!(cancelled(&events, &call) && cancelled(&events, &socket));
     assert_eq!(connections(&events), ["offline"]);
     assert!(h.open.is_empty(), "{:?}", h.open);
@@ -781,7 +785,11 @@ fn a_direct_call_times_out_refreshes_once_on_401_and_fails_unavailable_at_close(
     h.fire(&timer);
     let events = h.run();
     assert!(cancelled(&events, &http));
-    assert!(events.contains(&failed("slow", "action.execution_unknown")));
+    assert!(events.contains(&failed_with(
+        "slow",
+        "action.execution_unknown",
+        json!({"code":"action.execution_unknown","message":"direct call timed out"})
+    )));
     h.ok(&http, &renamed(&body, "slow"));
     assert_eq!(h.run(), Vec::<Value>::new());
     assert_eq!(h.text("e"), None);
@@ -826,7 +834,11 @@ fn a_direct_call_times_out_refreshes_once_on_401_and_fails_unavailable_at_close(
     let (http, _) = h.http("action");
     h.fail(&http, "unauthorized", Some(401));
     let events = h.run();
-    assert!(events.contains(&failed("twice", "action.execution_unknown")));
+    assert!(events.contains(&failed_with(
+        "twice",
+        "action.execution_unknown",
+        json!({"code":"action.execution_unknown","message":"unauthorized","status":401})
+    )));
     assert!(h.outstanding("refreshAuth", None).is_empty());
     // A failed refresh fails the call as unknown and is reported.
     h.task("refused", rename("refused"));
@@ -838,16 +850,22 @@ fn a_direct_call_times_out_refreshes_once_on_401_and_fails_unavailable_at_close(
     h.fail(&refresh, "no credentials", None);
     let events = h.run();
     assert_eq!(errors(&events), ["no credentials"]);
-    assert!(events.contains(&failed("refused", "action.execution_unknown")));
+    // The refusal is the cause: its own message, and no status it lacked.
+    assert!(events.contains(&failed_with(
+        "refused",
+        "action.execution_unknown",
+        json!({"code":"action.execution_unknown","message":"no credentials"})
+    )));
     // Any other failure: unknown at once.
     h.task("down", rename("down"));
     h.run();
     let (http, _) = h.http("action");
     h.fail(&http, "HTTP 503", Some(503));
-    assert!(
-        h.run()
-            .contains(&failed("down", "action.execution_unknown"))
-    );
+    assert!(h.run().contains(&failed_with(
+        "down",
+        "action.execution_unknown",
+        json!({"code":"action.execution_unknown","message":"HTTP 503","status":503})
+    )));
 
     // Close while a call is out: unavailable, and nothing answers later.
     h.task("closing", rename("closing"));
@@ -855,7 +873,11 @@ fn a_direct_call_times_out_refreshes_once_on_401_and_fails_unavailable_at_close(
     let (http, body) = h.http("action");
     h.submit(json!({"type":"close"}));
     let events = h.run();
-    assert!(events.contains(&failed("closing", "action.unavailable")));
+    assert!(events.contains(&failed_with(
+        "closing",
+        "action.unavailable",
+        json!({"code":"action.unavailable"})
+    )));
     assert!(cancelled(&events, &http));
     assert_eq!(events.last().unwrap(), &json!({"type":"runtimeClosed"}));
     let late: Input = serde_json::from_value(json!({"type":"effectResult","effectId":http,"outcome":{"ok":true,"value":{"status":200,"body":renamed(&body, "late")}}})).unwrap();
@@ -903,8 +925,17 @@ fn query_once_is_decided_fetched_joined_and_released_by_the_runtime() {
     let (http, _) = h.http("action");
     h.fail(&http, "offline", None);
     let events = h.run();
-    assert!(events.contains(&failed("refresh", "action.execution_unknown")));
-    assert!(events.contains(&failed("refresh-joined", "action.execution_unknown")));
+    let offline = json!({"code":"action.execution_unknown","message":"offline"});
+    assert!(events.contains(&failed_with(
+        "refresh",
+        "action.execution_unknown",
+        offline.clone()
+    )));
+    assert!(events.contains(&failed_with(
+        "refresh-joined",
+        "action.execution_unknown",
+        offline
+    )));
     h.task("still", echo(json!({"once":true})));
     assert_eq!(h.run(), vec![done("still", outcome.clone())]);
     // The failed flight was released: the next refresh fetches again.
@@ -936,8 +967,16 @@ fn query_once_is_decided_fetched_joined_and_released_by_the_runtime() {
     assert!(!events.iter().any(|e| e["requestId"] == "waiting"));
     h.submit(json!({"type":"close"}));
     let events = h.run();
-    assert!(events.contains(&failed("next", "action.unavailable")));
-    assert!(events.contains(&failed("waiting", "action.unavailable")));
+    assert!(events.contains(&failed_with(
+        "next",
+        "action.unavailable",
+        json!({"code":"action.unavailable"})
+    )));
+    assert!(events.contains(&failed_with(
+        "waiting",
+        "action.unavailable",
+        json!({"code":"action.unavailable"})
+    )));
 }
 
 #[test]
@@ -1531,6 +1570,54 @@ fn inbound_work_admitted_after_an_ordinary_task_runs_after_it() {
     assert!(!sockets(&events).is_empty(), "{events:?}");
 }
 
+/// Socket frames admitted while a callback holds the writer go to the
+/// Downlink worker at once: its bounded queue holds them, one past the bound
+/// discards them all, and after the commit the lane recovers from the durable
+/// cursor with one catch-up. Nothing is applied while the callback is open.
+#[test]
+fn frames_admitted_behind_an_open_callback_stay_within_the_worker_bound() {
+    let mut h = host();
+    h.connect(false);
+    let socket = h.streaming(0);
+    let (effect, transaction) = h.begin("tx");
+    for i in 0..=QUEUED_FRAMES as u64 {
+        h.frame(&socket, &page(i, i + 1, "e", &format!("frame {i}")));
+        assert!(
+            h.runtime.held_frames() <= QUEUED_FRAMES,
+            "frame {i}: {} held",
+            h.runtime.held_frames()
+        );
+    }
+    assert!(
+        h.run().is_empty(),
+        "nothing runs while the callback holds the writer"
+    );
+    assert_eq!(h.client().cursor("book").unwrap(), Some(0));
+    assert!(h.outstanding("http", Some("pull")).is_empty());
+    h.submit(
+        json!({"type":"callbackResult","effectId":effect,"transactionId":transaction,"ok":true}),
+    );
+    let events = h.run();
+    assert_eq!(h.completion(&events, "tx")["ok"], true);
+    assert_eq!(
+        h.text("e"),
+        None,
+        "no held frame applied: the queue overflowed"
+    );
+    assert_eq!(h.client().cursor("book").unwrap(), Some(0));
+    let (pull, body) = h.http("pull");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["cursors"],
+        json!({"book":0}),
+        "recovery starts from the durable cursor"
+    );
+    h.ok(&pull, &page(0, 65, "e", "recovered"));
+    h.run();
+    assert_eq!(h.text("e"), Some(json!("recovered")));
+    assert_eq!(h.client().cursor("book").unwrap(), Some(65));
+    assert!(h.outstanding("http", Some("pull")).is_empty());
+}
+
 // --- Observers ---------------------------------------------------------------
 
 /// The snapshots one observer published, in order.
@@ -2075,7 +2162,11 @@ fn a_response_in_hand_survives_stop_but_not_close() {
     h.ok(&http, &renamed(&body, "closing"));
     h.submit(json!({"type":"close"}));
     let events = h.run();
-    assert!(events.contains(&failed("closing", "action.unavailable")));
+    assert!(events.contains(&failed_with(
+        "closing",
+        "action.unavailable",
+        json!({"code":"action.unavailable"})
+    )));
     assert_eq!(events.last().unwrap(), &json!({"type":"runtimeClosed"}));
     assert_eq!(h.text("e"), Some(json!("server")));
 }

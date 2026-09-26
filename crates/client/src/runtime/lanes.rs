@@ -12,7 +12,8 @@
 use super::effects::{EffectKind, Waiter};
 use super::*;
 use crate::{
-    ClientStore, ConnectionAction, ConnectionDriver, DownlinkAction, DownlinkWorker, SyncCycle,
+    ClientStore, ConnectionAction, ConnectionDriver, DownlinkAction, DownlinkEvent, DownlinkWorker,
+    SyncCycle,
 };
 
 /// The engines behind the lanes.
@@ -84,6 +85,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         direct_timeout_ms: Option<u64>,
         refresh: bool,
         now: u64,
+        entropy: u64,
     ) -> std::result::Result<Value, String> {
         if self.connection.is_some() {
             return Err(ALREADY_ACTIVE.into());
@@ -109,8 +111,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             waiters: vec![],
         });
         self.lanes.connection.start(now);
-        self.inbox.clear();
-        self.inbox.push_back(DownlinkEvent::Start);
+        self.enqueue_downlink(DownlinkEvent::Start, now, entropy);
         Ok(Value::Null)
     }
 
@@ -120,21 +121,22 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         &mut self,
         event: ConnectionEvent,
         now: u64,
+        entropy: u64,
     ) -> std::result::Result<Value, String> {
         if self.connection.is_none() {
             return Ok(Value::Null);
         }
         match event {
-            ConnectionEvent::Pause => self.pause_lanes(now),
+            ConnectionEvent::Pause => self.pause_lanes(now, entropy),
             ConnectionEvent::Resume => {
                 self.lanes.connection.resume(now);
-                self.enqueue_downlink(DownlinkEvent::Resume);
+                self.enqueue_downlink(DownlinkEvent::Resume, now, entropy);
                 if let Some(connection) = &mut self.connection {
                     connection.paused = false;
                 }
                 self.wake_push();
             }
-            ConnectionEvent::Wake => self.wake_lanes(),
+            ConnectionEvent::Wake => self.wake_lanes(now, entropy),
             ConnectionEvent::Stop => self.stop_lanes(),
         }
         Ok(Value::Null)
@@ -143,7 +145,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     /// Pause: abandon the session, its catch-up, the Bootstrap page and the
     /// push in flight - the lane's own abandonment, so nothing is reported
     /// and no backoff follows - and schedule nothing until `resume`.
-    fn pause_lanes(&mut self, now: u64) {
+    fn pause_lanes(&mut self, now: u64, entropy: u64) {
         if let Some((_, epoch)) = self
             .connection
             .as_ref()
@@ -168,11 +170,15 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             .collect();
         for (effect_id, request) in loads {
             self.cancel_effect(&effect_id);
-            self.enqueue_downlink(DownlinkEvent::Failed {
-                request,
-                reason: None,
-                status: None,
-            });
+            self.enqueue_downlink(
+                DownlinkEvent::Failed {
+                    request,
+                    reason: None,
+                    status: None,
+                },
+                now,
+                entropy,
+            );
         }
         self.cancel_lane_effects(false);
         let Some(connection) = &mut self.connection else {
@@ -206,11 +212,15 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             connection.push.waiting = false;
         }
         for request in loads {
-            self.enqueue_downlink(DownlinkEvent::Failed {
-                request,
-                reason: None,
-                status: None,
-            });
+            self.enqueue_downlink(
+                DownlinkEvent::Failed {
+                    request,
+                    reason: None,
+                    status: None,
+                },
+                now,
+                entropy,
+            );
         }
         if let Some(effect_id) = &sent {
             self.cancel_effect(effect_id);
@@ -219,7 +229,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             self.lanes.connection.complete(true, now, 0);
         }
         self.lanes.connection.pause();
-        self.enqueue_downlink(DownlinkEvent::Pause);
+        self.enqueue_downlink(DownlinkEvent::Pause, now, entropy);
     }
 
     /// Stop: everything `pause` abandons, the lanes stop for good, direct
@@ -239,7 +249,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         self.fail_directs_in_flight(direct::UNAVAILABLE);
         self.connection = None;
         self.lanes.connection.stop();
-        self.inbox.clear();
         // Enqueue work only: no database access, no actions.
         let _ = self
             .lanes
@@ -277,11 +286,11 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
 
     /// Something committed or asked for work: both lanes look again, and a
     /// lane sleeping on a timer drops it.
-    pub(super) fn wake_lanes(&mut self) {
+    pub(super) fn wake_lanes(&mut self, now: u64, entropy: u64) {
         if self.connection.is_none() {
             return;
         }
-        self.enqueue_downlink(DownlinkEvent::Wake);
+        self.enqueue_downlink(DownlinkEvent::Wake, now, entropy);
         self.wake_push();
     }
     fn wake_push(&mut self) {
@@ -294,12 +303,22 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             self.cancel_effect(&timer);
         }
     }
-    /// Hand the worker one event for its next pump and wake the lane.
-    pub(super) fn enqueue_downlink(&mut self, event: DownlinkEvent) {
+    /// Hand the worker one event as it is admitted, with the facts of this
+    /// call, and wake the lane for its next pump. The worker only queues it -
+    /// no database work, no actions - so frames never pile up outside its
+    /// bounded queue, even while a callback holds the writer.
+    pub(super) fn enqueue_downlink(&mut self, event: DownlinkEvent, now: u64, entropy: u64) {
+        if self.connection.is_none() {
+            return;
+        }
+        // Enqueue work only: it answers no actions and cannot fail.
+        let _ = self
+            .lanes
+            .downlink
+            .handle(&mut self.client, event, now, entropy);
         let Some(connection) = &mut self.connection else {
             return;
         };
-        self.inbox.push_back(event);
         connection.downlink.dirty = true;
         if let Some(timer) = connection.downlink.timer.take() {
             self.cancel_effect(&timer);
@@ -450,20 +469,13 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
 
     // --- Downlink lane -----------------------------------------------------
 
-    /// One pump: feed the worker what arrived, then let it consume, commit
-    /// at most one page and decide; execute its actions as effects.
+    /// One pump: the worker consumes what it holds, commits at most one page
+    /// and decides; its actions are executed as effects.
     pub(super) fn downlink_turn(&mut self, now: u64, entropy: u64) {
         let Some(connection) = &mut self.connection else {
             return;
         };
         connection.downlink.dirty = false;
-        for event in std::mem::take(&mut self.inbox) {
-            // Enqueue work only: it answers no actions and cannot fail.
-            let _ = self
-                .lanes
-                .downlink
-                .handle(&mut self.client, event, now, entropy);
-        }
         let generation = self.client.generation();
         let pumped =
             self.lanes
@@ -497,7 +509,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                     .and_then(|c| c.downlink.socket.clone());
                 if let Some((_, epoch)) = socket {
                     self.abandon_session(epoch);
-                    self.enqueue_downlink(DownlinkEvent::Closed { epoch });
+                    self.enqueue_downlink(DownlinkEvent::Closed { epoch }, now, entropy);
                 }
             }
         }
@@ -657,8 +669,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     /// A rebuild replaced the replica: every lane effect belongs to the old
     /// one. The worker has already been reset in the same intent; the push
     /// driver keeps its intent and its cycle starts over.
-    pub(super) fn rebuilt_lanes(&mut self, now: u64) {
-        self.inbox.clear();
+    pub(super) fn rebuilt_lanes(&mut self, now: u64, entropy: u64) {
         self.ready
             .retain(|ready| !matches!(ready, effects::Ready::PushReceipt { .. }));
         let socket = self
@@ -680,7 +691,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         connection.downlink.outstanding = 0;
         // Whatever was in flight on the push lane is gone with the replica.
         self.lanes.connection.complete(true, now, 0);
-        self.wake_lanes();
+        self.wake_lanes(now, entropy);
     }
 
     /// Close: the lanes stop; their effects were already cancelled.

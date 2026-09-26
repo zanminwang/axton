@@ -19,17 +19,23 @@
 //! the events lock but under the sink lock, which [`detach`] takes to clear
 //! it: once `detach` returns, no invocation is in flight and none follows, so
 //! the carrier can free what the sink points at.
+//!
+//! A carrier that can be torn down without detaching - a Node env ended by
+//! `worker.terminate()` - records what it opened in [`Owners`] and detaches it
+//! from its teardown hook, so a lost carrier never leaves the actor and its
+//! SQLite transaction alive. [`wait_closed`] waits for an actor to release its
+//! store.
 use axton_client::Schema;
 use axton_client::runtime::{BridgeError, ClientRuntime, Diagnostic, Event, Input};
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::hash::{BuildHasher, RandomState};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Tells the carrier that runtime `id` has events to drain. It must return
 /// promptly and must not call back into this module on the calling thread: it
@@ -96,6 +102,94 @@ static REGISTRY: Mutex<Registry> = Mutex::new(Registry {
     runtimes: BTreeMap::new(),
 });
 
+/// The actor threads that have not ended, and the signal of each end.
+struct Running {
+    ids: Mutex<BTreeSet<u64>>,
+    ended: Condvar,
+}
+static RUNNING: Running = Running {
+    ids: Mutex::new(BTreeSet::new()),
+    ended: Condvar::new(),
+};
+/// Held by an actor thread for its whole life; its drop - after the runtime
+/// and its store are gone, on every exit path - announces the end.
+struct Alive(u64);
+impl Drop for Alive {
+    fn drop(&mut self) {
+        lock(&RUNNING.ids).remove(&self.0);
+        RUNNING.ended.notify_all();
+    }
+}
+
+/// Wait up to `timeout` for the thread of `runtime` to end, and say whether
+/// it has: from then on its store is closed and its files are released. True
+/// at once for a runtime that ended or never existed. It never runs work, so
+/// a carrier may call it after [`detach`]; not from a wake sink, whose actor
+/// would be waiting on it.
+pub fn wait_closed(runtime: u64, timeout: Duration) -> bool {
+    let ids = lock(&RUNNING.ids);
+    let (ids, _) = RUNNING
+        .ended
+        .wait_timeout_while(ids, timeout, |ids| ids.contains(&runtime))
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    !ids.contains(&runtime)
+}
+
+/// The runtimes each carrier instance opened and has not detached, keyed by
+/// an address that identifies the instance while it lives (a Node env). The
+/// instance's teardown hook calls [`Owners::lost`], which detaches whatever
+/// it still holds; that is how a lost carrier closes its runtimes.
+pub struct Owners {
+    opened: Mutex<BTreeMap<usize, BTreeSet<u64>>>,
+}
+impl Default for Owners {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl Owners {
+    pub const fn new() -> Self {
+        Self {
+            opened: Mutex::new(BTreeMap::new()),
+        }
+    }
+    /// Track `owner`, calling `install` - which registers its teardown hook -
+    /// only the first time, until [`Owners::lost`] forgets it. A failed
+    /// `install` leaves it untracked and is answered.
+    pub fn watch<E>(
+        &self,
+        owner: usize,
+        install: impl FnOnce() -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E> {
+        if let std::collections::btree_map::Entry::Vacant(entry) = lock(&self.opened).entry(owner) {
+            install()?;
+            entry.insert(BTreeSet::new());
+        }
+        Ok(())
+    }
+    /// `owner` opened `runtime`.
+    pub fn opened(&self, owner: usize, runtime: u64) {
+        lock(&self.opened).entry(owner).or_default().insert(runtime);
+    }
+    /// The carrier detached `runtime` itself. The owner stays tracked: its
+    /// hook is still installed.
+    pub fn detached(&self, runtime: u64) {
+        for runtimes in lock(&self.opened).values_mut() {
+            runtimes.remove(&runtime);
+        }
+    }
+    /// `owner` is gone: forget it and [`detach`] every runtime it still held,
+    /// which closes each one's actor. Answers those runtimes. The lock is not
+    /// held while detaching.
+    pub fn lost(&self, owner: usize) -> Vec<u64> {
+        let held = lock(&self.opened).remove(&owner).unwrap_or_default();
+        for runtime in &held {
+            detach(*runtime);
+        }
+        held.into_iter().collect()
+    }
+}
+
 /// A poisoned lock only means another thread panicked while holding it; the
 /// guarded maps and queues stay consistent, so carry on with them.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -143,13 +237,19 @@ pub fn open(request: Value, wake: WakeSink) -> std::result::Result<u64, String> 
                 outbox: outbox.clone(),
             },
         );
+        lock(&RUNNING.ids).insert(id);
         outbox
     };
     let id = outbox.id;
+    let alive = Alive(id);
     let spawned = std::thread::Builder::new()
         .name(format!("axton-runtime-{id}"))
-        .spawn(move || run(request_id, request, receiver, outbox));
+        .spawn(move || {
+            let _alive = alive;
+            run(request_id, request, receiver, outbox)
+        });
     if let Err(e) = spawned {
+        // The closure, and `alive` with it, was dropped: the id is not running.
         lock(&REGISTRY).runtimes.remove(&id);
         return Err(e.to_string());
     }
@@ -199,7 +299,15 @@ pub fn drain(runtime: u64) -> Vec<Value> {
 
 /// End the carrier's side of `runtime`: stop its wakes for good, forget it,
 /// and close it if its thread still runs. When this returns the sink is not
-/// running and will never run again. Idempotent.
+/// running and will never run again. It does not wait for the actor to end
+/// ([`wait_closed`] does); it blocks only while a wake already in flight
+/// returns.
+///
+/// Safe from any thread, concurrently, repeatedly, and for an id that was
+/// already detached, closed or never opened: all of those return at once. It
+/// runs no carrier code, so a finalizer (a Dart `NativeFinalizer`, a Node env
+/// cleanup hook) may call it. It must not be called from inside the wake sink
+/// of the same runtime, which runs under the lock it takes.
 pub fn detach(runtime: u64) {
     let outbox = lock(&REGISTRY)
         .runtimes

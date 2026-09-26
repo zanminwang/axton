@@ -480,7 +480,12 @@ pub enum Event {
         /// a `scopeBootstrap` waiter fails with `{"code":"bootstrap.superseded"}`,
         /// `{"code":"subscription.closed"}`, `{"code":"client_closed"}`, or the
         /// stored failure of its run, `{"code", "message"}` (`error` is then
-        /// that stored message).
+        /// that stored message). A direct call that fails once it was sent
+        /// carries `{"code"}` with its `error` - `action.unavailable` on stop
+        /// or close - and, for `action.execution_unknown` with a known cause,
+        /// that cause as `{"code", "message", "status"?}`: the transport
+        /// failure, the refused credential refresh, the failed apply, or
+        /// `"direct call timed out"` for the deadline.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         details: Option<Value>,
     },

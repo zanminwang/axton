@@ -5,11 +5,11 @@
 //!
 //! A result is admitted by [`ClientRuntime::receive`] without database work:
 //! it is correlated by id - an id that is not outstanding was cancelled,
-//! already answered or never issued, and its result is ignored - and turned
-//! into a Downlink worker event, a lane flag, or a [`Ready`] continuation that
-//! a later step runs as one local unit.
+//! already answered or never issued, and its result is ignored - and handed
+//! to the Downlink worker's queues at once, turned into a lane flag, or into
+//! a [`Ready`] continuation that a later step runs as one local unit.
 use super::*;
-use crate::ClientStore;
+use crate::{ClientStore, DownlinkEvent};
 
 /// What an outstanding effect was issued for.
 pub(super) enum EffectKind {
@@ -217,9 +217,11 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         match event {
             Ok(SocketEvent::Opened) => {}
             Ok(SocketEvent::Message { body }) => {
-                self.enqueue_downlink(DownlinkEvent::Message { epoch, body });
+                self.enqueue_downlink(DownlinkEvent::Message { epoch, body }, now, entropy);
             }
-            Ok(SocketEvent::Overflow) => self.enqueue_downlink(DownlinkEvent::Overflow { epoch }),
+            Ok(SocketEvent::Overflow) => {
+                self.enqueue_downlink(DownlinkEvent::Overflow { epoch }, now, entropy)
+            }
             Ok(SocketEvent::Closed) => {
                 let error = EffectError {
                     message: "socket closed".into(),
@@ -264,7 +266,9 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             self.settle_catch_up(epoch);
         }
         match http_body(outcome) {
-            Ok(body) => self.enqueue_downlink(DownlinkEvent::Response { request, body }),
+            Ok(body) => {
+                self.enqueue_downlink(DownlinkEvent::Response { request, body }, now, entropy)
+            }
             Err(error) => {
                 self.error_status(error.message.clone(), error.status);
                 let waiter = Waiter::Pull {
@@ -295,7 +299,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         if refresh {
             self.join_refresh(waiter);
         } else {
-            self.resume_waiter(waiter, true, now, entropy);
+            self.resume_waiter(waiter, None, now, entropy);
         }
     }
     /// Wait for the refresh in flight, starting one when none is: however
@@ -324,41 +328,57 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             }
             _ => return,
         };
-        if !outcome.ok {
-            let (message, status) = outcome
-                .error
-                .map(|e| (e.message, e.status))
-                .unwrap_or_else(|| ("refreshAuth failed".into(), None));
-            self.error_status(message, status);
+        let refused = (!outcome.ok).then(|| {
+            outcome.error.unwrap_or_else(|| EffectError {
+                message: "refreshAuth failed".into(),
+                status: None,
+            })
+        });
+        if let Some(refused) = &refused {
+            self.error_status(refused.message.clone(), refused.status);
         }
         for waiter in waiters {
-            self.resume_waiter(waiter, outcome.ok, now, entropy);
+            self.resume_waiter(waiter, refused.as_ref(), now, entropy);
         }
     }
     /// Continue what a failure interrupted: the push cycle fails with
     /// backoff, the worker hears its socket closed or its request failed, a
-    /// direct call is sent again once (or fails when the refresh did).
-    fn resume_waiter(&mut self, waiter: Waiter, refreshed: bool, now: u64, entropy: u64) {
+    /// direct call is sent again once - or fails with the refresh's refusal
+    /// as its cause when the refresh was `refused`.
+    fn resume_waiter(
+        &mut self,
+        waiter: Waiter,
+        refused: Option<&EffectError>,
+        now: u64,
+        entropy: u64,
+    ) {
         match waiter {
             Waiter::Push => self.push_failed(now, entropy),
-            Waiter::Socket { epoch } => self.enqueue_downlink(DownlinkEvent::Closed { epoch }),
+            Waiter::Socket { epoch } => {
+                self.enqueue_downlink(DownlinkEvent::Closed { epoch }, now, entropy)
+            }
             Waiter::Pull {
                 request,
                 reason,
                 status,
                 ..
-            } => self.enqueue_downlink(DownlinkEvent::Failed {
-                request,
-                reason,
-                status,
-            }),
-            Waiter::Direct { request_id } => {
-                if refreshed {
-                    self.resend_direct(&request_id);
-                } else {
-                    self.fail_direct(&request_id, direct::EXECUTION_UNKNOWN);
-                }
-            }
+            } => self.enqueue_downlink(
+                DownlinkEvent::Failed {
+                    request,
+                    reason,
+                    status,
+                },
+                now,
+                entropy,
+            ),
+            Waiter::Direct { request_id } => match refused {
+                None => self.resend_direct(&request_id),
+                Some(refused) => self.fail_direct(
+                    &request_id,
+                    direct::EXECUTION_UNKNOWN,
+                    direct::transport_failure(refused),
+                ),
+            },
         }
     }
 }

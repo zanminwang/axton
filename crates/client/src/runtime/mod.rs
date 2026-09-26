@@ -64,8 +64,10 @@
 //! a timer, a credential refresh, a prerequisite handler. An effect result is
 //! a fact; [`ClientRuntime::receive`] correlates it by `effectId` (a result for
 //! an id that is not outstanding is ignored: that is the fence for cancelled,
-//! duplicate and stale answers) and turns it into a *ready continuation* or a
-//! Downlink worker event without touching the database. [`ClientRuntime::step`]
+//! duplicate and stale answers) and turns it into a *ready continuation*, or
+//! hands it to the Downlink worker as it arrives, without touching the
+//! database: the worker's enqueue path only queues, so its bounded frame queue
+//! and overflow recovery hold even while a callback keeps the writer. [`ClientRuntime::step`]
 //! then runs one unit: the application transaction's own lane first, then
 //! ordinary tasks and *lane units* - a ready continuation (a receipt, a direct
 //! response, a prerequisite outcome), else a Downlink pump, else a push-lane
@@ -105,7 +107,7 @@ mod transactions;
 
 pub use protocol::*;
 
-use crate::{Client, ClientStore, DownlinkEvent, Result, Schema, StoreFactory};
+use crate::{Client, ClientStore, Result, Schema, StoreFactory};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
@@ -125,9 +127,6 @@ pub struct ClientRuntime<S: ClientStore> {
     effects: BTreeMap<String, effects::EffectKind>,
     /// Effect results turned into local work, one unit each, in arrival order.
     ready: VecDeque<effects::Ready>,
-    /// Downlink worker events admitted since the last pump; fed to the worker
-    /// right before it pumps. The worker's own page queue is the bound.
-    inbox: VecDeque<DownlinkEvent>,
     directs: direct::Directs,
     prerequisites: Option<prerequisites::Loop>,
     /// Subscription and watch observers, and the Bootstrap waiters.
@@ -180,7 +179,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             transaction: None,
             effects: BTreeMap::new(),
             ready: VecDeque::new(),
-            inbox: VecDeque::new(),
             directs: direct::Directs::default(),
             prerequisites: None,
             observers: observers::Observers::default(),
@@ -206,6 +204,11 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     /// Whether [`Event::RuntimeClosed`] has been queued.
     pub fn closed(&self) -> bool {
         self.lifecycle == Lifecycle::Closed
+    }
+    /// Test seam: the inbound socket frames held and not yet applied.
+    #[doc(hidden)]
+    pub fn held_frames(&self) -> usize {
+        self.lanes.downlink.queued_frames()
     }
     /// Test seam: the client, for inspecting committed state in Rust tests.
     pub fn client(&mut self) -> &mut Client<S> {

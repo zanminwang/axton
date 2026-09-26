@@ -87,6 +87,15 @@ pub fn drain(runtime: u64) -> *mut c_char {
 }
 
 /// Stop wakes and forget the runtime; see [`actor::detach`].
+///
+/// Finalizer-safe: it may run on any thread, concurrently with itself, any
+/// number of times, and for an id already detached, closed or never opened
+/// (those return at once). It takes only short internal locks, calls no
+/// carrier code and never waits for the actor, so a Dart `NativeFinalizer`
+/// run by the garbage collector or at isolate shutdown may call it. Once it
+/// returns the wake is never called again for this id, so the carrier may
+/// then close its `NativeCallable`. It must not be called from inside that
+/// runtime's own wake callback.
 pub fn detach(runtime: u64) {
     let _ = catch_unwind(|| actor::detach(runtime));
 }

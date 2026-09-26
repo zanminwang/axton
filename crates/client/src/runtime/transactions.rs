@@ -107,12 +107,12 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     }
     /// One unit of the open transaction: its finish once the result arrived,
     /// else one command of its lane. False while it waits on the callback.
-    pub(super) fn step_transaction(&mut self) -> bool {
+    pub(super) fn step_transaction(&mut self, now: u64, entropy: u64) -> bool {
         let Some(open) = &mut self.transaction else {
             return false;
         };
         if let Some((ok, error)) = open.finishing.take() {
-            self.finish_transaction(ok, error);
+            self.finish_transaction(ok, error, now, entropy);
             return true;
         }
         let Some(command) = open.lane.pop_front() else {
@@ -194,7 +194,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     }
     /// Commit or roll back once the callback finished, then settle its
     /// unawaited commands and the parent task.
-    fn finish_transaction(&mut self, ok: bool, error: Option<String>) {
+    fn finish_transaction(&mut self, ok: bool, error: Option<String>, now: u64, entropy: u64) {
         let Some(open) = self.transaction.take() else {
             return;
         };
@@ -229,7 +229,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 // What the callback queued or subscribed is the lanes' work
                 // now, as after any other commit.
                 if self.client.generation() != generation {
-                    self.wake_lanes();
+                    self.wake_lanes(now, entropy);
                 }
                 committed.map(|()| Value::Null)
             }

@@ -116,7 +116,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     }
     fn unit(&mut self, now: u64, entropy: u64) -> bool {
         if self.transaction.is_some() {
-            return self.step_transaction();
+            return self.step_transaction(now, entropy);
         }
         let head = self.tasks.queue.front().map(|task| task.seq);
         let lane_since = if self.lane_ready() {
@@ -131,8 +131,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         // admitted so far.
         match (head, lane_since) {
             (None, None) => return false,
-            (Some(_), None) => self.ordinary_unit(now),
-            (Some(head), Some(since)) if head <= since => self.ordinary_unit(now),
+            (Some(_), None) => self.ordinary_unit(now, entropy),
+            (Some(head), Some(since)) if head <= since => self.ordinary_unit(now, entropy),
             (_, Some(_)) => {
                 self.lane_since = None;
                 self.lane_unit(now, entropy);
@@ -168,7 +168,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 Ready::PrerequisiteNext => self.next_prerequisite(),
             }
             if self.client.generation() != generation {
-                self.wake_lanes();
+                self.wake_lanes(now, entropy);
             }
             return;
         }
@@ -185,7 +185,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     /// connection, direct calls, prerequisites, rebuild and the observers -
     /// are decided here; everything else is a command against the client. A
     /// task that committed wakes both lanes.
-    fn ordinary_unit(&mut self, now: u64) {
+    fn ordinary_unit(&mut self, now: u64, entropy: u64) {
         let Some(Queued {
             request_id,
             command,
@@ -200,8 +200,13 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             Command::Connect {
                 direct_timeout_ms,
                 refresh_auth,
-            } => Some(self.connect(*direct_timeout_ms, refresh_auth.unwrap_or(false), now)),
-            Command::Connection { event } => Some(self.control(*event, now)),
+            } => Some(self.connect(
+                *direct_timeout_ms,
+                refresh_auth.unwrap_or(false),
+                now,
+                entropy,
+            )),
+            Command::Connection { event } => Some(self.control(*event, now, entropy)),
             Command::Invoke {
                 name,
                 version,
@@ -224,7 +229,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 self.run_prerequisites(&request_id, handlers.clone())
             }
             Command::Rebuild { discard_pending } => {
-                Some(self.rebuild(discard_pending.unwrap_or(false), now))
+                Some(self.rebuild(discard_pending.unwrap_or(false), now, entropy))
             }
             Command::ScopeSubscribe { scope } => Some(self.subscribe_scope(scope)),
             Command::ScopeBootstrap { .. } => self.bootstrap_scope(&request_id, &command),
@@ -245,7 +250,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             }
         }
         if self.client.generation() != generation {
-            self.wake_lanes();
+            self.wake_lanes(now, entropy);
         }
         if let Some(outcome) = outcome {
             self.complete(request_id, outcome);
@@ -257,7 +262,12 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     /// direct calls fail with an unknown execution, the prerequisite loop
     /// moves on, every observer of the old replica ends and every abandoned
     /// durable call is completed. A refused rebuild changes nothing.
-    fn rebuild(&mut self, discard_pending: bool, now: u64) -> std::result::Result<Value, String> {
+    fn rebuild(
+        &mut self,
+        discard_pending: bool,
+        now: u64,
+        entropy: u64,
+    ) -> std::result::Result<Value, String> {
         let report = self
             .client
             .rebuild(discard_pending)
@@ -269,7 +279,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         self.lanes.downlink.reset_for_rebuild();
         self.fail_directs(direct::EXECUTION_UNKNOWN);
         self.rebuilt_prerequisites();
-        self.rebuilt_lanes(now);
+        self.rebuilt_lanes(now, entropy);
         self.observers.stale = true;
         self.rebuilt_observers();
         for abandoned in &report.abandoned_calls {
@@ -332,7 +342,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         self.fail_directs(direct::UNAVAILABLE);
         self.finish_prerequisites(Err("client_closed".into()));
         self.ready.clear();
-        self.inbox.clear();
         self.close_lanes();
         self.close_observers();
         self.lifecycle = Lifecycle::Closed;

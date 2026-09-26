@@ -12,6 +12,11 @@
 //! lanes, and sends the same body once more under the same deadline; every
 //! other failure, the deadline, and a rebuild leave the execution unknown.
 //!
+//! Every such failure carries `details` with its `code` and, when a cause is
+//! known, that cause's `message` and HTTP `status`, so an SDK can attach it:
+//! the transport failure, the refused refresh, the failed apply, or
+//! `"direct call timed out"` for the deadline ([`transport_failure`]).
+//!
 //! Stopping the connection fails a call still waiting on the network with
 //! `action.unavailable`, but a call whose response is already in hand is
 //! known to have executed: it is still applied once the writer is free and
@@ -26,6 +31,21 @@ pub(super) const UNAVAILABLE: &str = "action.unavailable";
 pub(super) const EXECUTION_UNKNOWN: &str = "action.execution_unknown";
 pub(super) const OBSERVATION_FAILED: &str = "action.observation_failed";
 pub(super) const INVALID_OPTIONS: &str = "action.invalid_options";
+const TIMED_OUT: &str = "direct call timed out";
+
+/// The `details` of a direct failure with no known cause: `{"code"}`.
+pub(super) fn code(error: &str) -> Value {
+    json!({ "code": error })
+}
+/// The `details` of an unknown execution caused by `cause`:
+/// `{"code":"action.execution_unknown","message","status"?}`.
+pub(super) fn transport_failure(cause: &EffectError) -> Value {
+    let mut details = json!({ "code": EXECUTION_UNKNOWN, "message": cause.message });
+    if let Some(status) = cause.status {
+        details["status"] = json!(status);
+    }
+    details
+}
 
 /// One direct call in flight, by the request id of its task.
 pub(super) struct Call {
@@ -230,7 +250,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                     call.retried = true;
                     self.join_refresh(Waiter::Direct { request_id });
                 } else {
-                    self.fail_direct(&request_id, EXECUTION_UNKNOWN);
+                    self.fail_direct(&request_id, EXECUTION_UNKNOWN, transport_failure(&error));
                 }
             }
         }
@@ -251,7 +271,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         );
         match (http, self.directs.calls.get_mut(request_id)) {
             (Some(http), Some(call)) => call.http = Some(http),
-            _ => self.fail_direct(request_id, EXECUTION_UNKNOWN),
+            _ => self.fail_direct(request_id, EXECUTION_UNKNOWN, code(EXECUTION_UNKNOWN)),
         }
     }
     /// The deadline passed first: the request is abandoned and its execution
@@ -259,12 +279,16 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     pub(super) fn direct_timeout(&mut self, request_id: String) {
         if let Some(call) = self.directs.calls.get_mut(&request_id) {
             call.timer = None;
-            self.fail_direct(&request_id, EXECUTION_UNKNOWN);
+            let details = transport_failure(&EffectError {
+                message: TIMED_OUT.into(),
+                status: None,
+            });
+            self.fail_direct(&request_id, EXECUTION_UNKNOWN, details);
         }
     }
-    /// Fail one call - and every caller joined to its flight - with `error`,
-    /// abandoning its effects and releasing its flight.
-    pub(super) fn fail_direct(&mut self, request_id: &str, error: &str) {
+    /// Fail one call - and every caller joined to its flight - with `error`
+    /// and its `details`, abandoning its effects and releasing its flight.
+    pub(super) fn fail_direct(&mut self, request_id: &str, error: &str, details: Value) {
         let Some(call) = self.directs.calls.remove(request_id) else {
             return;
         };
@@ -285,9 +309,9 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             }
             None => vec![],
         };
-        self.complete(request_id.to_string(), Err(error.into()));
+        self.fail(request_id.to_string(), error, details.clone());
         for joined in joined {
-            self.complete(joined, Err(error.into()));
+            self.fail(joined, error, details.clone());
         }
     }
     /// Fail every call still waiting on the network (`stop`); a response that
@@ -301,19 +325,19 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             .map(|(id, _)| id.clone())
             .collect();
         for request_id in waiting {
-            self.fail_direct(&request_id, error);
+            self.fail_direct(&request_id, error, code(error));
         }
     }
     /// Fail every call and joined caller (close, rebuild).
     pub(super) fn fail_directs(&mut self, error: &str) {
         let all: Vec<String> = self.directs.calls.keys().cloned().collect();
         for request_id in all {
-            self.fail_direct(&request_id, error);
+            self.fail_direct(&request_id, error, code(error));
         }
         // Joined callers whose fetcher is already gone.
         for (_, joined) in std::mem::take(&mut self.directs.joined) {
             for request_id in joined {
-                self.complete(request_id, Err(error.into()));
+                self.fail(request_id, error, code(error));
             }
         }
     }
@@ -347,15 +371,23 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                     .map(|completion| {
                         json!({"outcome": serde_json::to_value(&completion.outcome).unwrap_or(Value::Null)})
                     })
-                    .ok_or(OBSERVATION_FAILED)
+                    .ok_or((OBSERVATION_FAILED, code(OBSERVATION_FAILED)))
             }
-            // Nothing was committed: the response cannot be observed.
-            Err(_) => Err(EXECUTION_UNKNOWN),
+            // Nothing was committed: the response cannot be observed, and
+            // the apply's failure is its cause.
+            Err(e) => Err((
+                EXECUTION_UNKNOWN,
+                transport_failure(&EffectError {
+                    message: e.to_string(),
+                    status: None,
+                }),
+            )),
         };
-        let outcome = outcome.map_err(str::to_string);
-        self.complete(request_id, outcome.clone());
-        for joined in joined {
-            self.complete(joined, outcome.clone());
+        for request_id in std::iter::once(request_id).chain(joined) {
+            match &outcome {
+                Ok(value) => self.complete(request_id, Ok(value.clone())),
+                Err((error, details)) => self.fail(request_id, *error, details.clone()),
+            }
         }
     }
 }

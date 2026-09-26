@@ -38,10 +38,19 @@ pub extern "C" fn axton_runtime_drain(runtime: u64) -> *mut c_char {
     ffi::drain(runtime)
 }
 /// Stop wakes and forget the runtime; the wake context may be released once
-/// this returns.
+/// this returns. Safe from any thread, repeatedly, and for an id already
+/// detached; see `axton_binding::ffi::detach`.
 #[unsafe(no_mangle)]
 pub extern "C" fn axton_runtime_detach(runtime: u64) {
     ffi::detach(runtime)
+}
+/// [`axton_runtime_detach`] in the shape a Dart `NativeFinalizer` calls,
+/// `void (*)(void *token)`: the token is the runtime id as an address
+/// (`Pointer.fromAddress(id)`). Safe from any thread, repeatedly, and for an
+/// id already detached; see `axton_binding::ffi::detach`.
+#[unsafe(no_mangle)]
+pub extern "C" fn axton_runtime_finalize(token: *mut c_void) {
+    ffi::detach(token as usize as u64)
 }
 /// Free a string the `axton_runtime` functions returned.
 ///

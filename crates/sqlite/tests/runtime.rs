@@ -553,10 +553,11 @@ fn a_direct_apply_that_fails_to_commit_fails_the_call_and_lets_nothing_escape() 
     h.submit(json!({"type":"effectResult","effectId":effect,"outcome":answer(&body)}))
         .unwrap();
     let events = h.run();
-    assert!(
-        events.contains(&failed("1", "action.execution_unknown")),
-        "{events:?}"
-    );
+    // The apply's own failure travels as the cause.
+    let mut unknown = failed("1", "action.execution_unknown");
+    unknown["details"] =
+        json!({"code":"action.execution_unknown","message":"injected commit failure"});
+    assert!(events.contains(&unknown), "{events:?}");
     assert!(
         !events.iter().any(|e| e["type"] == "callCompleted"),
         "{events:?}"

@@ -280,7 +280,11 @@ fn detach_stops_wakes_before_it_returns_and_closes_a_live_runtime() {
     };
     live.completed("open");
     live.task("1", json!({"kind":"transaction"}));
-    live.until(|e| e["type"] == "effect");
+    let effect = live.until(|e| e["type"] == "effect");
+    let tx = effect["operation"]["transactionId"].clone();
+    // The open transaction holds a write the detach must roll back.
+    live.submit(json!({"type":"transactionCommand","requestId":"w","transactionId":tx,"command":create("e")}));
+    assert_eq!(live.completed("w")["ok"], true);
     for i in 0..50 {
         live.task(&format!("r{i}"), read("e"));
     }
@@ -292,8 +296,17 @@ fn detach_stops_wakes_before_it_returns_and_closes_a_live_runtime() {
         Err("client_closed".to_string())
     );
     assert!(actor::drain(id).is_empty());
-    // The detached actor rolled back and released the file: a new runtime
-    // on the same path opens and sees nothing committed.
+    // The detached actor ends on its own: it rolled back and released the
+    // file, so no sidecar is left and a new runtime on the same path sees
+    // nothing of the uncommitted write.
+    assert!(
+        actor::wait_closed(id, LOST_WAKE),
+        "the detached actor never ended"
+    );
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = dir.path().join(format!("live{suffix}"));
+        assert!(!sidecar.exists(), "{} still held", sidecar.display());
+    }
     let (mut again, _) = Carrier::open(&dir.path().join("live"));
     again.task("1", read("e"));
     assert!(again.completed("1")["value"].is_null());
@@ -494,4 +507,89 @@ fn observer_snapshots_arrive_after_the_commit_they_describe() {
             .all(|e| e["snapshot"]["closed"] == true)
     );
     actor::detach(carrier.id);
+}
+
+/// A carrier instance lost without detaching - a Node env torn down by
+/// `worker.terminate()` - detaches every runtime it still held: its teardown
+/// hook is installed once per instance, a runtime it detached itself is
+/// forgotten, and runtimes of other instances are untouched.
+#[test]
+fn a_lost_carrier_detaches_every_runtime_it_still_held() {
+    let dir = tempfile::tempdir().unwrap();
+    let owners = actor::Owners::new();
+    let installs = AtomicUsize::new(0);
+    let install = || {
+        installs.fetch_add(1, Ordering::SeqCst);
+        Ok::<(), String>(())
+    };
+    let mut opened = BTreeMap::new();
+    for (owner, name) in [(1, "a"), (1, "b"), (1, "c"), (2, "other")] {
+        owners.watch(owner, install).unwrap();
+        let (carrier, _) = Carrier::open(&dir.path().join(name));
+        owners.opened(owner, carrier.id);
+        opened.insert(name, carrier);
+    }
+    assert_eq!(installs.load(Ordering::SeqCst), 2, "one hook per instance");
+    // A refused installation leaves the instance untracked; the next open
+    // tries again.
+    assert_eq!(owners.watch(3, || Err("no hook")), Err("no hook"));
+    owners.watch(3, install).unwrap();
+    assert_eq!(installs.load(Ordering::SeqCst), 3);
+
+    // The carrier detached one runtime itself: it is forgotten.
+    let b = opened["b"].id;
+    actor::detach(b);
+    owners.detached(b);
+
+    // The first instance's teardown hook runs.
+    let mut lost = owners.lost(1);
+    lost.sort_unstable();
+    let mut held = vec![opened["a"].id, opened["c"].id];
+    held.sort_unstable();
+    assert_eq!(lost, held);
+    for id in held {
+        assert_eq!(
+            actor::submit(id, json!({"type":"close"})),
+            Err("client_closed".to_string())
+        );
+        assert!(actor::wait_closed(id, LOST_WAKE), "{id} never ended");
+    }
+    assert!(owners.lost(1).is_empty(), "lost once");
+    // The other instance's runtime still serves.
+    let other = opened.get_mut("other").unwrap();
+    other.task("1", read("e"));
+    assert!(other.completed("1")["value"].is_null());
+    // An instance at a reused address is a new one: its hook is installed.
+    owners.watch(1, install).unwrap();
+    assert_eq!(installs.load(Ordering::SeqCst), 4);
+    assert_eq!(owners.lost(2), vec![other.id]);
+    assert!(actor::wait_closed(other.id, LOST_WAKE));
+}
+
+/// What a Dart `NativeFinalizer` relies on: detach from any thread, several
+/// times at once and again later, and for an id never opened, is safe and
+/// closes the runtime exactly once.
+#[test]
+fn ffi_detach_is_safe_from_any_thread_repeatedly_and_for_unknown_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let (carrier, _) = Carrier::open(&dir.path().join("db"));
+    let id = carrier.id;
+    let finalizers: Vec<_> = (0..4)
+        .map(|_| {
+            std::thread::spawn(move || {
+                axton_binding::ffi::detach(id);
+                axton_binding::ffi::detach(id);
+            })
+        })
+        .collect();
+    for finalizer in finalizers {
+        finalizer.join().unwrap();
+    }
+    axton_binding::ffi::detach(id);
+    axton_binding::ffi::detach(u64::MAX);
+    assert_eq!(
+        actor::submit(id, json!({"type":"close"})),
+        Err("client_closed".to_string())
+    );
+    assert!(actor::wait_closed(id, LOST_WAKE), "the actor never ended");
 }

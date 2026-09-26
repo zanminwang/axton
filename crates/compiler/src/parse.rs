@@ -221,7 +221,9 @@ impl Parser {
         };
         let mut attributes = Map::new();
         let mut deprecated = None;
+        let mut default = None;
         while self.peek() == "@" && self.tokens.get(self.i + 1).is_some_and(|t| t.text != "@") {
+            let directive_pos = self.pos();
             self.need("@")?;
             let attr = self.ident()?;
             if attr == "deprecated" {
@@ -229,6 +231,13 @@ impl Parser {
                     return Err(self.err("duplicate field directive"));
                 }
                 deprecated = Some(self.deprecation()?);
+                continue;
+            }
+            if attr == "default" {
+                if default.is_some() {
+                    return Err(self.err("duplicate field directive"));
+                }
+                default = Some(self.default_value(directive_pos)?);
                 continue;
             }
             if !["reference", "inverse", "requires"].contains(&attr.as_str()) {
@@ -246,8 +255,74 @@ impl Parser {
             nullable,
             attributes,
             deprecated,
+            default,
             pos,
         })
+    }
+    /// The `(expression)` of a `@default` directive: a string, a number, an
+    /// identifier (`true`, `false`, `null` or an enum member) or a function
+    /// call whose arguments are counted, never evaluated.
+    fn default_value(&mut self, pos: Pos) -> Result<DefaultDecl, String> {
+        self.need("(")?;
+        if self.peek() == ")" {
+            return Err(self.err("expected default value"));
+        }
+        let expr = if self.peek().starts_with('"') {
+            DefaultExpr::String(
+                serde_json::from_str(&self.take()).map_err(|_| self.err("invalid string"))?,
+            )
+        } else if self.peek() == "-" || self.peek().starts_with(|c: char| c.is_ascii_digit()) {
+            self.number()?
+        } else {
+            let name = self.ident()?;
+            if self.peek() == "(" {
+                self.need("(")?;
+                let mut arguments = 0;
+                while !self.eat(")") {
+                    if self.peek() == "<eof>" {
+                        return Err(self.err("expected )"));
+                    }
+                    if self.peek() == "-" || self.peek().starts_with(|c: char| c.is_ascii_digit()) {
+                        self.number()?;
+                    } else {
+                        self.expression()?;
+                    }
+                    arguments += 1;
+                    if self.peek() != ")" {
+                        self.need(",")?;
+                    }
+                }
+                DefaultExpr::Call { name, arguments }
+            } else {
+                DefaultExpr::Identifier(name)
+            }
+        };
+        self.need(")")?;
+        Ok(DefaultDecl { expr, pos })
+    }
+    /// A JSON-grammar number spelled by adjacent tokens (`-`, digits, `.`,
+    /// exponent), such as `-1.5e3`.
+    fn number(&mut self) -> Result<DefaultExpr, String> {
+        let first = self.i;
+        let mut text = self.take();
+        loop {
+            let previous = &self.tokens[self.i - 1];
+            let next = &self.tokens[self.i];
+            let adjacent = next.line == previous.line
+                && next.col == previous.col + previous.text.chars().count();
+            let continues = next.text == "."
+                || next.text == "-"
+                || next.text.starts_with(|c: char| c.is_ascii_alphanumeric());
+            if !adjacent || !continues || next.text == "<eof>" {
+                break;
+            }
+            text.push_str(&self.take());
+        }
+        if serde_json::from_str::<serde_json::Number>(&text).is_err() {
+            self.i = first;
+            return Err(self.err("invalid default number"));
+        }
+        Ok(DefaultExpr::Number(text))
     }
     fn slot(&mut self, name: String, model: String, pos: Pos) -> Result<SlotDecl, String> {
         self.need(".")?;
@@ -347,7 +422,7 @@ fn lex(s: &str) -> Result<Vec<Token>, String> {
             }
             i += 1;
             col += 1;
-        } else if "{}()[]?,.@<>:".contains(c) {
+        } else if "{}()[]?,.@<>:-".contains(c) {
             i += 1;
             col += 1;
         } else {
@@ -408,7 +483,24 @@ pub struct FieldDecl {
     pub attributes: Map<String, Value>,
     /// `@deprecated(reason: "…")`: `Some(reason)` when present, the reason itself optional.
     pub deprecated: Option<Option<String>>,
+    /// `@default(…)`: the creation default as written, given meaning by validation.
+    pub default: Option<DefaultDecl>,
     pub pos: Pos,
+}
+/// A `@default` directive and the position of its `@`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DefaultDecl {
+    pub expr: DefaultExpr,
+    pub pos: Pos,
+}
+/// A default expression as written. Numbers keep their source text so
+/// validation can apply the field's own rules (safe integers, finite floats).
+#[derive(Clone, Debug, PartialEq)]
+pub enum DefaultExpr {
+    String(String),
+    Number(String),
+    Identifier(String),
+    Call { name: String, arguments: usize },
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct UniqueDecl {

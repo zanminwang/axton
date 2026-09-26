@@ -74,8 +74,54 @@ pub struct FieldDescriptor {
     #[serde(rename = "type")]
     pub value_type: ValueType,
     pub nullable: bool,
+    /// Internal literal used by older reconciliation and read-projection
+    /// paths. Source `@default` never populates it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
+    /// Client creation policy from source `@default`: filled only for an
+    /// omitted field of a fresh create, never on update, read, sync, replay
+    /// or migration ([#27](https://github.com/zanminwang/axton/issues/27)).
+    #[serde(
+        default,
+        rename = "createDefault",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub create_default: Option<CreateDefault>,
+}
+/// How a fresh create fills an omitted field. Generated values are produced
+/// once by the client before the create is persisted or sent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum CreateDefault {
+    /// A fixed value, already normalized by the field's contract.
+    Literal { value: Value },
+    /// A canonical lowercase UUID v4, for String and UUID fields.
+    Uuid,
+    /// The client's UTC wall clock at millisecond precision, for DateTime fields.
+    Now,
+}
+/// Strict tagged form: an unknown kind or any member other than the kind's
+/// own is malformed metadata, not something to ignore.
+impl<'de> Deserialize<'de> for CreateDefault {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        use serde::de::Error;
+        let mut raw = Map::<String, Value>::deserialize(deserializer)?;
+        let kind = raw
+            .remove("kind")
+            .ok_or_else(|| D::Error::custom("createDefault kind missing"))?;
+        let value = raw.remove("value");
+        if !raw.is_empty() {
+            return Err(D::Error::custom("unknown createDefault member"));
+        }
+        match (kind.as_str(), value) {
+            (Some("literal"), Some(value)) => Ok(Self::Literal { value }),
+            (Some("uuid"), None) => Ok(Self::Uuid),
+            (Some("now"), None) => Ok(Self::Now),
+            _ => Err(D::Error::custom("malformed createDefault")),
+        }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -163,6 +209,9 @@ impl Schema {
                 if matches!(field.value_type, ValueType::List { .. }) && field.nullable {
                     return Err(invalid("lists cannot be nullable"));
                 }
+                if let Some(create_default) = &field.create_default {
+                    self.validate_create_default(field, create_default)?;
+                }
             }
             let mut identities = BTreeSet::new();
             for name in &model.identity {
@@ -236,6 +285,33 @@ impl Schema {
         }
         self.validate_actions()?;
         Ok(())
+    }
+    /// A creation default must suit its field: generators by scalar type,
+    /// literals by the field's own normalization. Lists take no default.
+    pub(crate) fn validate_create_default(
+        &self,
+        field: &FieldDescriptor,
+        create_default: &CreateDefault,
+    ) -> Result<()> {
+        let bad = || invalid(format!("invalid createDefault for {}", field.name));
+        let scalar = match &field.value_type {
+            ValueType::Scalar { name } => Some(*name),
+            ValueType::Enum { .. } => None,
+            ValueType::List { .. } => return Err(bad()),
+        };
+        match create_default {
+            CreateDefault::Uuid
+                if matches!(scalar, Some(ScalarType::String | ScalarType::Uuid)) =>
+            {
+                Ok(())
+            }
+            CreateDefault::Now if matches!(scalar, Some(ScalarType::DateTime)) => Ok(()),
+            CreateDefault::Literal { value } if !value.is_null() => self
+                .value(&field.value_type, value)
+                .map(|_| ())
+                .map_err(|_| bad()),
+            _ => Err(bad()),
+        }
     }
     fn validate_type(&self, ty: &ValueType) -> Result<()> {
         match ty {

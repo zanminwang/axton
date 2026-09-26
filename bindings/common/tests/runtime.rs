@@ -83,8 +83,20 @@ fn open_answers_on_the_wake_and_a_failed_open_closes_the_runtime() {
     assert_eq!(opened["ok"], true);
     assert!(!opened["value"]["clientId"].as_str().unwrap().is_empty());
     assert_eq!(opened["value"]["schema"]["rebuilt"], false);
+    carrier.task("1", create("e"));
+    assert_eq!(carrier.completed("1")["ok"], true);
     carrier.submit(json!({"type":"close"}));
     carrier.until(|e| e["type"] == "runtimeClosed");
+    // The end is announced only once the store is released: the carrier can
+    // delete or reopen the files the moment it sees `runtimeClosed`.
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = dir.path().join(format!("db{suffix}"));
+        assert!(
+            !sidecar.exists(),
+            "{} still held after runtimeClosed",
+            sidecar.display()
+        );
+    }
     assert_eq!(
         actor::submit(carrier.id, json!({"type":"close"})),
         Err("client_closed".to_string())

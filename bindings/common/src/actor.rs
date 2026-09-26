@@ -272,7 +272,12 @@ fn run(request_id: String, request: Value, mailbox: Receiver<Mail>, outbox: Arc<
         error: None,
     }]);
     let served = catch_unwind(AssertUnwindSafe(|| serve(&mut runtime, &mailbox, &outbox)));
-    if served.is_err() {
+    if served.is_ok() {
+        // Release the store before announcing the end: once the carrier sees
+        // `runtimeClosed`, the database files are no longer held.
+        drop(runtime);
+        outbox.publish(vec![Event::RuntimeClosed]);
+    } else {
         // The runtime's state is not trusted after a panic; dropping it
         // closes its connections, which rolls back an open transaction.
         drop(runtime);
@@ -361,8 +366,11 @@ fn admit(runtime: &mut ClientRuntime<SqliteStore>, mail: Mail, outbox: &Outbox) 
 }
 
 fn flush(runtime: &mut ClientRuntime<SqliteStore>, outbox: &Outbox) {
+    let mut events = runtime.take_events();
     if runtime.closed() {
         outbox.closed.store(true, Ordering::SeqCst);
+        // `run` announces the end once the runtime and its store are dropped.
+        events.retain(|event| !matches!(event, Event::RuntimeClosed));
     }
-    outbox.publish(runtime.take_events());
+    outbox.publish(events);
 }

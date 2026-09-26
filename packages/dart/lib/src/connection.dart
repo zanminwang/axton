@@ -297,8 +297,8 @@ class DownlinkLane implements LaneControls {
   int _outstanding = 0;
 
   /// What abandons the historical pages in flight. They belong to the lane, not
-  /// to a socket, so only `pause` and `close` abandon them and a replaced
-  /// socket leaves them alone
+  /// to a socket, so only `pause`, `reset` and `close` abandon them and a
+  /// replaced socket leaves them alone
   /// ([#151](https://github.com/zanminwang/axton/issues/151)).
   Completer<void> _loading = Completer<void>();
 
@@ -505,6 +505,20 @@ class DownlinkLane implements LaneControls {
                 },
               ),
         );
+      // The replica was rebuilt and the worker forgot everything it had in
+      // flight: abandon the socket and every page, catch-up and bootstrap
+      // alike. It comes first in its batch and replaces a `close`, so it never
+      // reaches the session the batch opens next. A local abort, as `pause`
+      // is: whatever the old I/O still answers is the application's failure no
+      // more, and the worker ignores it by epoch and request id
+      // ([#162](https://github.com/zanminwang/axton/issues/162)).
+      case 'reset':
+        final current = _session;
+        if (current != null) _abandon(current);
+        _session = null;
+        _outstanding = 0;
+        _abandonLoads();
+        _loading = Completer<void>();
       case 'close':
         if (_session?.epoch == action['epoch']) {
           _abandon(_session!);

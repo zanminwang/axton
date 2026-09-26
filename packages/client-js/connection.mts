@@ -193,10 +193,17 @@ export type DownlinkAction =
   | { type: "open"; epoch: number; subscribe: string }
   | { type: "close"; epoch: number; reason: string | null }
   /**
+   * The replica was rebuilt and the worker forgot everything it had in flight:
+   * abandon the socket and every page, catch-up and bootstrap alike. It comes
+   * first in its batch and replaces a `close`, so it never reaches the session
+   * the batch opens next ([#162](https://github.com/zanminwang/axton/issues/162)).
+   */
+  | { type: "reset" }
+  /**
    * `POST /sync/pull`. An ordinary catch-up belongs to the open session, so the
    * session's cancellation abandons it and its failure ends the session. A
    * `bootstrap` page belongs to the lane: it outlives the session, its failure
-   * ends none, and only `pause` and `close` abandon it
+   * ends none, and only `pause`, `reset` and `close` abandon it
    * ([#151](https://github.com/zanminwang/axton/issues/151)).
    */
   | { type: "request"; request: number; body: string; bootstrap: boolean }
@@ -288,8 +295,8 @@ export async function startDownlinkLane(
   let session: Session | undefined;
   /**
    * What abandons the historical pages in flight. They belong to the lane, not
-   * to a socket, so only `pause` and `close` abandon them and a replaced socket
-   * leaves them alone ([#151](https://github.com/zanminwang/axton/issues/151)).
+   * to a socket, so only `pause`, `reset` and `close` abandon them and a
+   * replaced socket leaves them alone ([#151](https://github.com/zanminwang/axton/issues/151)).
    */
   let loading = new AbortController();
   /** Catch-up requests of the open session that have not answered yet. */
@@ -437,6 +444,17 @@ export async function startDownlinkLane(
             });
           },
         );
+        return;
+      }
+      case "reset": {
+        // A local abort, as `pause` is: whatever the old I/O still answers is
+        // the application's failure no more, and the worker ignores it by epoch
+        // and request id.
+        if (session) abandon(session);
+        session = undefined;
+        outstanding = 0;
+        loading.abort();
+        loading = new AbortController();
         return;
       }
       case "close": {

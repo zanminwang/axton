@@ -2686,3 +2686,56 @@ fn a_ledger_issue_reaches_the_application_once_per_unchanged_defect() {
         "the next connection hears it once"
     );
 }
+
+/// A commit made through the application callback is a commit like any
+/// other: what it queued is pushed without another wake, and a Scope it
+/// registered is followed. The push lane is idle when the callback opens, so
+/// nothing but the commit itself can start the send.
+#[test]
+fn a_committed_callback_transaction_wakes_the_lanes() {
+    let mut h = host();
+    h.connect(false);
+    h.run();
+    assert!(h.outstanding("http", Some("push")).is_empty(), "idle lane");
+    h.task("tx", json!({"kind":"transaction"}));
+    let events = h.run();
+    let callback = events
+        .iter()
+        .find(|e| e["type"] == "effect" && e["operation"]["kind"] == "callback")
+        .unwrap();
+    let (effect, transaction) = (
+        callback["effectId"].as_str().unwrap().to_string(),
+        callback["operation"]["transactionId"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    );
+    h.submit(json!({"type":"transactionCommand","requestId":"enqueue","transactionId":transaction,
+        "command":{"kind":"enqueue","mutation":{"name":"Edit","operations":[{"model":"Entry","op":"create","identity":{"id":"e"},"values":{"text":"queued","note":null}}]}}}));
+    h.submit(
+        json!({"type":"transactionCommand","requestId":"subscribe","transactionId":transaction,
+        "command":{"kind":"channel","channel":"book","subscribed":true}}),
+    );
+    let events = h.run();
+    assert_eq!(h.completion(&events, "enqueue")["ok"], true);
+    assert_eq!(h.completion(&events, "subscribe")["ok"], true);
+    assert!(
+        h.outstanding("http", Some("push")).is_empty(),
+        "nothing sends before the commit"
+    );
+    h.submit(
+        json!({"type":"callbackResult","effectId":effect,"transactionId":transaction,"ok":true}),
+    );
+    let events = h.run();
+    assert_eq!(h.completion(&events, "tx")["ok"], true);
+    assert_eq!(h.client().pending_count().unwrap(), 1);
+    let (_, body) = h.http("push");
+    assert!(
+        body.contains("\"queued\""),
+        "the queued mutation is sent: {body}"
+    );
+    assert!(
+        !h.outstanding("socket", None).is_empty(),
+        "the registered Scope is followed"
+    );
+}

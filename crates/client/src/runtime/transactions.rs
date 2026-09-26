@@ -226,6 +226,11 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 // A failed commit has already rolled back inside the client.
                 let committed = self.client.commit_session().map_err(|e| e.to_string());
                 self.committed_since(generation);
+                // What the callback queued or subscribed is the lanes' work
+                // now, as after any other commit.
+                if self.client.generation() != generation {
+                    self.wake_lanes();
+                }
                 committed.map(|()| Value::Null)
             }
         };

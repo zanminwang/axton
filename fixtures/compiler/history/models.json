@@ -93,6 +93,74 @@
         "version": 1
       }
     },
+    "Draft": {
+      "1": {
+        "enums": [
+          {
+            "name": "Mood",
+            "values": [
+              "calm",
+              "busy"
+            ]
+          }
+        ],
+        "fields": [
+          {
+            "name": "id",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "uuid"
+            }
+          },
+          {
+            "name": "body",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "mood",
+            "nullable": false,
+            "type": {
+              "kind": "enum",
+              "name": "Mood"
+            }
+          },
+          {
+            "name": "created",
+            "nullable": false,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          },
+          {
+            "name": "note",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          },
+          {
+            "name": "memo",
+            "nullable": true,
+            "type": {
+              "kind": "scalar",
+              "name": "string"
+            }
+          }
+        ],
+        "identity": [
+          "id"
+        ],
+        "name": "Draft",
+        "version": 1
+      }
+    },
     "Entry": {
       "1": {
         "enums": [

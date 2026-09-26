@@ -105,9 +105,11 @@ version = "0.1.0"
 dependencies = [
  "axton-client",
  "axton-core",
+ "chrono",
  "rusqlite",
  "serde_json",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]

@@ -44,4 +44,4 @@ The same normalization runs wherever a value enters a record: before an operatio
 ## 11. Risks and Technical Debt
 
 - **Accepted limitation:** enum columns are `TEXT` without a check constraint; only normalization rejects unknown names, so rows stored before an enum value was removed remain in the table as strings the schema cannot decode. A changed value set of an enum a stored field uses is an incompatible schema change, so the client rebuilds its database rather than reading such rows ([Client / Storage / Reconciliation](../client/storage/reconciliation.md)).
-- Field defaults are a [Models](models.md) finding.
+- Creation defaults (`@default`) are specified in [Models](models.md#5-building-block-view); they use the normalization rules above.

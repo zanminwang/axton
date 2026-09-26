@@ -885,7 +885,7 @@ fn deprecations_reach_every_generated_surface_and_leave_the_descriptors_alone() 
         dart.contains("enum Status { active, @Deprecated('use closed') archived, closed }"),
         "{dart}"
     );
-    assert!(dart.contains("class Task {\n final String id;\n @Deprecated('renamed to title')\n final String name;\n final String title;\n @Deprecated('')\n final int? legacy;\n"), "{dart}");
+    assert!(dart.contains("class Task implements TaskCreateInput {\n final String id;\n @Deprecated('renamed to title')\n final String name;\n final String title;\n @Deprecated('')\n final int? legacy;\n"), "{dart}");
     assert!(
         dart.contains(
             "class TaskPatch {\n @Deprecated('renamed to title')\n final Present<String>? name;\n"
@@ -1018,7 +1018,11 @@ fn retained_generated_action_binding_validates_without_relation_snapshots() {
 fn action_typescript_emits_flattened_operands_for_generated_client() {
     let v = compile("model Todo { id String title String @@id(id) } mutation AddTodo(todo Todo.create, patch Todo.update<title>?, gone Todo.delete[], label String?) { related Todo? matches Todo[] count Int }").unwrap();
     let ts = axton_compiler::typescript(&v);
-    assert!(ts.contains("export type TodoCreate = Todo;"), "{ts}");
+    // Without creation defaults a create input requires every field.
+    assert!(
+        ts.contains("export interface TodoCreate {\n id: string;\n title: string;\n}"),
+        "{ts}"
+    );
     assert!(ts.contains("export type TodoUpdate<K extends keyof TodoPatch = keyof TodoPatch> = TodoIdentity & Partial<Pick<TodoPatch, K>>;"), "{ts}");
     assert!(
         ts.contains("export type TodoDelete = TodoIdentity;"),

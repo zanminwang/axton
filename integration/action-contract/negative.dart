@@ -77,3 +77,10 @@ Future<void> onceMisuse(GeneratedClient client) async {
   final GetTodosOutput nothing = await client.queries.invalidate.getTodos(); // invalidation returns no value
   nothing.hashCode;
 }
+
+Future<void> createMisuse(GeneratedClient client) async {
+  await client.models.note.create(const NoteCreate()); // memo has no default
+  await client.models.note.create(NoteCreate(memo: null, tag: 't')); // defaulted nullable needs Present
+  final AddNotesInput args = AddNotesInput(note: const NoteCreate(memo: null), many: const []); // handler args are complete
+  args.hashCode;
+}

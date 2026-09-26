@@ -679,6 +679,7 @@ pub fn normalize_action_args(
                         value_type: ty,
                         nullable: *nullable,
                         default: None,
+                        create_default: None,
                     },
                     value,
                 )?
@@ -959,6 +960,7 @@ pub fn validate_action_result(
                                     .ok_or_else(|| invalid("missing output type"))?,
                                 nullable: false,
                                 default: None,
+                                create_default: None,
                             },
                             one,
                         )

@@ -754,6 +754,152 @@ void main() {
       await local.close();
     }
   });
+
+  // Creation defaults (#27): the Dart SDK passes omitted fields through and
+  // the native client generates them once for both routes.
+  test(
+    'create defaults are generated natively for durable and direct calls',
+    () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'axton-actions-defaults-',
+      );
+      final note = {
+        'name': 'Note',
+        'version': 1,
+        'identity': ['id'],
+        'fields': [
+          {
+            'name': 'id',
+            'type': {'kind': 'scalar', 'name': 'uuid'},
+            'nullable': false,
+            'createDefault': {'kind': 'uuid'},
+          },
+          {
+            'name': 'body',
+            'type': {'kind': 'scalar', 'name': 'string'},
+            'nullable': false,
+            'createDefault': {'kind': 'literal', 'value': 'b'},
+          },
+          {
+            'name': 'createdAt',
+            'type': {'kind': 'scalar', 'name': 'dateTime'},
+            'nullable': false,
+            'createDefault': {'kind': 'now'},
+          },
+        ],
+      };
+      final local = await Client.open(
+        path: '${dir.path}/db',
+        schema: {
+          'enums': [],
+          'models': [note],
+          'actions': [
+            {
+              'name': 'AddNote',
+              'version': 1,
+              'inputs': [
+                {
+                  'kind': 'model',
+                  'name': 'note',
+                  'model': 'Note',
+                  'operation': 'create',
+                  'cardinality': 'single',
+                },
+              ],
+              'outputs': [],
+            },
+          ],
+        },
+        libraryPath: Platform.environment['AXTON_LIBRARY']!,
+      );
+      final uuid = RegExp(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+      );
+      final millis = RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$');
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final bodies = <Map>[];
+      final served = server.listen((request) async {
+        if (request.uri.path != '/sync/actions') {
+          request.response.statusCode = 404;
+          await request.response.close();
+          return;
+        }
+        final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+        bodies.add(body);
+        final call = body['call'] as Map;
+        final args = (call['args'] as Map)['note'] as Map;
+        request.response.write(
+          jsonEncode({
+            'completion': {
+              'callId': call['callId'],
+              'outcome': {'status': 'succeeded', 'result': null},
+            },
+            'records': [
+              {
+                'model': 'Note',
+                'identity': {'id': args['id']},
+                'stamp': 1,
+                'state': {'body': args['body'], 'createdAt': args['createdAt']},
+              },
+            ],
+          }),
+        );
+        await request.response.close();
+      });
+      try {
+        await local.invokeAction<void>('AddNote', 1, {
+          'note': {'body': 'queued'},
+        }, (_) {});
+        final frozen = jsonDecode((await local.freeze())!) as Map;
+        final queued =
+            ((frozen['mutations'] as List).single as Map)['args']['note']
+                as Map;
+        expect(
+          uuid.hasMatch(queued['id'] as String),
+          isTrue,
+          reason: '$queued',
+        );
+        expect(
+          millis.hasMatch(queued['createdAt'] as String),
+          isTrue,
+          reason: '$queued',
+        );
+        expect(queued['body'], 'queued');
+        final optimistic = await local.read('Note', {'id': queued['id']});
+        expect(optimistic, {
+          'id': queued['id'],
+          'body': 'queued',
+          'createdAt': queued['createdAt'],
+        });
+        final connection = await local.connect(
+          SyncServer(url: 'http://127.0.0.1:${server.port}', token: () => 'a'),
+        );
+        try {
+          await local.invokeDirectAction<void>('AddNote', 1, {
+            'note': {},
+          }, (_) {});
+        } finally {
+          await connection.close();
+        }
+        final sent =
+            ((bodies.last['call'] as Map)['args'] as Map)['note'] as Map;
+        expect(uuid.hasMatch(sent['id'] as String), isTrue);
+        expect(sent['id'], isNot(queued['id']));
+        expect(sent['body'], 'b');
+        expect(millis.hasMatch(sent['createdAt'] as String), isTrue);
+        expect(
+          await local.read('Note', {'id': sent['id']}),
+          sent,
+          reason: 'direct authority applied locally',
+        );
+      } finally {
+        await served.cancel();
+        await server.close(force: true);
+        await local.close();
+        await dir.delete(recursive: true);
+      }
+    },
+  );
 }
 
 final class _TestWeak implements ActionWeakState {

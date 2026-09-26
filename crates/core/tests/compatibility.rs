@@ -160,3 +160,35 @@ fn enum_values_used_by_a_stored_field_must_not_change_but_new_enums_may_appear()
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn creation_defaults_are_policy_not_storage_shape() {
+    let b = base();
+    let policy = |create_default: Value| {
+        let mut title = field("title", "string", false);
+        title["createDefault"] = create_default;
+        schema(
+            json!([{"name":"Task","identity":["id"],"fields":[field("id","string",false),title]}]),
+            json!([]),
+        )
+    };
+    // Adding, changing or removing a creation default rebuilds nothing.
+    let with = policy(json!({"kind":"literal","value":"x"}));
+    assert_eq!(Schema::compatibility(&b, &with), Compatibility::Identical);
+    assert_eq!(
+        Schema::compatibility(&with, &policy(json!({"kind":"uuid"}))),
+        Compatibility::Identical
+    );
+    assert_eq!(Schema::compatibility(&with, &b), Compatibility::Identical);
+    // A creation default never backfills a new required column.
+    let mut rank = field("rank", "int", false);
+    rank["createDefault"] = json!({"kind":"literal","value":0});
+    let required = schema(
+        json!([{"name":"Task","identity":["id"],"fields":[field("id","string",false),field("title","string",false),rank]}]),
+        json!([]),
+    );
+    assert!(matches!(
+        Schema::compatibility(&b, &required),
+        Compatibility::Incompatible(reason) if reason.contains("required and has no default")
+    ));
+}

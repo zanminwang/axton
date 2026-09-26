@@ -31,6 +31,9 @@ expected=(
   "'phase' can't be used as a setter because it's final"
   "The method 'cancel' isn't defined for the type 'Function'"
   "The method 'refresh' isn't defined for the type 'Subscription'"
+  "The named parameter 'memo' is required, but there's no corresponding argument"
+  "The argument type 'String' can't be assigned to the parameter type 'Present<String?>?'"
+  "The named parameter 'id' is required, but there's no corresponding argument"
 )
 failed=0
 for message in "${expected[@]}"; do

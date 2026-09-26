@@ -25,9 +25,10 @@ Code: `lex`, `Parser`, `parse` and the `Declarations` types in [compiler/parse.r
 - With several input files, the CLI names the file and the line within that file, for syntax and semantic errors alike. Evidence: [compiler/tests/cli.rs](../../../../crates/compiler/tests/cli.rs) `cli_relocates_errors_into_the_file_that_declares_them`.
 - Parsing records every declaration with its position and applies no semantic rule; an unknown type parses and is refused only by Validate. Evidence: [compiler/tests/parse.rs](../../../../crates/compiler/tests/parse.rs) `parse_keeps_every_declaration_with_its_position`, `parse_reports_syntax_errors_with_the_found_token_and_nothing_semantic`.
 - A model `@@version` follows the mutation rules: positive, within the safe range, at most one per declaration, 1 when omitted. Evidence: `model_version_follows_the_mutation_rules`.
+- `@default(...)` on a field keeps its expression kind (string, number text, identifier, or a zero-or-more-argument call whose arguments are counted, never evaluated) and its position; a repeat is refused. Evidence: `default_keeps_its_expression_kind_and_position`.
 - `@deprecated` parses on fields, enum values and slots with an optional string reason; another argument, a non-string reason or a repeat is refused. Evidence: `deprecated_is_a_field_level_directive_with_an_optional_reason`.
 - The split changes no output: the checked-in fixtures and the example compile to byte-identical files before and after it. Evidence: `compile_is_parse_then_validate_then_generate_and_declarations_are_plain_data`; verified 2026-09-14 by compiling `fixtures/compiler/*.model` and `integration/e2e/fixtures/round-trip/models` with both binaries and diffing the output files of each (seven then; six since mutation history moved out of the output directory).
 
 ## 11. Risks and Technical Debt
 
-- **Accepted limitation:** there are no numeric or boolean literals outside `@@version` (on mutations and models); this is the parsing half of the missing field default ([#27](https://github.com/zanminwang/axton/issues/27)).
+- **Accepted limitation:** numeric literals (JSON grammar, assembled from adjacent tokens such as `-`, `1`, `.`, `5e3`) exist only inside `@default(...)` and `@@version`; directive arguments elsewhere stay identifiers, strings and lists.

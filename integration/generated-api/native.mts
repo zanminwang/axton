@@ -29,6 +29,16 @@ try {
  await client.transaction(tx=>tx.models.book.delete({id:'local'}));
  await new Promise(r=>setTimeout(r,20));stop();
  if(seen[0]!==2||seen[seen.length-1]!==1)throw Error(`watch ${seen}`);
+ // Creation defaults (#27): omitted fields of a fresh create are filled once by the native client.
+ await client.transaction(async tx=>{await tx.models.draft.create({memo:null});await tx.models.draft.create({memo:'explicit',note:null,body:'mine'});});
+ await client.mutate.addDraft({draft:{memo:'queued'}});
+ const drafts=await client.models.draft.query();
+ const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+ if(drafts.length!==3||new Set(drafts.map(d=>d.id)).size!==3||!drafts.every(d=>uuid.test(d.id)&&d.mood==='busy'&&d.created instanceof Date&&Math.abs(d.created.getTime()-Date.now())<60000))throw Error(`generated defaults ${JSON.stringify(drafts)}`);
+ const defaulted=drafts.find(d=>d.memo===null);
+ if(defaulted?.body!=='q \'single\' "double" \'\'\' """ $dollar ${x} \\ back\nline'||defaulted.note!=='n')throw Error(`literal defaults ${JSON.stringify(defaulted)}`);
+ const explicit=drafts.find(d=>d.memo==='explicit');
+ if(explicit?.body!=='mine'||explicit.note!==null)throw Error('explicit values and null win');
  if(await client.client.freeze()===null)throw Error('native freeze');
 }finally{await client.close();await rm(directory,{recursive:true,force:true})}
 

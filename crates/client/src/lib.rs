@@ -5,6 +5,7 @@ pub mod bootstrap;
 mod bootstrap_ledger;
 pub mod connection;
 pub mod ddl;
+mod defaults;
 mod downlink;
 pub mod downlink_worker;
 pub mod engine;

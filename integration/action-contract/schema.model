@@ -39,3 +39,14 @@ query FindTodos(text String, cursor String?) {
  todos Todo[]
  nextCursor String?
 }
+// Creation defaults (#27): only client create inputs may omit these fields.
+model Note {
+ id String @default(uuid())
+ body String @default("")
+ pinned Boolean @default(false)
+ at DateTime @default(now())
+ tag String? @default("t")
+ memo String?
+ @@id(id)
+}
+mutation AddNotes(note Note.create, maybe Note.create?, many Note.create[]) { saved Note }

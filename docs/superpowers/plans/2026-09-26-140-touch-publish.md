@@ -1,5 +1,7 @@
 # Generated touch and explicit publication implementation plan
 
+> **SUPERSEDED — do not implement this revision.** On 2026-09-26 the user approved persistent record-to-Channel membership: `publish` enrolls a record and publishes current state; later inferred or explicitly touched changes automatically distribute to all member Channels. Each changed record gets one new stamp, with separate publication cursors in its Channels, atomically with the business transaction. Client subscription cursors remain client-owned. The [updated #140](https://github.com/zanminwang/axton/issues/140) is authoritative. This document's exclusions of membership and automatic distribution, its unchanged-engine assumptions, and its implementation readiness no longer apply. Rewrite and review the spec/plan to cover membership persistence, removal, concurrency, deletion/retention, repeated publication and Bootstrap compatibility before execution. The text below preserves the previous proposal for reference.
+
 > **For agentic workers:** Use superpowers:executing-plans to implement the following tasks and review checkpoints. Use implementation subagents only when authorized; if delegated, the user prefers Sol. Do not start implementation as part of the documentation-only preparation request.
 
 **Goal:** Replace public backend changes collectors with generated touch methods, add generated publication helpers, and require explicit publication records everywhere.

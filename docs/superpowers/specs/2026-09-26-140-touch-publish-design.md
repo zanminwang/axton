@@ -1,5 +1,7 @@
 # Generated touch and explicit publication APIs
 
+> **SUPERSEDED — do not implement this revision.** On 2026-09-26 the user approved persistent record-to-Channel membership: `publish` enrolls a record and publishes current state; later inferred or explicitly touched changes automatically distribute to all member Channels. Each changed record gets one new stamp, with separate publication cursors in its Channels, atomically with the business transaction. Client subscription cursors remain client-owned. The [updated #140](https://github.com/zanminwang/axton/issues/140) is authoritative. This document's exclusions of membership and automatic distribution, its unchanged-engine assumptions, and its implementation readiness no longer apply. Rewrite and review the spec/plan to cover membership persistence, removal, concurrency, deletion/retention, repeated publication and Bootstrap compatibility before execution. The text below preserves the previous proposal for reference.
+
 Status: agreed API direction for [#140](https://github.com/zanminwang/axton/issues/140), with engineering details specified here for review. This is a design document, not shipped behavior. Baseline inspected: main `9cfb0b8`.
 
 ## 1. Goal

@@ -380,3 +380,151 @@ test("store:false cannot suppress authority a Mutation's own changes require", a
     assert.equal((await client.models.todo.get({ id: "retitle-b" }))?.title, "retitleq durable", "the durable route applies the same required authority");
   } finally { await client?.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+// ---- Query once (#158): complete result snapshots over a real backend ----
+
+test("once reuses the complete Query snapshot; default calls stay fresh; refresh replaces it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "axton-query-once-"));
+  let client: GeneratedClient | undefined;
+  let other: GeneratedClient | undefined;
+  try {
+    await fixture.pool.query("INSERT INTO action_e2e_todo(id,title) VALUES('once-a','onceq A')");
+    client = await GeneratedClient.open({ path: join(directory, "client.sqlite"), server: server() });
+    const calls = () => fixture.onceCalls.todoPage;
+    const start = calls();
+    const first = await client.queries.todoPage({ query: "onceq" }, { once: true });
+    assert.equal(calls(), start + 1, "a miss executes the handler");
+    assert.deepEqual(first.todos, [{ id: "once-a", title: "onceq A" }]);
+    assert.equal(first.count, 1);
+    assert.equal(first.next, "after:once-a");
+    assert.ok(first.asOf instanceof Date);
+    let second: typeof first | undefined;
+    const paths = await requestedPaths(async () => { second = await client!.queries.todoPage({ query: "onceq" }, { once: true }); });
+    assert.deepEqual(paths, [], "a hit issues no request");
+    assert.equal(calls(), start + 1);
+    assert.deepEqual(second, first, "the same complete typed result");
+    assert.notStrictEqual(second, first);
+    // Mutating a returned result, its lists or Dates never reaches the snapshot.
+    (first.todos as { id: string; title: string }[]).push({ id: "x", title: "x" });
+    first.asOf.setUTCFullYear(1999);
+    const third = await client.queries.todoPage({ query: "onceq" }, { once: true });
+    assert.equal(third.todos.length, 1);
+    assert.equal(third.asOf.getUTCFullYear(), 2026);
+    // An ordinary call is an independent request and replaces nothing.
+    const fresh = await client.queries.todoPage({ query: "onceq" });
+    assert.equal(calls(), start + 2);
+    assert.notEqual(fresh.asOf.getTime(), third.asOf.getTime());
+    assert.equal((await client.queries.todoPage({ query: "onceq" }, { once: true })).asOf.getTime(), third.asOf.getTime());
+    // Refresh always requests and replaces the snapshot on success.
+    const refreshed = await client.queries.todoPage({ query: "onceq" }, { once: true, refresh: true });
+    assert.equal(calls(), start + 3);
+    assert.notEqual(refreshed.asOf.getTime(), third.asOf.getTime());
+    assert.equal((await client.queries.todoPage({ query: "onceq" }, { once: true })).asOf.getTime(), refreshed.asOf.getTime());
+    assert.equal(calls(), start + 3);
+    // A parameterless scalar-only Query.
+    const counted = fixture.onceCalls.countTodos;
+    const count = await client.queries.countTodos({}, { once: true });
+    assert.equal(typeof count.count, "number");
+    assert.deepEqual(await client.queries.countTodos({}, { once: true }), count);
+    assert.equal(fixture.onceCalls.countTodos, counted + 1);
+    // Concurrent callers of one miss share one request.
+    const shared = await Promise.all([1, 2, 3].map(() => client!.queries.todoPage({ query: "onceq-none" }, { once: true })));
+    assert.equal(calls(), start + 4);
+    assert.deepEqual(shared[0], shared[2]);
+    // Another local database is another cache: nothing is shared.
+    other = await GeneratedClient.open({ path: join(directory, "other.sqlite"), server: server() });
+    await other.queries.todoPage({ query: "onceq" }, { once: true });
+    assert.equal(calls(), start + 5);
+    assert.equal((await client.syncState()).pending, 0, "once never enqueues");
+  } finally {
+    await other?.close();
+    await client?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a hit returns the old snapshot while local Models move on, and writes or wakes nothing", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "axton-query-once-models-"));
+  let client: GeneratedClient | undefined;
+  try {
+    await fixture.pool.query("INSERT INTO action_e2e_todo(id,title) VALUES('snap-a','snapq A')");
+    client = await GeneratedClient.open({ path: join(directory, "client.sqlite"), server: server() });
+    const cached = await client.queries.todoPage({ query: "snapq" }, { once: true });
+    assert.equal(cached.todos[0]?.title, "snapq A");
+    assert.equal((await client.models.todo.get({ id: "snap-a" }))?.title, "snapq A", "the miss stored its Model authority");
+    const update = await client.mutations.updateTodo({ todo: { id: "snap-a", title: "snapq B" } });
+    assert.equal((await update.wait()).error, null);
+    assert.equal((await client.models.todo.get({ id: "snap-a" }))?.title, "snapq B");
+    const seen: unknown[] = [];
+    const stop = client.models.todo.watch({ id: "snap-a" }, (rows) => seen.push(rows));
+    await wait(async () => seen.length === 1, "initial watch");
+    const hit = await client.queries.todoPage({ query: "snapq" }, { once: true });
+    assert.equal(hit.todos[0]?.title, "snapq A", "the snapshot is the earlier request's result");
+    assert.equal((await client.models.todo.get({ id: "snap-a" }))?.title, "snapq B", "the hit reapplied no old authority");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(seen.length, 1, "no Model watcher woke");
+    stop();
+  } finally { await client?.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("once snapshots survive offline reopen; misses, refresh failures and invalidation behave", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "axton-query-once-offline-"));
+  const path = join(directory, "client.sqlite");
+  let client: GeneratedClient | undefined;
+  try {
+    await fixture.pool.query("INSERT INTO action_e2e_todo(id,title) VALUES('off-a','offq A')");
+    client = await GeneratedClient.open({ path, server: server() });
+    const calls = () => fixture.onceCalls.todoPage;
+    const saved = await client.queries.todoPage({ query: "offq" }, { once: true });
+    await client.close();
+    const start = calls();
+    client = await GeneratedClient.open({ path });
+    assert.deepEqual(await client.queries.todoPage({ query: "offq" }, { once: true }), saved, "offline after reopen");
+    await assert.rejects(client.queries.todoPage({ query: "offq-miss" }, { once: true }), (error: { code?: string }) => error.code === "action.unavailable");
+    await assert.rejects(client.queries.todoPage({ query: "offq" }, { once: true, refresh: true }), (error: { code?: string }) => error.code === "action.unavailable");
+    assert.equal((await client.syncState()).pending, 0, "never enqueued implicitly");
+    assert.equal(calls(), start);
+    await client.connect(server());
+    // A failed refresh keeps the previous snapshot.
+    fixture.failQueries = true;
+    try {
+      await assert.rejects(client.queries.todoPage({ query: "offq" }, { once: true, refresh: true }), (error: { code?: string; execution?: string }) => error.code === "query.down" && error.execution === "rejected");
+    } finally { fixture.failQueries = false; }
+    assert.equal(calls(), start + 1);
+    assert.deepEqual(await client.queries.todoPage({ query: "offq" }, { once: true }), saved);
+    // Explicit invalidation needs no network and causes the next miss.
+    await client.connection!.pause();
+    await client.queries.invalidate.todoPage({ query: "offq" });
+    await client.connection!.resume();
+    const again = await client.queries.todoPage({ query: "offq" }, { once: true });
+    assert.equal(calls(), start + 2);
+    assert.notEqual(again.asOf.getTime(), saved.asOf.getTime());
+  } finally { await client?.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("store variants are separate snapshots and store:false still persists the result", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "axton-query-once-store-"));
+  const path = join(directory, "client.sqlite");
+  let client: GeneratedClient | undefined;
+  try {
+    await fixture.pool.query("INSERT INTO action_e2e_todo(id,title) VALUES('ostore-a','ostoreq A')");
+    client = await GeneratedClient.open({ path, server: server() });
+    const calls = () => fixture.onceCalls.todoPage;
+    const start = calls();
+    const unstored = await client.queries.todoPage({ query: "ostoreq" }, { once: true, store: false });
+    assert.equal(unstored.todos[0]?.title, "ostoreq A");
+    assert.equal(await client.models.todo.get({ id: "ostore-a" }), null, "store:false materialized no Model");
+    await client.close();
+    client = await GeneratedClient.open({ path, server: server() });
+    assert.deepEqual(await client.queries.todoPage({ query: "ostoreq" }, { once: true, store: { todos: false } }), unstored, "the equivalent store:false policy hits after reopen");
+    assert.equal(calls(), start + 1);
+    // Asking for Models is a different key; the old snapshot is never replayed into Models.
+    await client.queries.todoPage({ query: "ostoreq" }, { once: true });
+    assert.equal(calls(), start + 2);
+    assert.equal((await client.models.todo.get({ id: "ostore-a" }))?.title, "ostoreq A");
+    await client.queries.invalidate.todoPage({ query: "ostoreq" });
+    await client.queries.todoPage({ query: "ostoreq" }, { once: true, store: false });
+    await client.queries.todoPage({ query: "ostoreq" }, { once: true });
+    assert.equal(calls(), start + 4, "invalidation cleared every store variant");
+  } finally { await client?.close(); await rm(directory, { recursive: true, force: true }); }
+});

@@ -131,14 +131,65 @@ fn different_arguments_store_variants_and_order_get_distinct_keys() {
     let mut null_since = args();
     null_since["since"] = Value::Null;
     add(key(&client, null_since, ActionStore::All));
-    add(key(&client, args(), ActionStore::None));
-    let none_map = key(
-        &client,
-        args(),
-        ActionStore::Outputs([("todos".to_string(), false)].into()),
+    let none = key(&client, args(), ActionStore::None);
+    assert_eq!(none.store, "false");
+    // A map that disables every eligible output is the same policy as false.
+    assert_eq!(
+        key(
+            &client,
+            args(),
+            ActionStore::Outputs([("todos".to_string(), false)].into()),
+        ),
+        none
     );
-    assert_eq!(none_map.store, r#"{"todos":false}"#);
-    add(none_map);
+    add(none);
+}
+
+#[test]
+fn a_selective_store_map_is_its_own_variant() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut value = schema_value();
+    let mut extra = value["actions"][0]["outputs"][0].clone();
+    extra["name"] = json!("featured");
+    extra["cardinality"] = json!("optional");
+    value["actions"][0]["outputs"]
+        .as_array_mut()
+        .unwrap()
+        .push(extra);
+    let client = Client::open(
+        SqliteStore::open(&path).unwrap(),
+        Schema::from_value(value).unwrap(),
+    )
+    .unwrap();
+    let k = |store| {
+        client
+            .query_cache_key("GetTodos", 1, &args(), &store)
+            .unwrap()
+    };
+    // With no eligible output, every store policy stores the same nothing.
+    assert_eq!(
+        client
+            .query_cache_key("Ping", 1, &json!({}), &ActionStore::None)
+            .unwrap(),
+        client
+            .query_cache_key("Ping", 1, &json!({}), &ActionStore::All)
+            .unwrap()
+    );
+    let selective = k(ActionStore::Outputs([("todos".to_string(), false)].into()));
+    assert_eq!(selective.store, r#"{"todos":false}"#);
+    assert_ne!(selective, k(ActionStore::None));
+    assert_ne!(selective, k(ActionStore::All));
+    assert_eq!(
+        k(ActionStore::Outputs(
+            [
+                ("todos".to_string(), false),
+                ("featured".to_string(), false)
+            ]
+            .into()
+        )),
+        k(ActionStore::None)
+    );
 }
 
 #[test]

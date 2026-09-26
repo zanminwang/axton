@@ -147,7 +147,24 @@ pub(crate) fn derive_key(
     }
     let args = canonical_json(&normalize_action_args(schema, action, args)?)?;
     store.validate(action)?;
-    let store = canonical_json(&store.clone().canonical().wire().unwrap_or(json!(true)))?;
+    // Omitted, `true` and all-true maps share the default; a map disabling
+    // every eligible output is the same policy as `false`; and with no
+    // eligible output every policy stores the same nothing.
+    let mut eligible = action
+        .outputs
+        .iter()
+        .filter(|output| axton_core::store_eligible(output))
+        .peekable();
+    let store = match store.clone().canonical() {
+        _ if eligible.peek().is_none() => ActionStore::All,
+        ActionStore::Outputs(map)
+            if eligible.all(|output| map.get(&output.name) == Some(&false)) =>
+        {
+            ActionStore::None
+        }
+        other => other,
+    };
+    let store = canonical_json(&store.wire().unwrap_or(json!(true)))?;
     let key = sha256_hex(&canonical_json(&json!({
         "format": QUERY_CACHE_FORMAT,
         "contract": contract,

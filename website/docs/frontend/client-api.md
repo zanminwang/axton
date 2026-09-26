@@ -265,6 +265,61 @@ By default, Model records returned by explicit Model outputs also update the mat
 
 The TypeScript/React Native call observer requires a working `WeakRef`; a runtime without it rejects durable invocation with `CallError` code `action.unsupported_runtime`. Dart uses `WeakReference`. SDKs keep active waits strongly until they settle, while otherwise allowing unobserved handles to be collected. Exceptions from a diagnostic `onError` callback after authority commits are reported through the runtime's uncaught-error channel (`reportError` or an asynchronous throw in JavaScript; the current Zone in Dart). They do not replace the call result, retry the handler or become transport errors.
 
+### Reuse a Query result with `once`
+
+A direct Query can opt in, at the call site, to reusing the complete result of an earlier successful call. Pass `once: true`: the first call runs as an ordinary direct call and, when it succeeds, saves its complete result in the local database; a later `once` call with equal arguments and store policy returns that saved result without a request. `refresh: true` (only together with `once`) always requests and replaces the saved result when the request succeeds. `client.queries.invalidate.<name>(args)` discards the saved results of one argument set. A call without `once` is unchanged: a fresh request that neither reads nor writes saved results.
+
+=== "TypeScript"
+
+    ```typescript title="action-contract"
+    const first = await client.queries.findTodos({ text: 'design', cursor: null }, { once: true });
+    const reused = await client.queries.findTodos({ text: 'design', cursor: null }, { once: true });
+    const refreshed = await client.queries.findTodos(
+      { text: 'design', cursor: null },
+      { once: true, refresh: true },
+    );
+    const everything = await client.queries.getTodos({}, { once: true, store: false });
+    await client.queries.invalidate.findTodos({ text: 'design', cursor: null });
+    console.log(first.nextCursor, reused.todos, refreshed.todos, everything.todos);
+    ```
+
+=== "Flutter"
+
+    ```dart title="action-contract"
+    final first = await client.queries.findTodos(text: 'design', cursor: null, once: true);
+    final reused = await client.queries.findTodos(text: 'design', cursor: null, once: true);
+    final refreshed = await client.queries.findTodos(
+      text: 'design',
+      cursor: null,
+      once: true,
+      refresh: true,
+    );
+    final everything = await client.queries.getTodos(
+      once: true,
+      store: const GetTodosStore.none(),
+    );
+    await client.queries.invalidate.findTodos(text: 'design', cursor: null);
+    print([first.nextCursor, reused.todos, refreshed.todos, everything.todos]);
+    ```
+
+| Situation | What a `once` call does |
+| --- | --- |
+| A saved result exists (and no `refresh`) | Returns it with no request, no connection needed and no local write: it does not update Models, wake `watch` listeners or change subscriptions |
+| No saved result, or `refresh` | Runs a direct call with a fresh call ID. On success, the returned Model authority (per `store`) and the saved result commit in one local transaction before the call resolves |
+| The same Query and arguments are already in flight | Waits for that request instead of sending another; every caller gets its own decoded result |
+| The request fails | Rejects with the `CallError` and saves nothing; a failed `refresh` keeps the previous result |
+| No connection and nothing saved (or `refresh`) | Rejects with `action.unavailable`; it is never queued |
+
+The saved value is the complete typed result: scalars, Model results, list order and membership, and pagination values such as `nextCursor`. A successful empty result is saved too. Each call decodes a new result object, so changing a returned list, `Date` or object affects neither the saved result nor another caller. A saved paginated result is only the page that was requested.
+
+A saved result is the answer of an earlier request, not the current local view. Channel deliveries and local writes change Models, never saved results, and a hit never reapplies an old Model result. Read `client.models` for current local data, and use `refresh` or `invalidate` when your application decides a saved result is outdated. Saved results never expire on their own: no time limit or automatic freshness applies. They stay until invalidated, replaced by a successful refresh, or discarded by a schema change or local database rebuild.
+
+The saved result belongs to the Query name and version, the normalized arguments (key order, UUID case and date offsets do not matter; list order and explicit `null` do) and the `store` policy. `store` still controls only which Model results update local Models, so `once` with `store: false` returns a saved result that did not store Models, and a later call that asks for Models (the default) does not reuse it. `store: false` does not make the call ephemeral: its result is still saved in the local database. `invalidate` takes only the Query's business arguments, needs no connection, resolves after its local commit and discards the saved results for every `store` policy. A request that was already in flight still resolves its callers, but cannot save its result after an invalidation.
+
+Saved results belong to the local database file, not to the signed-in user. The runtime does not derive identity from the access token, and refreshing a token for the same identity keeps them. Open a separate database per backend, account or tenant, or delete the database when the identity changes; changing credentials on a shared file isolates neither Models nor saved results. See [local storage](storage.md#manage-cached-data).
+
+`once` and `refresh` exist only on direct Query methods. Mutations, `mutations.call` and `queries.enqueue` do not accept them: generated types reject them and the runtime rejects dynamic callers with `CallError` code `action.invalid_options` before any request, as it does for `refresh` without `once`. Like every Query, a `once` call or `invalidate` from an application transaction callback fails with `transaction_active`. In Dart, the parameters are `once` and `refresh` unless the Query has business inputs with those names; they are then `callOnce` and `callRefresh`, following the `outputStore` rule. A Query may not be named `invalidate`.
+
 ## Local-only writes
 
 === "TypeScript"

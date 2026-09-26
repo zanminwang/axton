@@ -828,26 +828,36 @@ fn bootstrap_commands_register_read_and_schedule_one_page() {
             .any(|a| a["type"] == "request"),
         "no origin, no interval: {started}"
     );
-    // The acknowledgement commits the origin; the wake that follows a commit is
-    // what the SDK sends after `scopeBootstrap`, and the page follows it.
+    // The acknowledgement commits the origin, which is the bound the interval
+    // was missing, so the page is asked for in the host loop that ran it.
     let epoch = started[0]["epoch"].clone();
-    downlink(
+    let acknowledged = downlink(
         &mut host,
         &id,
         json!({"event":"message","epoch":epoch,"body":json!({"type":"subscribed","cursors":{"book":7}}).to_string()}),
     );
-    let asked = downlink(&mut host, &id, json!({"event":"wake"}));
-    let page = asked
+    let page = acknowledged
         .as_array()
         .unwrap()
         .iter()
         .find(|a| a["type"] == "request" && a["bootstrap"] == true)
-        .unwrap_or_else(|| panic!("a bootstrap request: {asked}"))
+        .unwrap_or_else(|| panic!("a bootstrap request: {acknowledged}"))
         .clone();
     assert_eq!(
         serde_json::from_str::<Value>(page["body"].as_str().unwrap()).unwrap(),
         json!({"mode":"bootstrap","channel":"book","models":{"Entry":1},"after":0,"until":7}),
         "the interval is bounded by the committed origin"
+    );
+    // Nothing asks twice: the wake the SDK sends after a commit finds that
+    // request already in flight.
+    let woken = downlink(&mut host, &id, json!({"event":"wake"}));
+    assert!(
+        !woken
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["type"] == "request" && a["bootstrap"] == true),
+        "one request at a time: {woken}"
     );
     // The answer commits its authority and its progress together, and the
     // committed run travels to the host as one `bootstrap` action.

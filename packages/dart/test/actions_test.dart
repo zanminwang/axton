@@ -637,8 +637,10 @@ void main() {
     },
   );
 
+  // A direct response's records are a runtime `report`, not part of the
+  // call: a throwing `onError` reaches the zone that connected.
   test(
-    'throwing direct diagnostic preserves applied result and reaches the Zone',
+    'throwing direct diagnostic preserves applied result and reaches the connecting Zone',
     () async {
       final schema =
           jsonDecode(
@@ -687,13 +689,19 @@ void main() {
       final diagnostic = StateError('diagnostic failed');
       final observed = <Object>[];
       try {
-        final connection = await local.connect(
-          SyncServer(
-            url: 'http://127.0.0.1:${server.port}',
-            token: () => 'alice',
-          ),
-          onError: (_) => throw diagnostic,
-        );
+        final connected = Completer<RuntimeConnection>();
+        runZonedGuarded(() {
+          local
+              .connect(
+                SyncServer(
+                  url: 'http://127.0.0.1:${server.port}',
+                  token: () => 'alice',
+                ),
+                onError: (_) => throw diagnostic,
+              )
+              .then(connected.complete, onError: connected.completeError);
+        }, (error, stack) => observed.add(error));
+        final connection = await connected.future;
         try {
           expect(
             await local.invokeDirectAction<String>(
@@ -704,14 +712,15 @@ void main() {
             ),
             'first',
           );
-          final result = Completer<String>();
-          runZonedGuarded(() {
-            local
-                .invokeDirectAction<String>('Ping', 1, {}, (_) => 'decoded')
-                .then(result.complete, onError: result.completeError);
-          }, (error, stack) => observed.add(error));
           expect(
-            await result.future.timeout(const Duration(seconds: 2)),
+            observed,
+            isEmpty,
+            reason: 'the first response applies cleanly',
+          );
+          expect(
+            await local
+                .invokeDirectAction<String>('Ping', 1, {}, (_) => 'decoded')
+                .timeout(const Duration(seconds: 2)),
             'decoded',
           );
         } finally {

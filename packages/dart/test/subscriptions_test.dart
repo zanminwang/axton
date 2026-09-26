@@ -22,31 +22,25 @@ BootstrapRun stored({int run = 1, String state = 'requested'}) => BootstrapRun(
 /// The registry driven straight through its command path: one registration,
 /// whose load commands the test supplies
 /// ([#151](https://github.com/zanminwang/axton/issues/151)).
-({Subscriptions subscriptions, List<void> woken}) registry({
+Subscriptions registry({
   Future<BootstrapRun> Function()? requestBootstrap,
   Future<BootstrapRun> Function()? read,
 }) {
-  final woken = <void>[];
   const state = SubscriptionState(
     scope: 'scope',
     subscriptionId: 1,
     startingCursor: 0,
     cursor: 0,
   );
-  return (
-    subscriptions: Subscriptions(
-      SubscriptionCommands(
-        subscribe: (_) async => state,
-        state: (_) async => state,
-        remove: (_, _) async => true,
-        removeScope: (_) async {},
-        requestBootstrap: (_, _) =>
-            (requestBootstrap ?? () async => stored())(),
-        bootstrapState: (_, _) => (read ?? () async => stored())(),
-        committed: () => woken.add(null),
-      ),
+  return Subscriptions(
+    SubscriptionCommands(
+      subscribe: (_) async => state,
+      state: (_) async => state,
+      remove: (_, _) async => true,
+      removeScope: (_) async {},
+      requestBootstrap: (_, _) => (requestBootstrap ?? () async => stored())(),
+      bootstrapState: (_, _) => (read ?? () async => stored())(),
     ),
-    woken: woken,
   );
 }
 
@@ -1059,7 +1053,7 @@ void main() {
         'it has no bootstrap state',
       );
       final closed = registry(requestBootstrap: () async => throw refusal);
-      final subscription = await closed.subscriptions.subscribe('scope');
+      final subscription = await closed.subscribe('scope');
       await expectLater(
         subscription.bootstrap(),
         throwsA(isA<SubscriptionClosedException>()),
@@ -1068,13 +1062,13 @@ void main() {
       // An unrelated engine failure is still the caller's to see, unchanged.
       final other = StateError('the database is locked');
       final locked = registry(requestBootstrap: () async => throw other);
-      final handle = await locked.subscriptions.subscribe('scope');
+      final handle = await locked.subscribe('scope');
       await expectLater(handle.bootstrap(), throwsA(same(other)));
     },
   );
 
   test(
-    'a handle closed while its registration commits wakes no lane',
+    'a handle closed while its registration commits settles as closed',
     () async {
       final gate = Completer<void>();
       final closing = registry(
@@ -1083,20 +1077,14 @@ void main() {
           return stored();
         },
       );
-      final subscription = await closing.subscriptions.subscribe('scope');
+      final subscription = await closing.subscribe('scope');
       final pending = subscription.bootstrap().then<Object?>(
         (_) => null,
         onError: (Object error) => error,
       );
-      closing.subscriptions.close();
-      final before = closing.woken.length;
+      closing.close();
       gate.complete();
       expect(await pending, isA<ClientClosedException>());
-      expect(
-        closing.woken,
-        hasLength(before),
-        reason: 'a closed client is not woken through its closed controller',
-      );
     },
   );
 
@@ -1108,7 +1096,7 @@ void main() {
         requestBootstrap: () async => answer,
         read: () async => answer,
       );
-      final subscription = await retried.subscriptions.subscribe('scope');
+      final subscription = await retried.subscribe('scope');
       final first = subscription.bootstrap().then<Object?>(
         (_) => null,
         onError: (Object error) => error,
@@ -1134,7 +1122,7 @@ void main() {
       var settled = false;
       unawaited(second.then((_) => settled = true));
       await until(() async {
-        retried.subscriptions.signal(
+        retried.signal(
           DownlinkSignal.bootstrap({
             'scope': 'scope',
             'subscriptionId': 1,

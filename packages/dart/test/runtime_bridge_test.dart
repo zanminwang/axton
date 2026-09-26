@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:axton/axton.dart';
 import 'package:axton/src/bridge.dart';
+import 'package:axton/src/subscriptions.dart' show DownlinkSignal;
 import 'package:test/test.dart';
 
 /// A fresh temporary file with the Entry schema, opened through the real
@@ -330,6 +331,15 @@ void main() {
           expect((event['diagnostic'] as Map)['kind'], isA<String>());
         case 'changed':
           expect((event['tables'] as List).cast<String>(), isNotEmpty);
+        case 'laneSignal':
+          // The subscription projection's signal, decoded as the SDK does.
+          final json = event['signal'] as Map<String, dynamic>;
+          final signal = DownlinkSignal.fromJson(json);
+          expect(signal.lane, json['lane']);
+          expect(signal.epoch, json['epoch']);
+          expect(signal.outstanding, json['outstanding']);
+          expect(signal.scopes, json['scopes'] ?? isEmpty);
+          expect(signal.run, json['run']);
         case 'runtimeClosed':
           break;
         default:
@@ -344,6 +354,7 @@ void main() {
       'observerChanged',
       'report',
       'changed',
+      'laneSignal',
       'runtimeClosed',
     });
   });

@@ -3,15 +3,21 @@ import 'dart:convert';
 import 'dart:io';
 import 'connection.dart';
 
-/// A pull the server refused, with the status it refused it with. It is an
+/// A request the server refused, with the status it refused it with. It is an
 /// `HttpException` like the failure it replaces, so existing handling is
-/// unchanged; the downlink lane reads the status, because a bootstrap run is
-/// failed by a refusal the server decided and retried after anything else
-/// ([#151](https://github.com/zanminwang/axton/issues/151)).
-class PullFailure extends HttpException {
+/// unchanged; the status travels to the runtime, which tells a refusal the
+/// server decided from a transport failure by it.
+class HttpFailure extends HttpException {
   final int statusCode;
-  PullFailure(this.statusCode, String body)
-    : super('pull failed: $statusCode $body');
+  HttpFailure(String what, this.statusCode, String body)
+    : super('$what failed: $statusCode $body');
+}
+
+/// A pull the server refused: a bootstrap run is failed by a refusal the
+/// server decided and retried after anything else
+/// ([#151](https://github.com/zanminwang/axton/issues/151)).
+class PullFailure extends HttpFailure {
+  PullFailure(int statusCode, String body) : super('pull', statusCode, body);
 }
 
 /// Immutable configuration reusable across independent client connections.
@@ -21,77 +27,79 @@ class SyncServer {
   const SyncServer({required this.url, required this.token});
 }
 
-/// Internal per-client network session.
+/// Internal per-client network session: the platform side of the runtime's
+/// `http` and `socket` effects. Every request and socket owns its
+/// cancellation, so aborting one never touches another.
 class ServerSession {
-  int _pushEpoch = 0;
-  final _requests = <HttpClient>{};
-  void cancelPush() {
-    _pushEpoch++;
-    for (final client in _requests.toList()) {
-      client.close(force: true);
-    }
-    _requests.clear();
-  }
-
   final Uri _base;
   final FutureOr<String> Function() _token;
   ServerSession(SyncServer server)
     : _base = Uri.parse(server.url),
       _token = server.token;
 
-  Future<String> push(String kind, String body) async {
-    final epoch = _pushEpoch;
-    final token = await _token();
-    if (epoch != _pushEpoch) throw StateError('connection_paused_or_closed');
-    final http = HttpClient();
-    _requests.add(http);
-    try {
-      final request = await http.postUrl(_endpoint('mutations', false));
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-      request.headers.contentType = ContentType.json;
-      request.write(body);
-      final response = await request.close();
-      final result = await utf8.decoder.bind(response).join();
-      if (response.statusCode == 401) throw const AuthenticationExpired();
-      if (response.statusCode < 200 || response.statusCode >= 300)
-        throw HttpException('push failed: ${response.statusCode} $result');
-      return result;
-    } finally {
-      _requests.remove(http);
-      http.close(force: true);
-    }
-  }
+  /// `POST /sync/mutations`: one frozen push batch.
+  Future<String> push(String body, Future<void> cancellation) => _post(
+    'mutations',
+    'push',
+    body,
+    cancellation,
+    'connection_paused_or_closed',
+  );
 
-  /// A direct Action owns its HTTP client. Its cancellation is independent of
-  /// push pause and closes the socket even while the response is stalled.
-  Future<String> action(String body, Future<void> cancellation) async {
-    var cancelled = false;
+  /// `POST /sync/actions`: one direct attempt. Its cancellation closes the
+  /// socket even while the response is stalled.
+  Future<String> action(String body, Future<void> cancellation) => _post(
+    'actions',
+    'action',
+    body,
+    cancellation,
+    'action.execution_unknown',
+  );
+
+  /// `POST /sync/pull`: an ordinary catch-up or a Bootstrap page.
+  Future<String> pull(String body, Future<void> cancellation) =>
+      _post('pull', 'pull', body, cancellation, 'connection_paused_or_closed');
+
+  /// One request on its own HTTP client. A 401 is [AuthenticationExpired],
+  /// any other non-2xx answer an [HttpFailure] with its status; once
+  /// [cancellation] completes, the token wait, the request and a stalled
+  /// response are abandoned and it fails with [cancelled].
+  Future<String> _post(
+    String path,
+    String what,
+    String body,
+    Future<void> cancellation,
+    String cancelled,
+  ) async {
+    var aborted = false;
     HttpClient? http;
     final stopped = Completer<String>();
     unawaited(
       cancellation.then((_) {
-        cancelled = true;
+        aborted = true;
         http?.close(force: true);
-        if (!stopped.isCompleted)
-          stopped.completeError(StateError('action.execution_unknown'));
+        if (!stopped.isCompleted) stopped.completeError(StateError(cancelled));
       }),
     );
     final sending = Future<String>(() async {
       final token = await _token();
-      if (cancelled) throw StateError('action.execution_unknown');
+      if (aborted) throw StateError(cancelled);
       final client = HttpClient();
       http = client;
       try {
-        final request = await client.postUrl(_endpoint('actions', false));
-        if (cancelled) throw StateError('action.execution_unknown');
+        final request = await client.postUrl(_endpoint(path, false));
+        if (aborted) throw StateError(cancelled);
         request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
         request.headers.contentType = ContentType.json;
         request.write(body);
         final response = await request.close();
         final result = await utf8.decoder.bind(response).join();
         if (response.statusCode == 401) throw const AuthenticationExpired();
-        if (response.statusCode < 200 || response.statusCode >= 300)
-          throw HttpException('action failed: ${response.statusCode} $result');
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw what == 'pull'
+              ? PullFailure(response.statusCode, result)
+              : HttpFailure(what, response.statusCode, result);
+        }
         return result;
       } finally {
         client.close(force: true);
@@ -101,49 +109,7 @@ class ServerSession {
       return await Future.any([sending, stopped.future]);
     } finally {
       http = null;
-      if (!stopped.isCompleted) stopped.complete('');
-    }
-  }
-
-  Future<String> pull(String body, Future<void> cancellation) async {
-    var cancelled = false;
-    HttpClient? http;
-    final stopped = Completer<String>();
-    unawaited(
-      cancellation.then((_) {
-        cancelled = true;
-        http?.close(force: true);
-        if (!stopped.isCompleted)
-          stopped.completeError(StateError('connection_paused_or_closed'));
-      }),
-    );
-    final fetching = Future<String>(() async {
-      final token = await _token();
-      if (cancelled) throw StateError('connection_paused_or_closed');
-      final client = HttpClient();
-      http = client;
-      try {
-        final request = await client.postUrl(_endpoint('pull', false));
-        if (cancelled) throw StateError('connection_paused_or_closed');
-        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-        request.headers.contentType = ContentType.json;
-        request.write(body);
-        final response = await request.close();
-        final result = await utf8.decoder.bind(response).join();
-        if (response.statusCode == 401) throw const AuthenticationExpired();
-        if (response.statusCode < 200 || response.statusCode >= 300) {
-          throw PullFailure(response.statusCode, result);
-        }
-        return result;
-      } finally {
-        client.close(force: true);
-      }
-    });
-    try {
-      return await Future.any([fetching, stopped.future]);
-    } finally {
-      http = null;
-      // Settle the losing future so a completed page is not retained until
+      // Settle the losing future so a completed answer is not retained until
       // the connection eventually ends. The cancellation callback has no IO.
       if (!stopped.isCompleted) stopped.complete('');
     }
@@ -266,7 +232,7 @@ class ServerSession {
   static const int bufferedBytes = 8 * 1024 * 1024;
 }
 
-/// How the downlink lane hears from one socket.
+/// How the `socket` effect hears from one socket.
 class SocketEvents {
   final Future<void> Function(String text) message;
   final Future<void> Function() overflow;

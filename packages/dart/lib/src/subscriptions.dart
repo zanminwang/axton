@@ -240,8 +240,8 @@ class SubscriptionState {
       );
 }
 
-/// What the downlink lane tells the registry. It is transport state the lane
-/// already has, not a second sync state machine: which session is open,
+/// What the runtime's Downlink lane tells the registry through `laneSignal`.
+/// It is transport state the lane already has, not a second sync state machine: which session is open,
 /// whether its handshake covered a Scope, how many catch-up requests are out,
 /// and which Scopes a commit moved. Signals name their session's epoch, so
 /// whatever an abandoned session reports changes nothing.
@@ -276,10 +276,20 @@ class DownlinkSignal {
     : this._('changed', scopes: scopes);
   const DownlinkSignal.bootstrap(Map<String, dynamic> run)
     : this._('bootstrap', run: run);
+
+  /// A runtime `laneSignal`: `{lane, epoch?, outstanding?, scopes?, run?}`.
+  factory DownlinkSignal.fromJson(Map<String, dynamic> json) =>
+      DownlinkSignal._(
+        json['lane'] as String,
+        epoch: json['epoch'] as int?,
+        outstanding: json['outstanding'] as int?,
+        scopes: (json['scopes'] as List?)?.cast<String>() ?? const [],
+        run: json['run'] as Map<String, dynamic>?,
+      );
 }
 
-/// The native commands and host services the registry needs; the client owns
-/// the serialized command path.
+/// The native commands the registry needs; the client owns the serialized
+/// command path.
 class SubscriptionCommands {
   final Future<SubscriptionState> Function(String scope) subscribe;
   final Future<SubscriptionState?> Function(String scope) state;
@@ -300,8 +310,6 @@ class SubscriptionCommands {
   final Future<BootstrapRun> Function(String scope, int subscriptionId)
   bootstrapState;
 
-  /// A committed membership change: wake the lanes, as every commit does.
-  final void Function() committed;
   const SubscriptionCommands({
     required this.subscribe,
     required this.state,
@@ -309,17 +317,14 @@ class SubscriptionCommands {
     required this.removeScope,
     required this.requestBootstrap,
     required this.bootstrapState,
-    required this.committed,
   });
 }
 
-/// The load commands of one identity, bound by the registry, and the wake a
-/// commit owes the lanes.
+/// The load commands of one identity, bound by the registry.
 class _Load {
   final Future<BootstrapRun> Function() request;
   final Future<BootstrapRun> Function() read;
-  final void Function() committed;
-  const _Load(this.request, this.read, this.committed);
+  const _Load(this.request, this.read);
 }
 
 /// One caller of `bootstrap()`, attached to the run the command answered with.
@@ -529,12 +534,9 @@ class Subscription {
       if (_refusedAsClosed(error)) throw const SubscriptionClosedException();
       rethrow;
     }
-    // A closed client or handle takes nothing further, not even the wake: the
-    // controller it would go through is closed too.
+    // A closed client or handle takes nothing further. The runtime woke its
+    // lanes with the commit.
     if (_closed) throw _closedError();
-    // The commit wakes the lanes the way a membership change does; without it
-    // the registered run waits for the next commit or reconnection.
-    _load.committed();
     final waiter = _Waiter(run.run);
     _waiters.add(waiter);
     _applyBootstrap(run);
@@ -624,7 +626,6 @@ class Subscriptions {
     final existing = _handles[state.subscriptionId];
     if (existing != null) {
       existing._apply(state);
-      _commands.committed();
       return existing;
     }
     final handle = Subscription._(
@@ -634,15 +635,12 @@ class Subscriptions {
       _Load(
         () => _commands.requestBootstrap(state.scope, state.subscriptionId),
         () => _commands.bootstrapState(state.scope, state.subscriptionId),
-        _commands.committed,
       ),
     );
     _handles[state.subscriptionId] = handle;
     // A task of this identity may already be running from before this handle:
     // read what is committed for it, so its status needs no new transition.
     handle._observe();
-    // The lane learns of committed membership from Rust; it is only woken here.
-    _commands.committed();
     return handle;
   }
 
@@ -657,7 +655,6 @@ class Subscriptions {
       }
     }
     _forget(scope);
-    _commands.committed();
   }
 
   Future<void> _removeIdentity(String scope, int subscriptionId) async {
@@ -666,10 +663,7 @@ class Subscriptions {
     handle?._close(removed: true);
     // Nothing went: another registration is this Scope's current one, and the
     // acknowledgement it may hold is not this handle's to forget.
-    if (removed) {
-      _forget(scope);
-      _commands.committed();
-    }
+    if (removed) _forget(scope);
   }
 
   /// The open session's handshake covered the registration that just went, not

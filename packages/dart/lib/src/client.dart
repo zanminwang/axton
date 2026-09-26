@@ -6,23 +6,18 @@ import 'port.dart';
 import 'subscriptions.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 
 /// Typed generated model APIs delegate to this generic native client.
 class Client implements WritePort, MutatePort {
   /// The Rust-owned runtime: it orders every task and owns the database.
   final Bridge _bridge;
   final String clientId;
-  final _channels = StreamController<void>.broadcast(sync: true);
-  Future<void>? _syncing;
   Future<void>? _tasks;
   bool _closed = false;
   RuntimeConnection? _connection;
-  void Function(Object)? _directOnError;
   bool _connecting = false;
   Completer<void>? _started;
   Future<void>? _closing;
-  final _work = StreamController<void>.broadcast();
   final _changes = StreamController<void>.broadcast();
   final _completions = StreamController<Map<String, dynamic>>.broadcast(
     sync: true,
@@ -36,9 +31,16 @@ class Client implements WritePort, MutatePort {
       _actionObservers.complete(event);
     }
     for (final event in events) {
-      _completions.add(event);
+      if (!_completions.isClosed) _completions.add(event);
     }
   }
+
+  /// The runtime's direct-call codes whose execution is unknown.
+  static const _unknownExecution = {
+    'action.unavailable',
+    'action.execution_unknown',
+    'action.observation_failed',
+  };
 
   CallError _publicActionError(Object error) {
     if (error is CallError) return error;
@@ -49,8 +51,11 @@ class Client implements WritePort, MutatePort {
         cause: error.cause,
       );
     }
-    final transactionActive =
-        error is StateError && error.message == 'transaction_active';
+    final message = error is StateError ? error.message : null;
+    if (message == 'action.invalid_options') {
+      return CallError(message!, execution: 'rejected', cause: error);
+    }
+    final transactionActive = message == 'transaction_active';
     return CallError(
       transactionActive ? 'transaction_active' : 'action.transport_failed',
       execution: transactionActive ? 'rejected' : 'unknown',
@@ -109,12 +114,6 @@ class Client implements WritePort, MutatePort {
             }))
             as Map<String, dynamic>,
       ),
-      // A committed membership change wakes the lanes; Rust decides what it
-      // means for the socket.
-      committed: () {
-        _channels.add(null);
-        _work.add(null);
-      },
     ),
   );
 
@@ -128,6 +127,14 @@ class Client implements WritePort, MutatePort {
     _bridge.changed.listen((_) {
       if (!_changes.isClosed) _changes.add(null);
     });
+    // What the runtime reports goes to the connection's `onError`.
+    _bridge.reports.listen((diagnostic) => _connection?.report(diagnostic));
+    // Durable, direct and abandoned calls, after the commit that decided them.
+    _bridge.onCallCompleted = (callId, outcome) => _deliverCompletions([
+      {'callId': callId, 'outcome': outcome},
+    ]);
+    _bridge.onLaneSignal = (signal) =>
+        _subscriptions.signal(DownlinkSignal.fromJson(signal));
   }
   static Future<Client> open({
     required String path,
@@ -174,7 +181,6 @@ class Client implements WritePort, MutatePort {
       }
       await tx._finish();
     });
-    _work.add(null);
     return result;
   }
 
@@ -291,29 +297,13 @@ class Client implements WritePort, MutatePort {
     T Function(dynamic) decode, {
     CallStore? store,
   }) async {
-    late final Map<String, dynamic> applied;
+    late final Map<String, dynamic> invoked;
     try {
-      applied = await callAction(name, version, args, store: store);
+      invoked = await callAction(name, version, args, store: store);
     } catch (error) {
       throw _publicActionError(error);
     }
-    final completions = applied['completions'] as List?;
-    if (completions == null || completions.isEmpty) {
-      throw const CallError('action.observation_failed');
-    }
-    final completion = completions.first as Map;
-    final outcome = completion['outcome'] as Map;
-    if (outcome['status'] != 'succeeded') {
-      throw CallError(
-        outcome['code'] as String? ?? 'action.failed',
-        execution: outcome['execution'] as String? ?? 'rejected',
-      );
-    }
-    try {
-      return decode(outcome['result']);
-    } catch (error) {
-      throw CallError('action.observation_failed', cause: error);
-    }
+    return _decodeOutcome(invoked['outcome'] as Map, decode);
   }
 
   /// Execute a direct Query. Without [once] it is exactly
@@ -331,23 +321,23 @@ class Client implements WritePort, MutatePort {
     bool once = false,
     bool refresh = false,
   }) async {
-    if (refresh && !once) {
-      throw CallError(
-        'action.invalid_options',
-        execution: 'rejected',
-        cause: ArgumentError('refresh requires once: true'),
-      );
-    }
-    if (!once) {
-      return invokeDirectAction<T>(name, version, args, decode, store: store);
-    }
-    late final String outcome;
+    final closedBefore = _closing != null;
+    late final Map<String, dynamic> invoked;
     try {
-      outcome = await _queryOnce(name, version, args, refresh, store);
+      invoked = await _invoke(name, version, args, store, once, refresh);
     } catch (error) {
+      // A once caller the closing client left waiting hears that it closed,
+      // as every call close can no longer observe does.
+      if (once &&
+          !closedBefore &&
+          _closing != null &&
+          error is ActionTransportException &&
+          error.code == 'action.unavailable') {
+        throw CallError('client.closed', cause: error);
+      }
       throw _publicActionError(error);
     }
-    return _decodeOutcome(jsonDecode(outcome) as Map, decode);
+    return _decodeOutcome(invoked['outcome'] as Map, decode);
   }
 
   /// Discard the saved once results of one Query argument set, every store
@@ -388,180 +378,13 @@ class Client implements WritePort, MutatePort {
     }
   }
 
-  /// Settles once every task submitted before it has run: Rust runs ordinary
-  /// tasks in submission order and holds them all while a local transaction
-  /// callback owns the writer. A direct response applies only if its
-  /// connection is still current at its turn, which Rust cannot judge until
-  /// the direct call itself moves into the runtime (checkpoint 2 of #134).
-  Future<void> _turn() =>
-      _bridge.task(const {'kind': 'sql', 'sql': 'SELECT 1', 'parameters': []});
-
-  /// Active once flights by Rust flight ID; removed at their terminal step.
-  /// Each holds only the raw outcome text; every caller decodes its own copy.
-  final _queryFlights = <String, Completer<String>>{};
-
-  Future<String> _queryOnce(
-    String name,
-    int version,
-    Map<String, dynamic> args,
-    bool refresh,
-    CallStore? store,
-  ) async {
-    final wire = store?.toWire();
-    if (_activeTxToken != null &&
-        identical(Zone.current[_txZoneKey], _activeTxToken)) {
-      throw StateError('transaction_active');
-    }
-    // Rust decides in task order, and the bridge dispatches completions in
-    // that order, so a `join` for flight F settles only after the `fetch` that
-    // opened F. Every decision passes through this same single await before
-    // touching `_queryFlights`, so the fetching caller registers F in an
-    // earlier microtask than any caller that joins it looks it up.
-    // Checkpoint 3 of #134 moves the flight into Rust.
-    final decided =
-        (await _bridge.task({
-              'kind': 'queryOnce',
-              'name': name,
-              'version': version,
-              'args': args,
-              'refresh': refresh,
-              if (wire != null) 'store': wire,
-            }))
-            as Map<String, dynamic>;
-    final flightId = decided['flightId'] as String?;
-    switch (decided['decision']) {
-      case 'cached':
-        return jsonEncode({'status': 'succeeded', 'result': decided['result']});
-      case 'join':
-        final joined = _queryFlights[flightId];
-        if (joined == null) {
-          throw ActionTransportException('action.execution_unknown');
-        }
-        return joined.future;
-    }
-    final completer = Completer<String>();
-    // Settled callers observe it; an unobserved failure is not an error.
-    completer.future.ignore();
-    _queryFlights[flightId!] = completer;
-    final current = _connection;
-    if (current == null || !current.directAvailable || _closing != null) {
-      // Registered first so a caller Rust already joined to it hears the same.
-      await _releaseQueryFlight(
-        flightId,
-        completer,
-        ActionTransportException('action.unavailable'),
-      );
-      return completer.future;
-    }
-    unawaited(
-      _runQueryFlight(flightId, decided['body'] as String, current, completer),
-    );
-    return completer.future;
-  }
-
-  /// Tell Rust the flight ended without a result, then fail its callers. The
-  /// flight stays registered until Rust retired it, so a caller Rust joined to
-  /// it before then still finds it.
-  Future<void> _releaseQueryFlight(
-    String flightId,
-    Completer<String> flight,
-    Object error,
-  ) async {
-    if (identical(_queryFlights[flightId], flight)) {
-      try {
-        await _bridge.task({'kind': 'failQueryOnce', 'flightId': flightId});
-      } catch (_) {}
-      if (identical(_queryFlights[flightId], flight)) {
-        _queryFlights.remove(flightId);
-      }
-    }
-    if (!flight.isCompleted) flight.completeError(error);
-  }
-
-  /// Execute one fetched flight and settle every caller joined to it.
-  Future<void> _runQueryFlight(
-    String flightId,
-    String body,
-    RuntimeConnection connection,
-    Completer<String> flight,
-  ) async {
-    void fail(Object error) {
-      if (!flight.isCompleted) flight.completeError(error);
-    }
-
-    late final String response;
-    try {
-      response = await connection.requestAction(body);
-    } on ActionTransportException catch (error) {
-      return _releaseQueryFlight(flightId, flight, error);
-    } catch (error) {
-      return _releaseQueryFlight(
-        flightId,
-        flight,
-        ActionTransportException('action.execution_unknown', error),
-      );
-    }
-    late final Map<String, dynamic> applied;
-    try {
-      final parsed = jsonDecode(response);
-      await _turn();
-      if (!identical(_connection, connection) ||
-          !connection.directAvailable ||
-          _closing != null) {
-        throw ActionTransportException('action.execution_unknown');
-      }
-      applied =
-          (await _bridge
-                  .task({
-                    'kind': 'finishQueryOnce',
-                    'flightId': flightId,
-                    'response': parsed,
-                  })
-                  .whenComplete(() {
-                    // Rust retires the flight on every outcome of this task.
-                    if (identical(_queryFlights[flightId], flight)) {
-                      _queryFlights.remove(flightId);
-                    }
-                  }))
-              as Map<String, dynamic>;
-    } catch (error) {
-      final mapped = error is ActionTransportException
-          ? error
-          : ActionTransportException('action.execution_unknown', error);
-      if (identical(_queryFlights[flightId], flight)) {
-        return _releaseQueryFlight(flightId, flight, mapped);
-      }
-      return fail(mapped);
-    }
-    final completions = (applied['completions'] as List)
-        .cast<Map<String, dynamic>>();
-    _deliverCompletions(completions);
-    for (final report in applied['reports'] as List<dynamic>) {
-      try {
-        _directOnError?.call(
-          AxtonReport.fromJson(report as Map<String, dynamic>),
-        );
-      } catch (error, stack) {
-        Zone.current.handleUncaughtError(error, stack);
-      }
-    }
-    if (completions.isEmpty) {
-      return fail(const CallError('action.observation_failed'));
-    }
-    if (!flight.isCompleted) {
-      flight.complete(jsonEncode(completions.first['outcome']));
-    }
-  }
-
   /// One task: Rust enqueues the mutation in its own local transaction.
   Future<int> _submitMutation(Map<String, dynamic> mutation) async {
-    final ordinal =
-        await _bridge.task({'kind': 'enqueue', 'mutation': mutation}) as int;
-    _work.add(null);
-    return ordinal;
+    return await _bridge.task({'kind': 'enqueue', 'mutation': mutation}) as int;
   }
 
-  /// Internal Action seam: callback runs after local commit and before work wake.
+  /// Internal Action seam: [onCommitted] runs once the submission committed,
+  /// before any completion of the call can be delivered.
   Future<Map<String, dynamic>> submitAction(
     String name,
     int version,
@@ -587,70 +410,54 @@ class Client implements WritePort, MutatePort {
             submitted['callId'] as String,
             submitted['ordinal'] as int,
           );
-          _work.add(null);
           return submitted;
         });
   }
 
+  /// One direct call: the runtime prepares the request, sends it, bounds it
+  /// and applies the response; the value is `{outcome}`. A call the runtime
+  /// could not complete throws [ActionTransportException] with its code.
   Future<Map<String, dynamic>> callAction(
     String name,
     int version,
     Map<String, dynamic> args, {
     CallStore? store,
-  }) async {
+  }) => _invoke(name, version, args, store, false, false);
+
+  Future<Map<String, dynamic>> _invoke(
+    String name,
+    int version,
+    Map<String, dynamic> args,
+    CallStore? store,
+    bool once,
+    bool refresh,
+  ) async {
     final wire = store?.toWire();
     if (_activeTxToken != null &&
-        identical(Zone.current[_txZoneKey], _activeTxToken))
+        identical(Zone.current[_txZoneKey], _activeTxToken)) {
       throw StateError('transaction_active');
-    final connection = _connection;
-    if (connection == null || !connection.directAvailable || _closing != null)
-      throw ActionTransportException('action.unavailable');
-    final prepared =
-        (await _bridge.task({
-              'kind': 'prepareAction',
-              'name': name,
-              'version': version,
-              'args': args,
-              if (wire != null) 'store': wire,
-            }))
-            as Map<String, dynamic>;
-    final response = await connection.requestAction(prepared['body'] as String);
-    if (!identical(_connection, connection) ||
-        !connection.directAvailable ||
-        _closing != null)
-      throw ActionTransportException('action.execution_unknown');
-    late final Map<String, dynamic> applied;
+    }
     try {
-      await _turn();
-      if (!identical(_connection, connection) ||
-          !connection.directAvailable ||
-          _closing != null)
-        throw ActionTransportException('action.execution_unknown');
-      applied =
-          (await _bridge.task({
-                'kind': 'applyActionResponse',
-                'body': prepared['body'],
-                'response': jsonDecode(response),
-              }))
-              as Map<String, dynamic>;
-    } on ActionTransportException {
-      rethrow;
-    } catch (error) {
-      throw ActionTransportException('action.execution_unknown', error);
-    }
-    _deliverCompletions(
-      (applied['completions'] as List).cast<Map<String, dynamic>>(),
-    );
-    for (final report in applied['reports'] as List<dynamic>) {
-      try {
-        _directOnError?.call(
-          AxtonReport.fromJson(report as Map<String, dynamic>),
-        );
-      } catch (error, stack) {
-        Zone.current.handleUncaughtError(error, stack);
+      return (await _bridge.task({
+            'kind': 'invoke',
+            'name': name,
+            'version': version,
+            'args': args,
+            if (wire != null) 'store': wire,
+            if (once) 'once': true,
+            if (refresh) 'refresh': true,
+          }))
+          as Map<String, dynamic>;
+    } on StateError catch (error) {
+      if (_unknownExecution.contains(error.message)) {
+        throw ActionTransportException(error.message);
       }
+      // The runtime is gone: no call can be made.
+      if (error.message == 'client_closed') {
+        throw ActionTransportException('action.unavailable', error);
+      }
+      rethrow;
     }
-    return applied;
   }
 
   /// Register durable intent to follow [scope] and answer with its handle. It
@@ -667,6 +474,8 @@ class Client implements WritePort, MutatePort {
   Future<void> unsubscribe(String channel) =>
       _subscriptions.unsubscribeScope(channel);
 
+  /// Connect to [server]: the runtime runs both lanes and every direct call
+  /// from here on, and this client only executes the effects it asks for.
   Future<RuntimeConnection> connect(
     SyncServer server, {
     void Function(Object)? onError,
@@ -674,81 +483,28 @@ class Client implements WritePort, MutatePort {
     Duration directTimeout = const Duration(seconds: 30),
   }) async {
     final live = ServerSession(server);
-    final transport = live.push;
     if (_closed || _closing != null) throw StateError('client_closed');
-    if (_connecting || _connection != null)
+    if (_connecting || _connection != null) {
       throw StateError('connection already active');
+    }
     _connecting = true;
     final started = Completer<void>();
     _started = started;
     try {
-      Future<void>? refreshing;
-      Future<void> refresh() =>
-          refreshing ??= Future<void>.sync(refreshAuth!).whenComplete(() {
-            refreshing = null;
-          });
-      final connection = await RuntimeConnection.start(
-        control: (event, now, entropy) => _bridge.task({
-          'kind': 'connection',
-          'event': event,
-          'now': now,
-          'entropy': entropy,
-        }),
-        sync: (transport) => _startSync(transport, true, onError),
-        transport: transport,
-        directCarrier: live.action,
-        onError: onError,
-        refreshAuth: refreshAuth == null ? null : refresh,
-        directTimeout: directTimeout,
-      );
-      final streaming = await DownlinkLane.start(
-        command: (event) async =>
-            (await _bridge.task({
-                  'kind': 'downlink',
-                  ...event,
-                  'now': DateTime.now().millisecondsSinceEpoch,
-                  'entropy': Random().nextInt(0x100000000),
-                }))
-                as List<dynamic>,
+      late final RuntimeConnection connection;
+      connection = await RuntimeConnection.connect(
+        host: _bridge,
         network: live,
-        wakePush: () => unawaited(
-          connection.wake().catchError((Object error) {
-            onError?.call(error);
-          }),
-        ),
         onError: onError,
-        refreshAuth: refreshAuth == null ? null : refresh,
-        report: _subscriptions.signal,
+        refreshAuth: refreshAuth,
+        directTimeout: directTimeout,
+        onClosed: () {
+          _subscriptions.detach();
+          if (identical(_connection, connection)) _connection = null;
+        },
       );
       _subscriptions.attach();
-      final channelSubscription = _channels.stream.listen((_) {
-        unawaited(
-          streaming.wake().catchError((Object error) {
-            onError?.call(error);
-          }),
-        );
-      });
-      connection.attachDownlink(streaming, live.cancelPush);
-      final subscription = _work.stream.listen((_) {
-        unawaited(
-          connection.wake().catchError((Object error) {
-            onError?.call(error);
-          }),
-        );
-      });
       _connection = connection;
-      _directOnError = onError;
-      unawaited(
-        connection.closed.then((_) async {
-          await subscription.cancel();
-          await channelSubscription.cancel();
-          _subscriptions.detach();
-          if (identical(_connection, connection)) {
-            _connection = null;
-            _directOnError = null;
-          }
-        }),
-      );
       return connection;
     } finally {
       _connecting = false;
@@ -756,82 +512,31 @@ class Client implements WritePort, MutatePort {
     }
   }
 
-  Future<void> _startSync(
-    Transport transport,
-    bool pushOnly,
-    void Function(Object)? onError,
-  ) => _syncing ??= _runSync(transport, pushOnly, onError).whenComplete(() {
-    _syncing = null;
-  });
-  Future<void> _runSync(
-    Future<String> Function(String kind, String body) transport,
-    bool pushOnly,
-    void Function(Object)? onError,
-  ) async {
-    await _bridge.task({'kind': 'startSync', 'pushOnly': pushOnly});
-    while (true) {
-      final action = await _bridge.task({'kind': 'next'});
-      if (action == null) return;
-      final response = await transport(
-        action['kind'] as String,
-        action['body'] as String,
-      );
-      final applied =
-          await _bridge.task({
-                'kind': 'complete',
-                'response': jsonDecode(response),
-              })
-              as Map<String, dynamic>;
-      _deliverCompletions(
-        (applied['completions'] as List).cast<Map<String, dynamic>>(),
-      );
-      // What the receipt or page could not apply; the client stays consistent
-      // and the application hears about each one.
-      for (final report in applied['reports'] as List<dynamic>) {
-        try {
-          onError?.call(AxtonReport.fromJson(report as Map<String, dynamic>));
-        } catch (error, stack) {
-          Zone.current.handleUncaughtError(error, stack);
-        }
-      }
-    }
-  }
-
+  /// Run every pending prerequisite task this client has a handler for. Rust
+  /// picks each task and records its outcome; the handler runs as a
+  /// `prerequisite` effect.
   Future<void> runPrerequisites(
     Map<String, Future<void> Function(Map<String, dynamic>)> handlers,
   ) => _tasks ??= _runPrerequisites(handlers).whenComplete(() {
     _tasks = null;
   });
-  // Rust picks the task and settles it; this loop only calls the handler.
   Future<void> _runPrerequisites(
     Map<String, Future<void> Function(Map<String, dynamic>)> handlers,
   ) async {
-    final names = handlers.keys.toList();
-    while (true) {
-      final task =
-          await _bridge.task({'kind': 'task', 'handlers': names})
-              as Map<String, dynamic>?;
-      if (task == null) return;
-      String? error;
-      try {
-        await handlers[task['name']]!(
-          task['arguments'] as Map<String, dynamic>,
-        );
-      } catch (thrown) {
-        error = _reason(thrown);
-      }
+    final handler = prerequisiteHandler(handlers);
+    _bridge.handleEffects('prerequisite', handler);
+    try {
       await _bridge.task({
-        'kind': 'outcome',
-        'key': task['key'],
-        'error': error,
+        'kind': 'runPrerequisites',
+        'handlers': handlers.keys.toList(),
       });
-      _work.add(null);
+    } finally {
+      _bridge.stopHandling('prerequisite', handler);
     }
   }
 
-  /// The text a failed prerequisite keeps.
-  static String _reason(Object thrown) => thrown.toString();
-
+  /// Test seams over the legacy commands: freeze the next push batch, settle
+  /// it with a receipt, apply one page. The connection never uses them.
   Future<String?> freeze() async =>
       await _bridge.task({'kind': 'freeze'}) as String?;
   Future<void> acknowledge(int sequence, Map<String, dynamic> receipt) async {
@@ -877,21 +582,9 @@ class Client implements WritePort, MutatePort {
             }))
             as Map<String, dynamic>;
     // The replica that answered every handle is gone: no handle from before
-    // it names a registration of the file this client now reads.
+    // it names a registration of the file this client now reads. The runtime
+    // already completed every abandoned call.
     _subscriptions.rebuilt();
-    _deliverCompletions(
-      (report['abandonedCalls'] as List).map((abandoned) {
-        final call = abandoned as Map<String, dynamic>;
-        return {
-          'callId': call['callId'],
-          'outcome': {
-            'status': 'failed',
-            'code': 'abandoned',
-            'execution': call['frozen'] == true ? 'unknown' : 'rejected',
-          },
-        };
-      }),
-    );
     return report;
   }
 
@@ -900,17 +593,16 @@ class Client implements WritePort, MutatePort {
           .cast<Map<String, dynamic>>();
   Future<void> setReadiness(String key, String state) async {
     await _bridge.task({'kind': 'readiness', 'key': key, 'state': state});
-    _work.add(null);
   }
 
   Future<void> drop(int ordinal) async {
     final result =
         (await _bridge.task({'kind': 'drop', 'ordinal': ordinal}))
             as Map<String, dynamic>;
+    // The `drop` command answers its completions instead of emitting them.
     _deliverCompletions(
       (result['completions'] as List).cast<Map<String, dynamic>>(),
     );
-    _work.add(null);
   }
 
   Future<void> dismissRejection(int ordinal) async {
@@ -954,12 +646,6 @@ class Client implements WritePort, MutatePort {
 
   Future<void> _finishClose() async {
     _actionObservers.close();
-    for (final flight in _queryFlights.values) {
-      if (!flight.isCompleted) {
-        flight.completeError(const CallError('client.closed'));
-      }
-    }
-    _queryFlights.clear();
     _subscriptions.close();
     await _started?.future;
     await _connection?.close();
@@ -969,8 +655,6 @@ class Client implements WritePort, MutatePort {
       _closed = true;
       await _changes.close();
       await _completions.close();
-      await _work.close();
-      await _channels.close();
     }
   }
 }

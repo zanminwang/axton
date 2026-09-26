@@ -164,8 +164,83 @@ class _Route {
   StackTrace? stack;
 }
 
+/// Runs one kind of host effect. It answers through the [Effect] and aborts
+/// its platform resource when [Effect.cancelled] completes.
+typedef EffectHandler = void Function(Effect effect);
+
+/// One effect the runtime asked the host for: its operation, the per-effect
+/// cancellation a `cancelEffect` completes, and its answers. Answers after a
+/// cancellation are dropped here, and the runtime fences them anyway.
+class Effect {
+  Effect(this.id, this.operation, this._answer, [this._done]);
+
+  /// The runtime's `effectId`.
+  final String id;
+
+  /// The `{kind, ...}` operation to execute.
+  final Map<String, dynamic> operation;
+  final void Function(Map<String, dynamic> outcome) _answer;
+  final void Function()? _done;
+  final _cancelled = Completer<void>();
+  bool _finished = false;
+
+  /// Completes once the runtime cancelled this effect or its handler was
+  /// removed: the platform resource is aborted, and nothing more is answered.
+  Future<void> get cancelled => _cancelled.future;
+  bool get isCancelled => _cancelled.isCompleted;
+
+  /// The single answer of an HTTP, timer, credential or prerequisite effect.
+  void succeed([Object? value]) {
+    _send({'ok': true, if (value != null) 'value': value});
+    _finish();
+  }
+
+  /// One result of a socket stream; the stream goes on.
+  void emit(Object value) => _send({'ok': true, 'value': value});
+
+  /// The effect failed, with the HTTP [status] the failure carried, if any.
+  /// It ends a socket stream too.
+  void fail(String message, {int? status}) {
+    _send({
+      'ok': false,
+      'error': {'message': message, if (status != null) 'status': status},
+    });
+    _finish();
+  }
+
+  /// Abort the platform resource; later answers are dropped.
+  void cancel() {
+    if (!_cancelled.isCompleted) _cancelled.complete();
+    _finish();
+  }
+
+  void _send(Map<String, dynamic> outcome) {
+    if (!_finished && !isCancelled) _answer(outcome);
+  }
+
+  void _finish() {
+    if (_finished) return;
+    _finished = true;
+    _done?.call();
+  }
+}
+
+/// What the connection and the prerequisite runner need from a runtime: tasks
+/// and effect handlers by operation kind. The [Bridge] is one; tests drive the
+/// handlers through a fake.
+abstract interface class RuntimeHost {
+  Future<dynamic> task(Map<String, dynamic> command);
+
+  /// Run every effect of [kind] with [handler] until [stopHandling].
+  void handleEffects(String kind, EffectHandler handler);
+
+  /// Remove [handler] if it still handles [kind], aborting every effect of
+  /// that kind it still holds.
+  void stopHandling(String kind, EffectHandler handler);
+}
+
 /// The SDK side of one Rust-owned client runtime.
-class Bridge {
+class Bridge implements RuntimeHost {
   Bridge._(this._abi, this.runtimeId);
 
   final _Abi _abi;
@@ -195,10 +270,21 @@ class Bridge {
   /// every `report` event.
   Stream<Map<String, dynamic>> get reports => _reports.stream;
 
-  /// `callCompleted` and `observerChanged` deliveries; no runtime emits them
-  /// before the later checkpoints of #134.
+  /// `callCompleted`: a durable, direct or abandoned call's final outcome,
+  /// after the commit that decided it.
   void Function(String callId, dynamic outcome)? onCallCompleted;
+
+  /// `observerChanged`; no runtime emits it before the later checkpoints of
+  /// #134.
   void Function(String observerId, dynamic snapshot)? onObserverChanged;
+
+  /// `laneSignal`: transport state of the connection lanes for the
+  /// subscription status projection.
+  void Function(Map<String, dynamic> signal)? onLaneSignal;
+
+  /// Effect handlers by operation kind, and the effects they hold by id.
+  final _handlers = <String, EffectHandler>{};
+  final _effects = <String, Effect>{};
 
   /// Attached bridges by runtime id: what a wake names.
   static final _bridges = <int, Bridge>{};
@@ -278,8 +364,22 @@ class Bridge {
   /// Submit one task and answer its value, or throw its error as a
   /// [StateError] carrying the engine's message (`client_closed` once the
   /// runtime is gone).
+  @override
   Future<dynamic> task(Map<String, dynamic> command) =>
       _route(_Route(), (id) => taskEnvelope(id, command));
+
+  @override
+  void handleEffects(String kind, EffectHandler handler) =>
+      _handlers[kind] = handler;
+
+  @override
+  void stopHandling(String kind, EffectHandler handler) {
+    if (!identical(_handlers[kind], handler)) return;
+    _handlers.remove(kind);
+    for (final effect in _effects.values.toList()) {
+      if (effect.operation['kind'] == kind) effect.cancel();
+    }
+  }
 
   /// Run [run] as the callback of one local transaction the runtime owns.
   /// Ordinary tasks wait while it runs; its own commands go through
@@ -403,8 +503,7 @@ class Bridge {
           event['operation'] as Map<String, dynamic>,
         );
       case 'cancelEffect':
-        // No effect this bridge runs holds a platform resource yet.
-        break;
+        _effects[event['effectId']]?.cancel();
       case 'changed':
         _changed.add((event['tables'] as List).cast<String>());
       case 'report':
@@ -416,6 +515,8 @@ class Bridge {
           event['observerId'] as String,
           event['snapshot'],
         );
+      case 'laneSignal':
+        onLaneSignal?.call(event['signal'] as Map<String, dynamic>);
       case 'runtimeClosed':
         _terminate();
     }
@@ -439,7 +540,23 @@ class Bridge {
 
   void _effect(String effectId, Map<String, dynamic> operation) {
     if (operation['kind'] != 'callback') {
-      effectResult(effectId, ok: false, error: 'unsupported effect');
+      final effect = Effect(
+        effectId,
+        operation,
+        (outcome) => _submitQuietly(effectOutcomeEnvelope(effectId, outcome)),
+        () => _effects.remove(effectId),
+      );
+      final handler = _handlers[operation['kind']];
+      if (handler == null) {
+        effect.fail('unsupported effect');
+        return;
+      }
+      _effects[effectId] = effect;
+      try {
+        handler(effect);
+      } catch (error) {
+        effect.fail('$error');
+      }
       return;
     }
     final transactionId = operation['transactionId'] as String;
@@ -487,6 +604,10 @@ class Bridge {
     _detached = true;
     _abi.detach(runtimeId);
     _bridges.remove(runtimeId);
+    for (final effect in _effects.values.toList()) {
+      effect.cancel();
+    }
+    _handlers.clear();
     final remaining = _routes.values.toList();
     _routes.clear();
     for (final route in remaining) {
@@ -545,6 +666,11 @@ class Bridge {
         'error': {'message': error, if (status != null) 'status': status},
     },
   };
+
+  static Map<String, dynamic> effectOutcomeEnvelope(
+    String effectId,
+    Map<String, dynamic> outcome,
+  ) => {'type': 'effectResult', 'effectId': effectId, 'outcome': outcome};
 
   static const Map<String, dynamic> closeEnvelope = {'type': 'close'};
 }

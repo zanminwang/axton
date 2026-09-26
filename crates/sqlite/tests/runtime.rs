@@ -650,3 +650,171 @@ fn position(events: &[Value], matches: impl Fn(&Value) -> bool) -> usize {
         .position(matches)
         .unwrap_or_else(|| panic!("not found in {events:?}"))
 }
+
+/// The entry schema with a `Ping` action, and the same schema with a
+/// required field the stored rows lack.
+fn schemas() -> (Value, Value) {
+    let mut schema = serde_json::to_value(common::schema()).unwrap();
+    schema["actions"] = json!([{"name":"Ping","version":1,"inputs":[],"outputs":[]}]);
+    let mut breaking = schema.clone();
+    breaking["models"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"due","nullable":false,"type":{"kind":"scalar","name":"string"}}));
+    (schema, breaking)
+}
+fn at(path: &std::path::Path, schema: &Value) -> Harness<SqliteStore> {
+    Harness {
+        runtime: ClientRuntime::open_at(
+            path,
+            Schema::from_value(schema.clone()).unwrap(),
+            Box::new(|p| SqliteStore::open(p)),
+            false,
+        )
+        .unwrap(),
+        _dir: tempfile::tempdir().unwrap(),
+    }
+}
+impl<S: ClientStore + 'static> Harness<S> {
+    /// Run one task to quiescence: its completion and everything said with it.
+    fn call(&mut self, id: &str, command: Value) -> (Value, Vec<Value>) {
+        self.task(id, command);
+        let events = self.run();
+        let completion = events[position(&events, |e| {
+            e["type"] == "taskCompleted" && e["requestId"] == id
+        })]
+        .clone();
+        (completion, events)
+    }
+    fn close(mut self) {
+        self.submit(json!({"type":"close"})).unwrap();
+        assert_eq!(self.run().last().unwrap(), &json!({"type":"runtimeClosed"}));
+    }
+}
+
+/// A dropped call and the calls a rebuild leaves behind keep their identity to
+/// their terminal outcome: `drop` completes the call as `dropped`, and the
+/// rebuild reports each abandoned call - frozen ones as possibly executed -
+/// and completes it.
+#[test]
+fn dropped_and_abandoned_calls_keep_their_terminal_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let (schema, breaking) = schemas();
+    let ping = json!({"kind":"submitAction","name":"Ping","version":1,"args":{}});
+    for frozen in [false, true] {
+        let path = dir.path().join(if frozen { "frozen" } else { "unsent" });
+        let mut h = at(&path, &schema);
+        let first = h.call("first", ping.clone()).0["value"].clone();
+        if !frozen {
+            let (dropped, events) =
+                h.call("drop", json!({"kind":"drop","ordinal":first["ordinal"]}));
+            assert_eq!(
+                dropped["value"]["completions"][0]["callId"],
+                first["callId"]
+            );
+            assert_eq!(
+                dropped["value"]["completions"][0]["outcome"]["code"],
+                "dropped"
+            );
+            let announced = &events[position(&events, |e| e["type"] == "callCompleted")];
+            assert_eq!(announced["callId"], first["callId"]);
+            assert_eq!(announced["outcome"]["code"], "dropped");
+        }
+        let left = h.call("left", ping.clone()).0["value"].clone();
+        if frozen {
+            assert!(h.call("freeze", json!({"kind":"freeze"})).0["value"].is_string());
+        }
+        h.close();
+        let mut h = at(&path, &breaking);
+        let (report, events) = h.call("rebuild", json!({"kind":"rebuild","discardPending":true}));
+        let abandoned = report["value"]["abandonedCalls"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(
+            abandoned.contains(&json!({"callId":left["callId"],"frozen":frozen})),
+            "{abandoned:?}"
+        );
+        if frozen {
+            assert!(abandoned.contains(&json!({"callId":first["callId"],"frozen":true})));
+        }
+        for call in &abandoned {
+            let execution = if call["frozen"] == true {
+                "unknown"
+            } else {
+                "rejected"
+            };
+            assert!(
+                events.contains(&json!({"type":"callCompleted","callId":call["callId"],
+                    "outcome":{"status":"failed","code":"abandoned","execution":execution}})),
+                "{events:?}"
+            );
+        }
+    }
+}
+
+/// An incompatible schema at open keeps the old file while it holds unsent
+/// work, which is still settled through the same runtime; `rebuild` is
+/// refused until then and afterwards switches to a fresh file. Every step is
+/// visible in `status().schema`, and a watch re-runs on the fresh file.
+#[test]
+fn an_incompatible_schema_keeps_its_file_until_the_work_is_settled_and_rebuilt() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let (schema, breaking) = schemas();
+    let mut h = at(&path, &schema);
+    assert_eq!(h.runtime.opened()["schema"]["rebuilt"], false);
+    h.call("seed", create("e", "A"));
+    h.call(
+        "edit",
+        json!({"kind":"enqueue","mutation":{"name":"Edit","operations":[{"model":"Entry","op":"update","identity":{"id":"e"},"values":{"text":"B"}}]}}),
+    );
+    h.call("freeze", json!({"kind":"freeze"}));
+    h.close();
+
+    let mut h = at(&path, &breaking);
+    let opened = h.runtime.opened();
+    assert_eq!(opened["schema"]["rebuilt"], false);
+    assert_eq!(opened["schema"]["pending"]["pending"], 1);
+    assert!(
+        opened["schema"]["pending"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("due")
+    );
+    let status = h.call("status", json!({"kind":"status"})).0["value"].clone();
+    assert_eq!(status["pending"], 1);
+    assert_eq!(
+        status["schema"]["pending"]["oldFile"].as_str().unwrap(),
+        path.to_string_lossy()
+    );
+    let (refused, _) = h.call("refused", json!({"kind":"rebuild"}));
+    assert_eq!(refused["ok"], false, "unsent work blocks the rebuild");
+    let (watch, _) = h.call("watch", json!({"kind":"watch","model":"Entry"}));
+    let watch = watch["value"]["observerId"].clone();
+    let receipt = json!({"clientId":opened["clientId"],"batchSequence":1,"rejections":[],
+        "records":[{"model":"Entry","identity":{"id":"e"},"stamp":2,"state":{"text":"B","note":null}}]});
+    let (acked, _) = h.call("ack", json!({"kind":"ack","sequence":1,"receipt":receipt}));
+    assert_eq!(acked["ok"], true, "{acked}");
+    let (report, events) = h.call("rebuild", json!({"kind":"rebuild"}));
+    assert_eq!(report["value"]["leftPending"], 0);
+    assert!(
+        report["value"]["newFile"]
+            .as_str()
+            .unwrap()
+            .ends_with("db.1")
+    );
+    assert!(
+        events.contains(&json!({"type":"observerChanged","observerId":watch,"snapshot":{"kind":"watch","rows":[]}})),
+        "the watch re-ran on the fresh file: {events:?}"
+    );
+    let status = h.call("status", json!({"kind":"status"})).0["value"].clone();
+    assert_eq!(status["schema"]["rebuilt"], true);
+    assert!(status["schema"]["pending"].is_null());
+    assert_eq!(
+        h.call("read", read("e")).0["value"],
+        Value::Null,
+        "the fresh file is empty"
+    );
+    assert!(path.exists(), "the old file is kept");
+}

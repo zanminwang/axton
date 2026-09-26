@@ -145,6 +145,18 @@ fn open_answers_on_the_wake_and_a_failed_open_closes_the_runtime() {
     carrier.submit(json!({"type":"nope"}));
     let report = carrier.until(|e| e["type"] == "report");
     assert_eq!(report["diagnostic"]["kind"], "protocol");
+    // A routable envelope whose command does not decode completes its
+    // request with the decoding error: no waiter is left behind.
+    carrier.task("bad", json!({"kind":"nope"}));
+    let refused = carrier.completed("bad");
+    assert_eq!(refused["ok"], false);
+    assert!(
+        refused["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("unknown variant `nope`"),
+        "{refused}"
+    );
     actor::detach(carrier.id);
     assert_eq!(
         actor::submit(carrier.id, json!({"type":"close"})),
@@ -291,7 +303,6 @@ fn detach_stops_wakes_before_it_returns_and_closes_a_live_runtime() {
 
 #[test]
 fn transaction_isolation_and_closed_handles_match_the_session_contract() {
-    // Port of session.rs `language_commands_preserve_transaction_isolation_and_closed_handles`.
     let dir = tempfile::tempdir().unwrap();
     let (mut c, _) = Carrier::open(&dir.path().join("db"));
     c.task("1", json!({"kind":"transaction"}));
@@ -319,8 +330,8 @@ fn transaction_isolation_and_closed_handles_match_the_session_contract() {
         Err("client_closed".to_string())
     );
     actor::detach(c.id);
-
-    // Port of `transaction_scoped_commands_and_sync_commands_are_refused_by_code`.
+    // A transaction command outside its transaction is closed, and ordinary
+    // tasks wait outside an open one.
     let (mut c, _) = Carrier::open(&dir.path().join("scoped"));
     // No transaction yet: a transaction command is closed, a plain read served.
     c.submit(json!({"type":"transactionCommand","requestId":"1","transactionId":"tx1","command":read("e")}));

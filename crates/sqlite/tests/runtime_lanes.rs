@@ -41,10 +41,13 @@ struct Host {
     _dir: Option<tempfile::TempDir>,
 }
 fn host() -> Host {
+    host_with(schema_value())
+}
+fn host_with(schema: Value) -> Host {
     let dir = tempfile::tempdir().unwrap();
     let runtime = ClientRuntime::open_at(
         dir.path().join("db"),
-        Schema::from_value(schema_value()).unwrap(),
+        Schema::from_value(schema).unwrap(),
         factory(),
         false,
     )
@@ -202,6 +205,12 @@ impl Host {
         self.frame(&socket, &ack(&[("book", head)]));
         self.run();
         socket
+    }
+    /// Run one task to quiescence and answer its completion.
+    fn call(&mut self, id: &str, command: Value) -> Value {
+        self.task(id, command);
+        let events = self.run();
+        self.completion(&events, id).clone()
     }
     fn completion<'a>(&self, events: &'a [Value], id: &str) -> &'a Value {
         events
@@ -995,6 +1004,11 @@ fn prerequisites_run_as_effects_and_every_outcome_wakes_the_push_lane() {
 /// A replica left incompatible with unsent work: rebuild is pending, and
 /// `book` is carried over by name.
 fn pending_rebuild(dir: &Path) -> ClientRuntime<SqliteStore> {
+    rebuildable(dir, true, true)
+}
+/// A replica left incompatible with unsent work, optionally subscribed to
+/// `book` and with a durable load of it registered.
+fn rebuildable(dir: &Path, channel: bool, bootstrap: bool) -> ClientRuntime<SqliteStore> {
     let path = dir.join("db");
     {
         let mut runtime = ClientRuntime::open_at(
@@ -1005,9 +1019,11 @@ fn pending_rebuild(dir: &Path) -> ClientRuntime<SqliteStore> {
         )
         .unwrap();
         let client = runtime.client();
-        client
-            .transaction(|tx| tx.set_channel("book".into(), true))
-            .unwrap();
+        if channel {
+            client
+                .transaction(|tx| tx.set_channel("book".into(), true))
+                .unwrap();
+        }
         client
             .transaction(|tx| {
                 tx.enqueue(Mutation::new(
@@ -1016,10 +1032,12 @@ fn pending_rebuild(dir: &Path) -> ClientRuntime<SqliteStore> {
                 ))
             })
             .unwrap();
-        let subscription = client.ensure_subscription("book").unwrap();
-        client
-            .request_bootstrap("book", subscription.subscription_id)
-            .unwrap();
+        if bootstrap {
+            let subscription = client.ensure_subscription("book").unwrap();
+            client
+                .request_bootstrap("book", subscription.subscription_id)
+                .unwrap();
+        }
         client.submit_action("Ping", 1, json!({})).unwrap();
     }
     let mut breaking = schema_value();
@@ -1119,14 +1137,64 @@ fn a_rebuild_fences_old_lane_io_and_reopens_in_the_same_intent() {
     assert_eq!(h.client().cursor("book").unwrap(), Some(5));
 }
 
+/// A record the replaced replica's I/O would write if it reached the fresh
+/// file, complete under the rebuilt schema.
+fn late() -> Value {
+    json!({"model":"Entry","identity":{"id":"late"},"stamp":9,"state":{"text":"late","note":null,"due":"now"}})
+}
+/// A historical page of `book` over `(0, 7]` with the barrier at head 9.
+fn historical(records: Value) -> String {
+    json!({"mode":"bootstrap","channel":"book","from":0,"to":7,"until":7,"head":9,"records":records})
+        .to_string()
+}
+impl Host {
+    /// Deliver everything the replaced replica's socket, catch-up, historical
+    /// page and push can still answer - every socket event, an answer and a
+    /// failure of each request - and check that none of it reaches the fresh
+    /// replica: nothing is said, nothing commits, no cursor moves, no stale
+    /// record lands.
+    fn inert(&mut self, socket: &str, pull: Option<&str>, load: Option<&str>, push: Option<&str>) {
+        let generation = self.client().generation();
+        let cursors = self.client().subscriptions().unwrap();
+        let page =
+            json!({"cursors":{"book":{"from":0,"to":9,"head":9}},"changes":[late()]}).to_string();
+        self.frame(socket, &page);
+        self.frame(socket, &ack(&[("book", 3)]));
+        self.answer(socket, json!({"ok":true,"value":{"event":"overflow"}}));
+        if let Some(pull) = pull {
+            self.ok(pull, &page);
+            self.fail(pull, "late", None);
+        }
+        if let Some(load) = load {
+            self.ok(load, &historical(json!([late()])));
+            self.fail(load, "HTTP 400", Some(400));
+            self.fail(load, "late", None);
+        }
+        if let Some(push) = push {
+            self.ok(push, "{}");
+            self.fail(push, "unauthorized", Some(401));
+        }
+        self.answer(socket, json!({"ok":true,"value":{"event":"closed"}}));
+        assert_eq!(self.run(), Vec::<Value>::new(), "old I/O answers nothing");
+        assert_eq!(self.client().generation(), generation, "nothing committed");
+        assert_eq!(self.client().subscriptions().unwrap(), cursors);
+        assert_eq!(self.text("late"), None, "no stale record landed");
+    }
+}
+
 #[test]
 fn a_paused_lane_stays_paused_through_a_rebuild_until_resume() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = Host::of(pending_rebuild(dir.path()), Some(dir));
     h.connect(false);
     let old_socket = h.socket();
+    h.frame(&old_socket, &ack(&[("book", 7)]));
+    h.run();
+    let (old_load, _) = h.http("pull");
+    let (old_push, _) = h.http("push");
     h.task("pause", json!({"kind":"connection","event":"pause"}));
     h.run();
+    assert!(h.open.is_empty(), "{:?}", h.open);
     h.task("rebuild", json!({"kind":"rebuild","discardPending":true}));
     let events = h.run();
     assert_eq!(h.completion(&events, "rebuild")["ok"], true);
@@ -1135,9 +1203,19 @@ fn a_paused_lane_stays_paused_through_a_rebuild_until_resume() {
         "paused: nothing is asked for: {:?}",
         h.open
     );
+    // The old I/O - a historical page among it - is inert.
+    h.inert(&old_socket, None, Some(&old_load), Some(&old_push));
+    h.task("wake", json!({"kind":"connection","event":"wake"}));
+    assert_eq!(h.run(), vec![done("wake", Value::Null)], "still paused");
+    assert!(h.open.is_empty(), "{:?}", h.open);
+    // Resume opens exactly one session and asks for nothing else.
     h.task("resume", json!({"kind":"connection","event":"resume"}));
-    h.run();
+    let events = h.run();
+    assert_eq!(sockets(&events).len(), 1, "resume opens once: {events:?}");
     assert_ne!(h.socket(), old_socket);
+    assert!(h.outstanding("http", None).is_empty(), "{:?}", h.open);
+    h.task("again", json!({"kind":"connection","event":"wake"}));
+    assert!(sockets(&h.run()).is_empty(), "and only once");
 }
 
 #[test]
@@ -1145,6 +1223,8 @@ fn a_stopped_lane_stays_stopped_through_a_rebuild_until_connect() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = Host::of(pending_rebuild(dir.path()), Some(dir));
     h.connect(false);
+    let old_socket = h.socket();
+    let (old_push, _) = h.http("push");
     h.task("stop", json!({"kind":"connection","event":"stop"}));
     h.run();
     assert!(h.open.is_empty());
@@ -1153,8 +1233,243 @@ fn a_stopped_lane_stays_stopped_through_a_rebuild_until_connect() {
     assert_eq!(h.completion(&events, "rebuild")["ok"], true);
     assert!(h.open.is_empty(), "stopped: nothing restarts: {:?}", h.open);
     assert!(sockets(&events).is_empty());
+    h.inert(&old_socket, None, None, Some(&old_push));
+    for event in ["wake", "resume"] {
+        h.task(event, json!({"kind":"connection","event":event}));
+        assert_eq!(h.run(), vec![done(event, Value::Null)]);
+        assert!(h.open.is_empty(), "{event} restarts nothing: {:?}", h.open);
+    }
     h.connect(false);
-    h.socket();
+    assert_ne!(h.socket(), old_socket);
+}
+
+/// A rebuild under a running lane keeps it running: without another
+/// `connect` the old replica's I/O is abandoned and a session for the carried
+/// Scope opens on a new socket. Nothing the old socket or its catch-up had
+/// delivered but not yet applied, or still delivers - before the new
+/// handshake or while a new catch-up is in flight - reaches the fresh file,
+/// and the lane then advances from the new acknowledged head
+/// ([#162](https://github.com/zanminwang/axton/issues/162)).
+#[test]
+fn a_rebuild_keeps_a_running_lane_running_under_fresh_effects() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = Host::of(rebuildable(dir.path(), true, false), Some(dir));
+    h.connect(false);
+    let (old_push, _) = h.http("push");
+    let old = h.socket();
+    h.frame(&old, &ack(&[("book", 2)]));
+    h.frame(&old, &page(4, 5, "e", "gap"));
+    h.run();
+    let (pull, _) = h.http("pull");
+    // Admitted after the rebuild task: queued when it runs, never applied.
+    h.task("rebuild", json!({"kind":"rebuild","discardPending":true}));
+    let covering =
+        json!({"cursors":{"book":{"from":2,"to":5,"head":5}},"changes":[late()]}).to_string();
+    h.frame(&old, &covering);
+    h.ok(&pull, &covering);
+    let events = h.run();
+    assert_eq!(h.completion(&events, "rebuild")["ok"], true);
+    // The catch-up had answered; the socket and the push are abandoned.
+    for id in [&old, &old_push] {
+        assert!(cancelled(&events, id), "{id} abandoned: {events:?}");
+    }
+    assert_eq!(
+        Vec::from_iter(h.client().desired_channels().unwrap()),
+        ["book"],
+        "the Scope is carried"
+    );
+    assert!(
+        h.client().subscriptions().unwrap().is_empty(),
+        "with no origin"
+    );
+    assert_eq!(h.text("late"), None, "nothing queued applied");
+    assert_eq!(sockets(&events).len(), 1, "a new session, once: {events:?}");
+    let new = h.socket();
+    assert_ne!(new, old);
+    assert_eq!(h.run(), Vec::<Value>::new());
+    h.inert(&old, Some(&pull), None, Some(&old_push));
+
+    // The new handshake commits the carried Scope's first boundary.
+    h.frame(&new, &ack(&[("book", 5)]));
+    h.run();
+    assert_eq!(h.client().cursor("book").unwrap(), Some(5));
+    h.frame(&new, &page(7, 8, "e", "gap"));
+    h.run();
+    let (fresh, body) = h.http("pull");
+    assert_ne!(fresh, pull);
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["cursors"],
+        json!({"book":5})
+    );
+    // With a new catch-up in flight the old answers still match nothing.
+    h.inert(&old, Some(&pull), None, Some(&old_push));
+    let answer = json!({"cursors":{"book":{"from":5,"to":8,"head":8}},"changes":[{"model":"Entry","identity":{"id":"fresh"},"stamp":8,"state":{"text":"fresh","note":null,"due":"now"}}]});
+    h.ok(&fresh, &answer.to_string());
+    h.run();
+    assert_eq!(h.client().cursor("book").unwrap(), Some(8));
+    assert_eq!(h.text("fresh"), Some(json!("fresh")));
+}
+
+/// The same transition with a historical page in flight: its answer or
+/// failure - queued before the rebuild, delivered before the new handshake or
+/// while the fresh identity's own page is out - completes and fails nothing
+/// on the fresh replica, and the fresh page is asked for anew
+/// ([#162](https://github.com/zanminwang/axton/issues/162)).
+#[test]
+fn a_rebuild_fences_a_bootstrap_page_in_flight() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = Host::of(pending_rebuild(dir.path()), Some(dir));
+    let subscription = h
+        .client()
+        .subscription_state("book")
+        .unwrap()
+        .unwrap()
+        .subscription_id;
+    h.connect(false);
+    let (old_push, _) = h.http("push");
+    let old = h.socket();
+    h.frame(&old, &ack(&[("book", 7)]));
+    h.run();
+    let (load, _) = h.http("pull");
+    h.task("rebuild", json!({"kind":"rebuild","discardPending":true}));
+    h.ok(&load, &historical(json!([late()])));
+    let events = h.run();
+    assert_eq!(h.completion(&events, "rebuild")["ok"], true);
+    assert!(cancelled(&events, &old), "{events:?}");
+    let new = h.socket();
+    assert_ne!(new, old);
+    let carried =
+        h.call("state", json!({"kind":"scopeState","scope":"book"}))["value"]["subscriptionId"]
+            .as_u64()
+            .unwrap();
+    assert_ne!(carried, subscription, "a fresh identity");
+    h.inert(&old, None, Some(&load), Some(&old_push));
+    let untouched = h.client().bootstrap_state("book", carried).unwrap();
+    assert_eq!(untouched.run, 0, "no run of the fresh identity was touched");
+    assert_eq!(untouched.error, None);
+
+    // The new session commits the origin; a new load asks for its first page.
+    h.frame(&new, &ack(&[("book", 7)]));
+    h.run();
+    h.task(
+        "load",
+        json!({"kind":"scopeBootstrap","scope":"book","subscriptionId":carried}),
+    );
+    h.run();
+    let (fresh, body) = h.http("pull");
+    assert_ne!(fresh, load);
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["mode"],
+        "bootstrap"
+    );
+    let requested = h.client().bootstrap_state("book", carried).unwrap();
+    assert_eq!(requested.run, 1);
+    h.inert(&old, None, Some(&load), Some(&old_push));
+    assert_eq!(
+        h.client().bootstrap_state("book", carried).unwrap(),
+        requested,
+        "the old answer and failures neither complete nor fail the fresh run"
+    );
+    h.ok(&fresh, &historical(json!([])));
+    h.run();
+    let applied = h.client().bootstrap_state("book", carried).unwrap();
+    assert_eq!(
+        serde_json::to_value(&applied).unwrap(),
+        json!({"scope":"book","subscriptionId":carried,"state":"catching_up","run":1,"cursor":7,"barrier":9,"error":null}),
+        "the fresh page applies to the fresh run"
+    );
+}
+
+/// A running lane with no Channel still resets on a rebuild, and then idles
+/// until a registration wakes it
+/// ([#162](https://github.com/zanminwang/axton/issues/162)).
+#[test]
+fn a_rebuild_under_a_running_lane_with_no_channel_resets_and_idles() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = Host::of(rebuildable(dir.path(), false, false), Some(dir));
+    h.connect(false);
+    assert!(
+        h.outstanding("socket", None).is_empty(),
+        "nothing subscribed"
+    );
+    let (push, _) = h.http("push");
+    h.task("rebuild", json!({"kind":"rebuild","discardPending":true}));
+    let events = h.run();
+    assert_eq!(h.completion(&events, "rebuild")["ok"], true);
+    assert!(cancelled(&events, &push));
+    assert!(h.open.is_empty(), "still idle: {:?}", h.open);
+    h.task(
+        "subscribe",
+        json!({"kind":"channel","channel":"book","subscribed":true}),
+    );
+    let events = h.run();
+    assert_eq!(sockets(&events).len(), 1, "{events:?}");
+}
+
+/// A refused rebuild changes neither the replica nor the lane: nothing is
+/// cancelled, and the old socket, catch-up and historical page stay the
+/// lane's own - their answers apply as they would have
+/// ([#162](https://github.com/zanminwang/axton/issues/162)).
+#[test]
+fn a_refused_rebuild_leaves_the_lane_and_its_effects_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = Host::of(pending_rebuild(dir.path()), Some(dir));
+    let subscription = h
+        .client()
+        .subscription_state("book")
+        .unwrap()
+        .unwrap()
+        .subscription_id;
+    h.connect(false);
+    let socket = h.socket();
+    h.frame(&socket, &ack(&[("book", 7)]));
+    h.run();
+    let (load, _) = h.http("pull");
+    h.frame(
+        &socket,
+        &json!({"cursors":{"book":{"from":8,"to":9,"head":9}},"changes":[]}).to_string(),
+    );
+    h.run();
+    let pull = h
+        .outstanding("http", Some("pull"))
+        .into_iter()
+        .find(|(id, _)| *id != load)
+        .unwrap()
+        .0;
+    let generation = h.client().generation();
+    h.task("refused", json!({"kind":"rebuild"}));
+    let events = h.run();
+    assert_eq!(h.completion(&events, "refused")["ok"], false);
+    assert!(
+        !events.iter().any(|e| e["type"] == "cancelEffect"),
+        "{events:?}"
+    );
+    assert_eq!(h.client().generation(), generation);
+    let status = h.call("status", json!({"kind":"status"}))["value"].clone();
+    assert!(
+        status["schema"]["pending"].is_object(),
+        "the old replica stays"
+    );
+    // The catch-up still answers.
+    h.ok(
+        &pull,
+        &json!({"cursors":{"book":{"from":7,"to":9,"head":9}},"changes":[]}).to_string(),
+    );
+    h.run();
+    assert_eq!(h.client().cursor("book").unwrap(), Some(9));
+    // The historical page still answers, for the same identity.
+    h.ok(&load, &historical(json!([])));
+    h.run();
+    let run = h.client().bootstrap_state("book", subscription).unwrap();
+    assert_eq!(run.barrier, Some(9), "{run:?}");
+    // The socket still streams.
+    h.frame(
+        &socket,
+        &json!({"cursors":{"book":{"from":9,"to":10,"head":10}},"changes":[]}).to_string(),
+    );
+    h.run();
+    assert_eq!(h.client().cursor("book").unwrap(), Some(10));
+    assert_eq!(h.socket(), socket);
 }
 
 /// Arrival order is kept between foreground and inbound work: a frame that
@@ -1763,4 +2078,611 @@ fn a_response_in_hand_survives_stop_but_not_close() {
     assert!(events.contains(&failed("closing", "action.unavailable")));
     assert_eq!(events.last().unwrap(), &json!({"type":"runtimeClosed"}));
     assert_eq!(h.text("e"), Some(json!("server")));
+}
+
+// --- Command contract --------------------------------------------------------
+
+/// Whether a task failed, with its error.
+fn refused(completion: &Value) -> Option<String> {
+    (completion["ok"] == false).then(|| completion["error"].as_str().unwrap().to_string())
+}
+/// Open a callback transaction and answer its effect and transaction ids.
+impl Host {
+    fn begin(&mut self, id: &str) -> (Value, Value) {
+        self.task(id, json!({"kind":"transaction"}));
+        let events = self.run();
+        let callback = events
+            .iter()
+            .find(|e| e["type"] == "effect" && e["operation"]["kind"] == "callback")
+            .unwrap_or_else(|| panic!("a callback: {events:?}"));
+        (
+            callback["effectId"].clone(),
+            callback["operation"]["transactionId"].clone(),
+        )
+    }
+}
+
+/// The Scope commands the SDK handles are built on: register durable intent,
+/// read the committed state, and remove exactly the registration an identity
+/// names. An uninitialized boundary travels as JSON `null`, never as zero;
+/// a malformed identity is refused; Scope work is never transaction work
+/// ([#150](https://github.com/zanminwang/axton/issues/150)).
+#[test]
+fn scope_commands_register_read_and_remove_one_identity() {
+    let mut h = host();
+    let state = json!({"kind":"scopeState","scope":"book"});
+    assert_eq!(
+        h.call("state", state.clone())["value"],
+        Value::Null,
+        "no row means unsubscribed"
+    );
+    let generation = h.client().generation();
+    let registered = h.call("subscribe", json!({"kind":"scopeSubscribe","scope":"book"}));
+    assert_eq!(
+        registered["value"]["state"],
+        json!({"scope":"book","subscriptionId":1,"startingCursor":null,"cursor":null}),
+        "a fresh registration carries no boundary at all, not zero"
+    );
+    assert_ne!(
+        h.client().generation(),
+        generation,
+        "the registration committed"
+    );
+    let generation = h.client().generation();
+    let again = h.call("again", json!({"kind":"scopeSubscribe","scope":"book"}));
+    assert_eq!(
+        again["value"], registered["value"],
+        "the same identity and observer"
+    );
+    assert_eq!(h.client().generation(), generation, "nothing was written");
+    assert_eq!(
+        h.call("read", state.clone())["value"],
+        registered["value"]["state"]
+    );
+    // A name the wire refuses names no Scope: nothing is written for it.
+    for blank in ["", " ", "\t\n"] {
+        let subscribe = h.call("blank", json!({"kind":"scopeSubscribe","scope":blank}));
+        assert!(refused(&subscribe).is_some(), "{blank:?}: {subscribe}");
+        let channel = h.call(
+            "blank channel",
+            json!({"kind":"channel","channel":blank,"subscribed":true}),
+        );
+        assert!(refused(&channel).is_some(), "the same rule: {blank:?}");
+    }
+    assert_eq!(
+        Vec::from_iter(h.client().desired_channels().unwrap()),
+        ["book"],
+        "nothing of a refused registration was written"
+    );
+    // The Channel command shares the ledger: the same row, the same identity.
+    h.call(
+        "channel",
+        json!({"kind":"channel","channel":"book","subscribed":true}),
+    );
+    assert_eq!(h.call("read", state.clone())["value"]["subscriptionId"], 1);
+    for malformed in [
+        json!(null),
+        json!("1"),
+        json!(0),
+        json!(-1),
+        json!(1.5),
+        json!(9007199254740992u64),
+    ] {
+        let removed = h.call(
+            "malformed",
+            json!({"kind":"scopeUnsubscribe","scope":"book","subscriptionId":malformed}),
+        );
+        assert!(refused(&removed).is_some(), "refused: {malformed}");
+    }
+    assert_eq!(
+        h.call(
+            "other",
+            json!({"kind":"scopeUnsubscribe","scope":"book","subscriptionId":2})
+        )["value"],
+        json!({"removed":false}),
+        "another identity's unsubscribe removes nothing"
+    );
+    assert_eq!(
+        Vec::from_iter(h.client().desired_channels().unwrap()),
+        ["book"]
+    );
+    let generation = h.client().generation();
+    assert_eq!(
+        h.call(
+            "remove",
+            json!({"kind":"scopeUnsubscribe","scope":"book","subscriptionId":1})
+        )["value"],
+        json!({"removed":true})
+    );
+    assert_ne!(h.client().generation(), generation);
+    assert_eq!(h.call("read", state)["value"], Value::Null);
+    // Identities are never recycled.
+    assert_eq!(
+        h.call("next", json!({"kind":"scopeSubscribe","scope":"book"}))["value"]["state"]["subscriptionId"],
+        2
+    );
+
+    // Scope work is not transaction work: a callback cannot name it, and a
+    // task waits outside the open transaction until it ends.
+    let (effect, transaction) = h.begin("tx");
+    for (i, command) in [
+        json!({"kind":"scopeSubscribe","scope":"other"}),
+        json!({"kind":"scopeState","scope":"other"}),
+        json!({"kind":"scopeUnsubscribe","scope":"book","subscriptionId":2}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = format!("inside{i}");
+        h.submit(json!({"type":"transactionCommand","requestId":id,"transactionId":transaction,"command":command}));
+        let events = h.run();
+        assert!(
+            refused(h.completion(&events, &id))
+                .unwrap()
+                .starts_with("unknown variant"),
+            "{events:?}"
+        );
+    }
+    h.task("outside", json!({"kind":"scopeSubscribe","scope":"other"}));
+    assert_eq!(h.run(), Vec::<Value>::new(), "it waits for the callback");
+    h.submit(
+        json!({"type":"callbackResult","effectId":effect,"transactionId":transaction,"ok":true}),
+    );
+    let events = h.run();
+    assert_eq!(
+        h.completion(&events, "tx")["ok"],
+        false,
+        "the refusals poisoned it"
+    );
+    assert_eq!(h.completion(&events, "outside")["ok"], true);
+}
+
+/// The Bootstrap commands behind `bootstrap()`: registration is a local write
+/// that needs no connection, the stored run is readable by the same identity,
+/// the lane asks for the first page once an origin exists and asks once, and
+/// an identity that is malformed or not this Scope's is refused with the
+/// code the SDKs map ([#151](https://github.com/zanminwang/axton/issues/151)).
+#[test]
+fn bootstrap_commands_register_read_and_schedule_one_page() {
+    let mut h = host();
+    let (subscription, _, _) = h.subscribe("subscribe", "book");
+    let stored = json!({"kind":"scopeBootstrapState","scope":"book","subscriptionId":subscription});
+    let generation = h.client().generation();
+    h.bootstrap("load", subscription);
+    let events = h.run();
+    assert!(!completed(&events, "load"), "it waits for its run");
+    assert_ne!(
+        h.client().generation(),
+        generation,
+        "the registration committed"
+    );
+    assert_eq!(
+        h.call("stored", stored.clone())["value"],
+        json!({"scope":"book","subscriptionId":subscription,"state":"requested","run":1,"cursor":0,"barrier":null,"error":null})
+    );
+    // Connected, before an origin: no interval, no page.
+    h.connect(false);
+    assert!(
+        h.outstanding("http", Some("pull")).is_empty(),
+        "{:?}",
+        h.open
+    );
+    // The acknowledgement commits the origin, which bounds the interval.
+    let socket = h.socket();
+    h.frame(&socket, &ack(&[("book", 7)]));
+    h.run();
+    let (page, body) = h.http("pull");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap(),
+        json!({"mode":"bootstrap","channel":"book","models":{"Entry":1},"after":0,"until":7})
+    );
+    // Nothing asks twice: a wake finds the request in flight.
+    h.call("wake", json!({"kind":"connection","event":"wake"}));
+    assert_eq!(
+        h.outstanding("http", Some("pull")).len(),
+        1,
+        "one at a time"
+    );
+    h.ok(&page, &historical(json!([])));
+    h.run();
+    assert_eq!(
+        h.call("stored", stored)["value"],
+        json!({"scope":"book","subscriptionId":subscription,"state":"catching_up","run":1,"cursor":7,"barrier":9,"error":null}),
+        "the terminal page fixed the barrier; delivery at 7 has not reached 9"
+    );
+    for malformed in [json!(null), json!("1"), json!(0), json!(-1), json!(1.5)] {
+        let answer = h.call(
+            "malformed",
+            json!({"kind":"scopeBootstrap","scope":"book","subscriptionId":malformed}),
+        );
+        assert!(refused(&answer).is_some(), "refused: {malformed}");
+    }
+    for kind in ["scopeBootstrap", "scopeBootstrapState"] {
+        let other = h.call(
+            "other",
+            json!({"kind":kind,"scope":"book","subscriptionId":99}),
+        );
+        // The stable prefix and code both SDKs raise `subscription.closed` by.
+        let error = refused(&other).unwrap();
+        assert!(error.starts_with("subscription.closed:"), "{error}");
+        assert!(error.contains("is closed"), "{error}");
+        assert_eq!(other["details"], json!({"code":"subscription.closed"}));
+        let absent = h.call(
+            "absent",
+            json!({"kind":kind,"scope":"absent","subscriptionId":1}),
+        );
+        assert!(
+            refused(&absent).is_some(),
+            "{kind} of a Scope not subscribed"
+        );
+    }
+    // Load work is not transaction work.
+    let (effect, transaction) = h.begin("tx");
+    h.submit(
+        json!({"type":"transactionCommand","requestId":"inside","transactionId":transaction,
+        "command":{"kind":"scopeBootstrap","scope":"book","subscriptionId":subscription}}),
+    );
+    let events = h.run();
+    assert!(refused(h.completion(&events, "inside")).is_some());
+    h.submit(
+        json!({"type":"callbackResult","effectId":effect,"transactionId":transaction,"ok":false}),
+    );
+    h.run();
+}
+
+/// Closing the client is not unsubscribing: the rows and their boundaries
+/// survive a close and a reopen, and only `scopeUnsubscribe` removes one,
+/// durably.
+#[test]
+fn closing_a_client_keeps_the_subscriptions_unsubscribe_removes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let open = || {
+        let runtime = ClientRuntime::open_at(
+            &path,
+            Schema::from_value(schema_value()).unwrap(),
+            factory(),
+            false,
+        )
+        .unwrap();
+        Host::of(runtime, None)
+    };
+    let close = |mut h: Host| {
+        h.submit(json!({"type":"close"}));
+        assert_eq!(h.run().last().unwrap(), &json!({"type":"runtimeClosed"}));
+    };
+    let state = json!({"kind":"scopeState","scope":"book"});
+    let mut h = open();
+    let (subscription, _, _) = h.subscribe("subscribe", "book");
+    h.connect(false);
+    let socket = h.socket();
+    h.frame(&socket, &ack(&[("book", 7)]));
+    h.run();
+    let initialized = h.call("state", state.clone())["value"].clone();
+    assert_eq!(
+        initialized,
+        json!({"scope":"book","subscriptionId":subscription,"startingCursor":7,"cursor":7}),
+        "the acknowledged head is the committed boundary"
+    );
+    close(h);
+    let mut h = open();
+    assert_eq!(
+        h.call("state", state.clone())["value"],
+        initialized,
+        "closing the client deleted nothing"
+    );
+    assert_eq!(
+        h.call(
+            "remove",
+            json!({"kind":"scopeUnsubscribe","scope":"book","subscriptionId":subscription})
+        )["value"],
+        json!({"removed":true})
+    );
+    close(h);
+    let mut h = open();
+    assert_eq!(
+        h.call("state", state)["value"],
+        Value::Null,
+        "an unsubscribe is durable"
+    );
+    close(h);
+}
+
+/// The store policy travels beside the business arguments on both routes,
+/// never inside them, and a malformed one is refused on both.
+#[test]
+fn action_store_option_travels_beside_args_on_both_routes() {
+    let mut h = host_with(
+        json!({"enums":[],"models":[],"actions":[{"name":"Ping","version":1,"inputs":[{"kind":"value","name":"store","type":{"kind":"scalar","name":"string"},"nullable":false}],"outputs":[]}]}),
+    );
+    let ping = |store: Value, kind: &str| json!({"kind":kind,"name":"Ping","version":1,"args":{"store":"biz"},"store":store});
+    for bad in [json!({"missing":false}), json!("no"), json!(null)] {
+        for kind in ["submitAction", "invoke"] {
+            let answer = h.call("bad", ping(bad.clone(), kind));
+            assert!(refused(&answer).is_some(), "{kind} store {bad}: {answer}");
+        }
+    }
+    // The durable route: the frozen batch carries the policy beside the args.
+    assert_eq!(
+        h.call("submit", ping(json!(false), "submitAction"))["ok"],
+        true
+    );
+    let frozen = h.call("freeze", json!({"kind":"freeze"}))["value"].clone();
+    let frozen: Value = serde_json::from_str(frozen.as_str().unwrap()).unwrap();
+    assert_eq!(frozen["mutations"][0]["store"], false);
+    assert_eq!(frozen["mutations"][0]["args"], json!({"store":"biz"}));
+    // The direct route: the request carries it the same way.
+    h.connect(false);
+    h.task("call", ping(json!(false), "invoke"));
+    h.run();
+    let (_, body) = h.http("action");
+    let body: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(body["call"]["store"], false);
+    assert_eq!(body["call"]["args"], json!({"store":"biz"}));
+}
+
+/// Query once through the runtime: the exact request carries no cache
+/// control; malformed options, a Mutation and a callback are refused; and an
+/// invalidation - never transaction work - makes the next call fetch.
+#[test]
+fn query_once_refuses_bad_options_and_an_invalidation_makes_the_next_call_fetch() {
+    let mut h = host();
+    h.connect(false);
+    h.task("first", echo(json!({"once":true})));
+    h.run();
+    let (http, body) = h.http("action");
+    let request: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(request["call"]["name"], "Echo");
+    assert_eq!(request["call"]["callId"], call_id(&body).as_str());
+    assert!(
+        request["call"].get("once").is_none() && request["call"].get("refresh").is_none(),
+        "no cache control reaches the wire: {request}"
+    );
+    h.ok(&http, &echoed(&body, "hi"));
+    h.run();
+    for bad in [
+        echo(json!({"once":true,"refresh":"yes"})),
+        echo(json!({"once":true,"store":7})),
+    ] {
+        let answer = h.call("bad", bad.clone());
+        assert!(refused(&answer).is_some(), "{bad}: {answer}");
+    }
+    let mutation = h.call(
+        "mutation",
+        json!({"kind":"invoke","name":"Ping","version":1,"args":{},"once":true}),
+    );
+    assert!(refused(&mutation).is_some(), "a Mutation has no once route");
+    assert!(h.outstanding("http", Some("action")).is_empty());
+    // A hit, then the invalidation - waiting outside an open callback, which
+    // cannot name it - and the next call fetches.
+    assert_eq!(h.call("hit", echo(json!({"once":true})))["ok"], true);
+    assert!(h.outstanding("http", Some("action")).is_empty());
+    let invalidate =
+        json!({"kind":"invalidateQueryOnce","name":"Echo","version":1,"args":{"label":"hi"}});
+    let (effect, transaction) = h.begin("tx");
+    h.submit(json!({"type":"transactionCommand","requestId":"inside","transactionId":transaction,"command":invalidate}));
+    h.task("invalidate", invalidate.clone());
+    let events = h.run();
+    assert!(refused(h.completion(&events, "inside")).is_some());
+    assert!(!completed(&events, "invalidate"), "{events:?}");
+    h.submit(
+        json!({"type":"callbackResult","effectId":effect,"transactionId":transaction,"ok":false}),
+    );
+    let events = h.run();
+    assert_eq!(
+        h.completion(&events, "invalidate"),
+        &done("invalidate", Value::Null)
+    );
+    h.task("after", echo(json!({"once":true})));
+    h.run();
+    h.http("action");
+}
+
+/// A direct call never joins the durable queue and a response moves no
+/// delivery position.
+#[test]
+fn a_direct_call_stays_off_the_queue_and_moves_no_cursor() {
+    let mut h = host();
+    h.connect(false);
+    h.task(
+        "call",
+        json!({"kind":"invoke","name":"Ping","version":1,"args":{}}),
+    );
+    h.run();
+    let (http, body) = h.http("action");
+    assert_eq!(h.client().pending_count().unwrap(), 0, "off the queue");
+    let response = json!({"completion":{"callId":call_id(&body),"outcome":{"status":"succeeded","result":null}},"records":[]});
+    h.ok(&http, &response.to_string());
+    let events = h.run();
+    assert_eq!(
+        h.completion(&events, "call"),
+        &done(
+            "call",
+            json!({"outcome":{"status":"succeeded","result":null}})
+        )
+    );
+    assert_eq!(h.client().pending_count().unwrap(), 0);
+    assert!(h.client().subscriptions().unwrap().is_empty(), "no cursor");
+    assert!(
+        h.outstanding("http", Some("push")).is_empty(),
+        "nothing to push"
+    );
+}
+
+/// The push lane keeps the receipt's authority and leaves reads to the
+/// stream: the receipt completes the push without a pull, and the stream
+/// later carrying the same authority only advances the cursor.
+#[test]
+fn a_receipt_applies_its_authority_and_leaves_reads_to_the_stream() {
+    let mut h = host();
+    h.connect(false);
+    let socket = h.streaming(0);
+    h.task(
+        "create",
+        json!({"kind":"enqueue","mutation":{"name":"Create","operations":[{"model":"Entry","op":"create","identity":{"id":"e"},"values":{"text":"B","note":null}}]}}),
+    );
+    h.run();
+    let (push, body) = h.http("push");
+    let client_id = h.client().client_id().to_string();
+    let batch: Value = serde_json::from_str(&body).unwrap();
+    let receipt = json!({"clientId":client_id,"batchSequence":batch["batchSequence"],"rejections":[],
+        "records":[{"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"normalized","note":null}}]});
+    h.ok(&push, &receipt.to_string());
+    h.run();
+    assert_eq!(h.client().pending_count().unwrap(), 0);
+    assert_eq!(h.text("e"), Some(json!("normalized")));
+    assert!(
+        h.outstanding("http", None).is_empty(),
+        "no pull: {:?}",
+        h.open
+    );
+    h.frame(&socket, &page(0, 1, "e", "normalized"));
+    h.run();
+    assert_eq!(h.client().cursor("book").unwrap(), Some(1));
+    assert_eq!(h.text("e"), Some(json!("normalized")));
+}
+
+/// A dropped socket backs its own lane off while the push lane goes on; no
+/// command drives either lane by hand.
+#[test]
+fn a_dropped_socket_backs_its_lane_off_while_the_push_lane_goes_on() {
+    let mut h = host();
+    h.connect(false);
+    let socket = h.streaming(0);
+    h.answer(&socket, json!({"ok":true,"value":{"event":"closed"}}));
+    let events = h.run();
+    assert_eq!(errors(&events), ["socket closed"]);
+    assert_eq!(connections(&events), ["connecting"]);
+    h.one("timer", None);
+    assert!(h.outstanding("socket", None).is_empty());
+    // The push lane is not waiting on that backoff.
+    h.task(
+        "submit",
+        json!({"kind":"submitAction","name":"Ping","version":1,"args":{}}),
+    );
+    h.run();
+    h.http("push");
+    // The commit's wake lets the worker look again: it still backs off.
+    assert!(h.outstanding("socket", None).is_empty(), "{:?}", h.open);
+    let (timer, _) = h.one("timer", None);
+    for bad in [
+        json!({"kind":"downlink","event":"next"}),
+        json!({"kind":"connection","event":"unknown"}),
+        json!({"kind":"connection"}),
+    ] {
+        let answer = h.call("bad", bad.clone());
+        assert!(refused(&answer).is_some(), "{bad}");
+    }
+    h.fire(&timer);
+    h.run();
+    h.socket();
+}
+
+/// Delivery policy is the same streamed or answered: a covered page changes
+/// nothing, an overlap applies once, a catch-up in flight leaves the push in
+/// flight alone, and an answer that does not match its request ends the
+/// session with that reason.
+#[test]
+fn covered_and_overlapping_pages_apply_once_beside_a_push_in_flight() {
+    let mut h = host();
+    h.connect(false);
+    let socket = h.streaming(0);
+    let first = page(0, 1, "e", "first");
+    h.frame(&socket, &first);
+    h.run();
+    assert_eq!(h.text("e"), Some(json!("first")));
+    let generation = h.client().generation();
+    h.frame(&socket, &first);
+    h.run();
+    assert_eq!(h.client().generation(), generation, "covered");
+    // A streamed overlap applies once, from the boundary.
+    h.frame(&socket, &page(0, 2, "e", "incoming overlap"));
+    h.run();
+    assert_eq!(h.client().cursor("book").unwrap(), Some(2));
+    assert_eq!(h.text("e"), Some(json!("incoming overlap")));
+    // A gap asks for a catch-up while a push is out: neither disturbs the other.
+    h.frame(&socket, &page(4, 5, "e", "gap"));
+    h.task(
+        "edit",
+        json!({"kind":"enqueue","mutation":{"name":"Edit","operations":[{"model":"Entry","op":"update","identity":{"id":"e"},"values":{"text":"B"}}]}}),
+    );
+    h.run();
+    let (pull, _) = h.http("pull");
+    let push = h.http("push");
+    h.ok(
+        &pull,
+        &json!({"cursors":{"book":{"from":2,"to":5,"head":5}},"changes":[]}).to_string(),
+    );
+    h.run();
+    assert_eq!(h.client().cursor("book").unwrap(), Some(5));
+    assert_eq!(h.http("push"), push, "the catch-up never touches the push");
+    // An answer for another request ends the session with the reason.
+    h.frame(&socket, &page(7, 8, "e", "gap"));
+    h.run();
+    let (pull, _) = h.http("pull");
+    h.ok(
+        &pull,
+        &json!({"cursors":{"other":{"from":0,"to":2,"head":2}},"changes":[]}).to_string(),
+    );
+    let events = h.run();
+    assert!(
+        errors(&events).contains(&"response does not match pull request".to_string()),
+        "{events:?}"
+    );
+    assert!(cancelled(&events, &socket));
+    assert_eq!(h.client().cursor("book").unwrap(), Some(5));
+}
+
+/// A Bootstrap row the ledger cannot decode reaches the application once per
+/// unchanged defect: once when the lane starts, not again on a wake or a
+/// handshake, and once more for the next connection
+/// ([#163](https://github.com/zanminwang/axton/issues/163)).
+#[test]
+fn a_ledger_issue_reaches_the_application_once_per_unchanged_defect() {
+    let mut h = host();
+    let path = h._dir.as_ref().unwrap().path().join("db");
+    let issues = |events: &[Value]| -> Vec<String> {
+        errors(events)
+            .into_iter()
+            .filter(|e| e.starts_with("bootstrap ledger bad: "))
+            .collect()
+    };
+    let (subscription, _, _) = h.subscribe("subscribe", "bad");
+    h.connect(false);
+    let socket = h.socket();
+    h.frame(&socket, &ack(&[("bad", 100)]));
+    h.run();
+    h.call("stop", json!({"kind":"connection","event":"stop"}));
+    h.task(
+        "load",
+        json!({"kind":"scopeBootstrap","scope":"bad","subscriptionId":subscription}),
+    );
+    h.run();
+    // Damaged behind the runtime's back, as a foreign writer would.
+    let mut raw = SqliteStore::open(&path).unwrap();
+    assert_eq!(
+        raw.execute(
+            "UPDATE axton_subscription SET bootstrap_cursor='x' WHERE channel=?",
+            &[json!("bad")]
+        )
+        .unwrap(),
+        1
+    );
+    h.task("connect", json!({"kind":"connect"}));
+    let events = h.run();
+    let reported = issues(&events);
+    assert_eq!(reported.len(), 1, "{events:?}");
+    assert!(reported[0].contains("cannot be decoded"), "{reported:?}");
+    h.task("wake", json!({"kind":"connection","event":"wake"}));
+    assert_eq!(issues(&h.run()), Vec::<String>::new(), "once");
+    let socket = h.socket();
+    h.frame(&socket, &ack(&[("bad", 100)]));
+    assert_eq!(issues(&h.run()), Vec::<String>::new(), "still once");
+    h.call("stop", json!({"kind":"connection","event":"stop"}));
+    h.task("again", json!({"kind":"connect"}));
+    assert_eq!(
+        issues(&h.run()).len(),
+        1,
+        "the next connection hears it once"
+    );
 }

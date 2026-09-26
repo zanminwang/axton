@@ -26,12 +26,17 @@ export type EffectOutcome =
   | { ok: false; error: { message: string; status?: number } };
 
 export type BridgeEventType =
-  | "callCompleted"
-  | "observerChanged"
-  | "report"
-  | "changed"
-  | "cancelEffect"
-  | "laneSignal";
+  "callCompleted" | "observerChanged" | "report" | "changed" | "cancelEffect";
+
+/**
+ * One observer's state as the runtime published it: a subscription status or
+ * a watch's rows. `closed` marks the last one; nothing follows it.
+ */
+export type ObserverSnapshot = {
+  kind: "subscription" | "watch";
+  closed?: true;
+  [field: string]: any;
+};
 
 type Route = {
   resolve(value: any): void;
@@ -43,6 +48,10 @@ type Callback = {
   thrown?: { value: unknown };
 };
 type Event = { type: string; [field: string]: any };
+/** A task's failure: the runtime's message, and its machine-readable reason when it gave one. */
+export type TaskError = Error & {
+  details?: { code: string; [field: string]: unknown };
+};
 
 /** Report an application callback's failure without changing any outcome. */
 export function reportCallbackError(error: unknown): void {
@@ -88,6 +97,15 @@ export class Bridge {
   #callbacks = new Map<string, Callback>();
   #listeners = new Map<BridgeEventType, Set<(event: any) => void>>();
   #effects = new Map<string, (effectId: string, operation: any) => void>();
+  /** Observer routes by `observerId`. */
+  #observers = new Map<string, (snapshot: ObserverSnapshot) => void>();
+  /**
+   * The latest snapshot of each observer nobody observes yet. The runtime
+   * publishes an observer's first snapshot right after the task that names
+   * it, in the same batch, so it is dispatched before that task's
+   * continuation can attach a route; the continuation claims it here.
+   */
+  #held = new Map<string, ObserverSnapshot>();
   #dispatching = false;
   #closing: Promise<void> | undefined;
   #settleClose: (() => void) | undefined;
@@ -205,6 +223,26 @@ export class Bridge {
     if (!listeners) this.#listeners.set(type, (listeners = new Set()));
     listeners.add(listener);
     return () => void listeners.delete(listener);
+  }
+
+  /**
+   * Route the snapshots of `observerId` to `listener`, starting with the one
+   * held for it, if any, delivered at once. A terminal snapshot is the last
+   * one delivered: its route ends with it. A listener's exception is
+   * reported and changes nothing. Answers the detach.
+   */
+  observe(
+    observerId: string,
+    listener: (snapshot: ObserverSnapshot) => void,
+  ): () => void {
+    const held = this.#held.get(observerId);
+    this.#held.delete(observerId);
+    if (held?.closed !== true) this.#observers.set(observerId, listener);
+    if (held) this.#observe(listener, held);
+    return () => {
+      if (this.#observers.get(observerId) === listener)
+        this.#observers.delete(observerId);
+    };
   }
 
   /** Handle effects of one operation kind; unhandled kinds are refused. */
@@ -334,20 +372,46 @@ export class Bridge {
         if (!route) return;
         if (event.ok) route.resolve(event.value);
         else if (callback?.thrown) route.reject(callback.thrown.value);
-        else route.reject(Error(event.error ?? "task failed"));
+        else
+          route.reject(
+            Object.assign(
+              Error(event.error ?? "task failed"),
+              event.details === undefined ? {} : { details: event.details },
+            ),
+          );
         return;
       }
       case "effect":
         return this.#effect(event.effectId, event.operation);
       case "runtimeClosed":
         return this.#terminate();
-      case "callCompleted":
       case "observerChanged":
+        this.#emit(event.type, event);
+        return this.#snapshot(event.observerId, event.snapshot);
+      case "callCompleted":
       case "report":
       case "changed":
       case "cancelEffect":
-      case "laneSignal":
         return this.#emit(event.type, event);
+    }
+  }
+
+  /** Deliver one snapshot to its route, or hold it until one is attached. */
+  #snapshot(observerId: string, snapshot: ObserverSnapshot): void {
+    const listener = this.#observers.get(observerId);
+    if (!listener) return void this.#held.set(observerId, snapshot);
+    if (snapshot.closed === true) this.#observers.delete(observerId);
+    this.#observe(listener, snapshot);
+  }
+
+  #observe(
+    listener: (snapshot: ObserverSnapshot) => void,
+    snapshot: ObserverSnapshot,
+  ): void {
+    try {
+      listener(snapshot);
+    } catch (error) {
+      reportCallbackError(error);
     }
   }
 
@@ -393,6 +457,8 @@ export class Bridge {
     const routes = [...this.#routes.values()];
     this.#routes.clear();
     this.#callbacks.clear();
+    this.#observers.clear();
+    this.#held.clear();
     for (const route of routes) route.reject(Error("client_closed"));
     this.#native.runtimeDetach(this.#runtimeId);
     const settle = this.#settleClose;

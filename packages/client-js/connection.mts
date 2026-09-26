@@ -80,7 +80,8 @@ export class AxtonReport extends Error {
 /** What a runtime `report` event carries (`Diagnostic` in [protocol.rs](../../crates/client/src/runtime/protocol.rs)). */
 export type Diagnostic =
   | { kind: "records"; reports: ReportDetails[] }
-  | { kind: "error" | "protocol"; message: string };
+  | { kind: "error"; message: string; status?: number }
+  | { kind: "protocol"; message: string };
 
 /** The part of the Bridge an effect executor uses; tests supply a fake. */
 export type EffectBridge = {
@@ -97,8 +98,6 @@ export type EffectBridge = {
 
 /** The longest delay a platform timer accepts. */
 const MAX_DELAY = 2_147_483_647;
-/** Lane failures kept for their `onError` report; bounded against a report that never comes. */
-const RETAINED_FAILURES = 32;
 
 /** The direct-call deadline `connect` hands the runtime; the SDK keeps its own message for a bad value. */
 export function directTimeout(options: ConnectionOptions): number {
@@ -222,21 +221,8 @@ export function startConnection(
   options: ConnectionOptions,
 ): () => void {
   const owner = {};
-  /**
-   * The runtime reports a lane failure by its message; `onError` receives the
-   * failure itself, with its `status`, as it always has. A direct call's own
-   * failure is never reported, so it is not kept.
-   */
-  const failures: unknown[] = [];
-  const fail = (effectId: string, error: unknown, reported: boolean) => {
-    if (!effects.answer(effectId, failure(error)) || !reported) return;
-    failures.push(error);
-    if (failures.length > RETAINED_FAILURES) failures.shift();
-  };
-  const recall = (message: string): unknown => {
-    const index = failures.findIndex((error) => reason(error) === message);
-    return index < 0 ? Error(message) : failures.splice(index, 1)[0];
-  };
+  const fail = (effectId: string, error: unknown) =>
+    void effects.answer(effectId, failure(error));
   const uninstall = [
     effects.handle(owner, "http", (effectId, operation) => {
       const { route, body } = operation as { route: string; body: string };
@@ -245,7 +231,7 @@ export function startConnection(
         .then(() => network.push(route, body, abort.signal))
         .then(
           (text) => effects.answer(effectId, { ok: true, value: text }),
-          (error) => fail(effectId, error, route !== "action"),
+          (error) => fail(effectId, error),
         );
       return () => abort.abort();
     }),
@@ -259,7 +245,7 @@ export function startConnection(
         {
           message: (body) => frame({ event: "message", body }),
           overflow: () => frame({ event: "overflow" }),
-          closed: (error) => fail(effectId, error, true),
+          closed: (error) => fail(effectId, error),
         },
       );
       return () => abort.abort();
@@ -273,7 +259,7 @@ export function startConnection(
           .then(() => refreshAuth())
           .then(
             () => effects.answer(effectId, { ok: true }),
-            (error) => fail(effectId, error, true),
+            (error) => fail(effectId, error),
           );
       }),
     );
@@ -281,10 +267,19 @@ export function startConnection(
   uninstall.push(
     bridge.on("report", ({ diagnostic }: { diagnostic: Diagnostic }) => {
       if (!onError) return;
+      // A lane failure is the runtime's report of it: its message, and the
+      // HTTP status it carried when it had one.
       const errors =
         diagnostic.kind === "records"
           ? diagnostic.reports.map((report) => new AxtonReport(report))
-          : [recall(diagnostic.message)];
+          : [
+              Object.assign(
+                Error(diagnostic.message),
+                diagnostic.kind === "error" && diagnostic.status !== undefined
+                  ? { status: diagnostic.status }
+                  : {},
+              ),
+            ];
       for (const error of errors)
         try {
           onError(error);
@@ -296,7 +291,6 @@ export function startConnection(
   return () => {
     for (const remove of uninstall) remove();
     effects.abort(owner);
-    failures.length = 0;
   };
 }
 

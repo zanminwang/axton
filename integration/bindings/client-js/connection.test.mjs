@@ -19,6 +19,14 @@ import { Transaction } from "../../../packages/client-js/transaction.mts";
 // second half runs the real runtime over a scripted network.
 
 const settled = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Poll until `condition` holds; a real native client answers on its own schedule. */
+const eventually = async (condition, what) => {
+  const deadline = Date.now() + 5000;
+  while (!condition()) {
+    if (Date.now() > deadline) assert.fail(`${what} timed out`);
+    await settled(5);
+  }
+};
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((a, b) => {
@@ -266,16 +274,12 @@ test("prerequisite effects run the named handler and keep the failure's reason",
   assert.equal(bridge.handles("prerequisite"), false);
 });
 
-test("reports reach onError: records as AxtonReports, errors as the failure itself", async () => {
+test("reports reach onError: records as AxtonReports, errors with the runtime's message and status", async () => {
   const errors = [];
-  const refused = Object.assign(Error("pull failed: 503 unavailable"), {
-    status: 503,
-  });
   const { bridge } = executor(
     {
-      push: async (kind) => {
-        if (kind === "pull") throw refused;
-        throw Error("action lost");
+      push: async () => {
+        throw Object.assign(Error("pull failed: 503 unavailable"), { status: 503 });
       },
     },
     { onError: (error) => errors.push(error) },
@@ -289,13 +293,16 @@ test("reports reach onError: records as AxtonReports, errors as the failure itse
       ],
     },
   });
-  // A lane failure the runtime reports is handed over as it was thrown, with
-  // its status; a direct call's failure is never reported, so none is kept.
+  // The runtime reports a lane failure itself, with the HTTP status the effect
+  // answered with; the executor keeps no failure of its own to recall.
   bridge.effect("1", { kind: "http", route: "pull", body: "{}" });
-  bridge.effect("2", { kind: "http", route: "action", body: "{}" });
   await settled();
+  assert.deepEqual(bridge.results, [
+    ["1", { ok: false, error: { message: "pull failed: 503 unavailable", status: 503 } }],
+  ]);
+  assert.equal(errors.length, 2, "an effect's failure is not reported by the executor");
   bridge.emit("report", {
-    diagnostic: { kind: "error", message: "pull failed: 503 unavailable" },
+    diagnostic: { kind: "error", message: "pull failed: 503 unavailable", status: 503 },
   });
   bridge.emit("report", { diagnostic: { kind: "error", message: "action lost" } });
   bridge.emit("report", {
@@ -308,10 +315,12 @@ test("reports reach onError: records as AxtonReports, errors as the failure itse
   assert.match(errors[0].message, /readFailed: Entry .* stamp 9 \(loader.failed\)/);
   assert.ok(errors[1] instanceof AxtonReport);
   assert.equal(errors[1].kind, "skipped");
-  assert.strictEqual(errors[2], refused);
+  assert.ok(errors[2] instanceof Error && !(errors[2] instanceof AxtonReport));
+  assert.equal(errors[2].message, "pull failed: 503 unavailable");
   assert.equal(errors[2].status, 503);
   assert.ok(errors[3] instanceof Error && !(errors[3] instanceof AxtonReport));
   assert.equal(errors[3].message, "action lost");
+  assert.equal("status" in errors[3], false, "no status, no property");
   assert.equal(errors[4].message, "duplicate request id 4");
 });
 
@@ -572,6 +581,7 @@ test("raw Action discard and rebuild deliver terminal call identities", async ()
       original.onActionCompletion(value => delivered.push(value));
       const dropped = await original.submitAction("Ping", 1, {});
       await original.drop(dropped.ordinal);
+      assert.equal(delivered.length, 1, "a dropped call completes once");
       assert.equal(delivered[0].callId, dropped.callId);
       assert.equal(delivered[0].outcome.code, "dropped");
       const pending = await original.submitAction("Ping", 1, {});
@@ -739,6 +749,64 @@ test("client close waits for in-flight connection setup and remains idempotent",
     );
   } finally {
     await client.close().catch(() => {});
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A rebuild keeps the connected lane running: the runtime abandons the old
+ * socket and subscribes the carried Scope again on a session of its own, with
+ * no second `connect`. The Dart twin is `a rebuild wakes the sleeping
+ * downlink lane without another start` in `packages/dart/test/client_test.dart`
+ * ([#162](https://github.com/zanminwang/axton/issues/162)).
+ */
+test("a rebuild wakes the sleeping downlink lane without another start", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "axton-rebuild-wake-"));
+  const path = join(directory, "client.sqlite");
+  const schema = await entrySchema();
+  const breaking = structuredClone(schema);
+  breaking.models[0].fields.push({ name: "due", nullable: false, type: { kind: "scalar", name: "string" } });
+  // Sockets open and are never acknowledged, and HTTP never answers: once it
+  // opened its socket, the lane has nothing to do until it is woken.
+  const sockets = [];
+  let connects = 0;
+  const Client = createClient(native, Transaction, () => {
+    connects++;
+    return {
+      push: (kind, body, signal) =>
+        new Promise((resolve, reject) =>
+          signal?.addEventListener("abort", () => reject(Error("aborted")), { once: true }),
+        ),
+      open: (subscribe, signal) => sockets.push({ subscribe: JSON.parse(subscribe), signal }),
+    };
+  });
+  let client;
+  let connection;
+  try {
+    client = await Client.open({ path, schema });
+    await client.subscribe("scope");
+    // Unsent work keeps the incompatible file open, so the rebuild happens with
+    // this client - and its lane - already connected.
+    await client.mutate({ name: "Create", operations: [{ model: "Entry", op: "create", identity: { id: "e" }, values: { text: "A", note: null } }] });
+    await client.close();
+    client = await Client.open({ path, schema: breaking });
+    const reported = [];
+    connection = await client.connect({ url: "http://127.0.0.1:1", token: "t" }, { onError: (error) => reported.push(error) });
+    await eventually(() => sockets.length === 1, "the first handshake");
+    await settled(50);
+    assert.equal(sockets.length, 1, "the lane sleeps until woken");
+    await client.rebuild({ discardPending: true });
+    await eventually(() => sockets.length === 2, "the carried Scope subscribed again after the rebuild");
+    assert.deepEqual(sockets[1].subscribe.channels, ["scope"]);
+    assert.equal(sockets[0].signal.aborted, true, "the old socket was abandoned");
+    assert.equal(sockets[1].signal.aborted, false, "the new socket stays");
+    await settled(50);
+    assert.equal(sockets.length, 2, "one session per wake");
+    assert.equal(connects, 1, "no second connect");
+    assert.deepEqual(reported, []);
+  } finally {
+    await connection?.close();
+    await client?.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

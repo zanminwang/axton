@@ -57,17 +57,11 @@ export type ClientSyncState = {
   rejections: Rejection[];
   schema: SchemaState;
 };
-import { strictJson, type QuerySpec, type RecordValue } from "./values.mts";
+import type { QuerySpec, RecordValue } from "./values.mts";
 import { Bridge, reportCallbackError, type NativeCarrier } from "./bridge.mts";
 export type { NativeCarrier } from "./bridge.mts";
 import type { ServerOptions, ServerConnection } from "./live.mts";
-import { Events } from "./events.mts";
-import {
-  Subscriptions,
-  type BootstrapRun,
-  type Subscription,
-  type SubscriptionState,
-} from "./subscriptions.mts";
+import { Subscriptions, type Subscription } from "./subscriptions.mts";
 export type {
   BootstrapPhase,
   BootstrapStatus,
@@ -177,68 +171,21 @@ export function createClient<
     readonly #effects: Effects;
     #closed = false;
     #activePublicTx: Tx | undefined;
-    #events = new Events();
-    /** Subscription handles by persistent identity, and the status they publish. */
-    #subscriptions = new Subscriptions({
-      subscribe: (scope) =>
-        this.#bridge.task({
-          kind: "scopeSubscribe",
-          scope,
-        }) as Promise<SubscriptionState>,
-      state: (scope) =>
-        this.#bridge.task({
-          kind: "scopeState",
-          scope,
-        }) as Promise<SubscriptionState | null>,
-      // Registration and the state read of one identity's durable load: tasks
-      // of the runtime's one ordinary queue, so calls for one Scope keep their
-      // order ([#151](https://github.com/zanminwang/axton/issues/151)).
-      requestBootstrap: (scope, subscriptionId) =>
-        this.#bridge.task({
-          kind: "scopeBootstrap",
-          scope,
-          subscriptionId,
-        }) as Promise<BootstrapRun>,
-      bootstrapState: (scope, subscriptionId) =>
-        this.#bridge.task({
-          kind: "scopeBootstrapState",
-          scope,
-          subscriptionId,
-        }) as Promise<BootstrapRun>,
-      remove: async (scope, subscriptionId) =>
-        (
-          await this.#bridge.task({
-            kind: "scopeUnsubscribe",
-            scope,
-            subscriptionId,
-          })
-        ).removed === true,
-      removeScope: async (scope) => {
-        await this.#bridge.task({
-          kind: "channel",
-          channel: scope,
-          subscribed: false,
-        });
-      },
-      report: reportActionCallbackError,
-    });
+    /** Subscription handles by persistent identity; the runtime publishes their status. */
+    readonly #subscriptions: Subscriptions;
     readonly clientId: string;
     private constructor(bridge: Bridge, id: string) {
       this.#bridge = bridge;
       this.clientId = id;
       this.#effects = new Effects(bridge);
-      // A committed local transaction: watchers re-run their queries.
-      bridge.on("changed", () => this.#events.emit("change"));
-      // Every call outcome the runtime committed - receipts, direct calls,
-      // once flights and rebuild abandonments - after the commit that decided it.
+      this.#subscriptions = new Subscriptions(bridge, reportCallbackError);
+      // Every call outcome the runtime committed - receipts, discards, direct
+      // calls, once flights and rebuild abandonments - after the commit that
+      // decided it. This is the only path completions take.
       bridge.on("callCompleted", (event) =>
         this.#deliverCompletions([
           { callId: event.callId, outcome: event.outcome },
         ]),
-      );
-      // Transport state of the lanes for the subscription status projection.
-      bridge.on("laneSignal", (event) =>
-        this.#subscriptions.signal(event.signal),
       );
     }
     static async open(options: {
@@ -570,7 +517,6 @@ export function createClient<
           stop();
           throw error;
         }
-        this.#subscriptions.attach();
         let closed = false;
         const control = async (event: string) => {
           if (!closed) await this.#bridge.task({ kind: "connection", event });
@@ -583,7 +529,6 @@ export function createClient<
             if (closed) return;
             closed = true;
             stop();
-            this.#subscriptions.detach();
             try {
               await this.#bridge.task({ kind: "connection", event: "stop" });
             } catch (error) {
@@ -623,14 +568,9 @@ export function createClient<
     freeze(): Promise<string | null> {
       return this.#bridge.task({ kind: "freeze" });
     }
-    async acknowledge(sequence: number, receipt: object) {
-      const applied = await this.#bridge.task({
-        kind: "ack",
-        sequence,
-        receipt,
-      });
-      this.#deliverCompletions(applied.completions);
-      return applied;
+    /** The completions in its value were already delivered as `callCompleted`. */
+    acknowledge(sequence: number, receipt: object) {
+      return this.#bridge.task({ kind: "ack", sequence, receipt });
     }
     applyPull(page: object) {
       return this.#bridge.task({ kind: "pull", page });
@@ -647,20 +587,14 @@ export function createClient<
      * Leave an incompatible database behind and open a fresh file for the
      * schema this client asked for. Refused while unsent mutations remain
      * unless `discardPending`; the report says what the old file keeps. The
-     * runtime completes every abandoned call before the report arrives.
+     * runtime completes every abandoned call, ends every subscription handle
+     * of the replica it left and re-runs every watch before the report
+     * arrives.
      */
     rebuild(
       options: { discardPending?: boolean } = {},
     ): Promise<RebuildReport> {
-      return this.#bridge
-        .task({ kind: "rebuild", ...options })
-        .then((value) => {
-          // The replica that answered every handle is gone: no handle from
-          // before it names a registration of the file this client now reads.
-          this.#subscriptions.rebuilt();
-          this.#events.emit("change");
-          return value;
-        });
+      return this.#bridge.task({ kind: "rebuild", ...options });
     }
     pendingTasks(): Promise<RecordValue[]> {
       return this.#bridge.task({ kind: "tasks" });
@@ -668,39 +602,67 @@ export function createClient<
     setReadiness(key: string, state: "ready" | "pending" | "failed") {
       return this.#bridge.task({ kind: "readiness", key, state });
     }
+    /** The dropped call completes through `callCompleted`, once. */
     drop(ordinal: number) {
-      return this.#bridge.task({ kind: "drop", ordinal }).then((value) => {
-        this.#deliverCompletions(value.completions);
-        return undefined;
-      });
+      return this.#bridge.task({ kind: "drop", ordinal }).then(() => undefined);
     }
     dismissRejection(ordinal: number) {
       return this.#bridge.task({ kind: "dismiss", ordinal });
     }
+    /**
+     * Observe a local query. The runtime runs it on the committed state,
+     * re-runs it after every commit and publishes only a result that differs
+     * from the last one, starting with the current rows; `listener` receives
+     * each. The returned function stops delivery at once and unregisters the
+     * watch. `onError` receives what this call owns: the registration's
+     * failure and the listener's exceptions. A re-run that fails is the
+     * runtime's to report - through the connection's `onError` - and the
+     * watch stays.
+     */
     watch(
       model: string,
       where: RecordValue = {},
       listener: (rows: RecordValue[]) => void,
       onError: (error: unknown) => void = () => {},
     ) {
-      let previous: string | undefined;
-      let closed = false;
-      const refresh = () => {
-        this.query(model, where)
-          .then((rows) => {
-            const value = strictJson(rows);
-            if (!closed && value !== previous) {
-              previous = value;
-              listener(rows);
-            }
-          })
-          .catch(onError);
+      const fail = (error: unknown) => {
+        try {
+          onError(error);
+        } catch (thrown) {
+          reportCallbackError(thrown);
+        }
       };
-      this.#events.on("change", refresh);
-      refresh();
+      let stopped = false;
+      let unwatch: (() => void) | undefined;
+      this.#bridge.task({ kind: "watch", model, spec: { filter: where } }).then(
+        ({ observerId }: { observerId: string }) => {
+          // Claims the rows published behind the task, even when stopped
+          // already, so none is held for an observer nobody attaches.
+          const detach = this.#bridge.observe(observerId, (snapshot) => {
+            // A closed watch's last rows are the ones already delivered.
+            if (stopped || snapshot.closed) return;
+            try {
+              listener(snapshot.rows);
+            } catch (error) {
+              fail(error);
+            }
+          });
+          // The route stays until the runtime confirms nothing follows.
+          unwatch = () =>
+            void this.#bridge
+              .task({ kind: "unwatch", observerId })
+              .catch(() => {})
+              .finally(detach);
+          if (stopped) unwatch();
+        },
+        (error) => {
+          if (!stopped) fail(error);
+        },
+      );
       return () => {
-        closed = true;
-        this.#events.off("change", refresh);
+        if (stopped) return;
+        stopped = true;
+        unwatch?.();
       };
     }
     close(): Promise<void> {
@@ -708,6 +670,7 @@ export function createClient<
       for (const settle of [...this.#waitingOnce])
         settle(new CallError("client.closed"));
       this.#waitingOnce.clear();
+      // The runtime's close ends every handle; they stop with this client.
       this.#subscriptions.close();
       return (this.#closing ??= this.#finishClose());
     }
@@ -718,7 +681,7 @@ export function createClient<
         await this.#bridge.close();
       } finally {
         this.#closed = true;
-        this.#events.removeAllListeners();
+        this.#subscriptions.closed();
       }
     }
   };

@@ -443,14 +443,14 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
     "cancelEffect",
     "changed",
     "effect",
-    "laneSignal",
     "observerChanged",
     "report",
     "runtimeClosed",
     "taskCompleted",
   ]);
   const operations = new Set();
-  const lanes = new Set();
+  const codes = new Set();
+  const snapshots = new Set();
   for (const event of envelopes.events) {
     switch (event.type) {
       case "taskCompleted":
@@ -460,6 +460,12 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
         assert.ok(
           event.ok ? !("error" in event) : typeof event.error === "string",
         );
+        // The machine-readable reason a failure may carry beside its message.
+        if ("details" in event) {
+          assert.equal(event.ok, false);
+          assert.equal(typeof event.details.code, "string");
+          codes.add(event.details.code);
+        }
         break;
       case "effect":
         assert.equal(typeof event.effectId, "string");
@@ -479,7 +485,22 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
         break;
       case "observerChanged":
         assert.equal(typeof event.observerId, "string");
-        assert.ok("snapshot" in event);
+        assert.ok(["subscription", "watch"].includes(event.snapshot.kind));
+        assert.ok(
+          event.snapshot.closed === undefined || event.snapshot.closed === true,
+        );
+        if (event.snapshot.kind === "watch")
+          assert.ok(Array.isArray(event.snapshot.rows));
+        else
+          assert.deepEqual(Object.keys(event.snapshot.status).sort(), [
+            "active",
+            "bootstrap",
+            "connection",
+            "initialization",
+          ]);
+        snapshots.add(
+          `${event.snapshot.kind}${event.snapshot.closed ? ":closed" : ""}`,
+        );
         break;
       case "report":
         assert.ok(
@@ -488,10 +509,6 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
         break;
       case "changed":
         assert.ok(event.tables.every((table) => typeof table === "string"));
-        break;
-      case "laneSignal":
-        assert.equal(typeof event.signal.lane, "string");
-        lanes.add(event.signal.lane);
         break;
       case "runtimeClosed":
         assert.deepEqual(Object.keys(event), ["type"]);
@@ -506,17 +523,18 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
     "socket",
     "timer",
   ]);
-  // Every DownlinkSignal the subscription projection understands.
-  assert.deepEqual([...lanes].sort(), [
-    "acknowledged",
-    "bootstrap",
-    "changed",
-    "ended",
-    "opened",
-    "paused",
-    "requests",
-    "resumed",
-    "stopped",
+  // Every code the SDK maps a `scopeBootstrap` failure by, and every observer
+  // snapshot it dispatches.
+  assert.deepEqual([...codes].sort(), [
+    "bootstrap.request_rejected",
+    "bootstrap.superseded",
+    "subscription.closed",
+  ]);
+  assert.deepEqual([...snapshots].sort(), [
+    "subscription",
+    "subscription:closed",
+    "watch",
+    "watch:closed",
   ]);
 });
 
@@ -569,7 +587,6 @@ test("the bridge dispatches every fixture event and answers effects it has no ha
     "observerChanged",
     "report",
     "changed",
-    "laneSignal",
   ])
     bridge.on(type, (event) => seen.push(event.type));
   const handled = [];
@@ -584,12 +601,9 @@ test("the bridge dispatches every fixture event and answers effects it has no ha
   wake("9");
   assert.deepEqual(seen, [
     "callCompleted",
-    "observerChanged",
-    "report",
-    "report",
-    "report",
+    ...Array(5).fill("observerChanged"),
+    ...Array(4).fill("report"),
     "changed",
-    ...Array(9).fill("laneSignal"),
   ]);
   assert.deepEqual(handled, [["7", 250]]);
   const answered = submitted.filter((input) => input.type !== "callbackResult");
@@ -647,6 +661,124 @@ test("a throwing listener does not stop the completion in the same drain batch",
       assert.equal(seen.length, 1);
       assert.ok(seen[0].includes("Entry"));
     });
+  } finally {
+    if (original === undefined) delete globalThis.reportError;
+    else globalThis.reportError = original;
+  }
+});
+
+/**
+ * A Bridge over a scripted runtime: `respond(command, requestId)` answers each
+ * submitted task with the events it publishes, and `publish` hands the Bridge
+ * more, one drain batch per call, the way the runtime's outbox would.
+ */
+async function scripted(respond = () => []) {
+  let wake;
+  const outbox = [];
+  const submitted = [];
+  const later = () => setImmediate(() => wake("1"));
+  const carrier = {
+    runtimeOpen(request, wakeRuntime) {
+      wake = wakeRuntime;
+      outbox.push({
+        type: "taskCompleted",
+        requestId: JSON.parse(request).requestId,
+        ok: true,
+        value: {
+          clientId: "c",
+          schema: { rebuilt: false, pending: null, lastRebuild: null },
+        },
+      });
+      later();
+      return "1";
+    },
+    runtimeSubmit(runtimeId, message) {
+      const input = JSON.parse(message);
+      submitted.push(input);
+      if (input.type === "task")
+        outbox.push(...respond(input.command, input.requestId));
+      if (input.type === "close") outbox.push({ type: "runtimeClosed" });
+      later();
+    },
+    runtimeDrain: () => JSON.stringify(outbox.splice(0)),
+    runtimeDetach() {},
+  };
+  const { bridge } = await Bridge.open(carrier, { path: "unused", schema });
+  return {
+    bridge,
+    submitted,
+    publish(...events) {
+      outbox.push(...events);
+      wake("1");
+    },
+  };
+}
+const watchSnapshot = (rows, closed) => ({
+  kind: "watch",
+  rows,
+  ...(closed ? { closed: true } : {}),
+});
+
+test("a failed task rejects with its message and the details the runtime gave it", async () => {
+  const details = { code: "bootstrap.request_rejected", message: "HTTP 403" };
+  const { bridge } = await scripted((command, requestId) => [
+    command.kind === "coded"
+      ? { type: "taskCompleted", requestId, ok: false, value: null, error: "HTTP 403", details }
+      : { type: "taskCompleted", requestId, ok: false, value: null, error: "plain" },
+  ]);
+  const coded = await bridge.task({ kind: "coded" }).catch((error) => error);
+  assert.equal(coded.message, "HTTP 403");
+  assert.deepEqual(coded.details, details);
+  const plain = await bridge.task({ kind: "plain" }).catch((error) => error);
+  assert.equal(plain.message, "plain");
+  assert.equal("details" in plain, false, "no details, no property");
+});
+
+test("a snapshot published with its registering task is held until the observer is attached", async () => {
+  // The runtime queues an observer's first snapshot right after the task that
+  // named it, in the same batch: it is dispatched before the task's
+  // continuation can register anybody.
+  const { bridge, publish } = await scripted((command, requestId) => [
+    { type: "taskCompleted", requestId, ok: true, value: { observerId: "3" } },
+    { type: "observerChanged", observerId: "3", snapshot: watchSnapshot([1]) },
+    { type: "observerChanged", observerId: "3", snapshot: watchSnapshot([2]) },
+  ]);
+  const { observerId } = await bridge.task({ kind: "watch" });
+  const seen = [];
+  const detach = bridge.observe(observerId, (snapshot) => seen.push(snapshot.rows));
+  assert.deepEqual(seen, [[2]], "only the latest held snapshot, delivered once");
+  publish({ type: "observerChanged", observerId: "3", snapshot: watchSnapshot([3]) });
+  assert.deepEqual(seen, [[2], [3]]);
+  detach();
+  publish({ type: "observerChanged", observerId: "3", snapshot: watchSnapshot([4]) });
+  assert.deepEqual(seen, [[2], [3]], "a detached observer hears nothing");
+});
+
+test("a terminal snapshot ends its observer; a throwing observer is reported and hears the next one", async () => {
+  const original = globalThis.reportError;
+  const reported = [];
+  globalThis.reportError = (error) => reported.push(error);
+  try {
+    const { bridge, publish } = await scripted();
+    const seen = [];
+    const failure = Error("observer failed");
+    bridge.observe("5", (snapshot) => {
+      seen.push(snapshot.rows);
+      if (seen.length === 1) throw failure;
+    });
+    publish(
+      { type: "observerChanged", observerId: "5", snapshot: watchSnapshot([1]) },
+      { type: "observerChanged", observerId: "5", snapshot: watchSnapshot([2], true) },
+      { type: "observerChanged", observerId: "5", snapshot: watchSnapshot([3]) },
+    );
+    assert.deepEqual(reported, [failure]);
+    assert.deepEqual(seen, [[1], [2]], "nothing follows a terminal snapshot");
+    // A terminal snapshot held for an observer not attached yet ends it on attach.
+    publish({ type: "observerChanged", observerId: "6", snapshot: watchSnapshot([7], true) });
+    const late = [];
+    bridge.observe("6", (snapshot) => late.push(snapshot));
+    publish({ type: "observerChanged", observerId: "6", snapshot: watchSnapshot([8]) });
+    assert.deepEqual(late.map((snapshot) => snapshot.rows), [[7]]);
   } finally {
     if (original === undefined) delete globalThis.reportError;
     else globalThis.reportError = original;

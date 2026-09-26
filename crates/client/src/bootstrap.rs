@@ -11,7 +11,7 @@
 //! **H**, the channel head its transaction observed, as a completion barrier:
 //! the run completes once `B = S` and `L >= H`
 //! ([#151](https://github.com/zanminwang/axton/issues/151)).
-use crate::bootstrap_ledger::Loaded;
+use crate::bootstrap_ledger::{LedgerIssue, Loaded};
 use crate::store::ClientStore;
 use crate::{ApplyReport, Client, Report, ReportKind};
 use axton_core::{BootstrapPage, BootstrapRequest, Result, invalid};
@@ -152,7 +152,7 @@ impl BootstrapError {
 }
 /// Cut `text` to at most `bytes` UTF-8 bytes, on a character boundary: a
 /// message is diagnostic text, never a place to lose a valid string.
-fn truncate(text: String, bytes: usize) -> String {
+pub(crate) fn truncate(text: String, bytes: usize) -> String {
     if text.len() <= bytes {
         return text;
     }
@@ -272,10 +272,26 @@ impl<S: ClientStore> Client<S> {
     /// Scope order after `rotation`, or the first of all when that was the last
     /// one. One committed read, so the transaction is closed before the request
     /// leaves; a run that is catching up waits for delivery and is skipped.
+    ///
+    /// A stored row that cannot be decoded is skipped too, so it cannot stop
+    /// every other run's pages; it is not repaired, and a named read of it
+    /// ([`Client::bootstrap_state`], [`Client::bootstrap_tasks`]) still fails.
+    /// The account of what was skipped is the Downlink worker's to give, from
+    /// the crate's `bootstrap_schedule_scan`
+    /// ([#163](https://github.com/zanminwang/axton/issues/163)).
     pub fn bootstrap_schedule(&mut self, rotation: Option<&str>) -> Result<Option<BootstrapTask>> {
+        Ok(self.bootstrap_schedule_scan(rotation)?.0)
+    }
+    /// [`Client::bootstrap_schedule`] with an issue for every active row the
+    /// read skipped because it cannot be decoded.
+    pub(crate) fn bootstrap_schedule_scan(
+        &mut self,
+        rotation: Option<&str>,
+    ) -> Result<(Option<BootstrapTask>, Vec<LedgerIssue>)> {
         self.view(|e| {
-            let tasks: Vec<BootstrapTask> = e
-                .bootstrap_task_rows()?
+            let scan = e.bootstrap_task_scan()?;
+            let tasks: Vec<BootstrapTask> = scan
+                .rows
                 .into_iter()
                 .filter(|row| row.state.state.schedulable())
                 .filter_map(|row| {
@@ -288,18 +304,29 @@ impl<S: ClientStore> Client<S> {
             let after = rotation
                 .and_then(|last| tasks.iter().find(|t| t.state.scope.as_str() > last))
                 .or_else(|| tasks.first());
-            Ok(after.cloned())
+            Ok((after.cloned(), scan.issues))
         })
     }
     /// Every run waiting for its barrier, in Scope order: what a reopen
-    /// re-evaluates before it issues any request.
+    /// re-evaluates before it issues any request. Like the schedule, it skips a
+    /// row that cannot be decoded - which therefore never supplies completion
+    /// evidence - so one damaged registration cannot hold every other reached
+    /// barrier open.
     pub fn bootstrap_barriers(&mut self) -> Result<Vec<String>> {
+        Ok(self.bootstrap_barriers_scan()?.0)
+    }
+    /// [`Client::bootstrap_barriers`] with an issue for every active row the
+    /// read skipped because it cannot be decoded.
+    pub(crate) fn bootstrap_barriers_scan(&mut self) -> Result<(Vec<String>, Vec<LedgerIssue>)> {
         self.view(|e| {
-            Ok(e.bootstrap_tasks()?
+            let scan = e.bootstrap_task_scan()?;
+            let waiting = scan
+                .rows
                 .into_iter()
-                .filter(|state| state.state == BootstrapPhase::CatchingUp)
-                .map(|state| state.scope)
-                .collect())
+                .filter(|row| row.state.state == BootstrapPhase::CatchingUp)
+                .map(|row| row.state.scope)
+                .collect();
+            Ok((waiting, scan.issues))
         })
     }
     /// Register a durable load of everything published to `scope` before its

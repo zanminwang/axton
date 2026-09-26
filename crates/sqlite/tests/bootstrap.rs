@@ -843,6 +843,142 @@ fn tasks_are_the_initialized_runs_with_work_in_scope_order() {
     );
 }
 
+/// A second handle on the client's SQLite file: the tests below corrupt a row
+/// with SQL, as a damaged or foreign writer would, and read it back raw.
+fn raw_store(path: &std::path::Path) -> SqliteStore {
+    SqliteStore::open(path).unwrap()
+}
+/// Every stored column of `channel`'s row, with each one's SQLite type: what
+/// "retained exactly as stored" is checked against.
+fn raw_row(store: &mut SqliteStore, channel: &str) -> Vec<serde_json::Value> {
+    let rows = store
+        .query_committed(
+            "SELECT channel, subscription_id, starting_cursor, cursor, bootstrap_state, \
+             bootstrap_run, bootstrap_cursor, typeof(bootstrap_cursor), bootstrap_barrier, \
+             bootstrap_error, typeof(bootstrap_error) FROM axton_subscription WHERE channel=?",
+            &[json!(channel)],
+        )
+        .unwrap();
+    rows.rows
+        .into_iter()
+        .next()
+        .expect("the row is still there")
+}
+
+/// One active row that cannot be decoded is its own registration's problem: a
+/// named read of it still fails, and so does the strict task list, but the
+/// scheduler's scan skips it - wherever it falls in Channel order - and the
+/// healthy run beside it keeps its turn. Nothing rewrites the damaged row.
+#[test]
+fn an_undecodable_active_row_does_not_block_the_schedule() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open(&path);
+    let mut ids = std::collections::BTreeMap::new();
+    for channel in ["bad", "good", "worse"] {
+        let id = origin(&mut c, channel, 5).subscription_id;
+        c.request_bootstrap(channel, id).unwrap();
+        ids.insert(channel, id);
+    }
+    let mut raw = raw_store(&path);
+    raw.execute(
+        "UPDATE axton_subscription SET bootstrap_cursor='x' WHERE channel='bad'",
+        &[],
+    )
+    .unwrap();
+    raw.execute(
+        "UPDATE axton_subscription SET bootstrap_error='{not json' WHERE channel='worse'",
+        &[],
+    )
+    .unwrap();
+    let stored = [raw_row(&mut raw, "bad"), raw_row(&mut raw, "worse")];
+    assert_eq!(stored[0][7], json!("text"), "{:?}", stored[0]);
+    assert_eq!(stored[1][10], json!("text"), "{:?}", stored[1]);
+
+    // Named reads of a damaged registration never invent a state.
+    for channel in ["bad", "worse"] {
+        c.bootstrap_state(channel, ids[channel])
+            .expect_err("a named read of an undecodable row fails");
+        c.request_bootstrap(channel, ids[channel])
+            .expect_err("so does registering against it");
+    }
+    c.bootstrap_tasks()
+        .expect_err("the strict task list keeps the decode error visible");
+
+    // The schedule rotates among the healthy runs only.
+    for rotation in [None, Some("bad"), Some("good"), Some("worse")] {
+        let task = c
+            .bootstrap_schedule(rotation)
+            .unwrap()
+            .expect("the healthy run is schedulable");
+        assert_eq!(task.state.scope, "good", "after {rotation:?}");
+        assert_eq!(task.origin, 5);
+    }
+    assert!(c.bootstrap_barriers().unwrap().is_empty());
+    let good = bootstrap(&mut c, "good");
+    assert_eq!((good.state, good.cursor), (BootstrapPhase::Requested, 0));
+
+    assert_eq!(
+        [raw_row(&mut raw, "bad"), raw_row(&mut raw, "worse")],
+        stored,
+        "the damaged rows are neither reset nor marked"
+    );
+}
+
+/// On reopen, the barrier scan finds a healthy reached barrier even beside an
+/// undecodable active row - one that is itself catching up past its barrier,
+/// and so never supplies completion evidence - and the schedule still picks
+/// the healthy requested run.
+#[test]
+fn an_undecodable_active_row_does_not_hide_a_reached_barrier() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open(&path);
+    let mut ids = std::collections::BTreeMap::new();
+    for channel in ["bad", "good", "waiting"] {
+        let id = origin(&mut c, channel, 5).subscription_id;
+        c.request_bootstrap(channel, id).unwrap();
+        ids.insert(channel, id);
+    }
+    for channel in ["bad", "waiting"] {
+        apply(&mut c, channel, &historical(channel, 0, 5, 5, 9, vec![]));
+        c.apply_page(page(channel, 5, 9, Some("live"))).unwrap();
+        assert_eq!(bootstrap(&mut c, channel).state, BootstrapPhase::CatchingUp);
+    }
+    let mut raw = raw_store(&path);
+    raw.execute(
+        "UPDATE axton_subscription SET bootstrap_error='{not json' WHERE channel='bad'",
+        &[],
+    )
+    .unwrap();
+    let stored = raw_row(&mut raw, "bad");
+    drop(c);
+
+    let mut c = open(&path);
+    c.bootstrap_state("bad", ids["bad"])
+        .expect_err("a named read of an undecodable row fails");
+    c.bootstrap_tasks()
+        .expect_err("the strict task list keeps the decode error visible");
+    let waiting = c.bootstrap_barriers().unwrap();
+    assert_eq!(waiting, vec!["waiting".to_string()]);
+    let task = c.bootstrap_schedule(None).unwrap().expect("a healthy run");
+    assert_eq!(task.state.scope, "good");
+
+    let settled = c.settle_bootstrap_barriers(&waiting).unwrap();
+    assert_eq!(settled.len(), 1);
+    assert_eq!(settled[0].scope, "waiting");
+    assert_eq!(settled[0].state, BootstrapPhase::Complete);
+    assert_eq!(
+        c.bootstrap_state("waiting", ids["waiting"]).unwrap().state,
+        BootstrapPhase::Complete
+    );
+    assert_eq!(
+        raw_row(&mut raw, "bad"),
+        stored,
+        "the damaged row is neither reset, completed nor marked"
+    );
+}
+
 /// The state the binding carries is serializable, with the phase as the stored
 /// text and an uncommitted barrier as null.
 #[test]

@@ -13,13 +13,6 @@ class HttpFailure extends HttpException {
     : super('$what failed: $statusCode $body');
 }
 
-/// A pull the server refused: a bootstrap run is failed by a refusal the
-/// server decided and retried after anything else
-/// ([#151](https://github.com/zanminwang/axton/issues/151)).
-class PullFailure extends HttpFailure {
-  PullFailure(int statusCode, String body) : super('pull', statusCode, body);
-}
-
 /// Immutable configuration reusable across independent client connections.
 class SyncServer {
   final String url;
@@ -38,38 +31,28 @@ class ServerSession {
       _token = server.token;
 
   /// `POST /sync/mutations`: one frozen push batch.
-  Future<String> push(String body, Future<void> cancellation) => _post(
-    'mutations',
-    'push',
-    body,
-    cancellation,
-    'connection_paused_or_closed',
-  );
+  Future<String> push(String body, Future<void> cancellation) =>
+      _post('mutations', 'push', body, cancellation);
 
   /// `POST /sync/actions`: one direct attempt. Its cancellation closes the
   /// socket even while the response is stalled.
-  Future<String> action(String body, Future<void> cancellation) => _post(
-    'actions',
-    'action',
-    body,
-    cancellation,
-    'action.execution_unknown',
-  );
+  Future<String> action(String body, Future<void> cancellation) =>
+      _post('actions', 'action', body, cancellation);
 
   /// `POST /sync/pull`: an ordinary catch-up or a Bootstrap page.
   Future<String> pull(String body, Future<void> cancellation) =>
-      _post('pull', 'pull', body, cancellation, 'connection_paused_or_closed');
+      _post('pull', 'pull', body, cancellation);
 
   /// One request on its own HTTP client. A 401 is [AuthenticationExpired],
   /// any other non-2xx answer an [HttpFailure] with its status; once
   /// [cancellation] completes, the token wait, the request and a stalled
-  /// response are abandoned and it fails with [cancelled].
+  /// response are abandoned and it fails with [_cancelled]. The runtime
+  /// fences a cancelled effect, so that failure only releases the caller.
   Future<String> _post(
     String path,
     String what,
     String body,
     Future<void> cancellation,
-    String cancelled,
   ) async {
     var aborted = false;
     HttpClient? http;
@@ -78,17 +61,17 @@ class ServerSession {
       cancellation.then((_) {
         aborted = true;
         http?.close(force: true);
-        if (!stopped.isCompleted) stopped.completeError(StateError(cancelled));
+        if (!stopped.isCompleted) stopped.completeError(_cancelled);
       }),
     );
     final sending = Future<String>(() async {
       final token = await _token();
-      if (aborted) throw StateError(cancelled);
+      if (aborted) throw _cancelled;
       final client = HttpClient();
       http = client;
       try {
         final request = await client.postUrl(_endpoint(path, false));
-        if (aborted) throw StateError(cancelled);
+        if (aborted) throw _cancelled;
         request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
         request.headers.contentType = ContentType.json;
         request.write(body);
@@ -96,9 +79,7 @@ class ServerSession {
         final result = await utf8.decoder.bind(response).join();
         if (response.statusCode == 401) throw const AuthenticationExpired();
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          throw what == 'pull'
-              ? PullFailure(response.statusCode, result)
-              : HttpFailure(what, response.statusCode, result);
+          throw HttpFailure(what, response.statusCode, result);
         }
         return result;
       } finally {
@@ -225,6 +206,9 @@ class ServerSession {
       }).catchError((Object error, StackTrace stack) => finish(error, stack)),
     );
   }
+
+  /// What an HTTP request its effect's cancellation abandoned fails with.
+  static StateError get _cancelled => StateError('cancelled');
 
   /// Host resource bounds; not protocol rules.
   static const int maxFrameLength = 8 * 1024 * 1024;

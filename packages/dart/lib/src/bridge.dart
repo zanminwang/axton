@@ -58,9 +58,28 @@ typedef _Detach = void Function(int runtime);
 typedef _FreeNative = Void Function(Pointer<Utf8> output);
 typedef _Free = void Function(Pointer<Utf8> output);
 
+/// What a [Bridge] drives: open, admission, drain and detach of one runtime.
+/// The C ABI below is the carrier the package ships; a test substitutes a
+/// fake to publish an exact event sequence.
+abstract interface class Carrier {
+  /// Open a runtime; its id, or 0 with the reason. Whenever events are ready
+  /// the carrier runs [wake] with that id on this isolate (the C ABI reaches
+  /// it through the process-wide wake listener).
+  (int, String?) open(String request, void Function(int runtime) wake);
+
+  /// Admit one envelope; null, or why it was refused.
+  String? submit(int runtime, String message);
+
+  /// The events published so far, in order.
+  List<dynamic> drain(int runtime);
+
+  /// Stop every wake for [runtime]; nothing is published after it.
+  void detach(int runtime);
+}
+
 /// The runtime functions of one loaded library. Every `char*` the library
 /// returns is copied into Dart and freed here exactly once.
-class _Abi {
+class _Abi implements Carrier {
   _Abi(DynamicLibrary library)
     : _open = library.lookupFunction<_OpenNative, _Open>('axton_runtime_open'),
       _submit = library.lookupFunction<_SubmitNative, _Submit>(
@@ -69,7 +88,7 @@ class _Abi {
       _drain = library.lookupFunction<_DrainNative, _Drain>(
         'axton_runtime_drain',
       ),
-      detach = library.lookupFunction<_DetachNative, _Detach>(
+      _detach = library.lookupFunction<_DetachNative, _Detach>(
         'axton_runtime_detach',
       ),
       _free = library.lookupFunction<_FreeNative, _Free>('axton_free');
@@ -77,7 +96,7 @@ class _Abi {
   final _Open _open;
   final _Submit _submit;
   final _Drain _drain;
-  final void Function(int runtime) detach;
+  final _Detach _detach;
   final _Free _free;
 
   static final _loaded = <String?, _Abi>{};
@@ -122,17 +141,21 @@ class _Abi {
     }
   }
 
-  /// Open a runtime; its id, or 0 with the reason.
-  (int, String?) open(String request, Pointer<NativeFunction<_WakeNative>> w) {
+  /// The wake runs through [Bridge]'s one native listener, whose target is
+  /// the same dispatch [wake] names.
+  @override
+  (int, String?) open(String request, void Function(int runtime) wake) {
     final text = request.toNativeUtf8();
     try {
-      return _withError((error) => _open(text, w, nullptr, error));
+      return _withError(
+        (error) => _open(text, Bridge._wakePointer, nullptr, error),
+      );
     } finally {
       malloc.free(text);
     }
   }
 
-  /// Admit one envelope; null, or why it was refused.
+  @override
   String? submit(int runtime, String message) {
     final text = message.toNativeUtf8();
     try {
@@ -145,9 +168,12 @@ class _Abi {
     }
   }
 
-  /// The events published so far.
+  @override
   List<dynamic> drain(int runtime) =>
       jsonDecode(_take(_drain(runtime))) as List<dynamic>;
+
+  @override
+  void detach(int runtime) => _detach(runtime);
 }
 
 /// One submitted input awaiting its `taskCompleted`.
@@ -235,7 +261,12 @@ class Effect {
 /// and effect handlers by operation kind. The [Bridge] is one; tests drive the
 /// handlers through a fake.
 abstract interface class RuntimeHost {
-  Future<dynamic> task(Map<String, dynamic> command);
+  /// Submit [command]; [onValue] runs with a successful value while its
+  /// completion is dispatched, before any later event of the same batch.
+  Future<dynamic> task(
+    Map<String, dynamic> command, {
+    void Function(dynamic value)? onValue,
+  });
 
   /// Run every effect of [kind] with [handler] until [stopHandling].
   void handleEffects(String kind, EffectHandler handler);
@@ -277,9 +308,9 @@ abstract interface class ObserverHost {
 
 /// The SDK side of one Rust-owned client runtime.
 class Bridge implements RuntimeHost, ObserverHost {
-  Bridge._(this._abi, this.runtimeId);
+  Bridge._(this._carrier, this.runtimeId);
 
-  final _Abi _abi;
+  final Carrier _carrier;
 
   /// The runtime's id: fresh per open, never reused.
   final int runtimeId;
@@ -295,15 +326,10 @@ class Bridge implements RuntimeHost, ObserverHost {
   bool _detached = false;
   Future<void>? _closing;
   final _terminated = Completer<void>();
-  final _changed = StreamController<List<String>>.broadcast(sync: true);
   final _reports = StreamController<Map<String, dynamic>>.broadcast(sync: true);
 
-  /// The tables of every committed local transaction, before the completion
-  /// of the task that committed it. Listener errors go to the listener's zone.
-  Stream<List<String>> get changed => _changed.stream;
-
   /// What the runtime reports that is not a task outcome: the `diagnostic` of
-  /// every `report` event.
+  /// every `report` event. Listener errors go to the listener's zone.
   Stream<Map<String, dynamic>> get reports => _reports.stream;
 
   /// `callCompleted`: a durable, direct or abandoned call's final outcome,
@@ -343,8 +369,9 @@ class Bridge implements RuntimeHost, ObserverHost {
         _woken,
       )..keepIsolateAlive = _held > 0).nativeFunction;
 
-  static void _woken(int runtime, Pointer<Void> _) =>
-      _bridges[runtime]?._drain();
+  static void _woken(int runtime, Pointer<Void> _) => _wakeRuntime(runtime);
+
+  static void _wakeRuntime(int runtime) => _bridges[runtime]?._drain();
 
   static void _hold() {
     if (_held++ == 0) _wake?.keepIsolateAlive = true;
@@ -357,15 +384,17 @@ class Bridge implements RuntimeHost, ObserverHost {
   /// Open a runtime for the database at [path] and answer once Rust opened
   /// it. A failed open throws its reason as a [StateError], after the runtime
   /// announced its end and was detached. [migration] is accepted for API
-  /// compatibility; the row-based client keeps none.
+  /// compatibility; the row-based client keeps none. [carrier] is a test
+  /// seam; the C ABI of [libraryPath] otherwise.
   static Future<Bridge> open({
     required String path,
     required Map<String, dynamic> schema,
     String? libraryPath,
     Map<String, dynamic>? migration,
     bool discardPending = false,
+    Carrier? carrier,
   }) async {
-    final abi = _Abi.load(libraryPath);
+    final opener = carrier ?? _Abi.load(libraryPath);
     final request = jsonEncode({
       'type': 'open',
       'requestId': '1',
@@ -373,11 +402,11 @@ class Bridge implements RuntimeHost, ObserverHost {
       'schema': schema,
       'discardPending': discardPending,
     });
-    final (runtime, refused) = abi.open(request, _wakePointer);
+    final (runtime, refused) = opener.open(request, _wakeRuntime);
     if (runtime == 0) throw StateError(refused ?? 'runtime open failed');
     // Registered before any wake can be delivered: the listener only posts to
     // this isolate, which runs it after this synchronous section.
-    final bridge = Bridge._(abi, runtime);
+    final bridge = Bridge._(opener, runtime);
     final route = _Route();
     bridge._routes['1'] = route;
     _hold();
@@ -475,7 +504,7 @@ class Bridge implements RuntimeHost, ObserverHost {
   /// Test seam: admit a raw envelope and answer the refusal, if any.
   String? submitRaw(Map<String, dynamic> envelope) => _detached
       ? 'client_closed'
-      : _abi.submit(runtimeId, jsonEncode(envelope));
+      : _carrier.submit(runtimeId, jsonEncode(envelope));
 
   /// Close the runtime: every waiter settles (`client_closed` for what did not
   /// complete), the runtime detaches, and this completes. Idempotent.
@@ -510,7 +539,7 @@ class Bridge implements RuntimeHost, ObserverHost {
     }
     _routes[requestId] = route;
     _hold();
-    final refused = _abi.submit(runtimeId, message);
+    final refused = _carrier.submit(runtimeId, message);
     if (refused != null && identical(_routes.remove(requestId), route)) {
       _release();
       route.completer.completeError(StateError(refused));
@@ -519,7 +548,7 @@ class Bridge implements RuntimeHost, ObserverHost {
   }
 
   void _submitQuietly(Map<String, dynamic> envelope) {
-    if (!_detached) _abi.submit(runtimeId, jsonEncode(envelope));
+    if (!_detached) _carrier.submit(runtimeId, jsonEncode(envelope));
   }
 
   /// Drain until empty, dispatching every event in order. Never re-entrant: a
@@ -529,7 +558,7 @@ class Bridge implements RuntimeHost, ObserverHost {
     _draining = true;
     try {
       while (!_detached) {
-        final batch = _abi.drain(runtimeId);
+        final batch = _carrier.drain(runtimeId);
         if (batch.isEmpty) return;
         for (final event in batch) {
           if (_detached) return;
@@ -556,8 +585,6 @@ class Bridge implements RuntimeHost, ObserverHost {
         );
       case 'cancelEffect':
         _effects[event['effectId']]?.cancel();
-      case 'changed':
-        _changed.add((event['tables'] as List).cast<String>());
       case 'report':
         _reports.add(event['diagnostic'] as Map<String, dynamic>);
       case 'callCompleted':
@@ -674,11 +701,11 @@ class Bridge implements RuntimeHost, ObserverHost {
   }
 
   /// `runtimeClosed`: fail what never completed, detach (after which no wake
-  /// runs for this id), forget the id and end the streams.
+  /// runs for this id), forget the id and end the report stream.
   void _terminate() {
     if (_detached) return;
     _detached = true;
-    _abi.detach(runtimeId);
+    _carrier.detach(runtimeId);
     _bridges.remove(runtimeId);
     for (final effect in _effects.values.toList()) {
       effect.cancel();
@@ -692,7 +719,6 @@ class Bridge implements RuntimeHost, ObserverHost {
       _release();
       route.completer.completeError(StateError('client_closed'));
     }
-    unawaited(_changed.close());
     unawaited(_reports.close());
     _terminated.complete();
   }

@@ -6,6 +6,8 @@ import 'package:axton/axton.dart';
 import 'package:axton/src/bridge.dart';
 import 'package:test/test.dart';
 
+import 'fake_carrier.dart';
+
 /// A fresh temporary file with the Entry schema, opened through the real
 /// native runtime as a [Client] or a bare [Bridge].
 class Fixture {
@@ -48,6 +50,12 @@ Map<String, dynamic> update(String text) => {
 
 Future<String?> text(Client client) async =>
     (await client.read('Entry', {'id': 'e'}))?['text'] as String?;
+
+Future<Map<String, dynamic>> envelopeFixtures() async =>
+    jsonDecode(
+          await File('../../fixtures/bridge/envelopes.json').readAsString(),
+        )
+        as Map<String, dynamic>;
 
 /// Whether [future] settles within [wait]: `'settled'` or `'pending'`.
 Future<String> settles(Future<Object?> future, [int wait = 50]) => future
@@ -243,60 +251,42 @@ void main() {
   });
 
   test('the bridge envelopes match the shared fixtures', () async {
-    final fixtures =
-        jsonDecode(
-              await File('../../fixtures/bridge/envelopes.json').readAsString(),
-            )
-            as Map<String, dynamic>;
+    final fixtures = await envelopeFixtures();
     final inputs = (fixtures['inputs'] as List).cast<Map<String, dynamic>>();
     final events = (fixtures['events'] as List).cast<Map<String, dynamic>>();
-    for (final entry in [...inputs, ...events]) {
-      expect(entry['type'], isA<String>(), reason: '$entry');
-    }
     // Every input the bridge builds has the spelling Rust decodes.
     final built = [
-      Bridge.taskEnvelope('42', {
-        'kind': 'read',
-        'key': {
-          'model': 'Todo',
-          'identity': {'id': 't'},
+      for (final input in inputs)
+        switch (input['type']) {
+          'task' => Bridge.taskEnvelope(
+            input['requestId'] as String,
+            input['command'] as Map<String, dynamic>,
+          ),
+          'transactionCommand' => Bridge.transactionCommandEnvelope(
+            input['requestId'] as String,
+            input['transactionId'] as String,
+            input['scope'] as String?,
+            input['command'] as Map<String, dynamic>,
+          ),
+          'callbackResult' => Bridge.callbackResultEnvelope(
+            input['effectId'] as String,
+            input['transactionId'] as String,
+            ok: input['ok'] as bool,
+            error: input['error'] as String?,
+          ),
+          'effectResult' => Bridge.effectResultEnvelope(
+            input['effectId'] as String,
+            ok: (input['outcome'] as Map)['ok'] as bool,
+            value: (input['outcome'] as Map)['value'],
+            error:
+                ((input['outcome'] as Map)['error'] as Map?)?['message']
+                    as String?,
+            status:
+                ((input['outcome'] as Map)['error'] as Map?)?['status'] as int?,
+          ),
+          'close' => Bridge.closeEnvelope,
+          final type => fail('unknown input type $type'),
         },
-      }),
-      Bridge.taskEnvelope('44', {'kind': 'transaction'}),
-      Bridge.transactionCommandEnvelope('43', 'tx7', 'sp1', {
-        'kind': 'direct',
-        'operation': {},
-      }),
-      Bridge.transactionCommandEnvelope('45', 'tx7', null, {
-        'kind': 'savepoint',
-      }),
-      Bridge.callbackResultEnvelope('5', 'tx7', ok: true),
-      Bridge.callbackResultEnvelope('5', 'tx7', ok: false, error: 'boom'),
-      Bridge.effectResultEnvelope('101', ok: true, value: {'event': 'opened'}),
-      Bridge.effectResultEnvelope(
-        '101',
-        ok: true,
-        value: {'event': 'message', 'body': '{}'},
-      ),
-      Bridge.effectResultEnvelope(
-        '101',
-        ok: true,
-        value: {'event': 'overflow'},
-      ),
-      Bridge.effectResultEnvelope('101', ok: true, value: {'event': 'closed'}),
-      Bridge.effectResultEnvelope(
-        '102',
-        ok: false,
-        error: 'pull failed',
-        status: 401,
-      ),
-      Bridge.effectResultEnvelope('103', ok: false, error: 'offline'),
-      Bridge.effectResultEnvelope(
-        '104',
-        ok: true,
-        value: {'status': 200, 'body': '{}'},
-      ),
-      Bridge.closeEnvelope,
     ];
     expect(jsonDecode(jsonEncode(built)), inputs);
     // Every event carries what the dispatcher switches on.
@@ -332,8 +322,6 @@ void main() {
           expect(event.containsKey('snapshot'), isTrue);
         case 'report':
           expect((event['diagnostic'] as Map)['kind'], isA<String>());
-        case 'changed':
-          expect((event['tables'] as List).cast<String>(), isNotEmpty);
         case 'runtimeClosed':
           break;
         default:
@@ -347,36 +335,239 @@ void main() {
       'callCompleted',
       'observerChanged',
       'report',
-      'changed',
       'runtimeClosed',
     });
   });
 
+  test('the commands the client builds match the shared fixtures', () async {
+    final fixtures = await envelopeFixtures();
+    final byId = <String, Map<String, dynamic>>{
+      for (final input
+          in (fixtures['inputs'] as List).cast<Map<String, dynamic>>())
+        if (input['requestId'] case final String id) id: input,
+    };
+    Map<String, dynamic> command(String id) =>
+        byId[id]!['command'] as Map<String, dynamic>;
+    // A runtime that answers every command at once, and runs the one
+    // transaction's callback.
+    String? transaction;
+    final carrier = FakeCarrier((envelope) {
+      final requestId = envelope['requestId'] as String?;
+      final kind = (envelope['command'] as Map?)?['kind'];
+      if (envelope['type'] == 'callbackResult') {
+        return [completed(transaction!)];
+      }
+      if (kind == 'transaction') {
+        transaction = requestId;
+        return [
+          {
+            'type': 'effect',
+            'effectId': '5',
+            'operation': {
+              'kind': 'callback',
+              'transactionId': 'tx7',
+              'requestId': requestId,
+            },
+          },
+        ];
+      }
+      if (requestId == null) return null;
+      return [
+        completed(requestId, switch (kind) {
+          'query' || 'sql' || 'querySpec' || 'referencing' || 'tasks' => [],
+          'status' || 'recordStatus' || 'rebuild' || 'pull' => {},
+          'enqueue' => 1,
+          'submitAction' => {'callId': 'c1', 'ordinal': 1},
+          'invoke' => {
+            'outcome': {'status': 'succeeded', 'result': null},
+          },
+          'scopeSubscribe' => {
+            'state': {'scope': 'book', 'subscriptionId': 1},
+            'observerId': '9',
+          },
+          'watch' => {'observerId': '3'},
+          'savepoint' => {'scope': 'sp1'},
+          _ => null,
+        }),
+      ];
+    });
+    final client = await Client.open(
+      path: 'unused',
+      schema: const {},
+      carrier: carrier,
+    );
+    final expected = <Map<String, dynamic>>[];
+    Future<T> step<T>(String id, Future<T> Function() call) {
+      expected.add(command(id));
+      return call();
+    }
+
+    try {
+      await step('101', () => client.read('Todo', {'id': 't'}));
+      await step('102', () => client.query('Todo', where: {'done': false}));
+      await step(
+        '103',
+        () => client.readSql(
+          'SELECT count(*) AS n FROM Todo WHERE done = ?',
+          parameters: [false],
+        ),
+      );
+      await step(
+        '104',
+        () => client.querySpec(
+          'Todo',
+          command('104')['query'] as Map<String, dynamic>,
+        ),
+      );
+      await step('105', () => client.related('Todo', {'id': 't'}, 'owner'));
+      await step(
+        '106',
+        () => client.referencing('User', {'id': 'u'}, 'Todo', 'owner'),
+      );
+      await step('107', client.syncState);
+      await step('108', () => client.recordSyncState('Todo', {'id': 't'}));
+      await step('109', client.pendingTasks);
+      await step(
+        '110',
+        () => client.mutate(command('110')['mutation'] as Map<String, dynamic>),
+      );
+      await step(
+        '113',
+        () => client.submitAction('Ping', 1, {}, store: const _Store(false)),
+      );
+      await step('114', () => client.setReadiness('k', 'ready'));
+      await step('115', () => client.drop(3));
+      await step('116', () => client.dismissRejection(4));
+      await step(
+        '117',
+        () => client.invalidateQuery('GetTodo', 1, {'id': 't'}),
+      );
+      await step('118', () => client.rebuild(discardPending: true));
+      await step('119', client.freeze);
+      await step(
+        '120',
+        () => client.acknowledge(
+          1,
+          command('120')['receipt'] as Map<String, dynamic>,
+        ),
+      );
+      await step(
+        '121',
+        () => client.applyPull(command('121')['page'] as Map<String, dynamic>),
+      );
+      final subscription = await step(
+        '122',
+        () => client.subscribeScope('book'),
+      );
+      await step('124', subscription.bootstrap);
+      await step('126', subscription.unsubscribe);
+      await step(
+        '127',
+        () => client.transaction((tx) async {
+          await step('134', () => tx.read('Todo', {'id': 't'}));
+          await step('136', () => tx.readSql('SELECT 1 AS one'));
+          await step(
+            '137',
+            () => tx.querySpec(
+              'Todo',
+              command('137')['query'] as Map<String, dynamic>,
+            ),
+          );
+          await step('138', () => tx.related('Todo', {'id': 't'}, 'owner'));
+          await step(
+            '139',
+            () => tx.referencing('User', {'id': 'u'}, 'Todo', 'owner'),
+          );
+          // A savepoint's own commands carry the scope Rust issued for it.
+          await step(
+            '143',
+            () => tx.savepoint(
+              () => step(
+                '141',
+                () => tx.direct(
+                  command('141')['operation'] as Map<String, dynamic>,
+                ),
+              ),
+            ),
+          );
+          expected
+            ..add(command('144'))
+            ..add(command('143'))
+            // A rollback names the scope it closes, the spelling the
+            // fixture shows for `release`; Rust accepts either.
+            ..add({...command('145'), 'scope': 'sp1'});
+          await tx
+              .savepoint<void>(() async => throw StateError('rolled back'))
+              .then((_) {}, onError: (Object _) {});
+        }),
+      );
+      final connection = await step(
+        '128',
+        () => client.connect(
+          SyncServer(url: 'http://127.0.0.1:1', token: () => 't'),
+          refreshAuth: () async {},
+        ),
+      );
+      await step('129', connection.pause);
+      await step(
+        '130',
+        () => client.invokeQuery(
+          'GetTodo',
+          1,
+          {'id': 't'},
+          (value) => value,
+          store: const _Store({'todo': false}),
+          once: true,
+          refresh: true,
+        ),
+      );
+      await step(
+        '131',
+        () => client.runPrerequisites({'upload': (_) async {}}),
+      );
+      final rows = step(
+        '132',
+        () async => client.watch('Todo', where: {'done': false}).listen((_) {}),
+      );
+      await pumpEventQueue();
+      await step('133', () async => (await rows).cancel());
+      expected.add({'kind': 'connection', 'event': 'stop'});
+    } finally {
+      await client.close();
+    }
+    expect(carrier.commands, expected);
+  });
+
   test(
-    'a throwing changed listener cannot stop the completion in its batch',
+    'a throwing observer listener cannot stop the completion in its batch',
     () async {
       final bridge = await fixture.bridge();
       try {
         final reported = <Object>[];
-        final done = Completer<Object?>();
-        runZonedGuarded(() {
-          bridge.changed.listen((_) => throw StateError('listener'));
-          bridge
-              .task({'kind': 'direct', 'operation': create('hello')})
-              .then(done.complete, onError: done.completeError);
-        }, (error, _) => reported.add(error));
-        await done.future.timeout(const Duration(seconds: 5));
+        final subscribed =
+            await bridge.task({'kind': 'scopeSubscribe', 'scope': 'book'})
+                as Map;
+        runZonedGuarded(
+          () => bridge.listen(
+            subscribed['observerId'] as String,
+            (_) => throw StateError('listener'),
+          ),
+          (error, _) => reported.add(error),
+        );
+        // The removal publishes the terminal snapshot before its own
+        // completion, in the same batch.
+        final state = subscribed['state'] as Map;
+        await bridge
+            .task({
+              'kind': 'scopeUnsubscribe',
+              'scope': 'book',
+              'subscriptionId': state['subscriptionId'],
+            })
+            .timeout(const Duration(seconds: 5));
         expect(reported, [
           isA<StateError>().having((e) => e.message, 'message', 'listener'),
         ]);
-        final row = await bridge.task({
-          'kind': 'read',
-          'key': {
-            'model': 'Entry',
-            'identity': {'id': 'e'},
-          },
-        });
-        expect((row as Map)['text'], 'hello');
+        expect(await bridge.task({'kind': 'status'}), isA<Map>());
       } finally {
         await bridge.close();
       }
@@ -463,3 +654,10 @@ void main() {
 }
 
 class _Thrown {}
+
+class _Store extends CallStore {
+  const _Store(this.wire);
+  final Object? wire;
+  @override
+  Object? toWire() => wire;
+}

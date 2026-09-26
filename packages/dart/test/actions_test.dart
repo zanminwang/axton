@@ -6,7 +6,54 @@ import 'package:axton/axton.dart';
 import 'package:axton/src/actions.dart' show ActionObservers, ActionWeakState;
 import 'package:test/test.dart';
 
+import 'fake_carrier.dart';
+
 void main() {
+  test(
+    'a call completed in the batch of its submission is registered first',
+    () async {
+      // The runtime publishes the submission's completion and the call's
+      // `callCompleted` in one drained batch: the handle is registered while
+      // the completion is dispatched, never in a later continuation.
+      final carrier = FakeCarrier((envelope) {
+        final command = envelope['command'] as Map<String, dynamic>?;
+        if (command?['kind'] != 'submitAction') return null;
+        return [
+          completed(envelope['requestId'] as String, {
+            'callId': 'call-1',
+            'ordinal': 1,
+          }),
+          {
+            'type': 'callCompleted',
+            'callId': 'call-1',
+            'outcome': {'status': 'succeeded', 'result': 'pong'},
+          },
+        ];
+      });
+      final client = await Client.open(
+        path: 'unused',
+        schema: const {},
+        carrier: carrier,
+      );
+      try {
+        final completions = <Map<String, dynamic>>[];
+        client.actionCompletions.listen(completions.add);
+        final call = await client.invokeAction(
+          'Ping',
+          1,
+          const {},
+          (value) => value as String,
+        );
+        final outcome = await call.wait().timeout(const Duration(seconds: 1));
+        expect((outcome as CallSuccess<String>).result, 'pong');
+        expect(call.status, CallStatus.succeeded);
+        expect(completions.single['callId'], 'call-1');
+      } finally {
+        await client.close();
+      }
+    },
+  );
+
   test('weak routes sweep without retaining an abandoned handle', () {
     final refs = <_TestWeak>[];
     final observers = ActionObservers(

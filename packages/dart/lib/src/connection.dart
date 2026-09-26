@@ -87,13 +87,10 @@ EffectHandler prerequisiteHandler(
       () => handler(effect.operation['arguments'] as Map<String, dynamic>),
     ).then(
       (_) => effect.succeed(),
-      onError: (Object thrown) => effect.fail(_reason(thrown)),
+      onError: (Object thrown) => effect.fail(thrown.toString()),
     );
   });
 }
-
-/// The text a failed prerequisite keeps.
-String _reason(Object thrown) => thrown.toString();
 
 /// One runtime-owned connection: its controls submit `connection` tasks and
 /// its effect handlers run the platform I/O. Application callbacks - the
@@ -104,7 +101,7 @@ class RuntimeConnection {
   final Future<void> Function()? _refreshAuth;
   final void Function(Object)? _onError;
   final Zone _zone;
-  final void Function()? _onClosed;
+  final void Function(RuntimeConnection connection)? _onClosed;
   late final Map<String, EffectHandler> _handlers = {
     'http': _http,
     'socket': _socket,
@@ -122,16 +119,20 @@ class RuntimeConnection {
     this._onClosed,
   ) : _zone = Zone.current;
 
-  /// Install the effect handlers and submit `connect`. A refused connect
-  /// removes them again and throws the runtime's reason.
+  /// Submit `connect`; the effect handlers are installed while its completion
+  /// is dispatched, before the first lane effect, and [onConnected] runs
+  /// there too. A refused connect - the runtime refuses a second active
+  /// connection - installs nothing and throws the runtime's reason.
   static Future<RuntimeConnection> connect({
     required RuntimeHost host,
     required ServerSession network,
     void Function(Object)? onError,
     Future<void> Function()? refreshAuth,
     Duration directTimeout = const Duration(seconds: 30),
-    void Function()? onClosed,
+    void Function(RuntimeConnection connection)? onConnected,
+    void Function(RuntimeConnection connection)? onClosed,
   }) async {
+    // Typed encoding: a Duration the wire's positive milliseconds cannot say.
     if (directTimeout.inMicroseconds <= 0) {
       throw ArgumentError.value(directTimeout, 'directTimeout');
     }
@@ -142,18 +143,17 @@ class RuntimeConnection {
       onError,
       onClosed,
     );
-    connection._install();
-    try {
-      await host.task({
+    await host.task(
+      {
         'kind': 'connect',
         'directTimeoutMs': _millis(directTimeout),
         'refreshAuth': refreshAuth != null,
-      });
-    } catch (_) {
-      connection._stopped = true;
-      connection._uninstall();
-      rethrow;
-    }
+      },
+      onValue: (_) {
+        connection._install();
+        onConnected?.call(connection);
+      },
+    );
     return connection;
   }
 
@@ -162,6 +162,7 @@ class RuntimeConnection {
       ((timeout.inMicroseconds + 999) ~/ 1000).clamp(1, 2147483647);
 
   /// Hand one `report` diagnostic to `onError`, in the zone that connected.
+  /// A closed handle hears nothing: a later connection's reports are not its.
   void report(Map<String, dynamic> diagnostic) {
     final onError = _onError;
     if (onError == null || _stopped) return;
@@ -186,10 +187,12 @@ class RuntimeConnection {
       if (error.message != 'client_closed') rethrow;
     } finally {
       _uninstall();
-      _onClosed?.call();
+      _onClosed?.call(this);
     }
   }
 
+  /// Handle identity: the runtime has no connection id, so a closed handle's
+  /// controls stop here instead of altering a later connection's lanes.
   Future<void> _control(String event) async {
     if (_stopped) return;
     await _host.task({'kind': 'connection', 'event': event});

@@ -300,6 +300,46 @@ void main() {
   );
 
   test(
+    'the runtime refuses a second active connection, concurrent or not',
+    () async {
+      final fixture = await Fixture.create('axton-dart-connect-');
+      final client = await fixture.open();
+      final server = SyncServer(
+        url: 'http://127.0.0.1:1',
+        token: () => 'secret',
+      );
+      final refused = throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          'connection already active',
+        ),
+      );
+      try {
+        final first = await client.connect(server, onError: (_) {});
+        await expectLater(client.connect(server), refused);
+        await first.close();
+        final racing = [
+          for (var i = 0; i < 2; i++)
+            client
+                .connect(server, onError: (_) {})
+                .then<Object>((c) => c, onError: (Object e) => e),
+        ];
+        final settled = await Future.wait(racing);
+        expect(settled.whereType<RuntimeConnection>(), hasLength(1));
+        expect(
+          settled.whereType<StateError>().single.message,
+          'connection already active',
+        );
+        await settled.whereType<RuntimeConnection>().single.close();
+      } finally {
+        await client.close();
+        await fixture.dispose();
+      }
+    },
+  );
+
+  test(
     'an incompatible schema keeps unsent work in the old file until rebuild is asked to leave it',
     () async {
       final fixture = await Fixture.create('axton-dart-rebuild-');

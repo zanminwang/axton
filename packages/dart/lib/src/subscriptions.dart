@@ -294,6 +294,8 @@ class Subscription {
   /// locally - offline too - and a call after a terminal failure explicitly
   /// retries the saved run.
   Future<void> bootstrap() {
+    // Handle lifetime: a closed handle's registration is gone, and a stopped
+    // one has no runtime to ask; the runtime answers the same code otherwise.
     if (_closed) return Future.error(const SubscriptionClosedException());
     return _registry._host
         .task({
@@ -330,6 +332,8 @@ class Subscription {
   /// Repeating it on a closed handle is a no-op; a handle its client stopped
   /// cannot commit work at all.
   Future<void> unsubscribe() async {
+    // Handle lifetime: nothing is left to remove, and a stopped handle has no
+    // runtime to ask.
     if (_stopped) throw const SubscriptionClosedException();
     if (_closed) return;
     await _registry._host.task({
@@ -401,7 +405,9 @@ class Subscriptions {
   void closing() => _stopping = true;
 
   /// The runtime is gone. Its terminal snapshots ended every handle it knew;
-  /// any handle still open stops here, with the status it last had.
+  /// any handle still open stops here, with the status it last had. The
+  /// bridge contract makes this a fallback: it only keeps a Dart stream from
+  /// waiting forever on a runtime that ended without its terminal snapshot.
   void close() {
     _stopping = true;
     for (final handle in _handles.values.toList()) {

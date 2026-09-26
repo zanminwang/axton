@@ -14,23 +14,25 @@ class Client implements WritePort, MutatePort {
   Future<void>? _tasks;
   bool _closed = false;
   RuntimeConnection? _connection;
-  bool _connecting = false;
-  Completer<void>? _started;
+
+  /// Connects not settled yet: close waits for them, so a connection set up
+  /// while it closes is stopped with it.
+  final _connecting = <Future<void>>{};
   Future<void>? _closing;
   final _completions = StreamController<Map<String, dynamic>>.broadcast(
     sync: true,
   );
+
+  /// Every `callCompleted` as `{callId, outcome}`, after its [Call] handle
+  /// settled.
   Stream<Map<String, dynamic>> get actionCompletions => _completions.stream;
   late final ActionObservers _actionObservers = ActionObservers();
-  void _deliverCompletions(Iterable<Map<String, dynamic>> completions) {
-    final events = completions.toList();
-    // Settle every internal waiter before invoking application stream listeners.
-    for (final event in events) {
-      _actionObservers.complete(event);
-    }
-    for (final event in events) {
-      if (!_completions.isClosed) _completions.add(event);
-    }
+
+  /// One `callCompleted`: the handle's waiter first, then the stream.
+  void _callCompleted(String callId, dynamic outcome) {
+    final event = {'callId': callId, 'outcome': outcome};
+    _actionObservers.complete(event);
+    if (!_completions.isClosed) _completions.add(event);
   }
 
   /// The runtime's direct-call codes whose execution is unknown.
@@ -76,9 +78,7 @@ class Client implements WritePort, MutatePort {
     _bridge.reports.listen((diagnostic) => _connection?.report(diagnostic));
     // Durable, direct and abandoned calls, after the commit that decided
     // them - including those a drop, a receipt or a page settled.
-    _bridge.onCallCompleted = (callId, outcome) => _deliverCompletions([
-      {'callId': callId, 'outcome': outcome},
-    ]);
+    _bridge.onCallCompleted = _callCompleted;
   }
   static Future<Client> open({
     required String path,
@@ -88,6 +88,9 @@ class Client implements WritePort, MutatePort {
 
     /// Rebuild at once when the schema is incompatible, leaving unsent work in the old file.
     bool discardPending = false,
+
+    /// Test seam: the carrier to drive instead of the library's C ABI.
+    Carrier? carrier,
   }) async {
     final bridge = await Bridge.open(
       path: path,
@@ -95,6 +98,7 @@ class Client implements WritePort, MutatePort {
       libraryPath: libraryPath,
       migration: migration,
       discardPending: discardPending,
+      carrier: carrier,
     );
     return Client._(bridge, bridge.opened['clientId'] as String);
   }
@@ -223,6 +227,8 @@ class Client implements WritePort, MutatePort {
       // Close is priority control: a submission still queued when the client
       // began closing never runs. Its caller gets the handle close gives every
       // call it can no longer observe, as when the submission ran first.
+      // Platform-specific: only this client object knows the call began
+      // before its own close; the runtime answers `client_closed` either way.
       if (!closedBefore &&
           _closing != null &&
           error is StateError &&
@@ -271,7 +277,8 @@ class Client implements WritePort, MutatePort {
       invoked = await _invoke(name, version, args, store, once, refresh);
     } catch (error) {
       // A once caller the closing client left waiting hears that it closed,
-      // as every call close can no longer observe does.
+      // as every call close can no longer observe does. Platform-specific: the
+      // public error depends on this object's close, not on the runtime.
       if (once &&
           !closedBefore &&
           _closing != null &&
@@ -327,35 +334,37 @@ class Client implements WritePort, MutatePort {
     return await _bridge.task({'kind': 'enqueue', 'mutation': mutation}) as int;
   }
 
-  /// Internal Action seam: [onCommitted] runs once the submission committed,
-  /// before any completion of the call can be delivered.
+  /// Internal Action seam: [onCommitted] runs while the submission's
+  /// completion is dispatched, so a `callCompleted` later in the same batch
+  /// always finds the handle it registers.
   Future<Map<String, dynamic>> submitAction(
     String name,
     int version,
     Map<String, dynamic> args, {
     void Function(String callId, int ordinal)? onCommitted,
     CallStore? store,
-  }) {
+  }) async {
     final wire = store?.toWire();
     if (_activeTxToken != null &&
-        identical(Zone.current[_txZoneKey], _activeTxToken))
-      return Future.error(StateError('transaction_active'));
-    return _bridge
-        .task({
-          'kind': 'submitAction',
-          'name': name,
-          'version': version,
-          'args': args,
-          if (wire != null) 'store': wire,
-        })
-        .then((value) {
-          final submitted = value as Map<String, dynamic>;
-          onCommitted?.call(
-            submitted['callId'] as String,
-            submitted['ordinal'] as int,
-          );
-          return submitted;
-        });
+        identical(Zone.current[_txZoneKey], _activeTxToken)) {
+      throw StateError('transaction_active');
+    }
+    return await _bridge.task(
+          {
+            'kind': 'submitAction',
+            'name': name,
+            'version': version,
+            'args': args,
+            if (wire != null) 'store': wire,
+          },
+          onValue: onCommitted == null
+              ? null
+              : (value) => onCommitted(
+                  (value as Map)['callId'] as String,
+                  value['ordinal'] as int,
+                ),
+        )
+        as Map<String, dynamic>;
   }
 
   /// One direct call: the runtime prepares the request, sends it, bounds it
@@ -420,6 +429,8 @@ class Client implements WritePort, MutatePort {
 
   /// Connect to [server]: the runtime runs both lanes and every direct call
   /// from here on, and this client only executes the effects it asks for.
+  /// The runtime refuses a second active connection
+  /// (`connection already active`).
   Future<RuntimeConnection> connect(
     SyncServer server, {
     void Function(Object)? onError,
@@ -427,31 +438,25 @@ class Client implements WritePort, MutatePort {
     Duration directTimeout = const Duration(seconds: 30),
   }) async {
     final live = ServerSession(server);
-    if (_closed || _closing != null) throw StateError('client_closed');
-    if (_connecting || _connection != null) {
-      throw StateError('connection already active');
-    }
-    _connecting = true;
-    final started = Completer<void>();
-    _started = started;
-    try {
-      late final RuntimeConnection connection;
-      connection = await RuntimeConnection.connect(
-        host: _bridge,
-        network: live,
-        onError: onError,
-        refreshAuth: refreshAuth,
-        directTimeout: directTimeout,
-        onClosed: () {
-          if (identical(_connection, connection)) _connection = null;
-        },
-      );
-      _connection = connection;
-      return connection;
-    } finally {
-      _connecting = false;
-      started.complete();
-    }
+    // Close has begun: a connect admitted now would outlive it.
+    if (_closing != null) throw StateError('client_closed');
+    final connecting = RuntimeConnection.connect(
+      host: _bridge,
+      network: live,
+      onError: onError,
+      refreshAuth: refreshAuth,
+      directTimeout: directTimeout,
+      // While the completion is dispatched: a report later in the same batch
+      // already reaches this connection's onError.
+      onConnected: (connection) => _connection = connection,
+      onClosed: (connection) {
+        if (identical(_connection, connection)) _connection = null;
+      },
+    );
+    final settled = connecting.then<void>((_) {}, onError: (Object _) {});
+    _connecting.add(settled);
+    unawaited(settled.whenComplete(() => _connecting.remove(settled)));
+    return await connecting;
   }
 
   /// Run every pending prerequisite task this client has a handler for. Rust
@@ -616,7 +621,7 @@ class Client implements WritePort, MutatePort {
     // The runtime stops every handle and watch with a terminal snapshot before
     // it announces its end.
     _subscriptions.closing();
-    await _started?.future;
+    await Future.wait(_connecting.toList());
     await _connection?.close();
     try {
       await _bridge.close();
@@ -638,7 +643,11 @@ class ClientScopes {
 
 /// The application callback's handle on the local transaction Rust owns.
 /// Its commands carry the runtime's transaction id and the savepoint scope of
-/// the zone they are issued from; Rust runs them in submission order.
+/// the zone they are issued from; Rust runs them in submission order and
+/// decides commit or rollback: scope checks, failure accounting and the
+/// refusal of a poisoned unit are its own. What stays here is what only the
+/// language sees - which zone issued a command, and whether the callback
+/// awaited what it started.
 class Transaction implements WritePort {
   final Client _client;
   final String _transactionId;
@@ -648,7 +657,12 @@ class Transaction implements WritePort {
   /// Settles once every command submitted so far has settled.
   Future<void> _tail = Future<void>.value();
   int _pending = 0;
+
+  /// The first command failure not undone by a savepoint rollback: what a
+  /// savepoint compares to decide it rolls back.
   Object? _failure;
+
+  /// Zone misuse the runtime cannot see: overlapping or unawaited savepoints.
   Object? _structural;
   final Object _zoneKey = Object();
   Object? _active;
@@ -685,6 +699,8 @@ class Transaction implements WritePort {
   }
 
   Future<dynamic> _send(Map<String, dynamic> command) {
+    // The callback's Future ended: a late command must not reach the runtime
+    // before the callback's result does.
     if (!_open) return Future.error(StateError('transaction_closed'));
     if (_active != null && Zone.current[_zoneKey] != _active) {
       _structural = StateError('overlapping savepoint work');
@@ -693,13 +709,15 @@ class Transaction implements WritePort {
     return _queue(command, _scopeOf(Zone.current));
   }
 
+  /// The callback returned. A command it did not await fails the unit even
+  /// if the runtime already ran it: only the language knows it was not
+  /// awaited. A failed command it caught is the runtime's to refuse at commit.
   Future<void> _finish() async {
     final outstanding = _pending > 0 || _scopes.isNotEmpty;
     _open = false;
     await _tail;
     if (_structural != null) throw _structural!;
     if (outstanding) throw StateError('unawaited transaction operation');
-    if (_failure != null) throw _failure!;
   }
 
   Future<Map<String, dynamic>?> read(
@@ -789,6 +807,9 @@ class Transaction implements WritePort {
           _structural = StateError('unawaited nested savepoint');
           throw _structural!;
         }
+        // A command that failed in this savepoint's body rolls it back even
+        // when caught; Rust's `release` does not refuse a poisoned scope, so
+        // this choice stays here until it does.
         if (_failure != failure) throw _failure!;
         if (_structural != null) throw _structural!;
         await _queue({'kind': 'release', 'scope': scope}, scope);

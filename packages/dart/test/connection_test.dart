@@ -26,10 +26,18 @@ class FakeHost implements RuntimeHost {
   /// What a task answers; tasks succeed with null by default.
   Future<dynamic> Function(Map<String, dynamic> command)? answer;
 
+  /// Records [command] and answers it; [onValue] runs with a successful
+  /// value before the caller resumes, as the Bridge runs it while
+  /// dispatching the completion.
   @override
-  Future<dynamic> task(Map<String, dynamic> command) async {
+  Future<dynamic> task(
+    Map<String, dynamic> command, {
+    void Function(dynamic value)? onValue,
+  }) async {
     tasks.add(command);
-    return answer?.call(command);
+    final value = await answer?.call(command);
+    onValue?.call(value);
+    return value;
   }
 
   @override
@@ -206,7 +214,7 @@ void main() {
       },
     );
 
-    test('a refused connect removes its handlers', () async {
+    test('a refused connect installs no handlers', () async {
       host.answer = (_) async => throw StateError('connection already active');
       await expectLater(
         connect(),
@@ -220,6 +228,21 @@ void main() {
       );
       expect(host.handlers, isEmpty);
     });
+
+    test(
+      'a second connect the runtime refuses leaves the active connection its handlers',
+      () async {
+        final first = await connect();
+        final installed = Map.of(host.handlers);
+        host.answer = (_) async =>
+            throw StateError('connection already active');
+        await expectLater(connect(), throwsStateError);
+        expect(host.handlers, installed);
+        host.answer = null;
+        await first.close();
+        expect(host.handlers, isEmpty);
+      },
+    );
 
     test(
       'http posts each route to its endpoint and answers the text',

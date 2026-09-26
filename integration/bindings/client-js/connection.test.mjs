@@ -507,6 +507,31 @@ test("a downlink bootstrap page runs without a session and reports its status", 
 });
 
 /**
+ * A stored Bootstrap row the worker cannot decode reaches `onError` once, as an
+ * `Error` naming the channel and the bounded reason; it is no status
+ * transition, so the subscription status projection hears nothing
+ * ([#163](https://github.com/zanminwang/axton/issues/163)).
+ */
+test("a downlink ledger issue reaches onError without a status transition", async () => {
+  const reported = [];
+  const signals = [];
+  const message = "the stored Bootstrap row cannot be decoded: expected an unsigned integer";
+  const { lane } = downlinkLane(
+    [[{ type: "ledgerIssue", channel: "a", message }]],
+    {},
+    { onError: (error) => reported.push(error) },
+    (signal) => signals.push(signal),
+  );
+  const downlink = await lane;
+  await settled();
+  assert.equal(reported.length, 1, "one error for one issue");
+  assert.ok(reported[0] instanceof Error);
+  assert.equal(reported[0].message, `bootstrap ledger a: ${message}`);
+  assert.deepEqual(signals, [], "no status transition");
+  await downlink.close();
+});
+
+/**
  * A page the lane abandoned itself is not the application's failure: `pause`
  * aborts it silently, the worker still hears `failed` so it can clear its slot,
  * and `resume` fetches again on a fresh cancellation

@@ -4,6 +4,7 @@
 //! credential refresh. A callback enqueues what arrived and wakes the loop; the
 //! loop pumps, and only a pump commits
 //! ([Downlink worker](../../../docs/engineering/architecture/client/connection/controller/downlink-worker.md)).
+use crate::bootstrap_ledger::LedgerIssue;
 use crate::*;
 use std::collections::VecDeque;
 
@@ -97,6 +98,15 @@ pub enum DownlinkAction {
     /// The SDKs turn it into the `live` connection status; no sync decision
     /// depends on it.
     Acknowledged { scopes: Vec<String> },
+    /// A stored Bootstrap row of `channel` cannot be decoded, so the schedule
+    /// and the barrier settlement skip it: the host hands `message`, a bounded
+    /// reason, to the application's error handler. The row is kept as stored
+    /// and a named read of it still fails. Announced once per defect for the
+    /// worker's lifetime - a changed defect, or one that returns after a
+    /// repair or a removal, is announced again - and it is neither a committed
+    /// `bootstrap` transition nor a record `report`
+    /// ([#163](https://github.com/zanminwang/axton/issues/163)).
+    LedgerIssue { channel: String, message: String },
     /// Nothing to do for `millis`; then pump again.
     Wait { millis: u64 },
     /// The replica under the lane was rebuilt: abandon the socket and every
@@ -200,6 +210,14 @@ impl Loading {
     }
 }
 
+/// Which rows a ledger scan read: every active one, or only the candidates it
+/// was asked about.
+#[derive(Clone, Copy, PartialEq)]
+enum Scan {
+    Complete,
+    Candidates,
+}
+
 /// Streamed page frames held in the queue. Beyond this the queue is discarded
 /// whole and every channel recovers from the durable cursor: the server log is
 /// the durable queue, the cursor the pointer into it. Control work is queued
@@ -248,6 +266,10 @@ pub struct DownlinkWorker {
     /// The replica was rebuilt since the last pump: the next one tells the
     /// host to abandon the old replica's I/O before anything else.
     reset: bool,
+    /// The ledger issue last announced for each channel, by fingerprint: a
+    /// scan that finds the same defect again announces nothing
+    /// ([`DownlinkWorker::ledger`]).
+    reported: BTreeMap<String, String>,
 }
 
 /// Whether an HTTP status is a refusal the server decided, which no retry can
@@ -423,6 +445,8 @@ impl DownlinkWorker {
         // local read and at most a commit, never I/O - before `resume`.
         self.reopened = running;
         self.reset = true;
+        // The fresh replica carries no row this map describes.
+        self.reported.clear();
     }
 
     /// The next catch-up or historical request id: one id space, never reused.
@@ -556,14 +580,17 @@ impl DownlinkWorker {
         let mut actions = vec![];
         // The host abandons the old replica's I/O before it opens or requests
         // anything for the new one. A pump that fails drops what it collected,
-        // so the reset is owed to the next one.
+        // so the reset is owed to the next one, and so is every ledger issue
+        // it announced: what it remembered as reported is forgotten again.
         let reset = std::mem::take(&mut self.reset);
         if reset {
             actions.push(DownlinkAction::Reset);
         }
+        let reported = self.reported.clone();
         let pumped = self.advance(client, now, entropy, &mut actions);
         if pumped.is_err() {
             self.reset |= reset;
+            self.reported = reported;
         }
         pumped.map(|()| actions)
     }
@@ -699,8 +726,10 @@ impl DownlinkWorker {
         client: &mut Client<S>,
         actions: &mut Vec<DownlinkAction>,
     ) -> Result<bool> {
-        let waiting = client.bootstrap_barriers()?;
-        let settled = client.settle_bootstrap_barriers(&waiting)?;
+        let (waiting, issues) = client.bootstrap_barriers_scan()?;
+        self.ledger(issues, Scan::Complete, actions);
+        let (settled, issues) = client.settle_bootstrap_barriers_scan(&waiting)?;
+        self.ledger(issues, Scan::Candidates, actions);
         let committed = !settled.is_empty();
         for state in settled {
             actions.push(DownlinkAction::Bootstrap(state));
@@ -729,10 +758,37 @@ impl DownlinkWorker {
         if moved.is_empty() {
             return Ok(());
         }
-        for state in client.settle_bootstrap_barriers(&moved)? {
+        let (settled, issues) = client.settle_bootstrap_barriers_scan(&moved)?;
+        self.ledger(issues, Scan::Candidates, actions);
+        for state in settled {
             actions.push(DownlinkAction::Bootstrap(state));
         }
         Ok(())
+    }
+
+    /// Announce the rows a ledger scan skipped because they cannot be decoded,
+    /// each defect once: an issue whose fingerprint is the one last announced
+    /// for its channel says nothing new, so no pump, wake or delivery that
+    /// leaves the defect as it was repeats it. A complete scan saw every active
+    /// row, so a channel it found healthy or absent is forgotten, and the same
+    /// defect coming back after a repair or a removal is announced again. A
+    /// candidate scan saw only the rows it was asked about and forgets nothing
+    /// ([#163](https://github.com/zanminwang/axton/issues/163)).
+    fn ledger(&mut self, issues: Vec<LedgerIssue>, scan: Scan, actions: &mut Vec<DownlinkAction>) {
+        if scan == Scan::Complete {
+            self.reported
+                .retain(|channel, _| issues.iter().any(|issue| &issue.channel == channel));
+        }
+        for issue in issues {
+            if self.reported.get(&issue.channel) == Some(&issue.fingerprint) {
+                continue;
+            }
+            actions.push(DownlinkAction::LedgerIssue {
+                channel: issue.channel.clone(),
+                message: issue.detail,
+            });
+            self.reported.insert(issue.channel, issue.fingerprint);
+        }
     }
 
     /// The historical work class: apply what the request in flight answered,
@@ -907,7 +963,9 @@ impl DownlinkWorker {
         if self.loading.due > now {
             return Ok(());
         }
-        let Some(task) = client.bootstrap_schedule(self.loading.rotation.as_deref())? else {
+        let (task, issues) = client.bootstrap_schedule_scan(self.loading.rotation.as_deref())?;
+        self.ledger(issues, Scan::Complete, actions);
+        let Some(task) = task else {
             // Nothing is schedulable: a wake says when to look again.
             self.loading.dirty = false;
             return Ok(());

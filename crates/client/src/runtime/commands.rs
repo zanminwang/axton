@@ -262,10 +262,11 @@ pub(super) fn execute<S: ClientStore + 'static>(
                 .transpose()?
                 .unwrap_or(false);
             let report = client.rebuild(discard)?;
-            // The lanes restart with the fresh replica, as the former host
-            // did; #162 settles what a rebuild resets.
+            // The push cycle starts over with the fresh replica; the worker
+            // forgets the old one but keeps its intent and its identifier
+            // allocators, so no answer to old I/O can match new I/O (#162).
             lanes.cycle = SyncCycle::default();
-            lanes.downlink = DownlinkWorker::default();
+            lanes.downlink.reset_for_rebuild();
             json!({"oldFile":report.old_file,"newFile":report.new_file,"reason":report.reason,"leftPending":report.left_pending,"leftDirect":report.left_direct,"abandonedCalls":abandoned_json(&report.abandoned_calls)})
         }
         _ => return Err(invalid(format!("unknown client command {kind}"))),

@@ -372,6 +372,38 @@ impl DownlinkWorker {
         }
     }
 
+    /// The replica behind the lane was replaced by a rebuild: forget
+    /// everything learned from the old one and keep the lane's intent
+    /// ([#162](https://github.com/zanminwang/axton/issues/162)).
+    ///
+    /// The session, its queues and requests, the Bootstrap slot and its
+    /// schedule, and the retry state are cleared; the socket epoch allocator
+    /// and the request id counter are kept, so no id issued before the reset
+    /// is ever issued again and every answer still addressed to an old socket
+    /// or request is ignored. No closing action is produced: the caller
+    /// abandons the old host I/O itself. A running lane is due at once and
+    /// re-evaluates the persisted barriers first, as on `start`; a paused one
+    /// stays paused until `resume`; a stopped one stays stopped.
+    pub fn reset_for_rebuild(&mut self) {
+        let running = self.driver.running();
+        let paused = self.driver.paused();
+        self.end(None);
+        self.closing = None;
+        self.bootstrap = None;
+        self.loaded = None;
+        self.loading = Loading::default();
+        self.driver = ConnectionDriver::default();
+        self.reopened = false;
+        if running {
+            self.driver.start(0);
+            self.loading.restart(0);
+            self.reopened = true;
+            if paused {
+                self.driver.pause();
+            }
+        }
+    }
+
     /// Whether `request` is the catch-up in flight. An answer or failure of any
     /// other belongs to a session that is gone.
     fn answers(&self, request: u64) -> bool {

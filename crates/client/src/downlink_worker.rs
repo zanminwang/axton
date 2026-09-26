@@ -74,7 +74,7 @@ pub enum DownlinkAction {
     /// abandons it and its failure ends the session. A `bootstrap` request is
     /// one Scope's historical page on the same route: it belongs to the lane,
     /// not to a socket, so it outlives the session, its failure ends none, and
-    /// only `pause` and `close` abandon it.
+    /// only `pause`, `reset` and `close` abandon it.
     Request {
         request: u64,
         body: String,

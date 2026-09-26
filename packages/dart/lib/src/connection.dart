@@ -297,8 +297,8 @@ class DownlinkLane implements LaneControls {
   int _outstanding = 0;
 
   /// What abandons the historical pages in flight. They belong to the lane, not
-  /// to a socket, so only `pause` and `close` abandon them and a replaced
-  /// socket leaves them alone
+  /// to a socket, so only `pause`, `reset` and `close` abandon them and a
+  /// replaced socket leaves them alone
   /// ([#151](https://github.com/zanminwang/axton/issues/151)).
   Completer<void> _loading = Completer<void>();
 

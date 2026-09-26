@@ -203,7 +203,7 @@ export type DownlinkAction =
    * `POST /sync/pull`. An ordinary catch-up belongs to the open session, so the
    * session's cancellation abandons it and its failure ends the session. A
    * `bootstrap` page belongs to the lane: it outlives the session, its failure
-   * ends none, and only `pause` and `close` abandon it
+   * ends none, and only `pause`, `reset` and `close` abandon it
    * ([#151](https://github.com/zanminwang/axton/issues/151)).
    */
   | { type: "request"; request: number; body: string; bootstrap: boolean }
@@ -295,8 +295,8 @@ export async function startDownlinkLane(
   let session: Session | undefined;
   /**
    * What abandons the historical pages in flight. They belong to the lane, not
-   * to a socket, so only `pause` and `close` abandon them and a replaced socket
-   * leaves them alone ([#151](https://github.com/zanminwang/axton/issues/151)).
+   * to a socket, so only `pause`, `reset` and `close` abandon them and a
+   * replaced socket leaves them alone ([#151](https://github.com/zanminwang/axton/issues/151)).
    */
   let loading = new AbortController();
   /** Catch-up requests of the open session that have not answered yet. */

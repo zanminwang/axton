@@ -673,7 +673,8 @@ test("a rebuild wakes the sleeping downlink lane without another start", async (
         new Promise((_, reject) =>
           signal?.addEventListener("abort", () => reject(Error("connection_closed")), { once: true }),
         ),
-      open: (subscribe, signal) => sockets.push({ subscribe: JSON.parse(subscribe), signal }),
+      open: (subscribe, signal, on) =>
+        sockets.push({ subscribe: JSON.parse(subscribe), signal, on }),
     }),
   );
   let client;
@@ -727,6 +728,29 @@ test("a rebuild wakes the sleeping downlink lane without another start", async (
     assert.equal(sockets.length, 2);
     assert.deepEqual(sockets[1].subscribe.channels, ["scope"]);
     assert.equal(sockets[1].signal.aborted, false, "the new socket stays open");
+    // The old socket still delivers a page for the carried Channel after the
+    // rebuild: its epoch names no current session, so the fresh replica never
+    // sees it.
+    const before = await client.syncState();
+    await sockets[0].on.message(
+      JSON.stringify({
+        cursors: { scope: { from: 0, to: 9, head: 9 } },
+        changes: [
+          {
+            model: "Entry",
+            identity: { id: "late" },
+            stamp: 9,
+            state: { text: "late", note: null, due: "now" },
+          },
+        ],
+      }),
+    );
+    await settled();
+    const later = await client.syncState();
+    assert.deepEqual(later.cursors, before.cursors, "the stale page moved no cursor");
+    assert.deepEqual(later.channels, before.channels);
+    assert.equal(sockets.length, 2, "the stale page ended no session");
+    assert.equal(sockets[1].signal.aborted, false);
     assert.deepEqual(reported, []);
   } finally {
     await connection?.close();

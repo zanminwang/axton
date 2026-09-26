@@ -690,7 +690,7 @@ fn epoch(action: &Value) -> u64 {
     assert_eq!(action["type"], "open", "{action}");
     action["epoch"].as_u64().unwrap()
 }
-/// The actions of these types, in order.
+/// The actions of one type, in order.
 fn only<'a>(actions: &'a Value, kind: &str) -> Vec<&'a Value> {
     actions
         .as_array()

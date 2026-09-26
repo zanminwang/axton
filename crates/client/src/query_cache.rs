@@ -194,10 +194,10 @@ pub(crate) fn prune<S: ClientStore>(store: &mut S, contract: &str) -> Result<()>
 }
 
 impl<S: ClientStore> Engine<'_, S> {
-    pub(crate) fn query_cache_entry(
-        &mut self,
-        key: &QueryCacheKey,
-    ) -> Result<Option<QueryCacheEntry>> {
+    /// The committed row for `key`: `Ok(None)` when there is none,
+    /// `Ok(Some(Err(_)))` when its content cannot be decoded. SQL failures
+    /// are errors.
+    fn query_cache_row(&mut self, key: &QueryCacheKey) -> Result<Option<Result<QueryCacheEntry>>> {
         let rows = self.rows(
             "SELECT generation, result FROM axton_query_cache WHERE key = ?",
             &[json!(key.key)],
@@ -205,16 +205,24 @@ impl<S: ClientStore> Engine<'_, S> {
         let Some(row) = rows.rows.into_iter().next() else {
             return Ok(None);
         };
-        let generation = row[0]
-            .as_str()
-            .ok_or_else(|| invalid("query cache generation is not text"))?
-            .to_string();
-        let result = match &row[1] {
-            Value::Null => None,
-            Value::String(text) => Some(serde_json::from_str(text)?),
-            _ => return Err(invalid("query cache result is not text")),
-        };
-        Ok(Some(QueryCacheEntry { generation, result }))
+        Ok(Some((|| {
+            let generation = row[0]
+                .as_str()
+                .ok_or_else(|| invalid("query cache generation is not text"))?
+                .to_string();
+            let result = match &row[1] {
+                Value::Null => None,
+                Value::String(text) => Some(serde_json::from_str(text)?),
+                _ => return Err(invalid("query cache result is not text")),
+            };
+            Ok(QueryCacheEntry { generation, result })
+        })()))
+    }
+    pub(crate) fn query_cache_entry(
+        &mut self,
+        key: &QueryCacheKey,
+    ) -> Result<Option<QueryCacheEntry>> {
+        self.query_cache_row(key)?.transpose()
     }
     /// Save `result` when the row still has the generation the request saw
     /// (`None`: no row existed). Returns whether it was saved; a newer
@@ -401,24 +409,28 @@ impl<S: ClientStore> Client<S> {
             return Err(invalid("client transaction active"));
         }
         let key = self.query_cache_key(name, version, args, &options.store)?;
-        let mut entry = self.view(|engine| engine.query_cache_entry(&key))?;
-        if let Some(QueryCacheEntry {
-            result: Some(result),
-            ..
-        }) = &entry
-        {
-            let action = self.schema.action(name, version)?;
-            match validate_action_result(&self.schema, action, result) {
-                Ok(result) if !options.refresh => return Ok(QueryOnce::Cached { result }),
-                Ok(_) => {}
-                // A snapshot the current output contract refuses is
-                // discarded, and this call misses.
-                Err(_) => {
-                    self.write(|engine| engine.invalidate_query_key(&key))?;
-                    entry = self.view(|engine| engine.query_cache_entry(&key))?;
-                }
+        let action = self.schema.action(name, version)?.clone();
+        // A row that does not decode, or a snapshot the current output
+        // contract refuses, is discarded and this call misses.
+        let usable = match self.view(|engine| engine.query_cache_row(&key))? {
+            None => Ok(None),
+            Some(Err(_)) => Err(()),
+            Some(Ok(entry)) => match &entry.result {
+                None => Ok(Some(entry)),
+                Some(result) => match validate_action_result(&self.schema, &action, result) {
+                    Ok(result) if !options.refresh => return Ok(QueryOnce::Cached { result }),
+                    Ok(_) => Ok(Some(entry)),
+                    Err(_) => Err(()),
+                },
+            },
+        };
+        let entry = match usable {
+            Ok(entry) => entry,
+            Err(()) => {
+                self.write(|engine| engine.invalidate_query_key(&key))?;
+                self.view(|engine| engine.query_cache_entry(&key))?
             }
-        }
+        };
         let generation = entry.map(|entry| entry.generation);
         let join = (key.key.clone(), generation.clone());
         if let Some(flight_id) = self.query_flights.joins.get(&join) {

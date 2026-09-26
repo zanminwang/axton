@@ -930,6 +930,28 @@ fn a_malformed_snapshot_is_invalidated_and_missed_but_read_errors_surface() {
 }
 
 #[test]
+fn a_snapshot_that_is_not_json_is_invalidated_and_missed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut client = open(&path);
+    let (flight, request) = fetch(begin(&mut client, false));
+    client
+        .finish_query_once(&flight, &succeeded(&request, "A", 1))
+        .unwrap();
+    SqliteStore::open(&path)
+        .unwrap()
+        .execute_batch("UPDATE axton_query_cache SET result = 'not json {'")
+        .unwrap();
+    let (retry, retry_request) = fetch(begin(&mut client, false));
+    let k = key(&client, args(), ActionStore::All);
+    assert_eq!(client.query_cache_entry(&k).unwrap().unwrap().result, None);
+    client
+        .finish_query_once(&retry, &succeeded(&retry_request, "B", 2))
+        .unwrap();
+    assert_eq!(cached(begin(&mut client, false)), titled("B"));
+}
+
+#[test]
 fn saved_results_survive_reopen_but_active_flights_do_not() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");

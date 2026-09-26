@@ -197,8 +197,9 @@ test('a record that moves above the origin comes from delivery, and the load sti
   await held.entered;
   assert.equal((await ledger(client, SCOPE)).bootstrap_cursor, 0, 'no page has been applied yet');
   await app.republish(['moving'], SCOPE);
-  assert.equal(await app.positionOf(SCOPE, 'moving'), 121, 'the republication replaced its one retained position');
-  assert.ok(121 > S, 'its latest publication is above the origin');
+  const republished = await app.positionOf(SCOPE, 'moving');
+  assert.equal(republished, 121, 'the republication replaced its one retained position');
+  assert.ok(republished > S, `its latest publication is above the origin: ${republished} > ${S}`);
 
   // Normal delivery supplies it while the historical interval is untouched.
   await wait(async () => (await client.models.entry.get({ id: 'moving' }))?.text === 'the record that moves', 'live delivery of the moved record');
@@ -217,10 +218,9 @@ test('a record that moves above the origin comes from delivery, and the load sti
   assert.deepEqual(observed.seen.at(-1), 'complete');
   observed.stop();
 
-  // Bounded pages, a fixed upper bound, and the compacted row the move left
-  // behind: the first page scans 50 positions and finds 49 records.
-  // The move left a hole where position 41 was, so the first page's fifty rows
-  // span fifty-one positions and the next one continues from 51: a compacted
+  // Bounded pages with a fixed upper bound, and the compacted row the move left
+  // behind: position 41 is now a hole, so the first page's fifty rows
+  // span fifty-one positions and the next page continues from 51. A compacted
   // interval is expected, not a defect.
   assert.deepEqual(net.loads.map(load => load.after), [0, 51, 101], 'each page continued from committed progress');
   assert.deepEqual([...new Set(net.loads.map(load => load.until))], [S], 'every page is bounded by the origin, never by a moving head');

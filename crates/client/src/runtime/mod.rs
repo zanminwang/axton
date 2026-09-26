@@ -55,7 +55,7 @@
 //! outstanding effect, ends the observers and queues [`Event::RuntimeClosed`]
 //! last. After it, [`ClientRuntime::receive`] answers [`BridgeError::Closed`].
 //!
-//! # Connection lanes and effects
+//! # Connection lanes, direct calls and effects
 //!
 //! A `connect` task records the connection intent and starts both lanes: the
 //! push lane (`ConnectionDriver` + `SyncCycle`) and the Downlink worker. From
@@ -68,7 +68,7 @@
 //! Downlink worker event without touching the database. [`ClientRuntime::step`]
 //! then runs one unit: the application transaction's own lane first, then it
 //! alternates between one ordinary task and one *lane unit* - a ready
-//! continuation (a receipt), else a
+//! continuation (a receipt, a direct response, a prerequisite outcome), else a
 //! Downlink pump, else a push-lane turn - so neither starves. Each unit holds
 //! at most one local transaction and none is held across an effect: prepare,
 //! effect and apply are three units. Every ordinary task or continuation that
@@ -82,17 +82,24 @@
 //! - `transactions`: the active transaction, its capability tokens, savepoint
 //!   stack, failure accounting and the callback effect.
 //! - `effects`: the effect table, result correlation, ready continuations and
-//!   the one credential refresh the lanes share.
+//!   the one credential refresh the lanes and direct calls share.
 //! - `lanes`: the connection intent, its controls, the push lane and the
 //!   Downlink worker as runtime work.
+//! - `direct`: direct Query/Mutation calls, Query once flights, their
+//!   deadlines and fences.
+//! - `prerequisites`: the prerequisite loop over application handlers.
 //! - `commands`: the command set: the local reads, writes, Scope, status and
 //!   sync commands executed against the client. The former host-driven lane
-//!   commands (`connection` lifecycle events, `downlink`, `startSync`,
-//!   `next`, `complete`, …) still execute for one more checkpoint of #134 and
-//!   are refused while a runtime-owned connection is active.
+//!   and split direct-call commands (`connection` lifecycle events,
+//!   `downlink`, `startSync`, `next`, `complete`, `prepareAction`,
+//!   `applyActionResponse`, `queryOnce`, …) still execute for one more
+//!   checkpoint of #134 and are refused while a runtime-owned connection is
+//!   active where they would drive its lanes.
 mod commands;
+mod direct;
 mod effects;
 mod lanes;
+mod prerequisites;
 pub mod protocol;
 mod tasks;
 mod transactions;
@@ -122,6 +129,8 @@ pub struct ClientRuntime<S: ClientStore> {
     /// Downlink worker events admitted since the last pump; fed to the worker
     /// right before it pumps. The worker's own page queue is the bound.
     inbox: VecDeque<DownlinkEvent>,
+    directs: direct::Directs,
+    prerequisites: Option<prerequisites::Loop>,
     /// Whether the next step prefers a lane unit over an ordinary task.
     lane_turn: bool,
     /// The one counter behind `transactionId`, `scope` and `effectId`: every
@@ -165,6 +174,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             effects: BTreeMap::new(),
             ready: VecDeque::new(),
             inbox: VecDeque::new(),
+            directs: direct::Directs::default(),
+            prerequisites: None,
             lane_turn: false,
             issued: 0,
             events: vec![],

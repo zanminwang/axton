@@ -1,6 +1,6 @@
 //! The effect table: what every outstanding effect was issued for, how its
 //! result is admitted, the continuations results become, and the one
-//! credential refresh the lanes share
+//! credential refresh the lanes and direct calls share
 //! ([#134](https://github.com/zanminwang/axton/issues/134)).
 //!
 //! A result is admitted by [`ClientRuntime::receive`] without database work:
@@ -32,12 +32,34 @@ pub(super) enum EffectKind {
     PushTimer,
     DownlinkTimer,
     RefreshAuth,
+    /// The HTTP request of the direct call routed by `request_id`.
+    DirectHttp {
+        request_id: String,
+    },
+    /// The deadline of that call.
+    DirectTimer {
+        request_id: String,
+    },
+    /// One prerequisite handler run of the `runPrerequisites` task.
+    Prerequisite {
+        request_id: String,
+        key: String,
+    },
 }
 
 /// An effect result that needs local work, run as one unit by `step`.
 pub(super) enum Ready {
     /// The receipt of the push in flight: settle it in one transaction.
     PushReceipt { body: String },
+    /// The response of a direct call: apply it in one transaction.
+    ApplyDirect {
+        request_id: String,
+        response: String,
+    },
+    /// A prerequisite handler settled: record it in one transaction.
+    PrerequisiteOutcome { key: String, error: Option<String> },
+    /// The prerequisite loop's next turn: pick the next task.
+    PrerequisiteNext,
 }
 
 /// Work waiting for the credential refresh in flight, resumed when it settles.
@@ -53,6 +75,8 @@ pub(super) enum Waiter {
         status: Option<u16>,
         bootstrap: bool,
     },
+    /// The direct call that failed with 401: sent again once, or failed.
+    Direct { request_id: String },
 }
 
 /// The HTTP answer's body, or why the request failed. A success value is
@@ -158,6 +182,13 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                     EffectKind::PushTimer => self.push_timer_fired(&effect_id),
                     EffectKind::DownlinkTimer => self.downlink_timer_fired(&effect_id),
                     EffectKind::RefreshAuth => self.refreshed(&effect_id, outcome, now, entropy),
+                    EffectKind::DirectHttp { request_id } => {
+                        self.direct_result(request_id, outcome)
+                    }
+                    EffectKind::DirectTimer { request_id } => self.direct_timeout(request_id),
+                    EffectKind::Prerequisite { request_id, key } => {
+                        self.prerequisite_result(request_id, key, outcome)
+                    }
                     EffectKind::Callback | EffectKind::Socket { .. } => {}
                 }
             }
@@ -305,8 +336,9 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         }
     }
     /// Continue what a failure interrupted: the push cycle fails with
-    /// backoff, the worker hears its socket closed or its request failed.
-    fn resume_waiter(&mut self, waiter: Waiter, _refreshed: bool, now: u64, entropy: u64) {
+    /// backoff, the worker hears its socket closed or its request failed, a
+    /// direct call is sent again once (or fails when the refresh did).
+    fn resume_waiter(&mut self, waiter: Waiter, refreshed: bool, now: u64, entropy: u64) {
         match waiter {
             Waiter::Push => self.push_failed(now, entropy),
             Waiter::Socket { epoch } => self.enqueue_downlink(DownlinkEvent::Closed { epoch }),
@@ -320,6 +352,13 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 reason,
                 status,
             }),
+            Waiter::Direct { request_id } => {
+                if refreshed {
+                    self.resend_direct(&request_id);
+                } else {
+                    self.fail_direct(&request_id, direct::EXECUTION_UNKNOWN);
+                }
+            }
         }
     }
 }

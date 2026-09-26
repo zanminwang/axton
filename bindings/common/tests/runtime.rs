@@ -359,3 +359,68 @@ fn transaction_isolation_and_closed_handles_match_the_session_contract() {
         Err("client_closed".to_string())
     );
 }
+
+#[test]
+fn a_client_waiting_on_the_network_holds_no_writer_and_no_other_client_waits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut with_action = schema();
+    with_action["actions"] = json!([{"name":"Rename","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"update","cardinality":"single"}],"outputs":[]}]);
+    let (sink, wakes) = channel_sink();
+    let id = actor::open(
+        json!({"type":"open","requestId":"open","path":dir.path().join("a"),"schema":with_action}),
+        sink,
+    )
+    .unwrap();
+    let mut a = Carrier {
+        id,
+        wakes,
+        seen: vec![],
+    };
+    assert_eq!(a.completed("open")["ok"], true);
+    a.task("connect", json!({"kind":"connect"}));
+    assert_eq!(a.completed("connect")["ok"], true);
+    a.task(
+        "call",
+        json!({"kind":"invoke","name":"Rename","version":1,"args":{"entry":{"id":"e","text":"server"}}}),
+    );
+    let request = a.until(|e| e["type"] == "effect" && e["operation"]["route"] == "action");
+    let body: Value = serde_json::from_str(request["operation"]["body"].as_str().unwrap()).unwrap();
+
+    // While A's request is out, A itself writes and reads, and B does too.
+    a.task("local", create("x"));
+    a.task("read", read("x"));
+    assert_eq!(a.completed("local")["ok"], true);
+    assert_eq!(a.completed("read")["value"]["text"], "hi");
+    let (mut b, _) = Carrier::open(&dir.path().join("b"));
+    for i in 0..20 {
+        b.task(&format!("w{i}"), create(&format!("e{i}")));
+        b.task(&format!("r{i}"), read(&format!("e{i}")));
+    }
+    for i in 0..20 {
+        assert_eq!(b.completed(&format!("w{i}"))["ok"], true);
+        assert_eq!(b.completed(&format!("r{i}"))["value"]["text"], "hi");
+    }
+    b.submit(json!({"type":"close"}));
+    b.until(|e| e["type"] == "runtimeClosed");
+    actor::detach(b.id);
+    assert!(
+        a.seen
+            .iter()
+            .all(|e| !(e["type"] == "taskCompleted" && e["requestId"] == "call")),
+        "the call waits for its response"
+    );
+
+    // The response arrives: the call succeeds once its apply committed.
+    let response = json!({"completion":{"callId":body["call"]["callId"],"outcome":{"status":"succeeded","result":null}},"records":[{"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"server","note":null}}]});
+    a.submit(json!({"type":"effectResult","effectId":request["effectId"],"outcome":{"ok":true,"value":{"status":200,"body":response.to_string()}}}));
+    let done = a.completed("call");
+    assert_eq!(
+        done["value"],
+        json!({"outcome":{"status":"succeeded","result":null}})
+    );
+    a.task("after", read("e"));
+    assert_eq!(a.completed("after")["value"]["text"], "server");
+    a.submit(json!({"type":"close"}));
+    a.until(|e| e["type"] == "runtimeClosed");
+    actor::detach(a.id);
+}

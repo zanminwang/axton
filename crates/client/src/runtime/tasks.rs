@@ -1,5 +1,5 @@
-//! The task table: request correlation, the ordinary FIFO, scheduling and
-//! close
+//! The task table: request correlation, the ordinary FIFO, scheduling,
+//! rebuild fencing and close
 //! ([#134](https://github.com/zanminwang/axton/issues/134)).
 use super::effects::Ready;
 use super::transactions::Continuation;
@@ -128,6 +128,12 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             let generation = self.client.generation();
             match ready {
                 Ready::PushReceipt { body } => self.push_receipt(body, now, entropy),
+                Ready::ApplyDirect {
+                    request_id,
+                    response,
+                } => self.apply_direct(request_id, response),
+                Ready::PrerequisiteOutcome { key, error } => self.prerequisite_outcome(key, error),
+                Ready::PrerequisiteNext => self.next_prerequisite(),
             }
             if self.client.generation() != generation {
                 self.wake_lanes();
@@ -143,9 +149,9 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             self.push_turn(now, entropy);
         }
     }
-    /// One ordinary task. The runtime-owned connection is decided here;
-    /// everything else is a command against the client. A task that committed
-    /// wakes both lanes.
+    /// One ordinary task. The runtime-owned lifecycles - the connection, direct
+    /// calls, prerequisites and rebuild - are decided here; everything else is
+    /// a command against the client. A task that committed wakes both lanes.
     fn ordinary_unit(&mut self, now: u64) {
         let Some(Queued {
             request_id,
@@ -167,18 +173,51 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             "downlink" | "startSync" | "next" | "complete" if connected => {
                 Some(Err(lanes::ALREADY_ACTIVE.into()))
             }
+            "invoke" => self.invoke(&request_id, &command),
+            "runPrerequisites" => self.run_prerequisites(&request_id, &command),
+            "rebuild" => Some(self.rebuild(&command, now)),
             _ => Some(
                 commands::execute(&mut self.client, &mut self.lanes, &command)
                     .map_err(|e| e.to_string()),
             ),
         };
-        self.changed_since(generation);
+        if kind != "rebuild" {
+            self.changed_since(generation);
+        }
         if self.client.generation() != generation {
             self.wake_lanes();
         }
         if let Some(outcome) = outcome {
             self.complete(request_id, outcome);
         }
+    }
+    /// `rebuild {discardPending?}` as the command answers it, plus the fence:
+    /// everything in flight belongs to the replaced replica. Lane effects are
+    /// cancelled and the lanes start over in the same intent, direct calls
+    /// fail with an unknown execution, the prerequisite loop moves on, and
+    /// every abandoned durable call is completed. A refused rebuild changes
+    /// nothing.
+    fn rebuild(&mut self, command: &Value, now: u64) -> std::result::Result<Value, String> {
+        let report = commands::execute(&mut self.client, &mut self.lanes, command)
+            .map_err(|e| e.to_string())?;
+        self.fail_directs(direct::EXECUTION_UNKNOWN);
+        self.rebuilt_prerequisites();
+        self.rebuilt_lanes(now);
+        self.events.push(Event::Changed {
+            tables: self.client.last_changed().iter().cloned().collect(),
+        });
+        for abandoned in report["abandonedCalls"].as_array().into_iter().flatten() {
+            let frozen = abandoned["frozen"].as_bool().unwrap_or(false);
+            self.events.push(Event::CallCompleted {
+                call_id: abandoned["callId"].as_str().unwrap_or_default().to_string(),
+                outcome: json!({
+                    "status": "failed",
+                    "code": "abandoned",
+                    "execution": if frozen { "unknown" } else { "rejected" },
+                }),
+            });
+        }
+        Ok(report)
     }
     fn admit(&mut self, request_id: &str) -> bool {
         if self.tasks.admit(request_id) {
@@ -191,7 +230,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     }
     /// Priority close: roll back the open session, cancel every outstanding
     /// effect, fail the parked parent, its queued commands and every queued
-    /// task with `client_closed`, end the lanes, then announce the end.
+    /// task with `client_closed`, fail direct calls as unavailable and the
+    /// prerequisite loop as closed, end the lanes, then announce the end.
     fn close(&mut self) {
         let transaction = self.transaction.take();
         if transaction.is_some()
@@ -211,6 +251,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         for task in std::mem::take(&mut self.tasks.queue) {
             self.complete(task.request_id, Err("client_closed".into()));
         }
+        self.fail_directs(direct::UNAVAILABLE);
+        self.finish_prerequisites(Err("client_closed".into()));
         self.ready.clear();
         self.inbox.clear();
         self.close_lanes();

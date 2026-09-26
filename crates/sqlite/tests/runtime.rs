@@ -486,3 +486,74 @@ fn envelope_fixtures_decode_and_re_encode_unchanged() {
         assert_eq!(&serde_json::to_value(&typed).unwrap(), wire);
     }
 }
+
+/// The id and body of the one `http` effect among `events`.
+fn http_effect(events: &[Value]) -> (String, String) {
+    let effects: Vec<&Value> = events
+        .iter()
+        .filter(|e| e["type"] == "effect" && e["operation"]["kind"] == "http")
+        .collect();
+    assert_eq!(effects.len(), 1, "{events:?}");
+    (
+        effects[0]["effectId"].as_str().unwrap().to_string(),
+        effects[0]["operation"]["body"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    )
+}
+
+#[test]
+fn a_direct_apply_that_fails_to_commit_fails_the_call_and_lets_nothing_escape() {
+    let dir = tempfile::tempdir().unwrap();
+    let armed = Arc::new(AtomicBool::new(false));
+    let store = FailingCommit {
+        inner: SqliteStore::open(dir.path().join("db")).unwrap(),
+        armed: armed.clone(),
+    };
+    let mut raw = serde_json::to_value(schema()).unwrap();
+    raw["actions"] = json!([{"name":"Rename","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"update","cardinality":"single"}],"outputs":[]}]);
+    let client = Client::open(store, Schema::from_value(raw).unwrap()).unwrap();
+    let mut h = Harness {
+        runtime: ClientRuntime::new(client),
+        _dir: dir,
+    };
+    h.task("connect", json!({"kind":"connect"}));
+    assert!(h.run().contains(&done("connect", Value::Null)));
+    let rename = json!({"kind":"invoke","name":"Rename","version":1,"args":{"entry":{"id":"e","text":"server"}}});
+    let answer = |body: &str| {
+        let call: Value = serde_json::from_str(body).unwrap();
+        json!({"ok":true,"value":{"status":200,"body":json!({"completion":{"callId":call["call"]["callId"],"outcome":{"status":"succeeded","result":null}},"records":[{"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"server","note":null}}]}).to_string()}})
+    };
+    h.task("1", rename.clone());
+    let (effect, body) = http_effect(&h.run());
+    let generation = h.runtime.client().generation();
+    armed.store(true, Ordering::SeqCst);
+    h.submit(json!({"type":"effectResult","effectId":effect,"outcome":answer(&body)}))
+        .unwrap();
+    let events = h.run();
+    assert!(
+        events.contains(&failed("1", "action.execution_unknown")),
+        "{events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| e["type"] == "changed" || e["type"] == "callCompleted"),
+        "{events:?}"
+    );
+    assert_eq!(h.runtime.client().generation(), generation);
+    assert_eq!(h.committed(), None);
+    // The writer is free: a later call applies and succeeds.
+    h.task("2", rename);
+    let (effect, body) = http_effect(&h.run());
+    h.submit(json!({"type":"effectResult","effectId":effect,"outcome":answer(&body)}))
+        .unwrap();
+    let events = h.run();
+    assert!(events.iter().any(|e| e["type"] == "changed"));
+    assert!(events.contains(&done(
+        "2",
+        json!({"outcome":{"status":"succeeded","result":null}})
+    )));
+    assert_eq!(h.committed().unwrap()["text"], "server");
+}

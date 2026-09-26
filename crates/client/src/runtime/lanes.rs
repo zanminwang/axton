@@ -34,7 +34,6 @@ pub(super) const ALREADY_ACTIVE: &str = "connection already active";
 /// work in flight.
 pub(super) struct Connection {
     /// The deadline of one direct call attempt, retries included.
-    #[allow(dead_code, reason = "direct calls become runtime tasks next")]
     pub(super) timeout: u64,
     /// Whether a 401 may ask the application for a credential refresh.
     pub(super) refresh: bool,
@@ -200,6 +199,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 }
                 false
             }
+            Waiter::Direct { .. } => true,
         });
         let abandoned = sent.is_some() || refreshing;
         if abandoned {
@@ -224,8 +224,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         self.signal(json!({"lane":"paused"}));
     }
 
-    /// Stop: everything `pause` abandons, the lanes stop for good and the
-    /// intent is cleared.
+    /// Stop: everything `pause` abandons, the lanes stop for good, direct
+    /// calls in flight fail as unavailable and the intent is cleared.
     fn stop_lanes(&mut self) {
         if let Some((_, epoch)) = self
             .connection
@@ -238,6 +238,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         if let Some(refresh) = self.connection.as_ref().and_then(|c| c.refreshing.clone()) {
             self.cancel_effect(&refresh);
         }
+        self.fail_directs_in_flight(direct::UNAVAILABLE);
         self.connection = None;
         self.lanes.connection.stop();
         self.inbox.clear();
@@ -646,6 +647,35 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             connection.downlink.timer = None;
             connection.downlink.dirty = true;
         }
+    }
+
+    /// A rebuild replaced the replica: every lane effect belongs to the old
+    /// one. The worker has already been reset in the same intent; the push
+    /// driver keeps its intent and its cycle starts over.
+    pub(super) fn rebuilt_lanes(&mut self, now: u64) {
+        self.inbox.clear();
+        self.ready
+            .retain(|ready| !matches!(ready, effects::Ready::PushReceipt { .. }));
+        let socket = self
+            .connection
+            .as_ref()
+            .and_then(|c| c.downlink.socket.clone());
+        if let Some((_, epoch)) = socket {
+            self.abandon_session(epoch);
+        }
+        self.cancel_lane_effects(true);
+        let Some(connection) = &mut self.connection else {
+            return;
+        };
+        connection
+            .waiters
+            .retain(|waiter| matches!(waiter, Waiter::Direct { .. }));
+        connection.push.cycling = false;
+        connection.push.waiting = false;
+        connection.downlink.outstanding = 0;
+        // Whatever was in flight on the push lane is gone with the replica.
+        self.lanes.connection.complete(true, now, 0);
+        self.wake_lanes();
     }
 
     /// Close: the SDK hears the session end and the lanes stop.

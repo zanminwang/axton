@@ -426,3 +426,40 @@ test('a failed run stays failed for the calls it belongs to; an explicit retry i
   await connection.close();
  } finally { await fixture.close();await network.close(); }
 });
+
+test('an observer that throws on a load transition is reported and changes nothing', async()=>{
+ const fixture=await openClient();const {client}=fixture;
+ const previous=globalThis.reportError;const reported=[];
+ globalThis.reportError=error=>reported.push(error);
+ const network=await fakeServer({scope:0});
+ try {
+  const subscription=await client.subscribe('scope');
+  const connection=await client.connect(network.config);
+  await until(()=>subscription.status.initialization==='ready','the committed boundary');
+  // Installed after the boundary, so every exception below belongs to a load
+  // transition and nothing else.
+  const before=reported.length;
+  subscription.watch(status=>{throw Error(`observer failed at ${status.bootstrap.phase}`);});
+  assert.equal(reported.length,before+1,'the first snapshot already reached the failing observer');
+  const gate=Promise.withResolvers();network.loadHold=gate.promise;
+  network.load=body=>loaded(body,3);
+  const loading=subscription.bootstrap();
+  await until(()=>subscription.status.bootstrap.phase==='loading','a registered load');
+  gate.resolve();
+  await until(()=>subscription.status.bootstrap.phase==='catching-up','the fixed barrier');
+  network.sockets[0].send(JSON.stringify({cursors:{scope:{from:0,to:3,head:3}},changes:[]}));
+  // Every committed transition reached the failing observer, and none of them
+  // was undone, retried or turned into a transport failure by it.
+  await loading;
+  assert.deepEqual({...subscription.status.bootstrap},{phase:'complete',error:null});
+  const phases=reported.slice(before).map(error=>error.message.replace('observer failed at ',''));
+  assert.deepEqual(phases,['not-requested','loading','catching-up','complete'],
+   `each committed phase reached the observer that throws: ${phases}`);
+  assert.equal(network.loads.length,1,'the exceptions asked for no further page');
+  assert.equal(network.handshakes.length,1,'and reopened no socket');
+  await subscription.bootstrap();
+  assert.deepEqual({...subscription.status.bootstrap},{phase:'complete',error:null},
+   'the committed completion is what a later call resolves from');
+  await connection.close();
+ } finally { await fixture.close();globalThis.reportError=previous;await network.close(); }
+});

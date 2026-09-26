@@ -190,7 +190,15 @@ void main() {
     final submitting = client.invokeAction<void>('Ping', 1, {}, (_) {});
     final closing = client.close();
     release.complete();
-    await blocker;
+    // Close is priority control: it may roll the blocker back before its
+    // callback result arrives.
+    await blocker.then<void>(
+      (_) {},
+      onError: (Object error) => expect(
+        error,
+        isA<StateError>().having((e) => e.message, 'message', 'client_closed'),
+      ),
+    );
     final call = await submitting.timeout(const Duration(seconds: 1));
     final failure = await call.wait() as CallFailure<void>;
     expect(failure.error.code, 'client.closed');

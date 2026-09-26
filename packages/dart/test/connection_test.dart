@@ -105,9 +105,17 @@ Map<String, dynamic> get _pingSchema => {
   ],
 };
 
-Matcher _transport(String code) => throwsA(
-  isA<ActionTransportException>().having((e) => e.code, 'code', code),
+/// A direct call the runtime could not complete, with [code] and the cause
+/// the runtime's `details` named.
+Matcher _transport(String code, [Object? cause = anything]) => throwsA(
+  isA<ActionTransportException>()
+      .having((e) => e.code, 'code', code)
+      .having((e) => e.cause, 'cause', cause),
 );
+
+/// The cause of a deadline or a transport failure without a status.
+Matcher _message(String message) =>
+    isA<StateError>().having((e) => e.message, 'message', message);
 
 void main() {
   group('effect executor', () {
@@ -668,7 +676,10 @@ void main() {
       );
       await expectLater(
         client.callAction('Ping', 1, {}),
-        _transport('action.execution_unknown'),
+        _transport(
+          'action.execution_unknown',
+          _message('direct call timed out'),
+        ),
       );
       await connection.close();
     });
@@ -707,7 +718,7 @@ void main() {
       final connection = await client.connect(config());
       final pending = expectLater(
         client.callAction('Ping', 1, {}),
-        _transport('action.unavailable'),
+        _transport('action.unavailable', isNull),
       );
       await entered.future;
       await connection.close();
@@ -727,7 +738,61 @@ void main() {
       );
       await expectLater(
         client.callAction('Ping', 1, {}),
-        _transport('action.execution_unknown'),
+        _transport(
+          'action.execution_unknown',
+          _message('direct call timed out'),
+        ),
+      );
+      await connection.close();
+    });
+
+    test('a transport failure keeps its message and status', () async {
+      server.listen((request) async {
+        await utf8.decoder.bind(request).join();
+        request.response.statusCode = 503;
+        request.response.write('down');
+        await request.response.close();
+      });
+      final connection = await client.connect(config());
+      final cause = isA<HttpFailure>()
+          .having((e) => e.statusCode, 'statusCode', 503)
+          .having((e) => e.message, 'message', 'action failed: 503 down');
+      await expectLater(
+        client.callAction('Ping', 1, {}),
+        _transport('action.execution_unknown', cause),
+      );
+      await expectLater(
+        client.invokeDirectAction<void>('Ping', 1, {}, (_) {}),
+        throwsA(
+          isA<CallError>()
+              .having((e) => e.code, 'code', 'action.execution_unknown')
+              .having((e) => e.execution, 'execution', 'unknown')
+              .having((e) => e.cause, 'cause', cause),
+        ),
+      );
+      await connection.close();
+    });
+
+    test('a refused refresh keeps its reason', () async {
+      server.listen((request) async {
+        await utf8.decoder.bind(request).join();
+        request.response.statusCode = 401;
+        await request.response.close();
+      });
+      final connection = await client.connect(
+        config(),
+        refreshAuth: () async => throw StateError('login required'),
+      );
+      await expectLater(
+        client.callAction('Ping', 1, {}),
+        _transport(
+          'action.execution_unknown',
+          isA<Object>().having(
+            (e) => e.toString(),
+            'text',
+            contains('login required'),
+          ),
+        ),
       );
       await connection.close();
     });

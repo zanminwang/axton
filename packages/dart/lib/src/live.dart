@@ -6,11 +6,15 @@ import 'connection.dart';
 /// A request the server refused, with the status it refused it with. It is an
 /// `HttpException` like the failure it replaces, so existing handling is
 /// unchanged; the status travels to the runtime, which tells a refusal the
-/// server decided from a transport failure by it.
+/// server decided from a transport failure by it. A direct call whose
+/// transport failed with a status carries one as its `cause`.
 class HttpFailure extends HttpException {
   final int statusCode;
   HttpFailure(String what, this.statusCode, String body)
     : super('$what failed: $statusCode $body');
+
+  /// The failure the runtime reported: its [message] and [statusCode].
+  HttpFailure.reported(super.message, this.statusCode);
 }
 
 /// Immutable configuration reusable across independent client connections.

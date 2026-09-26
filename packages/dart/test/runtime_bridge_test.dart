@@ -250,6 +250,183 @@ void main() {
     }
   });
 
+  test(
+    'close is priority control while a connected callback holds the transaction',
+    () async {
+      final client = await fixture.client();
+      await client.connect(
+        SyncServer(url: 'http://127.0.0.1:1', token: () => 't'),
+        onError: (_) {},
+      );
+      final gate = Completer<void>();
+      final entered = Completer<void>();
+      final later = Completer<Object>();
+      final transaction = client.transaction((tx) async {
+        await tx.direct(create('never'));
+        entered.complete();
+        await gate.future;
+        try {
+          await tx.read('Entry', {'id': 'e'});
+          later.complete('succeeded');
+        } catch (error) {
+          later.complete(error);
+        }
+      });
+      final outcome = transaction.then<Object?>(
+        (_) => null,
+        onError: (Object error) => error,
+      );
+      await entered.future;
+      // The connection's stop would park behind the callback; close does not.
+      await client.close().timeout(const Duration(seconds: 5));
+      expect(gate.isCompleted, isFalse, reason: 'close did not need the gate');
+      expect(
+        await outcome,
+        isA<StateError>().having((e) => e.message, 'message', 'client_closed'),
+      );
+      gate.complete();
+      expect(
+        await later.future,
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          anyOf('transaction_closed', 'client_closed'),
+        ),
+      );
+      final reopened = await fixture.client();
+      try {
+        expect(await text(reopened), isNull, reason: 'the unit rolled back');
+      } finally {
+        await reopened.close();
+      }
+    },
+  );
+
+  test('close settles a connect parked behind an open callback', () async {
+    final client = await fixture.client();
+    final gate = Completer<void>();
+    final entered = Completer<void>();
+    final transaction = client.transaction((tx) async {
+      entered.complete();
+      await gate.future;
+    });
+    final failed = transaction.then<Object?>(
+      (_) => null,
+      onError: (Object error) => error,
+    );
+    await entered.future;
+    final connecting = client
+        .connect(
+          SyncServer(url: 'http://127.0.0.1:1', token: () => 't'),
+          onError: (_) {},
+        )
+        .then<Object?>((_) => null, onError: (Object error) => error);
+    await client.close().timeout(const Duration(seconds: 5));
+    expect(gate.isCompleted, isFalse);
+    expect(
+      await connecting,
+      isA<StateError>().having((e) => e.message, 'message', 'client_closed'),
+    );
+    expect(await failed, isA<StateError>());
+    gate.complete();
+  });
+
+  test('a callback whose task close already refused never runs', () async {
+    // The runtime refused the transaction in the batch that asked for its
+    // callback: the effect, its cancellation, the refusal and the end.
+    String? transaction;
+    final carrier = FakeCarrier((envelope) {
+      if ((envelope['command'] as Map?)?['kind'] == 'transaction') {
+        transaction = envelope['requestId'] as String;
+        return const [];
+      }
+      if (envelope['type'] != 'close') return null;
+      return [
+        {
+          'type': 'effect',
+          'effectId': '5',
+          'operation': {
+            'kind': 'callback',
+            'transactionId': 'tx1',
+            'requestId': transaction,
+          },
+        },
+        {'type': 'cancelEffect', 'effectId': '5'},
+        {
+          'type': 'taskCompleted',
+          'requestId': transaction,
+          'ok': false,
+          'error': 'client_closed',
+        },
+        {'type': 'runtimeClosed'},
+      ];
+    });
+    final client = await Client.open(
+      path: 'unused',
+      schema: const {},
+      carrier: carrier,
+    );
+    var ran = false;
+    final refused = client.transaction((tx) async => ran = true);
+    final closing = client.close();
+    await expectLater(
+      refused,
+      throwsA(
+        isA<StateError>().having((e) => e.message, 'message', 'client_closed'),
+      ),
+    );
+    await closing;
+    await pumpEventQueue();
+    expect(ran, isFalse, reason: 'the callback of a refused task never runs');
+    expect(
+      carrier.admitted.where((e) => e['type'] == 'callbackResult'),
+      isEmpty,
+    );
+  });
+
+  test('a cancelled callback effect never runs its callback', () async {
+    // The runtime cancelled the callback before the bridge started it; the
+    // task is still pending until the runtime settles it.
+    String? transaction;
+    late FakeCarrier carrier;
+    carrier = FakeCarrier((envelope) {
+      if ((envelope['command'] as Map?)?['kind'] != 'transaction') return null;
+      transaction = envelope['requestId'] as String;
+      return [
+        {
+          'type': 'effect',
+          'effectId': '5',
+          'operation': {
+            'kind': 'callback',
+            'transactionId': 'tx1',
+            'requestId': transaction,
+          },
+        },
+        {'type': 'cancelEffect', 'effectId': '5'},
+      ];
+    });
+    final client = await Client.open(
+      path: 'unused',
+      schema: const {},
+      carrier: carrier,
+    );
+    var ran = false;
+    final refused = client.transaction((tx) async => ran = true);
+    await pumpEventQueue();
+    expect(ran, isFalse);
+    carrier.publish([
+      {
+        'type': 'taskCompleted',
+        'requestId': transaction,
+        'ok': false,
+        'error': 'transaction.cancelled',
+      },
+    ]);
+    await expectLater(refused, throwsStateError);
+    expect(ran, isFalse);
+    await client.close();
+  });
+
   test('the bridge envelopes match the shared fixtures', () async {
     final fixtures = await envelopeFixtures();
     final inputs = (fixtures['inputs'] as List).cast<Map<String, dynamic>>();
@@ -531,7 +708,7 @@ void main() {
       );
       await pumpEventQueue();
       await step('133', () async => (await rows).cancel());
-      expected.add({'kind': 'connection', 'event': 'stop'});
+      // Close is priority control: it stops the connection without a task.
     } finally {
       await client.close();
     }

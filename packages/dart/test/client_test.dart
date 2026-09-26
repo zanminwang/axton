@@ -147,6 +147,47 @@ void main() {
     );
 
     test(
+      'every outer client task rejects transaction_active inside a callback',
+      () async {
+        Matcher active() => throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'transaction_active',
+          ),
+        );
+        var nested = false;
+        await client.transaction((tx) async {
+          // Each would park behind this open transaction and deadlock.
+          await expectLater(
+            client
+                .read('Entry', {'id': 'e'})
+                .timeout(const Duration(seconds: 2)),
+            active(),
+          );
+          await expectLater(
+            client
+                .transaction((_) async => nested = true)
+                .timeout(const Duration(seconds: 2)),
+            active(),
+          );
+          await expectLater(
+            client.watch('Entry').first.timeout(const Duration(seconds: 2)),
+            active(),
+          );
+          await expectLater(
+            client.syncState().timeout(const Duration(seconds: 2)),
+            active(),
+          );
+          // The transaction's own commands are unaffected.
+          expect((await tx.read('Entry', {'id': 'e'}))!['text'], 'hello');
+        });
+        expect(nested, isFalse, reason: 'the nested body never ran');
+        expect(await text(client), 'hello', reason: 'the outer client works');
+      },
+    );
+
+    test(
       'failed standalone enqueue leaves no queue entry or optimistic record',
       () async {
         await expectLater(

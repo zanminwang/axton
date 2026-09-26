@@ -92,6 +92,11 @@ EffectHandler prerequisiteHandler(
   });
 }
 
+/// The client is closing: stop [connection] without a task. The runtime's
+/// `close` cancels every effect and ends the lanes, and a `connection stop`
+/// would wait behind a callback that holds the transaction.
+void abandonConnection(RuntimeConnection connection) => connection._abandon();
+
 /// One runtime-owned connection: its controls submit `connection` tasks and
 /// its effect handlers run the platform I/O. Application callbacks - the
 /// token, `refreshAuth`, `onError` - run in the zone that connected.
@@ -189,6 +194,15 @@ class RuntimeConnection {
       _uninstall();
       _onClosed?.call(this);
     }
+  }
+
+  /// Stop here only: controls end, the handlers go and every effect they hold
+  /// is aborted. A `close` in flight still settles from its task.
+  void _abandon() {
+    _stopped = true;
+    _closing ??= Future<void>.value();
+    _uninstall();
+    _onClosed?.call(this);
   }
 
   /// Handle identity: the runtime has no connection id, so a closed handle's

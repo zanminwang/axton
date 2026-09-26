@@ -13,7 +13,10 @@
 /// The actor wakes the bridge through one process-wide
 /// `NativeCallable.listener`: Rust calls it from its own thread under the
 /// actor's sink lock, the trampoline only posts to this isolate, and the drain
-/// runs on this isolate's event loop. See the
+/// runs on this isolate's event loop. The VM deletes that callable when the
+/// isolate shuts down, so every bridge of the C ABI carries a native finalizer
+/// that detaches its runtime then: no wake reaches a deleted callable, and the
+/// runtime closes and releases its database. See the
 /// [bridge contract](../../../../crates/client/src/runtime/protocol.rs).
 library;
 
@@ -91,13 +94,29 @@ class _Abi implements Carrier {
       _detach = library.lookupFunction<_DetachNative, _Detach>(
         'axton_runtime_detach',
       ),
-      _free = library.lookupFunction<_FreeNative, _Free>('axton_free');
+      _free = library.lookupFunction<_FreeNative, _Free>('axton_free'),
+      finalizer = NativeFinalizer(
+        library.lookup<NativeFinalizerFunction>('axton_runtime_finalize'),
+      );
 
   final _Open _open;
   final _Submit _submit;
   final _Drain _drain;
   final _Detach _detach;
   final _Free _free;
+
+  /// `axton_runtime_finalize`: detaches the runtime whose id is the token's
+  /// address. It runs when a bridge is collected, or its isolate shuts down,
+  /// while the runtime is attached. Detach is safe from any thread and
+  /// idempotent; once it returns no wake runs for that id.
+  final NativeFinalizer finalizer;
+
+  /// Attach [bridge]'s finalizer, unless a pointer cannot carry its id.
+  void attach(Bridge bridge) {
+    final id = bridge.runtimeId;
+    if (sizeOf<IntPtr>() < 8 && id >= 1 << 32) return;
+    finalizer.attach(bridge, Pointer<Void>.fromAddress(id), detach: bridge);
+  }
 
   static final _loaded = <String?, _Abi>{};
 
@@ -307,8 +326,11 @@ abstract interface class ObserverHost {
 }
 
 /// The SDK side of one Rust-owned client runtime.
-class Bridge implements RuntimeHost, ObserverHost {
-  Bridge._(this._carrier, this.runtimeId);
+class Bridge implements RuntimeHost, ObserverHost, Finalizable {
+  Bridge._(this._carrier, this.runtimeId) {
+    final carrier = _carrier;
+    if (carrier is _Abi) carrier.attach(this);
+  }
 
   final Carrier _carrier;
 
@@ -347,6 +369,9 @@ class Bridge implements RuntimeHost, ObserverHost {
   /// Effect handlers by operation kind, and the effects they hold by id.
   final _handlers = <String, EffectHandler>{};
   final _effects = <String, Effect>{};
+
+  /// Callback effects asked for and neither started nor cancelled yet.
+  final _callbacks = <String>{};
 
   /// Attached bridges by runtime id: what a wake names.
   static final _bridges = <int, Bridge>{};
@@ -585,6 +610,7 @@ class Bridge implements RuntimeHost, ObserverHost {
         );
       case 'cancelEffect':
         _effects[event['effectId']]?.cancel();
+        _callbacks.remove(event['effectId']);
       case 'report':
         _reports.add(event['diagnostic'] as Map<String, dynamic>);
       case 'callCompleted':
@@ -677,8 +703,13 @@ class Bridge implements RuntimeHost, ObserverHost {
       return;
     }
     // Application code runs after this batch is dispatched, in the zone the
-    // transaction was submitted from; the task completes only from Rust.
+    // transaction was submitted from; the task completes only from Rust. A
+    // later event of the batch may have cancelled the effect or settled the
+    // task (a close refuses it), and then the callback never starts.
+    _callbacks.add(effectId);
     route.zone.scheduleMicrotask(() {
+      final pending = identical(_routes[operation['requestId']], route);
+      if (!_callbacks.remove(effectId) || !pending) return;
       Future<void>.sync(() => run(transactionId)).then(
         (_) => _submitQuietly(
           callbackResultEnvelope(effectId, transactionId, ok: true),
@@ -706,7 +737,10 @@ class Bridge implements RuntimeHost, ObserverHost {
     if (_detached) return;
     _detached = true;
     _carrier.detach(runtimeId);
+    final carrier = _carrier;
+    if (carrier is _Abi) carrier.finalizer.detach(this);
     _bridges.remove(runtimeId);
+    _callbacks.clear();
     for (final effect in _effects.values.toList()) {
       effect.cancel();
     }

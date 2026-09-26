@@ -73,6 +73,22 @@ class Client implements WritePort, MutatePort {
 
   final Object _txZoneKey = Object();
   Object? _activeTxToken;
+
+  /// Whether this runs inside this client's own transaction callback. An
+  /// ordinary task issued there would wait behind the transaction that waits
+  /// for the callback, so every one is refused with `transaction_active`; the
+  /// [Transaction]'s own commands are not tasks.
+  bool get _inTransaction =>
+      _activeTxToken != null &&
+      identical(Zone.current[_txZoneKey], _activeTxToken);
+
+  /// One ordinary task, refused inside this client's transaction callback.
+  Future<dynamic> _task(
+    Map<String, dynamic> command, {
+    void Function(dynamic value)? onValue,
+  }) => _inTransaction
+      ? Future.error(StateError('transaction_active'))
+      : _bridge.task(command, onValue: onValue);
   Client._(this._bridge, this.clientId) {
     // What the runtime reports goes to the connection's `onError`.
     _bridge.reports.listen((diagnostic) => _connection?.report(diagnostic));
@@ -107,6 +123,7 @@ class Client implements WritePort, MutatePort {
   /// reads and writes wait until it commits or rolls back, and the result is
   /// returned only once the commit is confirmed.
   Future<T> transaction<T>(Future<T> Function(Transaction tx) body) async {
+    if (_inTransaction) throw StateError('transaction_active');
     late T result;
     await _bridge.transaction((transactionId) async {
       final tx = Transaction._(this, transactionId);
@@ -136,7 +153,7 @@ class Client implements WritePort, MutatePort {
     String model,
     Map<String, dynamic> identity,
   ) async =>
-      (await _bridge.task({
+      (await _task({
             'kind': 'read',
             'key': {'model': model, 'identity': identity},
           }))
@@ -145,21 +162,20 @@ class Client implements WritePort, MutatePort {
     String model, {
     Map<String, dynamic> where = const {},
   }) async =>
-      (await _bridge.task({'kind': 'query', 'model': model, 'filter': where})
-              as List)
+      (await _task({'kind': 'query', 'model': model, 'filter': where}) as List)
           .cast<Map<String, dynamic>>();
   Future<List<Map<String, dynamic>>> readSql(
     String sql, {
     List<dynamic> parameters = const [],
   }) async =>
-      (await _bridge.task({'kind': 'sql', 'sql': sql, 'parameters': parameters})
+      (await _task({'kind': 'sql', 'sql': sql, 'parameters': parameters})
               as List)
           .cast<Map<String, dynamic>>();
   Future<List<Map<String, dynamic>>> querySpec(
     String model,
     Map<String, dynamic> query,
   ) async =>
-      (await _bridge.task({'kind': 'querySpec', 'model': model, 'query': query})
+      (await _task({'kind': 'querySpec', 'model': model, 'query': query})
               as List)
           .cast<Map<String, dynamic>>();
   Future<Map<String, dynamic>?> related(
@@ -167,7 +183,7 @@ class Client implements WritePort, MutatePort {
     Map<String, dynamic> identity,
     String relation,
   ) async =>
-      await _bridge.task({
+      await _task({
             'kind': 'related',
             'key': {'model': model, 'identity': identity},
             'relation': relation,
@@ -179,7 +195,7 @@ class Client implements WritePort, MutatePort {
     String source,
     String relation,
   ) async =>
-      (await _bridge.task({
+      (await _task({
                 'kind': 'referencing',
                 'key': {'model': model, 'identity': identity},
                 'source': source,
@@ -187,22 +203,12 @@ class Client implements WritePort, MutatePort {
               })
               as List)
           .cast<Map<String, dynamic>>();
-  Future<int> mutate(Map<String, dynamic> mutation) {
-    if (_activeTxToken != null &&
-        identical(Zone.current[_txZoneKey], _activeTxToken)) {
-      return Future.error(StateError('transaction_active'));
-    }
-    return _submitMutation(mutation);
-  }
+  Future<int> mutate(Map<String, dynamic> mutation) =>
+      _submitMutation(mutation);
 
   /// One framework-owned local transaction; no backend work is queued.
-  Future<void> direct(Map<String, dynamic> operation) {
-    if (_activeTxToken != null &&
-        identical(Zone.current[_txZoneKey], _activeTxToken)) {
-      return Future.error(StateError('transaction_active'));
-    }
-    return transaction((tx) => tx.direct(operation));
-  }
+  Future<void> direct(Map<String, dynamic> operation) =>
+      transaction((tx) => tx.direct(operation));
 
   Future<Call<T>> invokeAction<T>(
     String name,
@@ -300,11 +306,7 @@ class Client implements WritePort, MutatePort {
     Map<String, dynamic> args,
   ) async {
     try {
-      if (_activeTxToken != null &&
-          identical(Zone.current[_txZoneKey], _activeTxToken)) {
-        throw StateError('transaction_active');
-      }
-      await _bridge.task({
+      await _task({
         'kind': 'invalidateQueryOnce',
         'name': name,
         'version': version,
@@ -331,7 +333,7 @@ class Client implements WritePort, MutatePort {
 
   /// One task: Rust enqueues the mutation in its own local transaction.
   Future<int> _submitMutation(Map<String, dynamic> mutation) async {
-    return await _bridge.task({'kind': 'enqueue', 'mutation': mutation}) as int;
+    return await _task({'kind': 'enqueue', 'mutation': mutation}) as int;
   }
 
   /// Internal Action seam: [onCommitted] runs while the submission's
@@ -345,11 +347,7 @@ class Client implements WritePort, MutatePort {
     CallStore? store,
   }) async {
     final wire = store?.toWire();
-    if (_activeTxToken != null &&
-        identical(Zone.current[_txZoneKey], _activeTxToken)) {
-      throw StateError('transaction_active');
-    }
-    return await _bridge.task(
+    return await _task(
           {
             'kind': 'submitAction',
             'name': name,
@@ -386,12 +384,8 @@ class Client implements WritePort, MutatePort {
     bool refresh,
   ) async {
     final wire = store?.toWire();
-    if (_activeTxToken != null &&
-        identical(Zone.current[_txZoneKey], _activeTxToken)) {
-      throw StateError('transaction_active');
-    }
     try {
-      return (await _bridge.task({
+      return (await _task({
             'kind': 'invoke',
             'name': name,
             'version': version,
@@ -402,8 +396,10 @@ class Client implements WritePort, MutatePort {
           }))
           as Map<String, dynamic>;
     } on StateError catch (error) {
-      if (_unknownExecution.contains(error.message)) {
-        throw ActionTransportException(error.message);
+      final details = error is TaskFailure ? error.details : null;
+      final code = details?['code'] as String? ?? error.message;
+      if (_unknownExecution.contains(code)) {
+        throw ActionTransportException(code, _directCause(details));
       }
       // The runtime is gone: no call can be made.
       if (error.message == 'client_closed') {
@@ -413,19 +409,32 @@ class Client implements WritePort, MutatePort {
     }
   }
 
+  /// The cause the runtime gave a direct failure in its `details`: the
+  /// transport's message, as an [HttpFailure] when it carried a status.
+  static Object? _directCause(Map<String, dynamic>? details) {
+    final message = details?['message'];
+    if (message is! String) return null;
+    final status = details!['status'];
+    return status is int
+        ? HttpFailure.reported(message, status)
+        : StateError(message);
+  }
+
   /// Register durable intent to follow [scope] and answer with its handle. It
   /// resolves when the local transaction commits: it awaits no
   /// authentication, connection or acknowledgement, and the same Scope answers
   /// with the same handle while its registration lives. The socket is never
   /// cancelled here; the Downlink worker sees the committed change and
   /// reconciles its own session.
-  Future<Subscription> subscribeScope(String scope) =>
-      _subscriptions.subscribe(scope);
+  Future<Subscription> subscribeScope(String scope) => _inTransaction
+      ? Future.error(StateError('transaction_active'))
+      : _subscriptions.subscribe(scope);
   Future<Subscription> subscribe(String channel) => subscribeScope(channel);
 
   /// Remove whatever registration this Scope name has; its handle stops.
-  Future<void> unsubscribe(String channel) =>
-      _subscriptions.unsubscribeScope(channel);
+  Future<void> unsubscribe(String channel) => _inTransaction
+      ? Future.error(StateError('transaction_active'))
+      : _subscriptions.unsubscribeScope(channel);
 
   /// Connect to [server]: the runtime runs both lanes and every direct call
   /// from here on, and this client only executes the effects it asks for.
@@ -437,6 +446,7 @@ class Client implements WritePort, MutatePort {
     Future<void> Function()? refreshAuth,
     Duration directTimeout = const Duration(seconds: 30),
   }) async {
+    if (_inTransaction) throw StateError('transaction_active');
     final live = ServerSession(server);
     // Close has begun: a connect admitted now would outlive it.
     if (_closing != null) throw StateError('client_closed');
@@ -464,16 +474,18 @@ class Client implements WritePort, MutatePort {
   /// `prerequisite` effect.
   Future<void> runPrerequisites(
     Map<String, Future<void> Function(Map<String, dynamic>)> handlers,
-  ) => _tasks ??= _runPrerequisites(handlers).whenComplete(() {
-    _tasks = null;
-  });
+  ) => _inTransaction
+      ? Future.error(StateError('transaction_active'))
+      : _tasks ??= _runPrerequisites(handlers).whenComplete(() {
+          _tasks = null;
+        });
   Future<void> _runPrerequisites(
     Map<String, Future<void> Function(Map<String, dynamic>)> handlers,
   ) async {
     final handler = prerequisiteHandler(handlers);
     _bridge.handleEffects('prerequisite', handler);
     try {
-      await _bridge.task({
+      await _task({
         'kind': 'runPrerequisites',
         'handlers': handlers.keys.toList(),
       });
@@ -484,29 +496,23 @@ class Client implements WritePort, MutatePort {
 
   /// Test seams over the legacy commands: freeze the next push batch, settle
   /// it with a receipt, apply one page. The connection never uses them.
-  Future<String?> freeze() async =>
-      await _bridge.task({'kind': 'freeze'}) as String?;
+  Future<String?> freeze() async => await _task({'kind': 'freeze'}) as String?;
 
   /// The runtime announces every completion the receipt settled as
   /// `callCompleted`.
   Future<void> acknowledge(int sequence, Map<String, dynamic> receipt) async {
-    await _bridge.task({
-      'kind': 'ack',
-      'sequence': sequence,
-      'receipt': receipt,
-    });
+    await _task({'kind': 'ack', 'sequence': sequence, 'receipt': receipt});
   }
 
   Future<Map<String, dynamic>> applyPull(Map<String, dynamic> page) async =>
-      (await _bridge.task({'kind': 'pull', 'page': page}))
-          as Map<String, dynamic>;
+      (await _task({'kind': 'pull', 'page': page})) as Map<String, dynamic>;
 
   /// One record's sync state: its pending mutations and retained rejections.
   Future<Map<String, dynamic>> recordSyncState(
     String model,
     Map<String, dynamic> identity,
   ) async =>
-      await _bridge.task({
+      await _task({
             'kind': 'recordStatus',
             'key': {'model': model, 'identity': identity},
           })
@@ -514,17 +520,14 @@ class Client implements WritePort, MutatePort {
 
   /// The client's sync state: a local snapshot, not a network probe.
   Future<Map<String, dynamic>> syncState() async =>
-      (await _bridge.task({'kind': 'status'})) as Map<String, dynamic>;
+      (await _task({'kind': 'status'})) as Map<String, dynamic>;
 
   /// Leave an incompatible database behind and open a fresh file for the
   /// schema this client asked for. Refused while unsent mutations remain
   /// unless [discardPending]; the report says what the old file keeps.
   Future<Map<String, dynamic>> rebuild({bool discardPending = false}) async {
     final report =
-        (await _bridge.task({
-              'kind': 'rebuild',
-              'discardPending': discardPending,
-            }))
+        (await _task({'kind': 'rebuild', 'discardPending': discardPending}))
             as Map<String, dynamic>;
     // The runtime ended every handle of the replica left behind and completed
     // every abandoned call before this completion.
@@ -532,19 +535,18 @@ class Client implements WritePort, MutatePort {
   }
 
   Future<List<Map<String, dynamic>>> pendingTasks() async =>
-      (await _bridge.task({'kind': 'tasks'}) as List)
-          .cast<Map<String, dynamic>>();
+      (await _task({'kind': 'tasks'}) as List).cast<Map<String, dynamic>>();
   Future<void> setReadiness(String key, String state) async {
-    await _bridge.task({'kind': 'readiness', 'key': key, 'state': state});
+    await _task({'kind': 'readiness', 'key': key, 'state': state});
   }
 
   /// The runtime announces the dropped call's completion as `callCompleted`.
   Future<void> drop(int ordinal) async {
-    await _bridge.task({'kind': 'drop', 'ordinal': ordinal});
+    await _task({'kind': 'drop', 'ordinal': ordinal});
   }
 
   Future<void> dismissRejection(int ordinal) async {
-    await _bridge.task({'kind': 'dismiss', 'ordinal': ordinal});
+    await _task({'kind': 'dismiss', 'ordinal': ordinal});
   }
 
   /// The rows of [model] matching [where]: the committed result when the
@@ -557,6 +559,13 @@ class Client implements WritePort, MutatePort {
     String model, {
     Map<String, dynamic> where = const {},
   }) => Stream<List<Map<String, dynamic>>>.multi((sink) {
+    // The watch task is submitted when the stream is listened to.
+    if (_inTransaction) {
+      sink
+        ..addError(StateError('transaction_active'))
+        ..close();
+      return;
+    }
     String? observer;
     var cancelled = false;
     void deliver(Map<String, dynamic> snapshot) {
@@ -616,15 +625,27 @@ class Client implements WritePort, MutatePort {
 
   Future<void> close() => _closing ??= _finishClose();
 
+  void _abandonConnection() {
+    final connection = _connection;
+    if (connection != null) abandonConnection(connection);
+  }
+
+  /// Close is priority control: the runtime's `close` is submitted before
+  /// anything is awaited, so it never waits behind a task - a callback that
+  /// holds the transaction, or the connection's `stop` parked behind it. The
+  /// runtime cancels every effect and ends the lanes; the connection is only
+  /// stopped here, and a connect in flight settles before this completes.
   Future<void> _finishClose() async {
     _actionObservers.close();
     // The runtime stops every handle and watch with a terminal snapshot before
     // it announces its end.
     _subscriptions.closing();
-    await Future.wait(_connecting.toList());
-    await _connection?.close();
+    final closing = _bridge.close();
     try {
-      await _bridge.close();
+      _abandonConnection();
+      await Future.wait(_connecting.toList());
+      _abandonConnection();
+      await closing;
     } finally {
       _closed = true;
       _subscriptions.close();

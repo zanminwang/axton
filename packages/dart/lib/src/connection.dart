@@ -532,6 +532,15 @@ class DownlinkLane implements LaneControls {
         for (final report in action['reports'] as List<dynamic>) {
           onError?.call(AxtonReport.fromJson(report as Map<String, dynamic>));
         }
+      // A damaged registration the worker skips: the application's to know
+      // about, and no subscription status to project
+      // ([#163](https://github.com/zanminwang/axton/issues/163)).
+      case 'ledgerIssue':
+        onError?.call(
+          StateError(
+            'bootstrap ledger ${action['channel']}: ${action['message']}',
+          ),
+        );
       // The Scopes a commit moved and the set the handshake covered: the
       // subscription status projection reads both. `wait` is the loop's own
       // sleep.

@@ -213,6 +213,12 @@ export type DownlinkAction =
   | { type: "report"; reports: ReportDetails[] }
   | { type: "changed"; scopes: string[] }
   | { type: "acknowledged"; scopes: string[] }
+  /**
+   * A stored Bootstrap row of `channel` cannot be decoded and the worker skips
+   * it; `message` is the bounded reason. Once per defect, and never a status
+   * transition ([#163](https://github.com/zanminwang/axton/issues/163)).
+   */
+  | { type: "ledgerIssue"; channel: string; message: string }
   | { type: "wait"; millis: number };
 /** Why one record or one queued mutation could not be applied as delivered. */
 export type ReportKind = "readFailed" | "skipped" | "conflict" | "diverged";
@@ -471,6 +477,13 @@ export async function startDownlinkLane(
       case "report":
         for (const report of action.reports)
           options.onError?.(new AxtonReport(report));
+        return;
+      // A damaged registration the worker skips: the application's to know
+      // about, and no subscription status to project.
+      case "ledgerIssue":
+        options.onError?.(
+          Error("bootstrap ledger " + action.channel + ": " + action.message),
+        );
         return;
       // The Scopes a commit moved and the set the handshake covered: the
       // subscription status projection reads both.

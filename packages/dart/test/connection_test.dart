@@ -542,6 +542,50 @@ void main() {
     },
   );
 
+  /// A stored Bootstrap row the worker cannot decode reaches `onError` once, as
+  /// a `StateError` naming the channel and the bounded reason; it is no status
+  /// transition, so the subscription status projection hears nothing. The
+  /// TypeScript twin is `a downlink ledger issue reaches onError without a
+  /// status transition`
+  /// ([#163](https://github.com/zanminwang/axton/issues/163)).
+  test(
+    'a downlink ledger issue reaches onError without a status transition',
+    () async {
+      final reported = <Object>[];
+      final signals = <DownlinkSignal>[];
+      final script = <List<dynamic>>[
+        [
+          {
+            'type': 'ledgerIssue',
+            'channel': 'a',
+            'message':
+                'the stored Bootstrap row cannot be decoded: expected an unsigned integer',
+          },
+        ],
+      ];
+      final lane = await DownlinkLane.start(
+        command: (event) async {
+          if (event['event'] != 'next') return const [];
+          return script.isEmpty ? const [] : script.removeAt(0);
+        },
+        network: _ScriptedSession(),
+        wakePush: () {},
+        onError: reported.add,
+        report: signals.add,
+      );
+      await _eventually(() => reported.isNotEmpty, 'the ledger issue');
+      expect(reported, hasLength(1), reason: 'one error for one issue');
+      expect(reported.single, isA<StateError>());
+      expect(
+        (reported.single as StateError).message,
+        'bootstrap ledger a: the stored Bootstrap row cannot be decoded: '
+        'expected an unsigned integer',
+      );
+      expect(signals, isEmpty, reason: 'no status transition');
+      await lane.close();
+    },
+  );
+
   /// A page the lane abandoned itself is not the application's failure: `pause`
   /// aborts it silently, the worker still hears `failed` so it can clear its
   /// slot, and `resume` fetches again on a cancellation of its own. The
@@ -707,6 +751,15 @@ void main() {
       await lane.close();
     },
   );
+}
+
+/// Poll [condition] until it holds or five seconds pass.
+Future<void> _eventually(bool Function() condition, String what) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) fail('$what timed out');
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
 }
 
 /// A downlink network whose pages answer only when the lane abandons them: the

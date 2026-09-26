@@ -27,6 +27,10 @@
 //! `now` (milliseconds) and `entropy` are facts the actor supplies on every
 //! call; deterministic tests pass their own.
 //!
+//! A unit that committed queues [`Event::Changed`] before its own
+//! [`Event::TaskCompleted`], so an SDK that resolves the task and re-queries at
+//! once has already heard about the change it is about to read.
+//!
 //! # Scheduling and transaction ownership
 //!
 //! Ordinary tasks form one FIFO. The first `transaction` task to run opens the
@@ -62,6 +66,138 @@
 //!   land, the lane and direct-call commands of the former `RuntimeHost`
 //!   remain here as tasks; the runtime replaces them with owned lifecycles
 //!   and effects in its later checkpoints.
+mod commands;
 pub mod protocol;
+mod tasks;
+mod transactions;
 
 pub use protocol::*;
+
+use crate::{Client, ClientStore, Result, Schema, StoreFactory};
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+use std::path::Path;
+
+/// One open client and everything the runtime decided about it. See the
+/// module documentation for the contract of the three driving calls.
+pub struct ClientRuntime<S: ClientStore> {
+    client: Client<S>,
+    lanes: commands::Lanes,
+    tasks: tasks::Tasks,
+    transaction: Option<transactions::Transaction>,
+    /// Every effect the host may still answer, by id. Checkpoint 1 issues only
+    /// callback effects, answered by [`Input::CallbackResult`]; the table is
+    /// what later effects correlate and fence against.
+    effects: BTreeMap<String, EffectKind>,
+    /// The one counter behind `transactionId`, `scope` and `effectId`: every
+    /// identity the runtime issues is fresh for its lifetime.
+    issued: u64,
+    events: Vec<Event>,
+    lifecycle: Lifecycle,
+}
+
+/// What an outstanding effect was issued for.
+enum EffectKind {
+    /// The application callback of the transaction this id names.
+    Callback,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lifecycle {
+    Open,
+    /// Close was admitted; the next step performs it ahead of any other work.
+    Closing,
+    Closed,
+}
+
+impl<S: ClientStore + 'static> ClientRuntime<S> {
+    /// [`Client::open_at`] under the runtime. Errors are the open errors.
+    pub fn open_at(
+        path: impl AsRef<Path>,
+        schema: Schema,
+        factory: StoreFactory<S>,
+        discard_pending: bool,
+    ) -> Result<Self> {
+        Ok(Self::new(Client::open_at(
+            path,
+            schema,
+            factory,
+            discard_pending,
+        )?))
+    }
+    /// Wrap an already opened client.
+    pub fn new(client: Client<S>) -> Self {
+        Self {
+            client,
+            lanes: commands::Lanes::default(),
+            tasks: tasks::Tasks::default(),
+            transaction: None,
+            effects: BTreeMap::new(),
+            issued: 0,
+            events: vec![],
+            lifecycle: Lifecycle::Open,
+        }
+    }
+    /// What a successful open answers: the client id and the schema check's
+    /// outcome, as the SDKs report it in `status()`.
+    pub fn opened(&self) -> Value {
+        json!({
+            "clientId": self.client.client_id(),
+            "schema": commands::schema_json(self.client.schema_state()),
+        })
+    }
+    /// The events queued since the last call, in order.
+    pub fn take_events(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.events)
+    }
+    /// Whether [`Event::RuntimeClosed`] has been queued.
+    pub fn closed(&self) -> bool {
+        self.lifecycle == Lifecycle::Closed
+    }
+    /// Test seam: the client, for inspecting committed state in Rust tests.
+    pub fn client(&mut self) -> &mut Client<S> {
+        &mut self.client
+    }
+}
+
+impl<S: ClientStore> ClientRuntime<S> {
+    /// A fresh number for an identity the runtime issues. Never reused; an
+    /// exhausted counter refuses rather than wraps.
+    fn issue(&mut self) -> std::result::Result<u64, String> {
+        self.issued = self
+            .issued
+            .checked_add(1)
+            .ok_or_else(|| "runtime identifiers exhausted".to_string())?;
+        Ok(self.issued)
+    }
+    /// Settle one routed request: the only place a [`Event::TaskCompleted`]
+    /// is queued, so a request is completed at most once.
+    fn complete(&mut self, request_id: String, outcome: std::result::Result<Value, String>) {
+        self.tasks.release(&request_id);
+        self.events.push(match outcome {
+            Ok(value) => Event::TaskCompleted {
+                request_id,
+                ok: true,
+                value,
+                error: None,
+            },
+            Err(error) => Event::TaskCompleted {
+                request_id,
+                ok: false,
+                value: Value::Null,
+                error: Some(error),
+            },
+        });
+    }
+    /// Queue [`Event::Changed`] when a unit committed since `generation`.
+    fn changed_since(&mut self, generation: u64) {
+        if self.client.generation() != generation {
+            self.events.push(Event::Changed {
+                tables: self.client.last_changed().iter().cloned().collect(),
+            });
+        }
+    }
+    fn report(&mut self, diagnostic: Diagnostic) {
+        self.events.push(Event::Report { diagnostic });
+    }
+}

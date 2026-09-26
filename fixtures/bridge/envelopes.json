@@ -1,0 +1,39 @@
+{
+  "inputs": [
+    {"type":"task","requestId":"42","command":{"kind":"read","key":{"model":"Todo","identity":{"id":"t"}}}},
+    {"type":"task","requestId":"44","command":{"kind":"transaction"}},
+    {"type":"transactionCommand","requestId":"43","transactionId":"tx7","scope":"sp1","command":{"kind":"direct","operation":{}}},
+    {"type":"transactionCommand","requestId":"45","transactionId":"tx7","command":{"kind":"savepoint"}},
+    {"type":"callbackResult","effectId":"5","transactionId":"tx7","ok":true},
+    {"type":"callbackResult","effectId":"5","transactionId":"tx7","ok":false,"error":"boom"},
+    {"type":"effectResult","effectId":"101","outcome":{"ok":true,"value":{"event":"opened"}}},
+    {"type":"effectResult","effectId":"101","outcome":{"ok":true,"value":{"event":"message","body":"{}"}}},
+    {"type":"effectResult","effectId":"101","outcome":{"ok":true,"value":{"event":"overflow"}}},
+    {"type":"effectResult","effectId":"101","outcome":{"ok":true,"value":{"event":"closed"}}},
+    {"type":"effectResult","effectId":"102","outcome":{"ok":false,"error":{"message":"pull failed","status":401}}},
+    {"type":"effectResult","effectId":"103","outcome":{"ok":false,"error":{"message":"offline"}}},
+    {"type":"effectResult","effectId":"104","outcome":{"ok":true,"value":{"status":200,"body":"{}"}}},
+    {"type":"close"}
+  ],
+  "events": [
+    {"type":"taskCompleted","requestId":"42","ok":true,"value":null},
+    {"type":"taskCompleted","requestId":"46","ok":true,"value":{"clientId":"c","schema":{"rebuilt":false,"pending":null,"lastRebuild":null}}},
+    {"type":"taskCompleted","requestId":"43","ok":false,"value":null,"error":"transaction_closed"},
+    {"type":"effect","effectId":"5","operation":{"kind":"callback","transactionId":"tx7","requestId":"42"}},
+    {"type":"effect","effectId":"6","operation":{"kind":"http","route":"action","body":"{}"}},
+    {"type":"effect","effectId":"8","operation":{"kind":"http","route":"push","body":"{}"}},
+    {"type":"effect","effectId":"9","operation":{"kind":"http","route":"pull","body":"{}"}},
+    {"type":"effect","effectId":"10","operation":{"kind":"socket","subscribe":"{}"}},
+    {"type":"effect","effectId":"7","operation":{"kind":"timer","millis":250}},
+    {"type":"effect","effectId":"11","operation":{"kind":"refreshAuth"}},
+    {"type":"effect","effectId":"12","operation":{"kind":"prerequisite","key":"k","name":"upload","arguments":{"id":"t"}}},
+    {"type":"cancelEffect","effectId":"6"},
+    {"type":"callCompleted","callId":"call-1","outcome":{"status":"succeeded","result":null}},
+    {"type":"observerChanged","observerId":"3","snapshot":{"rows":[]}},
+    {"type":"report","diagnostic":{"kind":"records","reports":[{"kind":"conflict","model":"Entry","identity":{"id":"e"},"stamp":3,"detail":null}]}},
+    {"type":"report","diagnostic":{"kind":"error","message":"socket closed"}},
+    {"type":"report","diagnostic":{"kind":"protocol","message":"duplicate request id 42"}},
+    {"type":"changed","tables":["Todo"]},
+    {"type":"runtimeClosed"}
+  ]
+}

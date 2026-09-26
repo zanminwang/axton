@@ -956,12 +956,13 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
     for decl in &d.actions {
         let label = kind_label(decl.kind);
         // `mutations.call` and `queries.enqueue` select the other delivery
-        // route, so an operation of that kind cannot take the member name.
-        let reserved = match decl.kind {
-            axton_core::CallKind::Mutation => "call",
-            axton_core::CallKind::Query => "enqueue",
+        // route and `queries.invalidate` discards saved once results, so an
+        // operation of that kind cannot take the member name.
+        let reserved: &[&str] = match decl.kind {
+            axton_core::CallKind::Mutation => &["call"],
+            axton_core::CallKind::Query => &["enqueue", "invalidate"],
         };
-        if decl.name.eq_ignore_ascii_case(reserved) {
+        if reserved.iter().any(|r| decl.name.eq_ignore_ascii_case(r)) {
             return Err(at(
                 decl.pos,
                 format!("{label} name {} is reserved", decl.name),

@@ -108,6 +108,13 @@ Future<void> useClient(GeneratedClient client) async {
   await client.queries.findTodos(text: 'x', cursor: null, store: const FindTodosStore.outputs(todos: false));
   await client.mutations.call.ping(store: const PingStore.none());
   await client.mutations.ping(store: const PingStore.all());
+  // once reuses a saved complete result; refresh replaces it; invalidate discards it.
+  final FindTodosOutput cached = await client.queries.findTodos(text: 'x', cursor: null, once: true);
+  await client.queries.findTodos(text: 'x', cursor: null, once: true, refresh: true, store: const FindTodosStore.none());
+  await client.queries.getTodos(once: true);
+  await client.queries.invalidate.findTodos(text: 'x', cursor: null);
+  await client.queries.invalidate.getTodos();
+  cached.hashCode;
   // A business input named store keeps its name; the selector is outputStore.
   final OpenTodoOutput opened = await client.mutations.call.openTodo(
     store: 'business',

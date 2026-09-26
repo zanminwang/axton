@@ -100,6 +100,27 @@
       "op": "publish",
       "request": {"op": "publish", "channel": "shared", "model": "Task", "identity": {"id": "t-1"}, "identityKey": "{\"id\":\"t-1\"}", "stamp": 4},
       "responses": [{"variant": "published", "value": {"cursor": 6, "stamp": 4}}]
+    },
+    {
+      "op": "lockRecord",
+      "request": {"op": "lockRecord", "model": "Task", "identityKey": "{\"id\":\"t-1\"}"},
+      "responses": [
+        {"variant": "locked", "value": 4},
+        {"variant": "absent", "value": null}
+      ]
+    },
+    {
+      "op": "memberships",
+      "request": {"op": "memberships", "model": "Task", "identityKey": "{\"id\":\"t-1\"}"},
+      "responses": [
+        {"variant": "members", "value": ["other", "shared"]},
+        {"variant": "none", "value": []}
+      ]
+    },
+    {
+      "op": "setMembership",
+      "request": {"op": "setMembership", "channel": "shared", "model": "Task", "identityKey": "{\"id\":\"t-1\"}", "present": true},
+      "responses": [{"variant": "acknowledged", "value": null}]
     }
   ]
 }

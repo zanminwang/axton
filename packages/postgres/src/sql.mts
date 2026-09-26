@@ -33,6 +33,25 @@ export const ADVANCE_STAMP =
  */
 export const ENSURE_STAMP =
   "INSERT INTO axton_record(model,identity_key,stamp) VALUES($1,$2,1) ON CONFLICT(model,identity_key) DO UPDATE SET stamp=axton_record.stamp RETURNING stamp";
+/**
+ * Write-lock an existing record row without changing its stamp. A no-op UPDATE
+ * rather than `SELECT … FOR UPDATE`: it writes a new row version, so a
+ * concurrent Repeatable Read writer of the row fails serialization and retries
+ * instead of acting on a membership snapshot taken before this commit. Never
+ * creates a row.
+ */
+export const LOCK_RECORD =
+  "UPDATE axton_record SET stamp=stamp WHERE model=$1 AND identity_key=$2 RETURNING stamp";
+export const MEMBERSHIPS =
+  "SELECT channel FROM axton_membership WHERE model=$1 AND identity_key=$2 ORDER BY channel";
+/** A first member creates its Channel at head zero; publication allocates the first real position. */
+export const ENSURE_CHANNEL =
+  "INSERT INTO axton_channel(channel,head) VALUES($1,0) ON CONFLICT(channel) DO NOTHING";
+/** The record's metadata row must exist (foreign key). An existing member is left alone. */
+export const INSERT_MEMBERSHIP =
+  "INSERT INTO axton_membership(channel,model,identity_key) VALUES($1,$2,$3) ON CONFLICT DO NOTHING";
+export const DELETE_MEMBERSHIP =
+  "DELETE FROM axton_membership WHERE channel=$1 AND model=$2 AND identity_key=$3";
 export const LOCK_STAMP =
   "SELECT stamp FROM axton_record WHERE model=$1 AND identity_key=$2 FOR UPDATE";
 export const ADVANCE_HEAD =

@@ -37,6 +37,9 @@ const fakePersistence=seen=>({
    case 'advanceStamp':return response('advanceStamp','stamped');
    case 'ensureStamp':return response('ensureStamp','stamped');
    case 'publish':return response('publish','published');
+   case 'lockRecord':return response('lockRecord','locked');
+   case 'memberships':return response('memberships','members');
+   case 'setMembership':return null;
    default:throw new Error(`fake persistence reached ${request.op}`);
   }
  },
@@ -95,6 +98,7 @@ test('every fixture request replays through the TypeScript host to the fixture a
   scan:response('scan','rows'),savepoint:null,rollback:null,release:null,
   handle:response('handle','settled'),handleAction:response('handleAction','settled'),load:response('load','rows'),
   advanceStamp:response('advanceStamp','stamped'),ensureStamp:response('ensureStamp','stamped'),publish:response('publish','published'),
+  lockRecord:response('lockRecord','locked'),memberships:response('memberships','members'),setMembership:null,
  };
  assert.equal(Object.keys(expected).length,HOST_OPERATIONS.length,'every operation has an expected answer');
  for(const [op,answer] of answers)assert.deepEqual(answer,expected[op],`${op} answer`);
@@ -137,4 +141,49 @@ test('the PostgreSQL persistence answers the persistence half through a two-meth
  for(const op of ['handle','handleAction','load'])
   await assert.rejects(()=>bound.call(entry(op).request),/Unsupported persistence operation/);
  await assert.rejects(()=>bound.call({op:'vacuum'}),/Unsupported persistence operation vacuum/);
+});
+
+test('the PostgreSQL persistence validates membership requests and the rows it answers from',async()=>{
+ const driverAnswering=rows=>{const seen=[];return {seen,driver:{transaction:body=>body('tx'),query:async(tx,sql,params)=>{seen.push([sql,params]);return rows(sql);}}};};
+ const lock=entry('lockRecord').request,members=entry('memberships').request,set=entry('setMembership').request;
+ {
+  const {driver,seen}=driverAnswering(()=>[]);
+  assert.equal(await answer(driver,'tx',lock),null,'no row: nothing locked, nothing created');
+  assert.deepEqual(await answer(driver,'tx',members),[]);
+  assert.equal(await answer(driver,'tx',set),null);
+  assert.equal(await answer(driver,'tx',{...set,present:false}),null);
+  assert.deepEqual(seen.map(([sql,params])=>[sql.split(/\s+/).slice(0,3).join(' '),params]),[
+   ['UPDATE axton_record SET',['Task',lock.identityKey]],
+   ['SELECT channel FROM',['Task',members.identityKey]],
+   ['INSERT INTO axton_channel(channel,head)',['shared']],
+   ['INSERT INTO axton_membership(channel,model,identity_key)',['shared','Task',set.identityKey]],
+   ['DELETE FROM axton_membership',['shared','Task',set.identityKey]],
+  ],'adding ensures the channel then inserts; removing only deletes');
+ }
+ {
+  const {driver}=driverAnswering(sql=>sql.startsWith('UPDATE')?[{stamp:4n}]:[{channel:'shared'},{channel:'other'}]);
+  assert.equal(await answer(driver,'tx',lock),response('lockRecord','locked'));
+  assert.deepEqual(await answer(driver,'tx',members),['shared','other'],'rows keep the database order');
+ }
+ for(const [rows,pattern] of [[[{stamp:0}],/Stored stamp/],[[{stamp:2**53}],/Stored stamp/],[[{stamp:1},{stamp:1}],/more than one/]]){
+  const {driver}=driverAnswering(()=>rows);
+  await assert.rejects(()=>answer(driver,'tx',lock),pattern);
+ }
+ for(const [rows,pattern] of [[[{channel:'a'},{channel:'a'}],/Duplicate membership/],[[{channel:' '}],/Invalid membership channel/],[[{channel:null}],/Invalid membership channel/]]){
+  const {driver}=driverAnswering(()=>rows);
+  await assert.rejects(()=>answer(driver,'tx',members),pattern);
+ }
+ for(const [request,pattern] of [
+  [{...set,present:undefined},/present must be a boolean/],
+  [{...set,present:'true'},/present must be a boolean/],
+  [{...set,channel:''},/Invalid membership channel/],
+  [{...set,channel:'  '},/Invalid membership channel/],
+  [{...set,surprise:1},/Unknown setMembership field surprise/],
+  [{...lock,channel:'shared'},/Unknown lockRecord field channel/],
+  [{...members,present:true},/Unknown memberships field present/],
+ ]){
+  const {driver,seen}=driverAnswering(()=>[]);
+  await assert.rejects(()=>answer(driver,'tx',request),pattern);
+  assert.deepEqual(seen,[],'a malformed request runs no statement');
+ }
 });

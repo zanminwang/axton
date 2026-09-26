@@ -1,14 +1,15 @@
 //! The server's persistence, in memory. Mirrors packages/postgres/src/persistence.mts
 //! closely enough that axton_server cannot tell the difference: per-client receipts,
 //! per-channel heads, one invalidation row per (channel, record) carrying the latest
-//! cursor, and one stamp counter per record that only a business change advances.
+//! cursor, one stamp counter per record that only a business change advances, and
+//! the persistent (record, channel) memberships of `axton_membership`.
 use axton_core::{PushRequest, RecordKey};
 use axton_server::{
     Host,
     host::{
         Acknowledged, Claimed, ClaimedCall, Handled, Head, HostRequest,
-        Invalidation as ContractInvalidation, Loaded, PublicationIntent, Published, RecordRef,
-        Scanned, Stamped,
+        Invalidation as ContractInvalidation, Loaded, Locked, Memberships, PublicationIntent,
+        Published, RecordRef, Scanned, Stamped,
     },
 };
 use serde_json::{Map, Value, json};
@@ -60,11 +61,18 @@ struct Tables {
     stamps: BTreeMap<String, Stamp>,
     heads: BTreeMap<String, u64>,
     invalidations: BTreeMap<(String, String), Invalidation>,
+    /// `axton_membership`: (encoded record key, channel), in primary-key order.
+    /// Kept apart from `stamps` and `invalidations`: enrolment allocates no
+    /// cursor and advances no stamp. It lives in the tables, so savepoints and
+    /// failed transactions restore it with everything else.
+    memberships: BTreeSet<(String, String)>,
 }
 
 #[derive(Default)]
 struct State {
     tables: Tables,
+    /// The scenario's routing: which channels the sim handler publishes each
+    /// record to. Configuration, not persistence (see `Tables::memberships`).
     membership: BTreeMap<String, Vec<String>>,
     clients: BTreeMap<String, Claimed>,
     savepoints: Vec<Tables>,
@@ -174,6 +182,13 @@ impl MemHost {
             .get(&encoded(key))
             .cloned()
             .unwrap_or_default()
+    }
+    /// The committed-or-current persistent memberships of `key` (`axton_membership`),
+    /// sorted. Distinct from [`membership`](Self::membership), the scenario routing.
+    pub fn stored_memberships(&self, key: &RecordKey) -> Vec<String> {
+        stored_memberships(&self.0.lock().unwrap().tables, key)
+            .into_iter()
+            .collect()
     }
     /// Whether membership was ever explicitly set for `key`, even to no channels at
     /// all - distinct from `membership` being empty because nothing was set yet.
@@ -433,6 +448,40 @@ fn publish_at(t: &mut Tables, channel: &str, key: &RecordKey, stamp: u64) -> Res
         },
     );
     Ok(cursor)
+}
+
+/// `memberships`: the channels `key` is a member of, sorted and unique.
+fn stored_memberships(t: &Tables, key: &RecordKey) -> BTreeSet<String> {
+    let k = encoded(key);
+    t.memberships
+        .range((k.clone(), String::new())..)
+        .take_while(|(record, _)| *record == k)
+        .map(|(_, channel)| channel.clone())
+        .collect()
+}
+
+/// `setMembership`: add (creating the channel at head zero) or remove one
+/// membership. Idempotent both ways; adding needs the record's metadata row,
+/// as the foreign key does.
+fn set_membership(
+    t: &mut Tables,
+    channel: &str,
+    key: &RecordKey,
+    present: bool,
+) -> Result<(), String> {
+    let k = encoded(key);
+    if !present {
+        t.memberships.remove(&(k, channel.to_string()));
+        return Ok(());
+    }
+    if !t.stamps.contains_key(&k) {
+        return Err(format!(
+            "Record metadata missing for {k}: membership needs its record first"
+        ));
+    }
+    t.heads.entry(channel.to_string()).or_insert(0);
+    t.memberships.insert((k, channel.to_string()));
+    Ok(())
 }
 
 fn key_of(model: &str, identity: &Value) -> RecordKey {
@@ -754,6 +803,37 @@ impl Host for MemHost {
                     let key = key_of(&model, &identity);
                     let cursor = publish_at(&mut s.tables, &channel, &key, stamp)?;
                     response!(Published { cursor, stamp })
+                }
+                HostRequest::LockRecord {
+                    model,
+                    identity_key,
+                } => {
+                    // The in-memory host is single-threaded; the lock is the
+                    // stamp read, which never creates a row.
+                    let key = key_from_identity_key(&model, &identity_key)?;
+                    let locked: Locked = s
+                        .tables
+                        .stamps
+                        .get(&encoded(&key))
+                        .map(|row| Stamped(row.value));
+                    response!(locked)
+                }
+                HostRequest::Memberships {
+                    model,
+                    identity_key,
+                } => {
+                    let key = key_from_identity_key(&model, &identity_key)?;
+                    response!(Memberships(stored_memberships(&s.tables, &key)))
+                }
+                HostRequest::SetMembership {
+                    channel,
+                    model,
+                    identity_key,
+                    present,
+                } => {
+                    let key = key_from_identity_key(&model, &identity_key)?;
+                    set_membership(&mut s.tables, &channel, &key, present)?;
+                    response!(Acknowledged)
                 }
                 HostRequest::Scan {
                     channel,
@@ -1152,6 +1232,149 @@ mod tests {
             host.accepted() + host.rejected() + host.failed(),
             "no_mutation_executes_twice must hold for a rejection too"
         );
+    }
+
+    /// One host request inside the currently open simulated transaction.
+    fn call(host: &MemHost, request: Value) -> Result<Value, String> {
+        block_on(host.call(request))
+    }
+    fn lock(host: &MemHost, id: &str) -> Result<Value, String> {
+        let identity_key = entry_key(id).encoded_identity().unwrap();
+        call(
+            host,
+            json!({"op":"lockRecord","model":"Entry","identityKey":identity_key}),
+        )
+    }
+    fn members(host: &MemHost, id: &str) -> Result<Value, String> {
+        let identity_key = entry_key(id).encoded_identity().unwrap();
+        call(
+            host,
+            json!({"op":"memberships","model":"Entry","identityKey":identity_key}),
+        )
+    }
+    fn enroll(host: &MemHost, channel: &str, id: &str, present: bool) -> Result<Value, String> {
+        let identity_key = entry_key(id).encoded_identity().unwrap();
+        call(
+            host,
+            json!({"op":"setMembership","channel":channel,"model":"Entry","identityKey":identity_key,"present":present}),
+        )
+    }
+    fn ensure_stamp(host: &MemHost, id: &str) -> Result<Value, String> {
+        let identity_key = entry_key(id).encoded_identity().unwrap();
+        call(
+            host,
+            json!({"op":"ensureStamp","model":"Entry","identityKey":identity_key}),
+        )
+    }
+
+    #[test]
+    fn persistent_membership_is_idempotent_sorted_and_needs_record_metadata() {
+        let host = MemHost::new();
+        host.transaction(|| {
+            assert_eq!(
+                lock(&host, "e1")?,
+                Value::Null,
+                "absent record: nothing locked"
+            );
+            assert!(
+                enroll(&host, "a", "e1", true)
+                    .unwrap_err()
+                    .contains("Record metadata missing"),
+                "a member needs its record row first"
+            );
+            assert_eq!(
+                enroll(&host, "a", "e1", false)?,
+                Value::Null,
+                "removing a non-member of an absent record is a no-op"
+            );
+            assert_eq!(
+                lock(&host, "e1")?,
+                Value::Null,
+                "neither lock nor removal creates the row"
+            );
+            assert_eq!(ensure_stamp(&host, "e1")?, json!(1));
+            for channel in ["b", "a", "a"] {
+                assert_eq!(enroll(&host, channel, "e1", true)?, Value::Null);
+            }
+            assert_eq!(members(&host, "e1")?, json!(["a", "b"]), "unique, sorted");
+            assert_eq!(members(&host, "e2")?, json!([]));
+            assert_eq!(enroll(&host, "b", "e1", false)?, Value::Null);
+            assert_eq!(enroll(&host, "b", "e1", false)?, Value::Null);
+            assert_eq!(members(&host, "e1")?, json!(["a"]));
+            assert_eq!(
+                lock(&host, "e1")?,
+                json!(1),
+                "the lock answers the unchanged stamp"
+            );
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(host.stored_memberships(&entry_key("e1")), ["a"]);
+        assert_eq!(
+            host.stamp(&entry_key("e1")),
+            1,
+            "locks and membership never advance a stamp"
+        );
+        assert_eq!(host.head("a"), 0, "enrolment publishes nothing");
+        assert_eq!(host.head("b"), 0);
+        assert!(host.channel_records("a").is_empty());
+        assert_eq!(
+            host.membership(&entry_key("e1")),
+            Vec::<String>::new(),
+            "the persistent table is distinct from the scenario routing"
+        );
+    }
+
+    #[test]
+    fn persistent_membership_rolls_back_with_savepoints_and_transactions() {
+        let host = MemHost::new();
+        host.transaction(|| {
+            ensure_stamp(&host, "e1")?;
+            enroll(&host, "a", "e1", true)?;
+            Ok(())
+        })
+        .unwrap();
+        host.transaction(|| {
+            call(&host, json!({"op":"savepoint","ordinal":1}))?;
+            enroll(&host, "b", "e1", true)?;
+            enroll(&host, "a", "e1", false)?;
+            assert_eq!(members(&host, "e1")?, json!(["b"]));
+            call(&host, json!({"op":"rollback","ordinal":1}))?;
+            call(&host, json!({"op":"release","ordinal":1}))?;
+            assert_eq!(
+                members(&host, "e1")?,
+                json!(["a"]),
+                "the savepoint restored both edits"
+            );
+            call(&host, json!({"op":"savepoint","ordinal":2}))?;
+            enroll(&host, "c", "e1", true)?;
+            call(&host, json!({"op":"release","ordinal":2}))?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(host.stored_memberships(&entry_key("e1")), ["a", "c"]);
+        assert!(
+            host.transaction(|| {
+                enroll(&host, "a", "e1", false)?;
+                enroll(&host, "d", "e1", true)?;
+                Err::<(), _>("cancel".into())
+            })
+            .is_err()
+        );
+        assert_eq!(
+            host.stored_memberships(&entry_key("e1")),
+            ["a", "c"],
+            "a failed transaction leaves memberships as they were"
+        );
+        host.transaction(|| {
+            assert_eq!(
+                members(&host, "e1")?,
+                json!(["a", "c"]),
+                "a new transaction reads the committed set"
+            );
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]

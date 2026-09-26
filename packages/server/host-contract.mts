@@ -106,6 +106,34 @@ export type PublishRequest = {
   identityKey: string;
   stamp: number;
 };
+/**
+ * Write-lock one existing record row without changing its stamp, so a
+ * concurrent Repeatable Read writer of the row restarts instead of acting on
+ * a stale snapshot. Never creates a row: an absent record answers `null`.
+ */
+export type LockRecordRequest = {
+  op: "lockRecord";
+  model: string;
+  identityKey: string;
+};
+/** The Channels this record is a persistent member of. */
+export type MembershipsRequest = {
+  op: "memberships";
+  model: string;
+  identityKey: string;
+};
+/**
+ * Make the record a member of `channel` (`present: true`, creating the Channel
+ * at head zero if needed) or not (`false`). Idempotent both ways; never
+ * allocates a cursor. The record's metadata must exist to add it.
+ */
+export type SetMembershipRequest = {
+  op: "setMembership";
+  channel: string;
+  model: string;
+  identityKey: string;
+  present: boolean;
+};
 
 export type HostRequest =
   | ClaimRequest
@@ -122,7 +150,10 @@ export type HostRequest =
   | LoadRequest
   | AdvanceStampRequest
   | EnsureStampRequest
-  | PublishRequest;
+  | PublishRequest
+  | LockRecordRequest
+  | MembershipsRequest
+  | SetMembershipRequest;
 
 export type HostOperation = HostRequest["op"];
 
@@ -166,6 +197,10 @@ export type Invalidation = {
 export type Stamped = number;
 /** The answer to `publish`: the allocated cursor and the stamp the request named. */
 export type Published = { cursor: number; stamp: number };
+/** The answer to `lockRecord`: the locked record's unchanged stamp, or `null` when it has no row. */
+export type Locked = number | null;
+/** The answer to `memberships`: unique Channel names, sorted by the database. */
+export type Memberships = string[];
 /** A record a handler names: an additional change or a publication member. */
 export type HostRecordRef = {
   model: string;
@@ -228,6 +263,9 @@ export type HostResponse = {
   advanceStamp: Stamped;
   ensureStamp: Stamped;
   publish: Published;
+  lockRecord: Locked;
+  memberships: Memberships;
+  setMembership: Acknowledged;
 };
 
 /**
@@ -250,6 +288,9 @@ const OPERATIONS: Record<HostOperation, true> = {
   advanceStamp: true,
   ensureStamp: true,
   publish: true,
+  lockRecord: true,
+  memberships: true,
+  setMembership: true,
 };
 
 export const HOST_OPERATIONS: readonly HostOperation[] = Object.keys(

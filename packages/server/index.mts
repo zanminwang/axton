@@ -948,6 +948,9 @@ export function createBackend<T>(options: BackendOptions<T>) {
             case "advanceStamp":
             case "ensureStamp":
             case "publish":
+            case "lockRecord":
+            case "memberships":
+            case "setMembership":
               break;
             default: {
               const unreachable: never = req;

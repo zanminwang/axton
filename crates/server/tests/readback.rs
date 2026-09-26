@@ -367,6 +367,12 @@ impl Scripted {
                 *head += 1;
                 json!({"cursor":*head,"stamp":stamp})
             }
+            // Readback settles no membership; a request for one is a script defect.
+            HostRequest::LockRecord { .. }
+            | HostRequest::Memberships { .. }
+            | HostRequest::SetMembership { .. } => {
+                return Err(format!("{} is not scripted", request.label()));
+            }
         })
     }
 }

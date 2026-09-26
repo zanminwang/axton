@@ -10,6 +10,7 @@ use crate::store::{ClientStore, SqlRows};
 use crate::{BOOTSTRAP_MARK, BootstrapError, SUBSCRIPTION_CLOSED, SubscriptionState};
 use axton_core::{Result, invalid};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 
 /// The whole subscription row: the #150 identity and boundary, and the load
 /// beside it. Both halves are read at once so one transaction decides on S, L
@@ -25,6 +26,11 @@ const COLUMNS: &str = "channel, subscription_id, starting_cursor, cursor, \
 /// A decode error is cut to this many UTF-8 bytes before it enters a
 /// [`LedgerIssue`]: it is a reason, never a copy of what the row stores.
 const MAX_DETAIL: usize = 200;
+
+/// How many channel names one settlement candidate query binds at most: below
+/// SQLite's older 999-variable floor, whatever limit the host build raised it
+/// to, with nothing else bound beside them.
+const SETTLE_CHUNK: usize = 900;
 
 /// One stored row a tolerant scan could not decode
 /// ([#163](https://github.com/zanminwang/axton/issues/163)). The row stays
@@ -250,30 +256,52 @@ impl<S: ClientStore> Engine<'_, S> {
         )
     }
     /// The named Scopes whose fixed barrier ordinary delivery has reached: the
-    /// runs a settlement would actually complete. Read on the committed reader
-    /// so a caller can tell there is nothing to do without opening a write.
-    pub(crate) fn settleable_scopes(&mut self, scopes: &[String]) -> Result<Vec<String>> {
-        if scopes.is_empty() {
-            return Ok(vec![]);
-        }
-        let named = vec!["?"; scopes.len()].join(",");
-        let rows = self.rows(
-            &format!(
-                "SELECT channel FROM axton_subscription \
-                 WHERE bootstrap_state='catching_up' AND bootstrap_barrier IS NOT NULL \
-                   AND cursor IS NOT NULL AND cursor >= bootstrap_barrier \
-                   AND channel IN ({named}) ORDER BY channel"
-            ),
-            &scopes.iter().map(|s| json!(s)).collect::<Vec<_>>(),
-        )?;
-        rows.rows
+    /// runs a settlement would actually complete, sorted and each once. Read on
+    /// the committed reader so a caller can tell there is nothing to do without
+    /// opening a write.
+    ///
+    /// The names are a set: duplicates are bound once, and the set is queried
+    /// in chunks of [`SETTLE_CHUNK`] with no other value bound, so no input
+    /// outgrows the variable limit of any supported SQLite. Each candidate's
+    /// whole row is decoded here, before its name can reach a write: one that
+    /// cannot be is an issue and is left out, so it neither completes nor stops
+    /// the healthy candidates beside it
+    /// ([#163](https://github.com/zanminwang/axton/issues/163)).
+    pub(crate) fn settleable_scan(&mut self, channels: &[String]) -> Result<LedgerScan<String>> {
+        let unique: Vec<&str> = channels
             .iter()
-            .map(|r| {
-                r[0].as_str()
-                    .map(str::to_owned)
-                    .ok_or_else(|| invalid("stored Scope name is not text"))
-            })
-            .collect()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let mut scan = LedgerScan {
+            rows: vec![],
+            issues: vec![],
+        };
+        for chunk in unique.chunks(SETTLE_CHUNK) {
+            let named = vec!["?"; chunk.len()].join(",");
+            let rows = self.rows(
+                &format!(
+                    "SELECT {COLUMNS} FROM axton_subscription \
+                     WHERE bootstrap_state='catching_up' AND bootstrap_barrier IS NOT NULL \
+                       AND cursor IS NOT NULL AND cursor >= bootstrap_barrier \
+                       AND channel IN ({named}) ORDER BY channel"
+                ),
+                &chunk
+                    .iter()
+                    .map(|channel| json!(channel))
+                    .collect::<Vec<_>>(),
+            )?;
+            for row in &rows.rows {
+                match decode_keyed(row)? {
+                    Ok(loaded) => scan.rows.push(loaded.state.scope),
+                    Err(issue) => scan.issues.push(issue),
+                }
+            }
+        }
+        scan.rows.sort();
+        scan.rows.dedup();
+        Ok(scan)
     }
     /// Mark a run complete when the barrier it fixed has been reached, and
     /// answer with the state it committed. Reading L and writing the phase in

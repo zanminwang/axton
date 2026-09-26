@@ -486,26 +486,42 @@ impl<S: ClientStore> Client<S> {
     /// not catching up, or is still behind its barrier, contributes nothing.
     /// An empty list names no Scope and settles nothing.
     ///
-    /// Which Scopes are settleable is decided by one query on the committed
+    /// Which Scopes are settleable is decided by one read on the committed
     /// reader, barrier and delivery cursor included, so a run still short of
     /// its barrier opens no transaction at all: waiting out a barrier must not
     /// commit an empty write - and bump the client generation - once per
-    /// delivered page.
+    /// delivered page. The names are a set, read in bounded chunks however many
+    /// there are, and a candidate whose stored row cannot be decoded is left
+    /// out, so it supplies no completion evidence and cannot hold the others
+    /// open; the Downlink worker gives the account of it from the crate's
+    /// `settle_bootstrap_barriers_scan`
+    /// ([#163](https://github.com/zanminwang/axton/issues/163)).
     pub fn settle_bootstrap_barriers(&mut self, scopes: &[String]) -> Result<Vec<BootstrapState>> {
+        Ok(self.settle_bootstrap_barriers_scan(scopes)?.0)
+    }
+    /// [`Client::settle_bootstrap_barriers`] with an issue for every candidate
+    /// it left out because its row cannot be decoded. The write re-reads and
+    /// fences each healthy candidate itself: the committed read only decides
+    /// whether a write is worth opening.
+    pub(crate) fn settle_bootstrap_barriers_scan(
+        &mut self,
+        scopes: &[String],
+    ) -> Result<(Vec<BootstrapState>, Vec<LedgerIssue>)> {
         if scopes.is_empty() {
-            return Ok(vec![]);
+            return Ok((vec![], vec![]));
         }
-        let settleable = self.view(|e| e.settleable_scopes(scopes))?;
-        if settleable.is_empty() {
-            return Ok(vec![]);
+        let scan = self.view(|e| e.settleable_scan(scopes))?;
+        if scan.rows.is_empty() {
+            return Ok((vec![], scan.issues));
         }
-        self.write(|e| {
+        let settled = self.write(|e| {
             let mut settled = vec![];
-            for scope in &settleable {
+            for scope in &scan.rows {
                 settled.extend(e.settle_barrier(scope)?);
             }
             Ok(settled)
-        })
+        })?;
+        Ok((settled, scan.issues))
     }
 }
 

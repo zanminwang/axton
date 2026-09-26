@@ -16,3 +16,15 @@ mutation RetitleTodos(query String, title String) { todos Todo[] first Todo? }
 // parameterless scalar-only Query.
 query TodoPage(query String?) { todos Todo[] count Int asOf DateTime next String? }
 query CountTodos() { count Int }
+// Creation defaults (#27): the client generates omitted values once, before
+// the create is persisted or sent; both handler routes receive them unchanged.
+enum Mood { calm busy }
+model Note {
+ id UUID @default(uuid())
+ body String @default("")
+ mood Mood @default(calm)
+ createdAt DateTime @default(now())
+ tag String? @default("inbox")
+ @@id(id)
+}
+mutation AddNote(note Note.create) { saved Note }

@@ -114,6 +114,102 @@
         "version": 1
       }
     },
+    "AddDraft": {
+      "1": {
+        "input": {
+          "enums": [
+            {
+              "name": "Mood",
+              "values": [
+                "calm",
+                "busy"
+              ]
+            }
+          ],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "body",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "mood",
+                  "nullable": false,
+                  "type": {
+                    "kind": "enum",
+                    "name": "Mood"
+                  }
+                },
+                {
+                  "name": "created",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                },
+                {
+                  "name": "note",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "memo",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Draft"
+            }
+          ]
+        },
+        "knownFields": {
+          "Draft": [
+            "id",
+            "body",
+            "mood",
+            "created",
+            "note",
+            "memo"
+          ]
+        },
+        "name": "AddDraft",
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "slots": [
+          {
+            "cardinality": "single",
+            "model": "Draft",
+            "name": "draft",
+            "operation": "create"
+          }
+        ],
+        "version": 1
+      }
+    },
     "CreateEntry": {
       "1": {
         "input": {

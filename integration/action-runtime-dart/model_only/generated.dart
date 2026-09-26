@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'package:axton/axton.dart';
 export 'package:axton/axton.dart' show RuntimeConnection, SyncServer, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, CallStore, Subscription, SubscriptionStatus, SubscriptionInitialization, SubscriptionConnection, SubscriptionClosedException;
 class Present<T> { final T value; const Present(this.value); }
-final Map<String,dynamic> schema = jsonDecode(r'''{"actions":[],"clientPolicies":[],"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","version":1}]}''') as Map<String,dynamic>;
-class Item {
+final Map<String,dynamic> schema = jsonDecode('{"actions":[],"clientPolicies":[],"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","version":1}]}') as Map<String,dynamic>;
+/// What a fresh create of Item accepts: a complete [Item], or a [ItemCreate] that may omit fields with creation defaults.
+abstract interface class ItemCreateInput { Map<String,dynamic> toCreateRecord(); }
+class Item implements ItemCreateInput {
  final String id;
  final String label;
  const Item({required this.id,required this.label});
@@ -16,6 +18,8 @@ class Item {
  id: row['id'] as String,
  label: row['label'] as String,
  );
+ @override
+ Map<String,dynamic> toCreateRecord() => toRecord();
  ItemIdentity get identity => ItemIdentity(id: id);
 }
 class ItemIdentity {
@@ -33,6 +37,16 @@ class ItemPatch {
  const ItemPatch({this.label});
  Map<String,dynamic> toRecord() => {
  if (label != null) 'label': label!.value,
+ };
+}
+class ItemCreate implements ItemCreateInput {
+ final String id;
+ final String label;
+ const ItemCreate({required this.id,required this.label});
+ @override
+ Map<String,dynamic> toCreateRecord() => {
+ 'id': id,
+ 'label': label,
  };
 }
 class ItemFilter {
@@ -56,7 +70,7 @@ class ItemLiveModel extends ItemTxModel { final Client client; ItemLiveModel(thi
  Future<SyncState> syncState(ItemIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Item', identity.toRecord()));
 }
 class ItemTxModel extends ItemModel { final WritePort writer; ItemTxModel(this.writer) : super(writer);
- Future<void> create(Item value) { final state=value.toRecord(); for (final key in value.identity.toRecord().keys) { state.remove(key); } return writer.direct({'model':'Item','op':'create','identity':value.identity.toRecord(),'values':state}); }
+ Future<void> create(ItemCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Item','op':'create','identity':identity,'values':state}); }
  Future<void> update(ItemIdentity identity, ItemPatch patch) => writer.direct({'model':'Item','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
  Future<void> delete(ItemIdentity identity) => writer.direct({'model':'Item','op':'delete','identity':identity.toRecord()});
 }

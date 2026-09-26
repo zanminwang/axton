@@ -30,7 +30,8 @@ Future<AddTodoHandlerOutput> handle(
   MutationHandlerCall<Object, AddTodoInput> call,
 ) async {
   final Object context = call.ctx;
-  final TodoCreate input = call.args.todo;
+  // Handlers receive complete records, whatever the client omitted.
+  final Todo input = call.args.todo;
   final AddTodoPatchUpdate? patch = call.args.patch;
   context.hashCode;
   input.id;
@@ -137,6 +138,32 @@ Future<void> useClient(GeneratedClient client) async {
   direct.count;
   removedId.length;
   selected.length;
+  // Creation defaults (#27): create inputs may omit defaulted fields; a
+  // defaulted nullable field uses Present to send an explicit null.
+  await client.models.note.create(const NoteCreate(memo: null));
+  await client.models.note.create(const NoteCreate(memo: 'm', tag: Present(null), pinned: true));
+  await client.models.note.create(Note(id: 'full', body: 'b', pinned: false, at: DateTime.utc(2026), tag: null, memo: null));
+  await client.transaction((tx) => tx.models.note.create(const NoteCreate(memo: null)));
+  final AddNotesOutput saved = await client.mutations.call.addNotes(
+    note: const NoteCreate(memo: null),
+    many: [const NoteCreate(memo: 'x'), todoNote],
+  );
+  saved.saved.at;
+  await client.mutations.addNotes(note: const NoteCreate(memo: null), maybe: null, many: const []);
+}
+
+final todoNote = Note(id: 'n', body: '', pinned: false, at: DateTime.utc(2026), tag: 't', memo: null);
+
+Future<AddNotesHandlerOutput> handleNotes(
+  MutationHandlerCall<Object, AddNotesInput> call,
+) async {
+  final Note note = call.args.note;
+  final String id = note.id;
+  final DateTime at = note.at;
+  final List<Note> many = call.args.many;
+  at.hashCode;
+  many.length;
+  return AddNotesHandlerOutput(saved: NoteIdentity(id: id));
 }
 
 void main() {
@@ -148,6 +175,7 @@ void main() {
   stateListOutput.states.length;
   oldStateListOutput.states.length;
   handle;
+  handleNotes;
   find;
   useClient;
 }

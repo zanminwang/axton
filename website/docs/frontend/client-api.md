@@ -345,6 +345,31 @@ Saved results belong to the local database file, not to the signed-in user. The 
     });
     ```
 
+### Creation defaults
+
+Fields with a [creation default](../schema/reference.md#creation-defaults) may be omitted from a create, locally or in a Mutation operand. The native client fills them once before writing or sending; an explicit value, including an explicit null, wins. These examples use the operation fixture's `Note` Model, whose fields except `memo` have defaults.
+
+=== "TypeScript"
+
+    ```typescript title="action-contract"
+    await client.models.note.create({ memo: null });
+    const saved = await client.mutations.call.addNotes({ note: { memo: 'draft', tag: null }, many: [] });
+    console.log(saved.saved.id, saved.saved.at);
+    ```
+
+=== "Flutter"
+
+    ```dart title="action-contract"
+    await client.models.note.create(const NoteCreate(memo: null));
+    final saved = await client.mutations.call.addNotes(
+      note: const NoteCreate(memo: 'draft', tag: Present(null)),
+      many: const [],
+    );
+    print([saved.saved.id, saved.saved.at]);
+    ```
+
+`create` does not return the generated values; read or watch the Model, or use a Mutation output, to see them.
+
 `create(record)`, `update(identity, patch)` and `delete(identity)` return `Promise<void>` / `Future<void>`. They change local storage without calling the backend. Use `client.mutations.<name>` for backend work. A later server update for the same identity may replace the cached local record; the application owns any conflict policy. Invalid identities, field values, references or uniqueness constraints can reject a local write and roll back the transaction.
 
 ## Channels

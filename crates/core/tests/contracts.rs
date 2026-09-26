@@ -1345,3 +1345,80 @@ fn hand_written_query_descriptors_cannot_declare_business_effects() {
     )
     .unwrap();
 }
+
+fn with_default(ty: Value, nullable: bool, create_default: Value) -> Result<Schema> {
+    Schema::from_value(
+        json!({"enums":[{"name":"Mood","values":["calm","busy"]}],"models":[{
+            "name":"Entry","identity":["id"],"fields":[
+                {"name":"id","type":{"kind":"scalar","name":"uuid"},"nullable":false},
+                {"name":"value","type":ty,"nullable":nullable,"createDefault":create_default}
+            ]
+        }]}),
+    )
+}
+
+#[test]
+fn create_default_descriptors_are_validated_by_kind_and_field_type() {
+    let scalar = |name: &str| json!({"kind":"scalar","name":name});
+    let accepted = [
+        (scalar("uuid"), json!({"kind":"uuid"})),
+        (scalar("string"), json!({"kind":"uuid"})),
+        (scalar("dateTime"), json!({"kind":"now"})),
+        (scalar("string"), json!({"kind":"literal","value":""})),
+        (scalar("int"), json!({"kind":"literal","value":0})),
+        (scalar("float"), json!({"kind":"literal","value":1.5})),
+        (scalar("boolean"), json!({"kind":"literal","value":true})),
+        (
+            scalar("dateTime"),
+            json!({"kind":"literal","value":"2026-01-02T03:04:05.000Z"}),
+        ),
+        (
+            json!({"kind":"enum","name":"Mood"}),
+            json!({"kind":"literal","value":"busy"}),
+        ),
+    ];
+    for (ty, create_default) in accepted {
+        let schema = with_default(ty.clone(), false, create_default.clone())
+            .unwrap_or_else(|e| panic!("{ty} {create_default}: {e}"));
+        // The metadata round-trips through the stored descriptor.
+        let field = &serde_json::to_value(&schema).unwrap()["models"][0]["fields"][1];
+        assert_eq!(field["createDefault"], create_default);
+        assert!(field.get("default").is_none());
+    }
+    let rejected = [
+        (scalar("int"), json!({"kind":"uuid"})),
+        (scalar("dateTime"), json!({"kind":"uuid"})),
+        (scalar("string"), json!({"kind":"now"})),
+        (scalar("int"), json!({"kind":"literal","value":"1"})),
+        (scalar("int"), json!({"kind":"literal","value":1.5})),
+        (scalar("uuid"), json!({"kind":"literal","value":"nope"})),
+        (
+            json!({"kind":"enum","name":"Mood"}),
+            json!({"kind":"literal","value":"sad"}),
+        ),
+        (scalar("string"), json!({"kind":"literal","value":null})),
+        (scalar("string"), json!({"kind":"literal"})),
+        (scalar("string"), json!({"kind":"cuid"})),
+        (scalar("string"), json!({"kind":"uuid","value":"x"})),
+        (scalar("string"), json!({"value":"x"})),
+        (
+            json!({"kind":"list","element":{"kind":"scalar","name":"string"}}),
+            json!({"kind":"literal","value":["a"]}),
+        ),
+    ];
+    for (ty, create_default) in rejected {
+        assert!(
+            with_default(ty.clone(), false, create_default.clone()).is_err(),
+            "{ty} {create_default} must be rejected"
+        );
+    }
+    // A nullable field may carry a non-null default.
+    with_default(
+        scalar("string"),
+        true,
+        json!({"kind":"literal","value":"x"}),
+    )
+    .unwrap();
+    // Absent metadata stays compatible.
+    schema();
+}

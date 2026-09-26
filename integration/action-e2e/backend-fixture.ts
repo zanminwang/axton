@@ -8,6 +8,8 @@ export async function createFixture() {
   let handlerCalls = 0;
   let loaderCalls = 0;
   let queryCalls = 0;
+  /** Every AddNote argument exactly as a handler received it. */
+  const notes: { id: string; body: string; mood: string; createdAt: Date; tag: string | null }[] = [];
   const onceCalls = { todoPage: 0, countTodos: 0 };
   let failQueries = false;
   const mutations: Mutations<PgClient> = {
@@ -36,6 +38,13 @@ export async function createFixture() {
     // Retained v1 of SearchTodos was a Mutation; current clients call the v2 Query.
     async searchTodos() {
       throw new CallRejected("search.v1_retired");
+    },
+    async addNote({ ctx, args }) {
+      handlerCalls++;
+      // The handler sees the complete, client-expanded record; nothing is filled here.
+      notes.push({ ...args.note });
+      await ctx.tx.query("INSERT INTO action_e2e_note(id,body,mood,created_at,tag) VALUES($1,$2,$3,$4,$5)", [args.note.id, args.note.body, args.note.mood, args.note.createdAt.toISOString(), args.note.tag]);
+      return { saved: { id: args.note.id } };
     },
     async retitleTodos({ ctx, args }) {
       handlerCalls++;
@@ -68,6 +77,14 @@ export async function createFixture() {
     },
   };
   const loaders: Loaders<PgClient> = {
+    async note({ ids, tx }) {
+      const rows: ({ id: string; body: string; mood: "calm" | "busy"; createdAt: Date; tag: string | null } | null)[] = [];
+      for (const { id } of ids) {
+        const row = (await tx.query("SELECT id,body,mood,created_at,tag FROM action_e2e_note WHERE id=$1", [id])).rows[0];
+        rows.push(row ? { id: String(row.id), body: String(row.body), mood: row.mood === "busy" ? "busy" : "calm", createdAt: new Date(String(row.created_at)), tag: row.tag === null ? null : String(row.tag) } : null);
+      }
+      return rows;
+    },
     async todo({ ids, tx }) {
       loaderCalls++;
       const rows: ({ id: string; title: string } | null)[] = [];
@@ -86,6 +103,7 @@ export async function createFixture() {
     get handlerCalls() { return handlerCalls; },
     get queryCalls() { return queryCalls; },
     get loaderCalls() { return loaderCalls; },
+    notes,
     /** Real handler executions of the once-test Queries. */
     onceCalls,
     set failQueries(value: boolean) { failQueries = value; },
@@ -93,6 +111,7 @@ export async function createFixture() {
       const migration = await readFile(new URL("../../packages/postgres/migration.sql", import.meta.url), "utf8");
       for (const sql of migration.split(";").map((statement) => statement.trim()).filter(Boolean)) await pool.query(sql);
       await pool.query("CREATE TABLE action_e2e_todo(id text PRIMARY KEY,title text NOT NULL)");
+      await pool.query("CREATE TABLE action_e2e_note(id text PRIMARY KEY,body text NOT NULL,mood text NOT NULL,created_at text NOT NULL,tag text)");
       await pool.query("CREATE TABLE action_e2e_outbox(id bigserial PRIMARY KEY,recipient text NOT NULL,subject text NOT NULL,body text NOT NULL)");
     },
     async listen() { listener = await backend.listen({ port: 0 }); return listener; },

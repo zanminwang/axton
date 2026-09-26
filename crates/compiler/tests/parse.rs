@@ -460,3 +460,26 @@ fn retired_action_keyword_and_blockless_queries_are_syntax_errors() {
         assert!(error.starts_with(message), "{source}: {error}");
     }
 }
+
+#[test]
+fn default_keeps_its_expression_kind_and_position() {
+    use axton_compiler::parse::DefaultExpr;
+    let d = parse("model A {\n id UUID @default(uuid())\n n Int @default(-1.5e3)\n s Status @default(open)\n t String @default(\"x\")\n @@id(id)\n}").unwrap();
+    let fields = &d.models[0].fields;
+    let default = |i: usize| fields[i].default.clone().unwrap();
+    assert_eq!(
+        default(0).expr,
+        DefaultExpr::Call {
+            name: "uuid".into(),
+            arguments: 0
+        }
+    );
+    assert_eq!(default(0).pos, pos(2, 10));
+    assert_eq!(default(1).expr, DefaultExpr::Number("-1.5e3".into()));
+    assert_eq!(default(2).expr, DefaultExpr::Identifier("open".into()));
+    assert_eq!(default(3).expr, DefaultExpr::String("x".into()));
+    assert!(
+        fields[0].attributes.is_empty(),
+        "@default is not a relation attribute"
+    );
+}

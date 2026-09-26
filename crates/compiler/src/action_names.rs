@@ -77,9 +77,6 @@ pub(crate) fn store_eligible(output: &Value) -> bool {
 /// The second call checks names that only exist in older Action/Model versions.
 pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Result<(), String> {
     let actions = values(config, "actions");
-    if actions.is_empty() {
-        return Ok(());
-    }
     let mut names = BTreeMap::<String, String>::new();
     let mut add = |identifier: String, owner: String| -> Result<(), String> {
         if let Some(previous) = names.get(&identifier) {
@@ -111,6 +108,7 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
             "Identity",
             "Patch",
             "Create",
+            "CreateInput",
             "Update",
             "Delete",
             "Filter",
@@ -134,6 +132,11 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
             add(format!("{n}V{version}"), format!("model {n}"))?;
             add(format!("{n}V{version}Identity"), format!("model {n}"))?;
         }
+    }
+    // Model-only schemas still emit every per-model type (such as
+    // `{Model}Create`); the remaining names exist only beside operations.
+    if actions.is_empty() {
+        return Ok(());
     }
     for helper in [
         "Call",

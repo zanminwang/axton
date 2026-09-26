@@ -91,6 +91,10 @@ fn ty(t: &Value, dart: bool) -> String {
     }
     .into()
 }
+/// Whether a fresh create may omit this field: it carries a creation default.
+fn defaulted(f: &Value) -> bool {
+    f.get("createDefault").is_some_and(|d| !d.is_null())
+}
 fn ft(f: &Value, dart: bool) -> String {
     format!(
         "{}{}",
@@ -231,6 +235,25 @@ pub fn typescript(v: &Value) -> String {
             }
             o.push_str("}\n");
         }
+        // What a fresh create accepts: a field with a creation default may be
+        // omitted (the client fills it once before persisting or sending).
+        writeln!(o, "export interface {n}Create {{").unwrap();
+        for f in arr(m, "fields") {
+            o.push_str(&ts_deprecated(deprecation(
+                v,
+                "field",
+                &[("model", n), ("field", s(f, "name"))],
+            )));
+            writeln!(
+                o,
+                " {}{}: {};",
+                s(f, "name"),
+                if defaulted(f) { "?" } else { "" },
+                ft(f, false)
+            )
+            .unwrap();
+        }
+        o.push_str("}\n");
         writeln!(
             o,
             "export function decode{n}(row:Record<string,unknown>):{n} {{ return {{"
@@ -294,13 +317,32 @@ pub fn typescript(v: &Value) -> String {
             o.push_str("}; }\n");
         }
     }
+    for m in arr(&v["schema"], "models") {
+        let n = s(m, "name");
+        for (suffix, identity_only) in [("", false), ("Identity", true)] {
+            writeln!(o, "export function encode{n}Create{suffix}(value:{n}Create):Record<string,unknown> {{ return {{").unwrap();
+            for f in arr(m, "fields") {
+                if identity_only && !arr(m, "identity").contains(&f["name"]) {
+                    continue;
+                }
+                let k = s(f, "name");
+                let ex = enc(f, &format!("value.{k}"), false);
+                if defaulted(f) {
+                    writeln!(o, " ...(value.{k} !== undefined ? {{ {k}: {ex} }} : {{}}),").unwrap()
+                } else {
+                    writeln!(o, " {k}: {ex},").unwrap()
+                }
+            }
+            o.push_str("}; }\n");
+        }
+    }
     for mu in arr(v, "mutations") {
         let n = s(mu, "name");
         writeln!(o, "export interface {n}Args {{").unwrap();
         for slot in arr(mu, "slots") {
             let model = s(slot, "model");
             let input = match s(slot, "operation") {
-                "create" => model.to_string(),
+                "create" => format!("{model}Create"),
                 "delete" => format!("{model}Identity"),
                 _ => {
                     let patch = if let Some(a) = slot["allowedPatchFields"].as_array() {
@@ -372,7 +414,12 @@ pub fn typescript(v: &Value) -> String {
             } else {
                 format!(", values:encode{model}Patch(value)")
             };
-            writeln!(o," operations.push({{ model:'{model}', op:'{op}', identity:encode{model}Identity({id}){vals} }}); }}").unwrap();
+            let identity = if op == "create" {
+                "CreateIdentity"
+            } else {
+                "Identity"
+            };
+            writeln!(o," operations.push({{ model:'{model}', op:'{op}', identity:encode{model}{identity}({id}){vals} }}); }}").unwrap();
         }
         writeln!(
             o,
@@ -482,7 +529,9 @@ fn action_cardinality(base: &str, cardinality: &str) -> String {
         _ => base.to_string(),
     }
 }
-fn action_input_type(input: &Value) -> String {
+/// A current operation input's TypeScript type. Client create operands may
+/// omit defaulted fields; `handler` types are the complete values handlers receive.
+fn action_input_type(input: &Value, handler: bool) -> String {
     if input["kind"] == "value" {
         let mut base = ty(&input["type"], false);
         if input["list"] == true {
@@ -496,6 +545,7 @@ fn action_input_type(input: &Value) -> String {
     }
     let model = s(input, "model");
     let base = match s(input, "operation") {
+        "create" if handler => model.to_string(),
         "create" => format!("{model}Create"),
         "delete" => format!("{model}Delete"),
         _ => {
@@ -564,7 +614,7 @@ fn snapshot_field_type(field: &Value, enums: &Value) -> String {
 }
 fn historical_action_input_type(arg: &Value, action: &Value, latest: u64) -> String {
     if action["version"].as_u64() == Some(latest) {
-        return action_input_type(arg);
+        return action_input_type(arg, true);
     }
     if arg["kind"] == "value" {
         let mut base = snapshot_type(&arg["type"], &action["input"]["enums"]);
@@ -633,7 +683,6 @@ fn ts_actions(v: &Value, o: &mut String) {
     }
     for model in arr(&v["schema"], "models") {
         let n = s(model, "name");
-        writeln!(o, "export type {n}Create = {n};").unwrap();
         writeln!(o, "export type {n}Update<K extends keyof {n}Patch = keyof {n}Patch> = {n}Identity & Partial<Pick<{n}Patch, K>>;").unwrap();
         writeln!(o, "export type {n}Delete = {n}Identity;").unwrap();
     }
@@ -660,7 +709,7 @@ fn ts_actions(v: &Value, o: &mut String) {
                 " {}{}: {};",
                 s(arg, "name"),
                 if optional { "?" } else { "" },
-                action_input_type(arg)
+                action_input_type(arg, false)
             )
             .unwrap();
         }
@@ -884,7 +933,7 @@ fn ts_action_encode_input(input: &Value, x: &str) -> String {
 fn ts_action_encode_model_one(input: &Value, x: &str) -> String {
     let model = s(input, "model");
     match s(input, "operation") {
-        "create" => format!("encode{model}({x})"),
+        "create" => format!("encode{model}Create({x})"),
         "update" => format!("{{...encode{model}Identity({x}),...encode{model}Patch({x})}}"),
         "delete" => format!("encode{model}Identity({x})"),
         _ => unreachable!(),
@@ -983,11 +1032,7 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
         }
         for m in models {
             let n = s(m, "name");
-            names.extend([
-                format!("{n}Create"),
-                format!("{n}Update"),
-                format!("{n}Delete"),
-            ]);
+            names.extend([format!("{n}Update"), format!("{n}Delete")]);
         }
     }
     writeln!(
@@ -1373,12 +1418,16 @@ fn dart_action_cardinality(base: &str, cardinality: &str) -> String {
         _ => base.to_string(),
     }
 }
+/// An operation input's Dart type. A current create operand is a
+/// `{Model}CreateInput` for the `client`, which may omit defaulted fields;
+/// handlers receive the complete record.
 fn dart_action_input_type(
     arg: &Value,
     prefix: &str,
     restriction_prefix: &str,
     enums: &Value,
     restricted: bool,
+    client: bool,
 ) -> String {
     if arg["kind"] == "value" {
         let base = dart_snapshot_type(&arg["type"], prefix, enums);
@@ -1392,7 +1441,9 @@ fn dart_action_input_type(
     }
     let model = s(arg, "model");
     let base = match s(arg, "operation") {
-        "create" => format!("{prefix}{model}Create"),
+        "create" if !prefix.is_empty() => format!("{prefix}{model}Create"),
+        "create" if client => format!("{model}CreateInput"),
+        "create" => model.to_string(),
         "delete" => format!("{prefix}{model}Delete"),
         "update" if restricted => format!(
             "{restriction_prefix}{}{}Update",
@@ -1506,11 +1557,7 @@ fn dart_actions(v: &Value, o: &mut String) {
     let models = arr(&v["schema"], "models");
     for model in models {
         let n = s(model, "name");
-        writeln!(
-            o,
-            "typedef {n}Create = {n};\ntypedef {n}Delete = {n}Identity;"
-        )
-        .unwrap();
+        writeln!(o, "typedef {n}Delete = {n}Identity;").unwrap();
         dart_action_update(o, &format!("{n}Update"), model, None, "", &Value::Null);
     }
     let mut emitted_reads = std::collections::BTreeSet::new();
@@ -1639,6 +1686,7 @@ fn dart_actions(v: &Value, o: &mut String) {
                         &prefix,
                         input_enums,
                         arg["allowedPatchFields"].is_array(),
+                        false,
                     ),
                     !optional,
                 )
@@ -1781,7 +1829,7 @@ fn dart_action_runtime(v: &Value, o: &mut String) {
     o.push_str("dynamic _dartActionEncode(dynamic value) {\n if (value == null) return null;\n if (value is DateTime) return value.toUtc().toIso8601String();\n if (value is Enum) return value.name;\n if (value is List) return value.map(_dartActionEncode).toList();\n if (value is _DartActionRecord) return value.toRecord();\n");
     for model in arr(&v["schema"], "models") {
         let n = s(model, "name");
-        writeln!(o, " if (value is {n}) return value.toRecord();\n if (value is {n}Identity) return value.toRecord();").unwrap();
+        writeln!(o, " if (value is {n}) return value.toRecord();\n if (value is {n}CreateInput) return value.toCreateRecord();\n if (value is {n}Identity) return value.toRecord();").unwrap();
     }
     o.push_str(" return value;\n}\n");
     let mut latest = std::collections::BTreeMap::new();
@@ -1946,7 +1994,8 @@ fn dart_action_params(action: &Value) -> String {
                     "",
                     s(action, "name"),
                     &Value::Null,
-                    arg["allowedPatchFields"].is_array()
+                    arg["allowedPatchFields"].is_array(),
+                    true,
                 ),
                 s(arg, "name")
             )
@@ -1966,8 +2015,8 @@ pub fn dart(v: &Value) -> String {
     }
     writeln!(
         o,
-        "final Map<String,dynamic> schema = jsonDecode(r'''{}''') as Map<String,dynamic>;",
-        v["schema"]
+        "final Map<String,dynamic> schema = jsonDecode({}) as Map<String,dynamic>;",
+        dart_string(&v["schema"].to_string())
     )
     .unwrap();
     for en in arr(&v["schema"], "enums") {
@@ -2005,7 +2054,12 @@ pub fn dart(v: &Value) -> String {
                 })
                 .collect();
             let patch = suffix == "Patch";
-            writeln!(o, "class {n}{suffix} {{").unwrap();
+            if suffix.is_empty() {
+                writeln!(o, "/// What a fresh create of {n} accepts: a complete [{n}], or a [{n}Create] that may omit fields with creation defaults.\nabstract interface class {n}CreateInput {{ Map<String,dynamic> toCreateRecord(); }}").unwrap();
+                writeln!(o, "class {n} implements {n}CreateInput {{").unwrap();
+            } else {
+                writeln!(o, "class {n}{suffix} {{").unwrap();
+            }
             for f in &fields {
                 if let Some(reason) =
                     deprecation(v, "field", &[("model", n), ("field", s(f, "name"))])
@@ -2091,6 +2145,7 @@ pub fn dart(v: &Value) -> String {
                 o.push_str(" );\n");
             }
             if suffix.is_empty() {
+                o.push_str(" @override\n Map<String,dynamic> toCreateRecord() => toRecord();\n");
                 writeln!(
                     o,
                     " {n}Identity get identity => {n}Identity({});",
@@ -2104,6 +2159,9 @@ pub fn dart(v: &Value) -> String {
             }
             o.push_str("}\n");
         }
+    }
+    for m in arr(&v["schema"], "models") {
+        dart_create_class(v, m, &mut o);
     }
     let mut mutate_methods = vec![];
     for mu in arr(v, "mutations") {
@@ -2168,7 +2226,7 @@ pub fn dart(v: &Value) -> String {
             } else if op == "delete" {
                 format!("{model}Identity")
             } else {
-                model.to_string()
+                format!("{model}CreateInput")
             };
             let card = s(slot, "cardinality");
             let mark = dart_deprecated(
@@ -2217,9 +2275,21 @@ pub fn dart(v: &Value) -> String {
                 "value.identity.toRecord()"
             };
             writeln!(o, " for (final value in {vals}) {{").unwrap();
-            if op == "create" {
-                writeln!(o," final state=value.toRecord(); for (final key in value.identity.toRecord().keys) {{ state.remove(key); }}").unwrap();
-            }
+            let identity = if op == "create" {
+                let m = arr(&v["schema"], "models")
+                    .iter()
+                    .find(|m| m["name"] == model)
+                    .unwrap();
+                writeln!(
+                    o,
+                    " final state=value.toCreateRecord(); {}",
+                    dart_split_identity(m)
+                )
+                .unwrap();
+                "identity"
+            } else {
+                identity
+            };
             writeln!(
                 o,
                 " operations.add({{'model':'{model}','op':'{op}','identity':{identity}{}}}); }}",
@@ -2340,7 +2410,7 @@ fn ts_models(v: &Value, o: &mut String) {
             }
         }
         o.push_str("}\n");
-        writeln!(o, "export class {n}TxModel<P extends WritePort=WritePort> extends {n}Model<P> {{\n create(value:{n}):Promise<void> {{ return this.port.direct({{model:'{n}',op:'create',identity:encode{n}Identity(value),values:encode{n}Patch(value)}}); }}\n update(identity:{n}Identity, patch:{n}Patch):Promise<void> {{ return this.port.direct({{model:'{n}',op:'update',identity:encode{n}Identity(identity),values:encode{n}Patch(patch)}}); }}\n delete(identity:{n}Identity):Promise<void> {{ return this.port.direct({{model:'{n}',op:'delete',identity:encode{n}Identity(identity)}}); }}\n}}").unwrap();
+        writeln!(o, "export class {n}TxModel<P extends WritePort=WritePort> extends {n}Model<P> {{\n create(value:{n}Create):Promise<void> {{ return this.port.direct({{model:'{n}',op:'create',identity:encode{n}CreateIdentity(value),values:encode{n}Patch(value)}}); }}\n update(identity:{n}Identity, patch:{n}Patch):Promise<void> {{ return this.port.direct({{model:'{n}',op:'update',identity:encode{n}Identity(identity),values:encode{n}Patch(patch)}}); }}\n delete(identity:{n}Identity):Promise<void> {{ return this.port.direct({{model:'{n}',op:'delete',identity:encode{n}Identity(identity)}}); }}\n}}").unwrap();
         writeln!(o, "export class {n}LiveModel extends {n}TxModel<LivePort> {{\n watch(options:{{where?:{filter}}}, listener:(rows:{n}[])=>void, onError?:(error:unknown)=>void):()=>void {{ return this.port.watch('{n}',encode{n}Where(options.where??{{}}),(rows)=>listener(rows.map(decode{n})),onError); }}\n /** This record's sync state: its pending mutations and retained rejections. Local only. */\n async syncState(identity:{n}Identity):Promise<SyncState> {{ return (await this.port.syncState('{n}',encode{n}Identity(identity))) as SyncState; }}\n}}").unwrap();
     }
 }
@@ -2416,6 +2486,92 @@ fn dart_models(v: &Value, o: &mut String) {
         }
         o.push_str("}\n");
         writeln!(o, "class {n}LiveModel extends {n}TxModel {{ final Client client; {n}LiveModel(this.client) : super(client);\n Stream<List<{n}>> watch({{{n}Filter? where}}) => client.watch('{n}', where:where?.toRecord()??{{}}).map((rows) => rows.map({n}.fromRecord).toList());\n /// This record's sync state: its pending mutations and retained rejections. Local only.\n Future<SyncState> syncState({n}Identity identity) async => SyncState.fromRecord(await client.recordSyncState('{n}', identity.toRecord()));\n}}").unwrap();
-        writeln!(o, "class {n}TxModel extends {n}Model {{ final WritePort writer; {n}TxModel(this.writer) : super(writer);\n Future<void> create({n} value) {{ final state=value.toRecord(); for (final key in value.identity.toRecord().keys) {{ state.remove(key); }} return writer.direct({{'model':'{n}','op':'create','identity':value.identity.toRecord(),'values':state}}); }}\n Future<void> update({n}Identity identity, {n}Patch patch) => writer.direct({{'model':'{n}','op':'update','identity':identity.toRecord(),'values':patch.toRecord()}});\n Future<void> delete({n}Identity identity) => writer.direct({{'model':'{n}','op':'delete','identity':identity.toRecord()}});\n}}").unwrap();
+        let split = dart_split_identity(model);
+        writeln!(o, "class {n}TxModel extends {n}Model {{ final WritePort writer; {n}TxModel(this.writer) : super(writer);\n Future<void> create({n}CreateInput value) {{ final state=value.toCreateRecord(); {split} return writer.direct({{'model':'{n}','op':'create','identity':identity,'values':state}}); }}\n Future<void> update({n}Identity identity, {n}Patch patch) => writer.direct({{'model':'{n}','op':'update','identity':identity.toRecord(),'values':patch.toRecord()}});\n Future<void> delete({n}Identity identity) => writer.direct({{'model':'{n}','op':'delete','identity':identity.toRecord()}});\n}}").unwrap();
     }
+}
+
+/// A Dart single-quoted string literal whose value is exactly `text`: every
+/// backslash, quote, dollar sign and control character is escaped, so no
+/// schema content (such as a default string) can end or interpolate it.
+fn dart_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('\'');
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '$' => out.push_str("\\$"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) < 0x20 => write!(out, "\\u{{{:x}}}", c as u32).unwrap(),
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
+}
+/// Statement moving a create record's identity fields out of `state` into
+/// `identity`. An omitted (defaulted) identity field stays omitted.
+fn dart_split_identity(model: &Value) -> String {
+    let keys = arr(model, "identity")
+        .iter()
+        .map(|k| format!("'{}'", k.as_str().unwrap()))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "final identity=<String,dynamic>{{for (final key in const <String>[{keys}]) if (state.containsKey(key)) key: state.remove(key)}};"
+    )
+}
+/// `{Model}Create`: the omission-preserving create input. A defaulted field
+/// may be left out; a defaulted nullable field uses `Present` so an explicit
+/// null stays distinct from omission. Other fields are as required as in
+/// the full record.
+fn dart_create_class(v: &Value, m: &Value, o: &mut String) {
+    let n = s(m, "name");
+    let fields = arr(m, "fields");
+    writeln!(o, "class {n}Create implements {n}CreateInput {{").unwrap();
+    for f in fields {
+        if let Some(reason) = deprecation(v, "field", &[("model", n), ("field", s(f, "name"))]) {
+            o.push(' ');
+            o.push_str(&dart_deprecated(Some(reason), "\n"));
+        }
+        let ty = match (defaulted(f), f["nullable"] == true) {
+            (true, true) => format!("Present<{}>?", ft(f, true)),
+            (true, false) => format!("{}?", ft(f, true)),
+            (false, _) => ft(f, true),
+        };
+        writeln!(o, " final {ty} {};", s(f, "name")).unwrap();
+    }
+    writeln!(
+        o,
+        " const {n}Create({{{}}});",
+        fields
+            .iter()
+            .map(|f| format!(
+                "{}this.{}",
+                if defaulted(f) { "" } else { "required " },
+                s(f, "name")
+            ))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+    .unwrap();
+    o.push_str(" @override\n Map<String,dynamic> toCreateRecord() => {\n");
+    for f in fields {
+        let k = s(f, "name");
+        let line = match (defaulted(f), f["nullable"] == true) {
+            (true, true) => format!(
+                " if ({k} != null) '{k}': {},",
+                enc(f, &format!("{k}!.value"), true)
+            ),
+            (true, false) => format!(
+                " if ({k} != null) '{k}': {},",
+                encoded(&f["type"], &format!("{k}!"), true)
+            ),
+            (false, _) => format!(" '{k}': {},", enc(f, k, true)),
+        };
+        writeln!(o, "{line}").unwrap();
+    }
+    o.push_str(" };\n}\n");
 }

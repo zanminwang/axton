@@ -19,6 +19,17 @@ mutation EditEntry(entry Entry.update<text,note>) { updated Entry? }
 
 `@@id(id)` defines identity. `String?` is nullable. `EditEntry` declares an update operand named `entry`; callers can change `text` and `note` but not identity through that patch. Its implicit `entry` result resolves the input identity through the Loader. The handler selects the explicit nullable `updated` result by identity.
 
+Fields can declare [creation defaults](reference.md#creation-defaults), filled in only when a new record omits them:
+
+```text
+model Note {
+  id String @default(uuid())
+  text String @default("")
+  createdAt DateTime @default(now())
+  @@id(id)
+}
+```
+
 ## Generate from a source checkout
 
 For the To-do example, run from the repository root:

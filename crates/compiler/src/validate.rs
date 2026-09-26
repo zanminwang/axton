@@ -70,6 +70,8 @@ pub struct Field {
     pub name: String,
     pub ty: FieldType,
     pub nullable: bool,
+    /// Source `@default`: create-only policy, emitted as `createDefault`.
+    pub create_default: Option<axton_core::CreateDefault>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FieldType {
@@ -311,7 +313,132 @@ fn kind_label(kind: axton_core::CallKind) -> &'static str {
         axton_core::CallKind::Query => "Query",
     }
 }
+/// `@default` belongs to stored Model fields; operation inputs and outputs
+/// are complete values supplied by the caller or handler.
+fn reject_operation_default(f: &FieldDecl) -> Result<(), String> {
+    match &f.default {
+        Some(default) => Err(at(
+            default.pos,
+            format!(
+                "@default is a Model field attribute; unsupported on operation field {}",
+                f.name
+            ),
+        )),
+        None => Ok(()),
+    }
+}
+/// Resolve a field's `@default` against its validated type. Literals are
+/// normalized by the same rules the runtime applies to the field's values;
+/// functions are recorded, never evaluated.
+fn create_default(
+    f: &FieldDecl,
+    ty: &FieldType,
+    enums: &[Enum],
+) -> Result<Option<axton_core::CreateDefault>, String> {
+    use crate::parse::DefaultExpr;
+    use axton_core::CreateDefault;
+    let Some(default) = &f.default else {
+        return Ok(None);
+    };
+    let fail = |msg: String| Err(at(default.pos, msg));
+    if matches!(ty, FieldType::List(_)) {
+        return fail(format!("@default is unsupported on list field {}", f.name));
+    }
+    let literal = match &default.expr {
+        DefaultExpr::Call { name, arguments } => {
+            let generator = match name.as_str() {
+                "uuid" => CreateDefault::Uuid,
+                "now" => CreateDefault::Now,
+                _ => {
+                    return fail(format!(
+                        "unknown default function {name}(); supported: uuid(), now()"
+                    ));
+                }
+            };
+            if *arguments != 0 {
+                return fail(format!("{name}() takes no arguments"));
+            }
+            let fits = matches!(
+                (&generator, ty),
+                (
+                    CreateDefault::Uuid,
+                    FieldType::Scalar(Scalar::String | Scalar::Uuid)
+                ) | (CreateDefault::Now, FieldType::Scalar(Scalar::DateTime))
+            );
+            if !fits {
+                return fail(match generator {
+                    CreateDefault::Uuid => {
+                        format!("uuid() requires a String or UUID field; {} is not", f.name)
+                    }
+                    _ => format!("now() requires a DateTime field; {} is not", f.name),
+                });
+            }
+            return Ok(Some(generator));
+        }
+        DefaultExpr::Identifier(name) if name == "null" => {
+            return fail(format!("@default(null) is unsupported on {}", f.name));
+        }
+        DefaultExpr::Identifier(name) => match ty {
+            FieldType::Scalar(Scalar::Boolean) if name == "true" || name == "false" => {
+                Value::Bool(name == "true")
+            }
+            FieldType::Enum(_) => Value::String(name.clone()),
+            _ => return fail(format!("invalid default for {}: {name}", f.name)),
+        },
+        DefaultExpr::String(text) => match ty {
+            FieldType::Enum(_) => {
+                return fail(format!(
+                    "invalid default for {}: an enum default is a member name, not a string",
+                    f.name
+                ));
+            }
+            _ => Value::String(text.clone()),
+        },
+        DefaultExpr::Number(text) => serde_json::from_str(text)
+            .map_err(|_| at(default.pos, format!("invalid default number {text}")))?,
+    };
+    let schema = axton_core::Schema {
+        enums: enums
+            .iter()
+            .map(|e| axton_core::EnumDescriptor {
+                name: e.name.clone(),
+                values: e.values.clone(),
+            })
+            .collect(),
+        models: vec![],
+        actions: vec![],
+        result_models: vec![],
+        requirements: vec![],
+        prerequisites: vec![],
+        client_policies: vec![],
+    };
+    let descriptor = axton_core::FieldDescriptor {
+        name: f.name.clone(),
+        value_type: serde_json::from_value(crate::generate::field_type(ty))
+            .map_err(|e| e.to_string())?,
+        nullable: false,
+        default: None,
+        create_default: None,
+    };
+    // Strings are only literals of text-backed scalars; numbers only of numeric ones.
+    let kind_fits = match (&literal, ty) {
+        (Value::String(_), FieldType::Scalar(Scalar::Int | Scalar::Float | Scalar::Boolean)) => {
+            false
+        }
+        (Value::Number(_), FieldType::Scalar(Scalar::Int | Scalar::Float)) => true,
+        (Value::Number(_), _) => false,
+        _ => true,
+    };
+    match kind_fits
+        .then(|| schema.normalize_value(&descriptor, &literal).ok())
+        .flatten()
+    {
+        Some(value) => Ok(Some(CreateDefault::Literal { value })),
+        None => fail(format!("invalid default for {}: {literal}", f.name)),
+    }
+}
 fn action_value_type(f: &FieldDecl, enums: &[Enum], label: &str) -> Result<FieldType, String> {
+    reject_operation_default(f)?;
     if !f.attributes.is_empty() || f.deprecated.is_some() {
         return Err(at(
             f.pos,
@@ -597,6 +724,12 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
                 requirement_fields.push((m, f, req));
             }
             if let Some(target) = is_model(d, &f.type_name) {
+                if let Some(default) = &f.default {
+                    return Err(at(
+                        default.pos,
+                        format!("@default is unsupported on relation field {}", f.name),
+                    ));
+                }
                 if let Some(reference) = f.attributes.get("reference") {
                     if f.list {
                         return Err(at(f.pos, "reference must be singular"));
@@ -665,10 +798,12 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
             if f.list {
                 ty = FieldType::List(Box::new(ty));
             }
+            let create_default = create_default(f, &ty, &enums)?;
             fields.push(Field {
                 name: f.name.clone(),
                 ty,
                 nullable: f.nullable,
+                create_default,
             });
         }
         for (f, decl) in fields.iter().zip(&stored) {
@@ -1075,6 +1210,7 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
             if !output_names.insert(f.name.as_str()) {
                 return Err(at(f.pos, format!("duplicate {label} output {}", f.name)));
             }
+            reject_operation_default(f)?;
             let (ty, source, read_version) = if let Some(model) = model(&f.type_name) {
                 if !f.attributes.is_empty() || f.deprecated.is_some() {
                     return Err(at(

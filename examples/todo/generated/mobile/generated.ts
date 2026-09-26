@@ -19,6 +19,10 @@ export interface UserIdentity {
 export interface UserPatch {
  name?: string;
 }
+export interface UserCreate {
+ id: string;
+ name: string;
+}
 export function decodeUser(row:Record<string,unknown>):User { return {
  id: row.id as string,
  name: row.name as string,
@@ -54,6 +58,12 @@ export interface TodoPatch {
  done?: boolean;
  createdById?: string;
 }
+export interface TodoCreate {
+ id: string;
+ title: string;
+ done: boolean;
+ createdById: string;
+}
 export function decodeTodo(row:Record<string,unknown>):Todo { return {
  id: row.id as string,
  title: row.title as string,
@@ -83,12 +93,28 @@ export function encodeTodoWhere(value:Partial<Todo>):Record<string,unknown> { re
  ...(value.done !== undefined ? { done: value.done } : {}),
  ...(value.createdById !== undefined ? { createdById: value.createdById } : {}),
 }; }
+export function encodeUserCreate(value:UserCreate):Record<string,unknown> { return {
+ id: value.id,
+ name: value.name,
+}; }
+export function encodeUserCreateIdentity(value:UserCreate):Record<string,unknown> { return {
+ id: value.id,
+}; }
+export function encodeTodoCreate(value:TodoCreate):Record<string,unknown> { return {
+ id: value.id,
+ title: value.title,
+ done: value.done,
+ createdById: value.createdById,
+}; }
+export function encodeTodoCreateIdentity(value:TodoCreate):Record<string,unknown> { return {
+ id: value.id,
+}; }
 export class UserModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:UserIdentity):Promise<User|null> { const row=await this.port.read('User',encodeUserIdentity(identity)); return row===null ? null : decodeUser(row); }
  async query(options:{where?:Partial<User>;orderBy?:{field:'id' | 'name';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<User[]> { return (await this.port.querySpec('User',{filter:encodeUserWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeUser); }
 }
 export class UserTxModel<P extends WritePort=WritePort> extends UserModel<P> {
- create(value:User):Promise<void> { return this.port.direct({model:'User',op:'create',identity:encodeUserIdentity(value),values:encodeUserPatch(value)}); }
+ create(value:UserCreate):Promise<void> { return this.port.direct({model:'User',op:'create',identity:encodeUserCreateIdentity(value),values:encodeUserPatch(value)}); }
  update(identity:UserIdentity, patch:UserPatch):Promise<void> { return this.port.direct({model:'User',op:'update',identity:encodeUserIdentity(identity),values:encodeUserPatch(patch)}); }
  delete(identity:UserIdentity):Promise<void> { return this.port.direct({model:'User',op:'delete',identity:encodeUserIdentity(identity)}); }
 }
@@ -103,7 +129,7 @@ export class TodoModel<P extends ReadPort=ReadPort> { readonly port:P; construct
  async createdBy(identity:TodoIdentity):Promise<User|null> { const row=await this.port.related('Todo',encodeTodoIdentity(identity),'createdBy'); return row===null?null:decodeUser(row); }
 }
 export class TodoTxModel<P extends WritePort=WritePort> extends TodoModel<P> {
- create(value:Todo):Promise<void> { return this.port.direct({model:'Todo',op:'create',identity:encodeTodoIdentity(value),values:encodeTodoPatch(value)}); }
+ create(value:TodoCreate):Promise<void> { return this.port.direct({model:'Todo',op:'create',identity:encodeTodoCreateIdentity(value),values:encodeTodoPatch(value)}); }
  update(identity:TodoIdentity, patch:TodoPatch):Promise<void> { return this.port.direct({model:'Todo',op:'update',identity:encodeTodoIdentity(identity),values:encodeTodoPatch(patch)}); }
  delete(identity:TodoIdentity):Promise<void> { return this.port.direct({model:'Todo',op:'delete',identity:encodeTodoIdentity(identity)}); }
 }
@@ -112,10 +138,8 @@ export class TodoLiveModel extends TodoTxModel<LivePort> {
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:TodoIdentity):Promise<SyncState> { return (await this.port.syncState('Todo',encodeTodoIdentity(identity))) as SyncState; }
 }
-export type UserCreate = User;
 export type UserUpdate<K extends keyof UserPatch = keyof UserPatch> = UserIdentity & Partial<Pick<UserPatch, K>>;
 export type UserDelete = UserIdentity;
-export type TodoCreate = Todo;
 export type TodoUpdate<K extends keyof TodoPatch = keyof TodoPatch> = TodoIdentity & Partial<Pick<TodoPatch, K>>;
 export type TodoDelete = TodoIdentity;
 export interface AddTodoInput {
@@ -131,7 +155,7 @@ export interface SetTodoDoneOutput {
  todo: Todo;
 }
 function encodeAddTodoInput(args:AddTodoInput):Record<string,unknown> { return {
- todo: encodeTodo(args.todo),
+ todo: encodeTodoCreate(args.todo),
 }; }
 function decodeAddTodoOutput(value:unknown):AddTodoOutput { const row=value as Record<string,unknown>; return {
  todo: decodeTodo(row.todo as Record<string,unknown>),

@@ -449,3 +449,65 @@ fn delivery_route_and_store_never_enter_operation_history() {
         history
     );
 }
+
+/// Creation policy is not part of any retained contract: changing, adding or
+/// removing a default on an existing field keeps every version, while a new
+/// required field stays a structural change even with a default (#27).
+#[test]
+fn default_only_changes_keep_retained_versions_and_required_fields_still_break() {
+    use axton_compiler::reconcile_model_history;
+    let source = |title: &str, extra: &str| {
+        format!(
+            "model Todo {{\n id String{}\n title String {title}\n{extra} @@id(id)\n}}\nmutation Add {{ todo Todo.create }}\nmutation Save(todo Todo.create) {{ saved Todo }}\n",
+            if title.is_empty() {
+                ""
+            } else {
+                " @default(uuid())"
+            }
+        )
+    };
+    let v1 = compile(&source("@default(\"a\")", "")).unwrap();
+    let models = reconcile_model_history(&v1, None).unwrap();
+    let mutations = reconcile_history(&v1, None).unwrap();
+    let mut with_models = v1.clone();
+    with_models["backendModels"] = json!([models["models"]["Todo"]["1"]]);
+    let actions = reconcile_action_history(&with_models, None).unwrap();
+    let text = |v: &serde_json::Value| v.to_string();
+    for retained in [&models, &mutations, &actions] {
+        assert!(!text(retained).contains("createDefault"), "{retained}");
+    }
+    // Client resultModels describe complete backend values, not creation policy.
+    assert!(!text(&v1["schema"]["resultModels"]).contains("createDefault"));
+    assert!(text(&v1["schema"]["models"]).contains("createDefault"));
+    for changed in [
+        source("@default(\"b\")", ""),
+        source("@default(uuid())", ""),
+        source("", ""),
+    ] {
+        let next = compile(&changed).unwrap();
+        let next_models = reconcile_model_history(&next, Some(&models)).unwrap();
+        assert_eq!(next_models, models, "{changed}");
+        assert_eq!(
+            reconcile_history(&next, Some(&mutations)).unwrap(),
+            mutations
+        );
+        let mut with_models = next.clone();
+        with_models["backendModels"] = json!([next_models["models"]["Todo"]["1"]]);
+        assert_eq!(
+            reconcile_action_history(&with_models, Some(&actions)).unwrap(),
+            actions,
+            "{changed}"
+        );
+    }
+    // A hand-authored snapshot that carries creation policy compares by shape.
+    let mut authored = models.clone();
+    authored["models"]["Todo"]["1"]["fields"][1]["createDefault"] =
+        json!({"kind":"literal","value":"z"});
+    reconcile_model_history(&v1, Some(&authored)).unwrap();
+    // A new required field is a read-contract and input change, default or not.
+    let required = compile(&source("@default(\"a\")", " rank Int @default(0)\n")).unwrap();
+    let error = reconcile_model_history(&required, Some(&models)).unwrap_err();
+    assert!(error.contains("adding required field"), "{error}");
+    let error = reconcile_history(&required, Some(&mutations)).unwrap_err();
+    assert!(error.contains("incompatible input change"), "{error}");
+}

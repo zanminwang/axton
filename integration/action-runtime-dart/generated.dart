@@ -4,9 +4,11 @@ import 'package:axton/axton.dart';
 export 'package:axton/axton.dart' show RuntimeConnection, SyncServer, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, CallStore, Subscription, SubscriptionStatus, SubscriptionInitialization, SubscriptionConnection, SubscriptionClosedException;
 class Present<T> { final T value; const Present(this.value); }
 abstract interface class _DartActionRecord { Map<String,dynamic> toRecord(); }
-final Map<String,dynamic> schema = jsonDecode(r'''{"actions":[{"input":{"enums":[{"name":"Mood","values":["calm","loud"]}],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"at","nullable":false,"required":true,"type":{"kind":"scalar","name":"dateTime"}},{"cardinality":"list","kind":"value","list":true,"name":"moods","nullable":false,"required":true,"type":{"kind":"enum","name":"Mood"}},{"cardinality":"single","kind":"value","list":false,"name":"maybe","nullable":true,"required":true,"type":{"kind":"scalar","name":"dateTime"}}],"kind":"mutation","name":"Echo","outputEnums":[{"name":"Mood","values":["calm","loud"]}],"outputs":[{"cardinality":"single","kind":"value","name":"result","source":"handlerValue","type":{"kind":"scalar","name":"dateTime"}},{"cardinality":"list","kind":"value","name":"moods","source":"handlerValue","type":{"kind":"enum","name":"Mood"}},{"cardinality":"optional","kind":"value","name":"maybe","source":"handlerValue","type":{"kind":"scalar","name":"dateTime"}}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"at","nullable":false,"required":true,"type":{"kind":"scalar","name":"dateTime"}}],"kind":"query","name":"Now","outputEnums":[],"outputs":[{"cardinality":"single","kind":"value","name":"at","source":"handlerValue","type":{"kind":"scalar","name":"dateTime"}}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[],"kind":"mutation","name":"Ping","outputEnums":[],"outputs":[],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[{"name":"Mood","values":["calm","loud"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"mood","nullable":false,"type":{"kind":"enum","name":"Mood"}},{"name":"label","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Note"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Note","name":"note","operation":"create"},{"allowedPatchFields":["at"],"cardinality":"optional","kind":"model","model":"Note","name":"changed","operation":"update"}],"kind":"mutation","name":"Touch","outputEnums":[],"outputs":[{"cardinality":"single","kind":"model","model":"Note","modelReadVersion":1,"name":"note","source":{"inputIdentity":"note"}},{"cardinality":"optional","kind":"model","model":"Note","modelReadVersion":1,"name":"changed","source":{"inputIdentity":"changed"}},{"cardinality":"single","kind":"value","name":"stamp","source":"handlerValue","type":{"kind":"scalar","name":"dateTime"}}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[{"name":"Mood","values":["calm","loud"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"mood","nullable":false,"type":{"kind":"enum","name":"Mood"}},{"name":"label","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Note","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[{"name":"Mood","values":["calm","loud"]}],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"mood","nullable":false,"type":{"kind":"enum","name":"Mood"}},{"name":"label","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Note","version":1}]}''') as Map<String,dynamic>;
+final Map<String,dynamic> schema = jsonDecode('{"actions":[{"input":{"enums":[{"name":"Mood","values":["calm","loud"]}],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"at","nullable":false,"required":true,"type":{"kind":"scalar","name":"dateTime"}},{"cardinality":"list","kind":"value","list":true,"name":"moods","nullable":false,"required":true,"type":{"kind":"enum","name":"Mood"}},{"cardinality":"single","kind":"value","list":false,"name":"maybe","nullable":true,"required":true,"type":{"kind":"scalar","name":"dateTime"}}],"kind":"mutation","name":"Echo","outputEnums":[{"name":"Mood","values":["calm","loud"]}],"outputs":[{"cardinality":"single","kind":"value","name":"result","source":"handlerValue","type":{"kind":"scalar","name":"dateTime"}},{"cardinality":"list","kind":"value","name":"moods","source":"handlerValue","type":{"kind":"enum","name":"Mood"}},{"cardinality":"optional","kind":"value","name":"maybe","source":"handlerValue","type":{"kind":"scalar","name":"dateTime"}}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"at","nullable":false,"required":true,"type":{"kind":"scalar","name":"dateTime"}}],"kind":"query","name":"Now","outputEnums":[],"outputs":[{"cardinality":"single","kind":"value","name":"at","source":"handlerValue","type":{"kind":"scalar","name":"dateTime"}}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[],"kind":"mutation","name":"Ping","outputEnums":[],"outputs":[],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[{"name":"Mood","values":["calm","loud"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"mood","nullable":false,"type":{"kind":"enum","name":"Mood"}},{"name":"label","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Note"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Note","name":"note","operation":"create"},{"allowedPatchFields":["at"],"cardinality":"optional","kind":"model","model":"Note","name":"changed","operation":"update"}],"kind":"mutation","name":"Touch","outputEnums":[],"outputs":[{"cardinality":"single","kind":"model","model":"Note","modelReadVersion":1,"name":"note","source":{"inputIdentity":"note"}},{"cardinality":"optional","kind":"model","model":"Note","modelReadVersion":1,"name":"changed","source":{"inputIdentity":"changed"}},{"cardinality":"single","kind":"value","name":"stamp","source":"handlerValue","type":{"kind":"scalar","name":"dateTime"}}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[{"name":"Mood","values":["calm","loud"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"mood","nullable":false,"type":{"kind":"enum","name":"Mood"}},{"name":"label","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Note","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[{"name":"Mood","values":["calm","loud"]}],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"mood","nullable":false,"type":{"kind":"enum","name":"Mood"}},{"name":"label","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Note","version":1}]}') as Map<String,dynamic>;
 enum Mood { calm, loud }
-class Note {
+/// What a fresh create of Note accepts: a complete [Note], or a [NoteCreate] that may omit fields with creation defaults.
+abstract interface class NoteCreateInput { Map<String,dynamic> toCreateRecord(); }
+class Note implements NoteCreateInput {
  final String id;
  final DateTime at;
  final Mood mood;
@@ -24,6 +26,8 @@ class Note {
  mood: Mood.values.byName(row['mood'] as String),
  label: row['label'] == null ? null : row['label'] as String,
  );
+ @override
+ Map<String,dynamic> toCreateRecord() => toRecord();
  NoteIdentity get identity => NoteIdentity(id: id);
 }
 class NoteIdentity {
@@ -45,6 +49,20 @@ class NotePatch {
  if (at != null) 'at': at!.value.toUtc().toIso8601String(),
  if (mood != null) 'mood': mood!.value.name,
  if (label != null) 'label': label!.value == null ? null : label!.value!,
+ };
+}
+class NoteCreate implements NoteCreateInput {
+ final String id;
+ final DateTime at;
+ final Mood mood;
+ final String? label;
+ const NoteCreate({required this.id,required this.at,required this.mood,required this.label});
+ @override
+ Map<String,dynamic> toCreateRecord() => {
+ 'id': id,
+ 'at': at.toUtc().toIso8601String(),
+ 'mood': mood.name,
+ 'label': label == null ? null : label!,
  };
 }
 class NoteFilter {
@@ -72,12 +90,11 @@ class NoteLiveModel extends NoteTxModel { final Client client; NoteLiveModel(thi
  Future<SyncState> syncState(NoteIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Note', identity.toRecord()));
 }
 class NoteTxModel extends NoteModel { final WritePort writer; NoteTxModel(this.writer) : super(writer);
- Future<void> create(Note value) { final state=value.toRecord(); for (final key in value.identity.toRecord().keys) { state.remove(key); } return writer.direct({'model':'Note','op':'create','identity':value.identity.toRecord(),'values':state}); }
+ Future<void> create(NoteCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Note','op':'create','identity':identity,'values':state}); }
  Future<void> update(NoteIdentity identity, NotePatch patch) => writer.direct({'model':'Note','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
  Future<void> delete(NoteIdentity identity) => writer.direct({'model':'Note','op':'delete','identity':identity.toRecord()});
 }
 /// Public Action lifecycle types are owned by the SDK.
-typedef NoteCreate = Note;
 typedef NoteDelete = NoteIdentity;
 class NoteUpdate implements _DartActionRecord {
  final String id;
@@ -163,7 +180,7 @@ class TouchChangedUpdate implements _DartActionRecord {
  };
 }
 class TouchInput implements _DartActionRecord {
- final NoteCreate note;
+ final Note note;
  final TouchChangedUpdate? changed;
  const TouchInput({required this.note,this.changed});
  Map<String,dynamic> toRecord() => {
@@ -218,6 +235,7 @@ dynamic _dartActionEncode(dynamic value) {
  if (value is List) return value.map(_dartActionEncode).toList();
  if (value is _DartActionRecord) return value.toRecord();
  if (value is Note) return value.toRecord();
+ if (value is NoteCreateInput) return value.toCreateRecord();
  if (value is NoteIdentity) return value.toRecord();
  return value;
 }
@@ -267,14 +285,14 @@ class Mutations {
  late final DirectMutations call = DirectMutations(client);
  Future<Call<EchoOutput>> echo({required DateTime at, required List<Mood> moods, required DateTime? maybe, EchoStore? store}) => client.invokeAction<EchoOutput>('Echo', 1, {'at': _dartActionEncode(at), 'moods': _dartActionEncode(moods), 'maybe': _dartActionEncode(maybe)}, (value) { final row = (value as Map).cast<String,dynamic>(); return EchoOutput(result: DateTime.parse(row['result'] as String), moods: (row['moods'] as List).map((e) => Mood.values.byName(e as String)).toList(), maybe: row['maybe'] == null ? null : DateTime.parse(row['maybe'] as String)); }, store: store);
  Future<Call<PingOutput>> ping({PingStore? store}) => client.invokeAction<PingOutput>('Ping', 1, {}, (_) {}, store: store);
- Future<Call<TouchOutput>> touch({required NoteCreate note, TouchChangedUpdate? changed, TouchStore? store}) => client.invokeAction<TouchOutput>('Touch', 1, {'note': _dartActionEncode(note), if (changed != null) 'changed': _dartActionEncode(changed)}, (value) { final row = (value as Map).cast<String,dynamic>(); return TouchOutput(note: Note.fromRecord((row['note'] as Map).cast<String,dynamic>()), changed: row['changed'] == null ? null : Note.fromRecord((row['changed'] as Map).cast<String,dynamic>()), stamp: DateTime.parse(row['stamp'] as String)); }, store: store);
+ Future<Call<TouchOutput>> touch({required NoteCreateInput note, TouchChangedUpdate? changed, TouchStore? store}) => client.invokeAction<TouchOutput>('Touch', 1, {'note': _dartActionEncode(note), if (changed != null) 'changed': _dartActionEncode(changed)}, (value) { final row = (value as Map).cast<String,dynamic>(); return TouchOutput(note: Note.fromRecord((row['note'] as Map).cast<String,dynamic>()), changed: row['changed'] == null ? null : Note.fromRecord((row['changed'] as Map).cast<String,dynamic>()), stamp: DateTime.parse(row['stamp'] as String)); }, store: store);
 }
 /// Mutations that wait for the backend outcome and applied authority.
 class DirectMutations {
  final Client client; DirectMutations(this.client);
  Future<EchoOutput> echo({required DateTime at, required List<Mood> moods, required DateTime? maybe, EchoStore? store}) => client.invokeDirectAction<EchoOutput>('Echo', 1, {'at': _dartActionEncode(at), 'moods': _dartActionEncode(moods), 'maybe': _dartActionEncode(maybe)}, (value) { final row = (value as Map).cast<String,dynamic>(); return EchoOutput(result: DateTime.parse(row['result'] as String), moods: (row['moods'] as List).map((e) => Mood.values.byName(e as String)).toList(), maybe: row['maybe'] == null ? null : DateTime.parse(row['maybe'] as String)); }, store: store);
  Future<PingOutput> ping({PingStore? store}) => client.invokeDirectAction<PingOutput>('Ping', 1, {}, (_) {}, store: store);
- Future<TouchOutput> touch({required NoteCreate note, TouchChangedUpdate? changed, TouchStore? store}) => client.invokeDirectAction<TouchOutput>('Touch', 1, {'note': _dartActionEncode(note), if (changed != null) 'changed': _dartActionEncode(changed)}, (value) { final row = (value as Map).cast<String,dynamic>(); return TouchOutput(note: Note.fromRecord((row['note'] as Map).cast<String,dynamic>()), changed: row['changed'] == null ? null : Note.fromRecord((row['changed'] as Map).cast<String,dynamic>()), stamp: DateTime.parse(row['stamp'] as String)); }, store: store);
+ Future<TouchOutput> touch({required NoteCreateInput note, TouchChangedUpdate? changed, TouchStore? store}) => client.invokeDirectAction<TouchOutput>('Touch', 1, {'note': _dartActionEncode(note), if (changed != null) 'changed': _dartActionEncode(changed)}, (value) { final row = (value as Map).cast<String,dynamic>(); return TouchOutput(note: Note.fromRecord((row['note'] as Map).cast<String,dynamic>()), changed: row['changed'] == null ? null : Note.fromRecord((row['changed'] as Map).cast<String,dynamic>()), stamp: DateTime.parse(row['stamp'] as String)); }, store: store);
 }
 /// Queries resolve with the backend result (direct); `once` reuses a saved complete result, [enqueue] accepts them durably and [invalidate] discards saved results.
 class Queries {

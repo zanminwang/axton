@@ -285,6 +285,18 @@ impl<S: ClientStore> Engine<'_, S> {
                 return Err(invalid("unknown mutation dependency"));
             }
         }
+        if mutation.call_id.is_none() {
+            // A fresh low-level create: its values become concrete before
+            // they are queued. An Action's operations were derived from
+            // already expanded args and are checked against them above.
+            for op in mutation
+                .operations
+                .iter_mut()
+                .chain(&mut mutation.companion)
+            {
+                crate::defaults::fill_operation(self.schema, op);
+            }
+        }
         mutation.effects.clear();
         let mut effects = vec![];
         let wire = mutation.operations.len();
@@ -324,6 +336,7 @@ impl<S: ClientStore> Engine<'_, S> {
     }
     /// A local write that is never sent: it moves the truth along with the row.
     pub fn direct(&mut self, mut operation: Operation) -> Result<()> {
+        crate::defaults::fill_operation(self.schema, &mut operation);
         normalize(self.schema, &mut operation)?;
         let key = self
             .schema

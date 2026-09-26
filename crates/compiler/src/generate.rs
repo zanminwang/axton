@@ -44,7 +44,13 @@ pub fn schema(v: &Validated) -> Value {
                 "name": m.name,
                 "version": m.version,
                 "identity": m.identity,
-                "fields": m.fields.iter().map(|f| json!({"name":f.name,"nullable":f.nullable,"type":field_type(&f.ty)})).collect::<Vec<_>>(),
+                "fields": m.fields.iter().map(|f| {
+                    let mut field = json!({"name":f.name,"nullable":f.nullable,"type":field_type(&f.ty)});
+                    if let Some(create_default) = &f.create_default {
+                        field["createDefault"] = json!(create_default);
+                    }
+                    field
+                }).collect::<Vec<_>>(),
                 "relations": m.relations.iter().map(|r| json!({
                     "name":r.name,"target":r.target,"fields":r.fields,"targetFields":r.target_fields,
                     "onDelete":r.on_delete.descriptor_name(),
@@ -68,7 +74,10 @@ pub fn schema(v: &Validated) -> Value {
                 .filter(|f| f["type"]["kind"] == "enum")
                 .filter_map(|f| f["type"]["name"].as_str()).collect();
             let retained_enums: Vec<_> = enums.iter().filter(|e| e["name"].as_str().is_some_and(|n| used.contains(n))).cloned().collect();
-            json!({"name":m.name,"version":m.version,"identity":m.identity,"fields":model["fields"],"enums":retained_enums})
+            // A read contract describes complete backend values; creation
+            // policy stays on the current client Model descriptor only.
+            let fields: Vec<Value> = model["fields"].as_array().unwrap().iter().map(crate::history::without_creation_policy).collect();
+            json!({"name":m.name,"version":m.version,"identity":m.identity,"fields":fields,"enums":retained_enums})
         }).collect::<Vec<_>>(),
         "requirements": requirements(v),
         "prerequisites": prerequisites(v),
@@ -76,7 +85,7 @@ pub fn schema(v: &Validated) -> Value {
     })
 }
 
-fn field_type(ty: &FieldType) -> Value {
+pub(crate) fn field_type(ty: &FieldType) -> Value {
     match ty {
         FieldType::Scalar(s) => json!({"kind":"scalar","name":s.descriptor_name()}),
         FieldType::Enum(name) => json!({"kind":"enum","name":name}),

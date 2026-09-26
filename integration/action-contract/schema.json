@@ -2,6 +2,152 @@
   "actions": [
     {
       "input": {
+        "enums": [],
+        "models": [
+          {
+            "fields": [
+              {
+                "name": "id",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              },
+              {
+                "name": "body",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              },
+              {
+                "name": "pinned",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "boolean"
+                }
+              },
+              {
+                "name": "at",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "dateTime"
+                }
+              },
+              {
+                "name": "tag",
+                "nullable": true,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              },
+              {
+                "name": "memo",
+                "nullable": true,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "identity": [
+              "id"
+            ],
+            "name": "Note"
+          }
+        ]
+      },
+      "inputs": [
+        {
+          "cardinality": "single",
+          "kind": "model",
+          "model": "Note",
+          "name": "note",
+          "operation": "create"
+        },
+        {
+          "cardinality": "optional",
+          "kind": "model",
+          "model": "Note",
+          "name": "maybe",
+          "operation": "create"
+        },
+        {
+          "cardinality": "list",
+          "kind": "model",
+          "model": "Note",
+          "name": "many",
+          "operation": "create"
+        }
+      ],
+      "kind": "mutation",
+      "name": "AddNotes",
+      "outputEnums": [],
+      "outputs": [
+        {
+          "cardinality": "single",
+          "kind": "model",
+          "model": "Note",
+          "modelReadVersion": 1,
+          "name": "note",
+          "source": {
+            "inputIdentity": "note"
+          }
+        },
+        {
+          "cardinality": "optional",
+          "kind": "model",
+          "model": "Note",
+          "modelReadVersion": 1,
+          "name": "maybe",
+          "source": {
+            "inputIdentity": "maybe"
+          }
+        },
+        {
+          "cardinality": "list",
+          "kind": "model",
+          "model": "Note",
+          "modelReadVersion": 1,
+          "name": "many",
+          "source": {
+            "inputIdentity": "many"
+          }
+        },
+        {
+          "cardinality": "single",
+          "handlerType": {
+            "fields": [
+              {
+                "name": "id",
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
+              }
+            ],
+            "kind": "identity",
+            "model": "Note"
+          },
+          "kind": "model",
+          "model": "Note",
+          "modelReadVersion": 1,
+          "name": "saved",
+          "source": "handlerIdentity"
+        }
+      ],
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "version": 1
+    },
+    {
+      "input": {
         "enums": [
           {
             "name": "Status",
@@ -1113,11 +1259,146 @@
       "relations": [],
       "unique": [],
       "version": 1
+    },
+    {
+      "fields": [
+        {
+          "createDefault": {
+            "kind": "uuid"
+          },
+          "name": "id",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "createDefault": {
+            "kind": "literal",
+            "value": ""
+          },
+          "name": "body",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "createDefault": {
+            "kind": "literal",
+            "value": false
+          },
+          "name": "pinned",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "boolean"
+          }
+        },
+        {
+          "createDefault": {
+            "kind": "now"
+          },
+          "name": "at",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "dateTime"
+          }
+        },
+        {
+          "createDefault": {
+            "kind": "literal",
+            "value": "t"
+          },
+          "name": "tag",
+          "nullable": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "memo",
+          "nullable": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "identity": [
+        "id"
+      ],
+      "name": "Note",
+      "relations": [],
+      "unique": [],
+      "version": 1
     }
   ],
   "prerequisites": [],
   "requirements": [],
   "resultModels": [
+    {
+      "enums": [],
+      "fields": [
+        {
+          "name": "id",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "body",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "pinned",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "boolean"
+          }
+        },
+        {
+          "name": "at",
+          "nullable": false,
+          "type": {
+            "kind": "scalar",
+            "name": "dateTime"
+          }
+        },
+        {
+          "name": "tag",
+          "nullable": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        },
+        {
+          "name": "memo",
+          "nullable": true,
+          "type": {
+            "kind": "scalar",
+            "name": "string"
+          }
+        }
+      ],
+      "identity": [
+        "id"
+      ],
+      "name": "Note",
+      "version": 1
+    },
     {
       "enums": [],
       "fields": [

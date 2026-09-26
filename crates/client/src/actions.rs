@@ -42,6 +42,9 @@ impl<S: ClientStore> Client<S> {
         options: ActionCallOptions,
     ) -> Result<DirectActionRequest> {
         let action = self.schema.action(name, version)?;
+        // Fresh arguments only: generated values are fixed here, once.
+        let mut args = args;
+        crate::defaults::fill_action_args(&self.schema, action, &mut args);
         let args = normalize_action_args(&self.schema, action, &args)?;
         validate_bindings(&self.schema, action, &args)?;
         options.store.validate(action)?;
@@ -125,6 +128,9 @@ impl<S: ClientStore> Client<S> {
         options: ActionCallOptions,
     ) -> Result<SubmittedCall> {
         let action = self.schema.action(name, version)?;
+        // Fresh arguments only: generated values are fixed here, once.
+        let mut args = args;
+        crate::defaults::fill_action_args(&self.schema, action, &mut args);
         let args = normalize_action_args(&self.schema, action, &args)?;
         validate_bindings(&self.schema, action, &args)?;
         options.store.validate(action)?;

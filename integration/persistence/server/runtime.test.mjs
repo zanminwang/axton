@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import * as serverSdk from '../../../packages/server/index.mts';
-import {createBackend,MutationRejected,EngineError,RECORD} from '../../../packages/server/index.mts';
+import {createBackend,MutationRejected,EngineError} from '../../../packages/server/index.mts';
 import {prisma,prismaDriver} from '../../../packages/postgres/index.mts';
 const require=createRequire(import.meta.url);
 const {PrismaClient}=require('../../bindings/node/generated/client');
@@ -12,29 +12,29 @@ const db=new PrismaClient();
 // The server suite runs on the Prisma shim (its handlers use Prisma's raw API); driver-conformance.test.mjs proves every shim.
 const database=()=>prisma(db);
 const store=tx=>prisma(db).persistence(tx);
-/** A business change made outside a handler: register the records and publish them to one channel. */
-const external=(backendLike,channel,records)=>backendLike.transaction(({changes,publish})=>{for(const r of records)changes.add(r);publish({channel});});
+/** A business change made outside a handler: touch the records and add each to one Channel. */
+const external=(backendLike,name,records)=>backendLike.transaction(({channel,touch})=>{channel(name).add(records);for(const {model,identity} of records)touch[model.charAt(0).toLowerCase()+model.slice(1)](identity);});
 const run=prismaDriver(db).transaction;
 const schema={enums:[],models:[{name:'Task',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'string'},nullable:false},{name:'title',type:{kind:'scalar',name:'string'},nullable:false}]}]};
 const config={schema,mutations:[{name:'edit',version:1,slots:[{name:'task',model:'Task',operation:'update',cardinality:'single',allowedPatchFields:['title']}]}]};
 const authenticate=async req=>req.headers.authorization==='Bearer alice'?'alice':null;
-let called=0,prepared=0,lastInput;const loaderCalls=[];
+let called=0,prepared=0,lastInput,lastHandles;const loaderCalls=[];
 const write=(tx,id,title)=>tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET title=$2',id,title);
 const readTasks=({ids,tx})=>Promise.all(ids.map(async identity=>{const rows=await tx.$queryRawUnsafe('SELECT title FROM business_task WHERE id=$1',identity.id);return rows[0]??null;}));
-// The patch title steers the handler: every mutation writes its row and, unless told to stay quiet, publishes the change set to `shared`.
+// The patch title steers the handler: every mutation writes its row and, unless told to stay quiet, adds its record to `shared`.
 const backend=createBackend({config,database:database(),authenticate,handlers:{
- async edit({input,tx,changes,publish}){
-  called++;lastInput=input;const {identity,patch}=input.task;
+ async edit({input,tx,channel,touch}){
+  called++;lastInput=input;lastHandles={channel,touch};const {identity,patch}=input.task;
   await write(tx,identity.id,patch.title);
-  if(patch.title==='empty-channel')publish({channel:''});
-  if(patch.title==='bad-records')publish({channel:'shared',records:'x'});
-  if(patch.title==='bogus-record')publish({channel:'shared',records:[{bogus:true}]});
+  if(patch.title==='empty-channel')channel('');
+  if(patch.title==='bad-records')channel('shared').add('x');
+  if(patch.title==='bogus-record')channel('shared').add([{bogus:true}]);
   if(patch.title==='quiet')return;
-  publish({channel:'shared'});
+  const shared=channel('shared');shared.task.add(identity);
   if(patch.title==='refuse')throw new MutationRejected('task.refused');if(patch.title==='crash')throw new Error('business crash');
-  if(patch.title==='two')publish({channel:'other'});
-  if(patch.title==='extra'){await write(tx,`${identity.id}-extra`,'extra too');changes.add({model:'Task',identity:{id:`${identity.id}-extra`}});}
-  if(patch.title==='publish-only')publish({channel:'other',records:[{model:'Task',identity:{id:'pub-only'}}]});
+  if(patch.title==='two')channel('other').task.add(identity);
+  if(patch.title==='extra'){const extra={id:`${identity.id}-extra`};await write(tx,extra.id,'extra too');touch.task(extra);shared.task.add(extra);}
+  if(patch.title==='publish-only')channel('other').task.add({id:'pub-only'});
  }},
  loaders:{async task(call){loaderCalls.push(Object.keys(call));return readTasks(call);}},
  loaderHooks:{task:{async prepareForViewer(){prepared++}}},
@@ -115,7 +115,7 @@ test('explicit rejection rolls back only mutation and its publication',async()=>
  assert.deepEqual(result.records,[authority('b',1,{title:'good'}),authority('d',1,{title:'last'})],'only the successful mutations contribute authority');assert.equal(to(await pull()),3);
  assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='c'")).length,0);
 });
-test('rejected mutation publishes nothing even though it called publish first',async()=>{
+test('rejected mutation publishes nothing even though it declared a membership first',async()=>{
  const head=to(await pull());
  const result=JSON.parse(await backend.push('alice',push('refuse-only',1,[mutation(1,'refuse','refuse-only-a')])));
  assert.deepEqual(result.rejections,[{ordinal:1,code:'task.refused'}]);
@@ -225,16 +225,16 @@ test('a pull reaches the loader of the declared model version and normalizes row
 });
 test('compaction materializes latest state; deletion is aligned null',async()=>{
  await backend.push('alice',push('dedup',2,[mutation(1,'updated')]));await assert.rejects(()=>backend.push('alice',push('dedup',1,[mutation(1,'first')])),/overlap/);
- await backend.transaction(async({tx,changes,publish})=>{await tx.$executeRawUnsafe("DELETE FROM business_task WHERE id='a'");changes.add({model:'Task',identity:{id:'a'}});publish({channel:'shared'});});
+ await backend.transaction(async({tx,channel,touch})=>{await tx.$executeRawUnsafe("DELETE FROM business_task WHERE id='a'");touch.task({id:'a'});channel('shared').task.add({id:'a'});});
  const page=await pull();assert.equal(page.changes.length,4);assert.deepEqual(page.changes.find(c=>c.identity.id==='a').state,null);assert.equal(to(page),6);
  await assert.rejects(()=>pull('shared',999),/cursor ahead/);
 });
 test('50-row pages retain original cursor progression and remainder reaches head',async()=>{
- await backend.transaction(async({tx,changes,publish})=>{for(let i=0;i<51;i++){await tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2)',`page-${i}`,'page');changes.add({model:'Task',identity:{id:`page-${i}`}});}publish({channel:'shared'});});
+ await backend.transaction(async({tx,channel,touch})=>{const shared=channel('shared');for(let i=0;i<51;i++){const id={id:`page-${i}`};await tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2)',id.id,'page');touch.task(id);shared.task.add(id);}});
  const first=await pull('shared',6);assert.equal(first.changes.length,50);assert.equal(to(first),56);assert.equal(first.cursors.shared.head,57);const last=await pull('shared',56);assert.equal(last.changes.length,1);assert.equal(to(last),57);assert.equal(last.cursors.shared.head,57);
 });
 test('concurrent same-client retry executes once under PostgreSQL lock',async()=>{const before=called;const request=push('race',1,[mutation(1,'race','race')]);const receipts=await Promise.all([backend.push('alice',request),backend.push('alice',request)]);assert.equal(receipts[0],receipts[1]);assert.equal(called,before+1);});
-test('publication rollback uses user transaction and rejects unregistered models',async()=>{const before=to(await pull('shared',56));await assert.rejects(()=>backend.transaction(async({changes,publish})=>{changes.add({model:'Task',identity:{id:'rollback'}});publish({channel:'shared'});throw new Error('cancel');}),/cancel/);assert.equal(to(await pull('shared',56)),before);await assert.rejects(()=>external(backend,'shared',[{model:'Unknown',identity:{id:'x'}}]),/unregistered loader/);});
+test('declarations roll back with the user transaction, and an unknown Model is refused at the declaration',async()=>{const before=to(await pull('shared',56));await assert.rejects(()=>backend.transaction(async({channel,touch})=>{touch.task({id:'rollback'});channel('shared').task.add({id:'rollback'});throw new Error('cancel');}),/cancel/);assert.equal(to(await pull('shared',56)),before);await assert.rejects(()=>external(backend,'shared',[{model:'Unknown',identity:{id:'x'}}]),/unknown Model Unknown/);});
 test('loader defects fail only their records; the page is served and the cursor advances',async()=>{
  const make=load=>createBackend({config:{...config,mutations:[]},database:database(),authenticate,handlers:{},loaders:{task:load}});
  const misaligned=JSON.parse(await make(async()=>[]).pull('alice',pullBody({shared:0})));
@@ -271,10 +271,12 @@ test('an undefined loader entry fails only its record, reaches onError and never
  assert.deepEqual(failed.map(c=>[c.identity.id,c.error,c.state]),[['a','loader.failed',null]]);
  assert.ok(errors.some(m=>/undefined entry/.test(m)),errors.join('; '));
 });
-test('publication failures poison push and roll back business writes',async()=>{
- const broken=createBackend({config,database:database(),authenticate,handlers:{async edit({tx,publish}){await tx.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('caught','bad')");publish({channel:'shared',records:[{model:'Unknown',identity:{id:'caught'}}]});}},loaders:{async task({ids}){return ids.map(()=>null)}}});
- await assert.rejects(()=>broken.push('alice',push('caught',1,[mutation(1,'x')])),/unregistered loader/);
- assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='caught'")).length,0);assert.equal((await db.$queryRawUnsafe("SELECT * FROM axton_client WHERE client_id='caught'")).length,0);
+test('a declaration naming an unknown Model fails its handler: only that mutation and its write roll back',async()=>{
+ const errors=[];
+ const broken=createBackend({config,database:database(),authenticate,onError:e=>errors.push(e.message),handlers:{async edit({tx,channel}){await tx.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('caught','bad')");channel('shared').add([{model:'Unknown',identity:{id:'caught'}}]);}},loaders:{async task({ids}){return ids.map(()=>null)}}});
+ const receipt=JSON.parse(await broken.push('alice',push('caught',1,[mutation(1,'x')])));
+ assert.deepEqual(receipt.rejections,[{ordinal:1,code:'handler.failed'}]);assert.match(errors[0],/unknown Model Unknown/);
+ assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='caught'")).length,0);assert.equal((await db.$queryRawUnsafe("SELECT * FROM axton_client WHERE client_id='caught'")).length,1,'the batch still commits');
 });
 test('a nonfinite loader value fails its record rather than clearing to null',async()=>{
  const expanded=structuredClone(config);expanded.schema.models[0].fields.push({name:'score',type:{kind:'scalar',name:'float'},nullable:true});
@@ -285,8 +287,12 @@ test('a nonfinite loader value fails its record rather than clearing to null',as
  assert.ok(page.changes.every(c=>c.error==='loader.failed'&&c.state===null));
  assert.ok(errors.some(m=>/nonfinite/.test(m)),errors.join('; '));
 });
-test('backend.transaction rolls the business write back when the settlement is rejected',async()=>{
- await assert.rejects(()=>backend.transaction(async({tx,changes,publish})=>{await tx.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('external','bad')");changes.add({model:'Unknown',identity:{id:'x'}});publish({channel:'shared'});}),/unregistered loader/);
+test('backend.transaction rolls the business write back when a declaration or the settlement is refused',async()=>{
+ await assert.rejects(()=>backend.transaction(async({tx,channel})=>{await tx.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('external','bad')");channel('shared').add([{model:'Unknown',identity:{id:'x'}}]);}),/unknown Model Unknown/);
+ assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='external'")).length,0);
+ // A declaration checks that a UUID component is a string; the engine checks its format when it settles.
+ const tickets=createBackend({config:{mutations:[],schema:{enums:[],models:[{name:'Ticket',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'uuid'},nullable:false}]}]}},database:database(),authenticate,handlers:{},loaders:{async ticket({ids}){return ids.map(()=>null)}}});
+ await assert.rejects(()=>tickets.transaction(async({tx,touch})=>{await tx.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('external','bad')");touch.ticket({id:'not-a-uuid'});}),/UUID/);
  assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='external'")).length,0);
 });
 test('repeatable-read runner keeps head, scan, and loader coherent across concurrent publication',async()=>{
@@ -318,20 +324,20 @@ test('live transport negotiates, wakes only after commit, reconnects, and cleans
  assert.equal(frames[0].type,'subscribed');assert.deepEqual(Object.keys(frames[0].cursors),['bob','shared']);assert.equal(frames[0].cursors.bob,0,'a fresh channel is at head 0');assert.ok(frames[0].cursors.shared>0,'the acknowledgement carries the current head');
 
  let release,ready;const held=new Promise(resolve=>{release=resolve;});const started=new Promise(resolve=>{ready=resolve;});
- const committing=backend.transaction(async({tx,changes,publish})=>{
+ const committing=backend.transaction(async({tx,channel,touch})=>{
    await tx.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('live-external','committed')");
-   changes.add({model:'Task',identity:{id:'live-external'}});publish({channel:'shared'});ready();await held;
+   touch.task({id:'live-external'});channel('shared').task.add({id:'live-external'});ready();await held;
  });
  await started;await delay(80);assert.equal(frames.length,1,'uncommitted publication must stay silent');release();await committing;
  while(frames.length<2)await delay(5);
  assert.deepEqual(frames[1].changes.at(-1),{model:'Task',identity:{id:'live-external'},stamp:1,state:{title:'committed'}});assert.deepEqual(Object.keys(frames[1].cursors),['shared'],'a frame names only the channels that moved');assert.equal(frames[1].cursors.shared.from,frames[0].cursors.shared);
 
  const pageStart=frames.length;
- await backend.transaction(async({tx,changes,publish})=>{for(let i=0;i<51;i++){const id=`live-page-${i}`;await tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2)',id,'paged');changes.add({model:'Task',identity:{id}});}publish({channel:'shared'});});
+ await backend.transaction(async({tx,channel,touch})=>{const shared=channel('shared');for(let i=0;i<51;i++){const id=`live-page-${i}`;await tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2)',id,'paged');touch.task({id});shared.task.add({id});}});
  while(frames.length<pageStart+2)await delay(5);assert.equal(frames[pageStart].changes.length,50);assert.equal(frames[pageStart+1].changes.length,1);assert.equal(frames[pageStart+1].cursors.shared.from,frames[pageStart].cursors.shared.to);assert.ok(frames[pageStart].cursors.shared.to<frames[pageStart].cursors.shared.head,'a full frame says the channel continues');
 
  const beforeRollback=frames.length;
- await assert.rejects(()=>backend.transaction(async({changes,publish})=>{changes.add({model:'Task',identity:{id:'live-rollback'}});publish({channel:'shared'});throw new Error('rollback live');}),/rollback live/);
+ await assert.rejects(()=>backend.transaction(async({channel,touch})=>{touch.task({id:'live-rollback'});channel('shared').task.add({id:'live-rollback'});throw new Error('rollback live');}),/rollback live/);
  await delay(80);assert.equal(frames.length,beforeRollback);
 
  socket.close();await new Promise(resolve=>socket.addEventListener('close',resolve,{once:true}));
@@ -351,7 +357,7 @@ test('a publication committed between negotiation and the acknowledgement is del
  // gate; a push commits meanwhile, before any listener exists for the socket.
  const base=prisma(db);let hold;
  const gated={transaction:async body=>{const result=await base.transaction(body);const gate=hold;hold=undefined;if(gate)await gate;return result;},persistence:base.persistence};
- const gatedBackend=createBackend({config,database:gated,authenticate,handlers:{async edit({input,tx,publish}){const {identity,patch}=input.task;await write(tx,identity.id,patch.title);publish({channel:'shared'});}},loaders:{task:readTasks}});
+ const gatedBackend=createBackend({config,database:gated,authenticate,handlers:{async edit({input,tx,channel}){const {identity,patch}=input.task;await write(tx,identity.id,patch.title);channel('shared').task.add(identity);}},loaders:{task:readTasks}});
  const server=await gatedBackend.listen({port:0});const port=Number(new URL(server.url).port);
  try{
   const socket=await openSocket(port);const frames=[];socket.addEventListener('message',event=>frames.push(JSON.parse(String(event.data))));
@@ -415,29 +421,30 @@ test('onError captures server-side failures and HTTP responds with {code:"server
   assert.equal(errors[0].message,'boom');
  }finally{await server.close();}
 });
-test('slot arguments are tagged so changes.add and publish accept them directly',async()=>{
- await backend.push('alice',push('tagged',1,[mutation(1,'hello','tagged-a')]));
- assert.deepEqual(lastInput.task[RECORD],{model:'Task',identity:{id:'tagged-a'}});
+test('slot arguments are plain data; a handler declares with their identity, and its handles close when it settles',async()=>{
+ await backend.push('alice',push('plain',1,[mutation(1,'hello','plain-a')]));
  assert.deepEqual(Object.keys(lastInput.task),['identity','patch']);
- assert.equal(RECORD in {...lastInput.task},false);
+ assert.deepEqual(Object.getOwnPropertySymbols(lastInput.task),[],'no hidden record tag');
+ assert.deepEqual((await invalidations('plain-a')).map(([channel,,stamp])=>[channel,stamp]),[['shared',1]]);
+ assert.throws(()=>lastHandles.channel('shared'),/closed/);assert.throws(()=>lastHandles.touch.task({id:'plain-a'}),/closed/);
 });
-test('a handler that publishes nothing still returns readback records and touches no channel',async()=>{
+test('a handler that declares no membership still returns readback records and touches no channel',async()=>{
  const channels=await count('axton_channel');
  const receipt=JSON.parse(await backend.push('alice',push('quiet',1,[mutation(1,'quiet','quiet-a')])));
  assert.deepEqual(receipt,{batchSequence:1,clientId:'quiet',records:[authority('quiet-a',1,{title:'quiet'})],rejections:[]});
  assert.equal(await recordStamp('quiet-a'),1);assert.deepEqual(await invalidations('quiet-a'),[]);assert.equal(await count('axton_channel'),channels);
  const again=JSON.parse(await backend.push('alice',push('quiet',2,[mutation(2,'quiet','quiet-a')])));assert.deepEqual(again.records,[authority('quiet-a',2,{title:'quiet'})],'every successful change advances the stamp, published or not');
 });
-test('publish({channel}) enrolls the final change set, an addition made after the call included; the addition is not caller authority',async()=>{
+test('a touched extra record added to a Channel is settled and delivered there, but is not caller authority',async()=>{
  const receipt=JSON.parse(await backend.push('alice',push('extra',1,[mutation(1,'extra','extra-a')])));
- assert.deepEqual(receipt.records,[authority('extra-a',1,{title:'extra'})],'only the uploaded target is read back');assert.equal(await recordStamp('extra-a-extra'),1,'the addition is still settled');
+ assert.deepEqual(receipt.records,[authority('extra-a',1,{title:'extra'})],'only the uploaded target is read back');assert.equal(await recordStamp('extra-a-extra'),1,'the touched record is still settled');
  assert.deepEqual((await invalidations('extra-a')).map(([channel,,stamp])=>[channel,stamp]),[['shared',1]]);assert.deepEqual((await invalidations('extra-a-extra')).map(([channel,,stamp])=>[channel,stamp]),[['shared',1]]);
 });
-test('explicit records publish only those, never join the change set, are initialised at stamp 1 once, and re-enrolling a member publishes nothing',async()=>{
- assert.equal(await recordStamp('pub-only'),null,'no metadata before the first publication');
+test('an added record is not a changed one: it is initialised at stamp 1 once, and re-adding a member publishes nothing',async()=>{
+ assert.equal(await recordStamp('pub-only'),null,'no metadata before the first enrolment');
  const first=JSON.parse(await backend.push('alice',push('pub-only',1,[mutation(1,'publish-only','pub-only-a')])));
- assert.deepEqual(first.records,[authority('pub-only-a',1,{title:'publish-only'})],'a published record is not a changed one');
- const other=await head('other');assert.deepEqual(await invalidations('pub-only'),[['other',other,1]]);assert.equal(await recordStamp('pub-only'),1,'first publication initialises the stamp');
+ assert.deepEqual(first.records,[authority('pub-only-a',1,{title:'publish-only'})],'an added record is not a changed one');
+ const other=await head('other');assert.deepEqual(await invalidations('pub-only'),[['other',other,1]]);assert.equal(await recordStamp('pub-only'),1,'first enrolment initialises the stamp');
  const second=JSON.parse(await backend.push('alice',push('pub-only',2,[mutation(2,'publish-only','pub-only-b')])));
  assert.deepEqual(second.records,[authority('pub-only-b',1,{title:'publish-only'})]);
  assert.equal(await head('other'),other,'an existing unchanged member is not published again');assert.deepEqual(await invalidations('pub-only'),[['other',other,1]],'the invalidation keeps its cursor');assert.equal(await recordStamp('pub-only'),1,'enrolling an unchanged record never advances it');
@@ -445,7 +452,7 @@ test('explicit records publish only those, never join the change set, are initia
  assert.equal(page.changes.some(c=>c.identity.id.startsWith('pub-only-')),false,'the changed records went to shared only');
 });
 test('a loader refusal during push rejects only that mutation; so does a thrown loader error',async()=>{
- const make=load=>createBackend({config,database:database(),authenticate,handlers:{async edit({input,tx,publish}){await write(tx,input.task.identity.id,input.task.patch.title);publish({channel:'shared'});}},loaders:{task:load}});
+ const make=load=>createBackend({config,database:database(),authenticate,handlers:{async edit({input,tx,channel}){await write(tx,input.task.identity.id,input.task.patch.title);channel('shared').task.add(input.task.identity);}},loaders:{task:load}});
  const refusing=make(async call=>{if(call.ids.some(id=>id.id==='ld-forbidden'))throw new MutationRejected('task.forbidden');return readTasks(call);});
  const receipt=JSON.parse(await refusing.push('alice',push('loader-refuse',1,[mutation(1,'ok','ld-ok'),mutation(2,'hidden','ld-forbidden'),mutation(3,'ok','ld-last')])));
  assert.deepEqual(receipt.rejections,[{ordinal:2,code:'task.forbidden'}]);assert.deepEqual(receipt.records,[authority('ld-last',1,{title:'ok'}),authority('ld-ok',1,{title:'ok'})]);
@@ -456,16 +463,16 @@ test('a loader refusal during push rejects only that mutation; so does a thrown 
  assert.deepEqual(crashing.rejections,[{ordinal:1,code:'loader.failed'}]);
  assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='ld-crash'")).length,0);assert.equal((await db.$queryRawUnsafe("SELECT * FROM axton_client WHERE client_id='loader-crash'")).length,1,'the batch still commits');
 });
-test('publish validates channel and records; the invalid call rejects only that mutation as a failure',async()=>{
+test('a declaration validates its Channel and records at the call; the invalid call rejects only that mutation as a failure',async()=>{
  const badchan=JSON.parse(await backend.push('alice',push('badchan',1,[mutation(1,'empty-channel','bad-a')])));assert.equal(badchan.rejections[0].code,'handler.failed');
  const badrecs=JSON.parse(await backend.push('alice',push('badrecs',1,[mutation(1,'bad-records','bad-b')])));assert.equal(badrecs.rejections[0].code,'handler.failed');
  const badbogus=JSON.parse(await backend.push('alice',push('badbogus',1,[mutation(1,'bogus-record','bad-c')])));assert.equal(badbogus.rejections[0].code,'handler.failed');
  assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id IN ('bad-a','bad-b','bad-c')")).length,0,'the failed mutations rolled back their writes');
 });
-test('a handler may keep using the transaction after publish; the publication goes out with the commit',async()=>{
- const deferredBackend=createBackend({config,database:database(),authenticate,handlers:{async edit({input,tx,publish}){
+test('a handler may keep using the transaction after a declaration; the membership settles with the commit',async()=>{
+ const deferredBackend=createBackend({config,database:database(),authenticate,handlers:{async edit({input,tx,channel}){
   const {identity,patch}=input.task;
-  publish({channel:'deferred'});
+  channel('deferred').task.add(identity);
   await write(tx,identity.id,patch.title);
   await tx.$queryRawUnsafe('SELECT 1');
  }},loaders:{task:readTasks}});
@@ -483,7 +490,7 @@ test('advanceStamp increments without a channel: no invalidation, no channel hea
  assert.deepEqual(stamps,[1,2]);assert.equal(await recordStamp('stamped'),2);assert.deepEqual(await invalidations('stamped'),[]);
  assert.equal((await db.$queryRawUnsafe("SELECT * FROM axton_channel WHERE channel LIKE 'stamp%'")).length,0);
 });
-test('one push publishing to two channels carries the same stamp to both and advances each head once',async()=>{
+test('one push enrolled in two channels carries the same stamp to both and advances each head once',async()=>{
  const before=[await head('shared'),await head('other')];
  const receipt=JSON.parse(await backend.push('alice',push('two-channels',1,[mutation(1,'two','two-a')])));
  assert.deepEqual(receipt.records,[authority('two-a',1,{title:'two'})]);
@@ -689,7 +696,7 @@ test('an upgrade whose authentication completes after close begins is refused wi
 
 test('a version dispatches only to its own handler and a function registers v1',async()=>{
  const seen=[];
- const record=tag=>async({input,publish})=>{seen.push([tag,input.task.patch.title]);publish({channel:'registration'});};
+ const record=tag=>async({input,channel})=>{seen.push([tag,input.task.patch.title]);channel('registration').task.add(input.task.identity);};
  const make=(handlers,mutations=config.mutations)=>createBackend({config:{...config,schema:structuredClone(schema),mutations},database:database(),authenticate,handlers,loaders:{async task({ids}){return ids.map(()=>null)}}});
  const shorthand=JSON.parse(await make({edit:record('function')}).push('alice',push('register-function',1,[mutation(1,'same','reg-a')])));
  const explicit=JSON.parse(await make({edit:{v1:record('v1 key')}}).push('alice',push('register-v1-key',1,[mutation(1,'same','reg-a')])));
@@ -769,7 +776,7 @@ test('the live stream serves the declared model version and refuses an unretaine
 test('backend.transaction publishes in the application transaction and wakes after commit',async()=>{
  let woke=0;const unsubscribe=backend.onCommitted('shared',()=>{woke++;});
  const from=await head('shared');
- const result=await backend.transaction(async({tx,changes,publish})=>{await write(tx,'tx-1','via transaction');for(const r of [{model:'Task',identity:{id:'tx-1'}}])changes.add(r);publish({channel:'shared'});return 'done';});
+ const result=await backend.transaction(async({tx,channel,touch})=>{await write(tx,'tx-1','via transaction');touch.task({id:'tx-1'});channel('shared').task.add({id:'tx-1'});return 'done';});
  assert.equal(result,'done');await delay(0);assert.equal(woke,1,'one wake after commit');
  const page=await pull('shared',from);assert.ok(page.changes.some(c=>c.identity.id==='tx-1'&&c.state.title==='via transaction'),JSON.stringify(page));
  unsubscribe();
@@ -777,7 +784,7 @@ test('backend.transaction publishes in the application transaction and wakes aft
 test('backend.transaction rolls back a failing body and wakes nobody',async()=>{
  let woke=0;const unsubscribe=backend.onCommitted('shared',()=>{woke++;});
  const before=await head('shared');
- await assert.rejects(()=>backend.transaction(async({tx,changes,publish})=>{await write(tx,'tx-rollback','never');for(const r of [{model:'Task',identity:{id:'tx-rollback'}}])changes.add(r);publish({channel:'shared'});throw new Error('cancel');}),/cancel/);
+ await assert.rejects(()=>backend.transaction(async({tx,channel,touch})=>{await write(tx,'tx-rollback','never');touch.task({id:'tx-rollback'});channel('shared').task.add({id:'tx-rollback'});throw new Error('cancel');}),/cancel/);
  await delay(0);assert.equal(woke,0);assert.equal(await head('shared'),before);
  assert.equal((await db.$queryRawUnsafe("SELECT count(*) AS count FROM business_task WHERE id='tx-rollback'"))[0].count,0n);
  unsubscribe();
@@ -786,7 +793,7 @@ test('backend.transaction wakes a connected live subscriber without reconnect',a
  const server=await backend.listen({port:0});const port=Number(new URL(server.url).port);
  const socket=await openSocket(port);const frames=[];socket.addEventListener('message',event=>frames.push(JSON.parse(String(event.data))));
  socket.send(JSON.stringify({type:'subscribe',channels:['shared'],models:{Task:1}}));while(frames.length<1)await delay(5);
- await backend.transaction(async({tx,changes,publish})=>{await write(tx,'tx-live','live via transaction');for(const r of [{model:'Task',identity:{id:'tx-live'}}])changes.add(r);publish({channel:'shared'});});
+ await backend.transaction(async({tx,channel,touch})=>{await write(tx,'tx-live','live via transaction');touch.task({id:'tx-live'});channel('shared').task.add({id:'tx-live'});});
  while(frames.length<2)await delay(5);
  assert.deepEqual(frames[1].changes.at(-1).identity,{id:'tx-live'});assert.deepEqual(frames[1].changes.at(-1).state,{title:'live via transaction'});
  socket.close();await new Promise(resolve=>socket.addEventListener('close',resolve,{once:true}));await server.close();
@@ -794,22 +801,22 @@ test('backend.transaction wakes a connected live subscriber without reconnect',a
 test('notify and bindTransaction are gone; backend.transaction is the only external write path',async()=>{
  assert.equal(backend.notify,undefined);assert.equal(backend.bindTransaction,undefined);
  const before=await head('shared');
- await backend.transaction(async({tx,changes,publish})=>{await write(tx,'tx-only-path','only path');changes.add({model:'Task',identity:{id:'tx-only-path'}});publish({channel:'shared'});});
+ await backend.transaction(async({tx,channel,touch})=>{await write(tx,'tx-only-path','only path');touch.task({id:'tx-only-path'});channel('shared').task.add({id:'tx-only-path'});});
  assert.equal(await head('shared'),before+1);
 });
-test('re-enrolling an unchanged member keeps its stamp and publishes nothing; a later change reaches its Channel without publish',async()=>{
+test('re-adding an unchanged member keeps its stamp and publishes nothing; a later touch reaches its Channel without another add',async()=>{
  await external(backend,'shared',[{model:'Task',identity:{id:'stamp-probe'}}]);
  const stampOf=()=>recordStamp('stamp-probe');
  const first=await stampOf();
  const headBefore=await head('shared');
- await backend.transaction(async({publish})=>{publish({channel:'shared',records:[{model:'Task',identity:{id:'stamp-probe'}}]});});
+ await backend.transaction(async({channel})=>{channel('shared').task.add({id:'stamp-probe'});});
  assert.equal(await stampOf(),first,'membership-only records keep their stamp');assert.equal(await head('shared'),headBefore,'and an existing member is not published again');
- await backend.transaction(async({changes})=>{changes.add({model:'Task',identity:{id:'stamp-probe'}});});
- assert.equal(await stampOf(),first+1,'changes advance even without a publish');assert.equal(await head('shared'),headBefore+1,'and reach the Channel the record is a member of');
+ await backend.transaction(async({touch})=>{touch.task({id:'stamp-probe'});});
+ assert.equal(await stampOf(),first+1,'a touch advances the stamp without a membership declaration');assert.equal(await head('shared'),headBefore+1,'and reach the Channel the record is a member of');
 });
 test('a pull covers every channel in one request and delivers a record shared by two channels once',async()=>{
  await db.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('multi-a','A'),('multi-b','B') ON CONFLICT(id) DO NOTHING");
- await backend.transaction(async({changes,publish})=>{changes.add({model:'Task',identity:{id:'multi-a'}});changes.add({model:'Task',identity:{id:'multi-b'}});publish({channel:'multi-x'});publish({channel:'multi-y',records:[{model:'Task',identity:{id:'multi-a'}}]});});
+ await backend.transaction(async({channel,touch})=>{touch.task({id:'multi-a'});touch.task({id:'multi-b'});channel('multi-x').task.add({id:'multi-a'});channel('multi-x').task.add({id:'multi-b'});channel('multi-y').task.add({id:'multi-a'});});
  const page=JSON.parse(await backend.pull('alice',pullBody({'multi-x':0,'multi-y':0})));
  assert.deepEqual(Object.keys(page.cursors),['multi-x','multi-y']);
  assert.deepEqual(page.cursors['multi-x'],{from:0,to:2,head:2});assert.deepEqual(page.cursors['multi-y'],{from:0,to:1,head:1});
@@ -848,9 +855,9 @@ test('onError defaults to console.error so nothing is dropped silently',async()=
 const bootstrapBody=(channel,after,until,models={Task:1})=>JSON.stringify({mode:'bootstrap',channel,models,after,until});
 const bootstrap=(channel,after,until)=>backend.pull('alice',bootstrapBody(channel,after,until)).then(JSON.parse);
 /** Publish `count` fresh records to one channel, one cursor each. */
-const fill=(channel,prefix,count)=>backend.transaction(async({tx,changes,publish})=>{
- for(let i=0;i<count;i++){await write(tx,`${prefix}-${i}`,`title ${i}`);changes.add({model:'Task',identity:{id:`${prefix}-${i}`}});}
- publish({channel});
+const fill=(name,prefix,count)=>backend.transaction(async({tx,channel,touch})=>{
+ const target=channel(name);
+ for(let i=0;i<count;i++){const id={id:`${prefix}-${i}`};await write(tx,id.id,`title ${i}`);touch.task(id);target.task.add(id);}
 });
 test('a bounded bootstrap request pages the historical interval and stops at the fixed origin',async()=>{
  await fill('boot','boot',60);
@@ -895,14 +902,14 @@ test('a record republished above the origin leaves the historical interval betwe
  assert.ok(!second.records.some(r=>r.identity.id==='moved-55'),'the republished record is no longer historical');
 });
 test('a bootstrap page reads content and stamps at its own repeatable-read snapshot',async()=>{
- await backend.transaction(async({tx,changes,publish})=>{await write(tx,'coherent','first');changes.add({model:'Task',identity:{id:'coherent'}});publish({channel:'coherent'});});
+ await backend.transaction(async({tx,channel,touch})=>{await write(tx,'coherent','first');touch.task({id:'coherent'});channel('coherent').task.add({id:'coherent'});});
  const origin=await head('coherent');const before=await recordStamp('coherent');
  // A concurrent transaction rewrites and republishes the record after the page
  // transaction has read its head; the page must still answer its own snapshot.
  let changed=false;
  const reader=createBackend({config:{...config,mutations:[]},database:{transaction:run,persistence:tx=>{const storage=store(tx);return {call:async r=>{
   const result=await storage.call(r);
-  if(r.op==='head'&&!changed){changed=true;await backend.transaction(async({tx:other,changes,publish})=>{await write(other,'coherent','second');changes.add({model:'Task',identity:{id:'coherent'}});publish({channel:'coherent'});});}
+  if(r.op==='head'&&!changed){changed=true;await backend.transaction(async({tx:other,touch})=>{await write(other,'coherent','second');touch.task({id:'coherent'});});}
   return result;
  }}}},authenticate,handlers:{},loaders:{task:async({ids,tx})=>readTasks({ids,tx})}});
  const page=JSON.parse(await reader.pull('alice',bootstrapBody('coherent',0,origin)));

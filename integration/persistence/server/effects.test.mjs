@@ -137,28 +137,35 @@ test('a Channel name must be a nonblank string; selecting one declares nothing',
  assert.deepEqual(effects.settlement(),empty);
 });
 
-test('handles are null-prototype dictionaries; __proto__ and constructor are ordinary Models',()=>{
+test('handles are null-prototype dictionaries; __proto__, constructor and function member names are ordinary Models',()=>{
  const scalar={kind:'scalar',name:'string'};
  const effects=createEffects([
   {name:'__proto__',identity:['id'],fields:[{name:'id',type:scalar,nullable:false}]},
   {name:'Constructor',identity:['__proto__'],fields:[{name:'__proto__',type:scalar,nullable:false}]},
   {name:'ToString',identity:['id'],fields:[{name:'id',type:scalar,nullable:false}]},
+  // A Channel handle is no function, so function members need no reservation either.
+  ...['Name','Length','Bind','Apply','Call'].map(name=>({name,identity:['id'],fields:[{name:'id',type:scalar,nullable:false}]})),
  ]);
  assert.equal(Object.getPrototypeOf(effects.touch),null);
- assert.deepEqual(Object.keys(effects.touch),['__proto__','constructor','toString']);
+ const keys=['__proto__','constructor','toString','name','length','bind','apply','call'];
+ assert.deepEqual(Object.keys(effects.touch),keys);
  const channel=effects.channel('c');
  assert.equal(Object.getPrototypeOf(channel),null);
- assert.deepEqual(Object.keys(channel),['__proto__','constructor','toString','add','remove']);
+ assert.deepEqual(Object.keys(channel),[...keys,'add','remove']);
+ assert.equal(typeof channel,'object');
+ channel.name.add({id:'n'});
+ channel.length.remove({id:'l'});
+ effects.touch.call({id:'k'});
  channel.__proto__.add({id:'p'});
  channel.constructor.remove({['__proto__']:'c'});
  effects.touch.toString({id:'s'});
  effects.touch.__proto__({id:'p'});
  const identity=Object.defineProperty({},'__proto__',{value:'c',enumerable:true});
  assert.deepEqual(effects.settlement(),{
-  changes:[{model:'ToString',identity:{id:'s'}},{model:'__proto__',identity:{id:'p'}}],
-  memberships:[add('c','__proto__',{id:'p'}),remove('c','Constructor',identity)],
+  changes:[{model:'Call',identity:{id:'k'}},{model:'ToString',identity:{id:'s'}},{model:'__proto__',identity:{id:'p'}}],
+  memberships:[add('c','Name',{id:'n'}),remove('c','Length',{id:'l'}),add('c','__proto__',{id:'p'}),remove('c','Constructor',identity)],
  });
- assert.equal(Object.hasOwn(effects.settlement().memberships[1].identity,'__proto__'),true);
+ assert.equal(Object.hasOwn(effects.settlement().memberships[3].identity,'__proto__'),true);
  assert.equal({}.id,undefined,'Object.prototype is untouched');
  assert.equal(Object.getPrototypeOf(fresh().touch),null);
 });

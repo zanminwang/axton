@@ -1,6 +1,10 @@
 import type { Call, CallOutcome, GeneratedClient } from "./client.ts";
 import {
   createBackend,
+  Moment,
+  Pin,
+  Todo as TodoRef,
+  type Channel,
   type MutationContext,
   type MutationHandlerCall,
   type QueryContext,
@@ -8,6 +12,7 @@ import {
   type Queries,
   type Loaders,
   type PutV1Input,
+  type RecordRef,
 } from "./backend.ts";
 import type { Todo } from "./generated.ts";
 import type { Database } from "../../packages/server/index.mts";
@@ -18,8 +23,8 @@ import type {
 
 declare const client: GeneratedClient;
 declare const todo: Todo;
-declare const context: MutationContext<{ rows: Map<string, Todo> }>;
-declare const queryContext: QueryContext<{ rows: Map<string, Todo> }>;
+declare const ctx: MutationContext<{ rows: Map<string, Todo> }>;
+declare const queryCtx: QueryContext<{ rows: Map<string, Todo> }>;
 
 const call: Promise<
   Call<{ todo: Todo; echoed: Date; status: "open" | "closed" }>
@@ -62,23 +67,61 @@ void [
   identity,
   removed,
 ];
-context.tx.rows.set(todo.id, todo);
-context.changes.add(todo);
-context.publish({ channel: "todos", records: [todo] });
-queryContext.tx.rows.get(todo.id);
-void queryContext.callId;
-// @ts-expect-error a Query context has no changes
-queryContext.changes.add(todo);
-// @ts-expect-error a Query context has no publish
-queryContext.publish({ channel: "todos" });
+ctx.tx.rows.set(todo.id, todo);
+ctx.channel("project:1").todo.add({ id: "A" });
+ctx.channel("project:1").todo.remove({ id: "A" });
+ctx.touch.todo({ id: "A" });
+// @ts-expect-error missing identity
+ctx.channel("project:1").todo.add({});
+// @ts-expect-error old API is gone
+ctx.publish({ channel: "project:1" });
+// @ts-expect-error old API is gone
+ctx.changes.add(todo);
+// @ts-expect-error Query has no membership writer
+queryCtx.channel("project:1").todo.add({ id: "A" });
+// @ts-expect-error Query has no change declaration
+queryCtx.touch.todo({ id: "A" });
+queryCtx.tx.rows.get(todo.id);
+void queryCtx.callId;
+// A structurally compatible record is accepted; only its identity is copied.
+ctx.channel("project:1").todo.add(todo);
+const at = new Date();
+// A DateTime identity is a Date, and a composite identity names every component.
+ctx.touch.moment({ at });
+ctx.channel("project:1").pin.add({ todo: "A", at });
+ctx.touch.pin({ todo: "A", at });
+// @ts-expect-error a DateTime identity is a Date, not its wire string
+ctx.touch.moment({ at: "2026-01-01T00:00:00.000Z" });
+// @ts-expect-error a composite identity needs every component
+ctx.channel("project:1").pin.remove({ todo: "A" });
+// @ts-expect-error touch has one method per Model
+ctx.touch.nope({ id: "A" });
+// Mixed sets take the generated, explicitly typed references.
+const channel: Channel = ctx.channel("project:1");
+channel.add([TodoRef({ id: "A" }), Moment({ at }), Pin({ todo: "A", at })]);
+channel.remove([TodoRef({ id: "B" })]);
+channel.add([{ model: "Todo", identity: { id: "C" } }]);
+channel.add([]);
+// @ts-expect-error a raw identity names no Model
+channel.add([{ id: "A" }]);
+// @ts-expect-error a reference's identity is its own Model's
+channel.add([{ model: "Todo", identity: { at } }]);
+// @ts-expect-error mixed methods take a list
+channel.remove(TodoRef({ id: "A" }));
+// @ts-expect-error a constructor takes its own Model's identity
+Moment({ id: "A" });
+const narrowed: Extract<RecordRef, { model: "Pin" }> = Pin({ todo: "A", at });
+// @ts-expect-error a Todo reference is not a Moment reference
+const mismatched: Extract<RecordRef, { model: "Moment" }> = TodoRef({ id: "A" });
+void [narrowed, mismatched];
 
 type Tx = { rows: Map<string, Todo> };
 const queries: Queries<Tx> = {
   find: {
     async v2({ ctx }) {
       ctx.tx.rows.get("one");
-      // @ts-expect-error Query handlers cannot report changes
-      ctx.changes.add(todo);
+      // @ts-expect-error Query handlers cannot declare changes
+      ctx.touch.todo({ id: "one" });
       return { todo: { id: "one" } };
     },
   },
@@ -97,8 +140,7 @@ const handlers: Mutations<Tx> = {
   put: {
     async v1({ ctx, args }) {
       ctx.tx.rows.set(args.todo.id, args.todo);
-      ctx.changes.add(args.todo);
-      ctx.publish({ channel: "todos", records: [args.todo] });
+      ctx.channel("todos").todo.add(args.todo);
       return {
         todo: { id: args.todo.id },
         echoed: new Date(args.when.getTime()),
@@ -107,8 +149,7 @@ const handlers: Mutations<Tx> = {
     },
     async v2({ ctx, args }) {
       ctx.tx.rows.set(args.todo.id, args.todo);
-      ctx.changes.add(args.todo);
-      ctx.publish({ channel: "todos", records: [args.todo] });
+      ctx.channel("todos").todo.add(args.todo);
       return {
         todo: { id: args.todo.id },
         echoed: new Date(args.when.getTime()),
@@ -158,6 +199,24 @@ if (false) {
     loaders,
   });
   void backend;
+  // The external transaction hands its body the same generated handles and
+  // answers the body's own value.
+  const external: Promise<number> = backend.transaction(
+    async ({ tx, channel, touch }) => {
+      tx.rows.set(todo.id, todo);
+      touch.todo({ id: todo.id });
+      channel("project:1").todo.add({ id: todo.id });
+      channel("project:1").add([Pin({ todo: todo.id, at })]);
+      return tx.rows.size;
+    },
+  );
+  void external;
+  // @ts-expect-error the external body has no changes collector
+  void backend.transaction(async ({ changes }) => changes);
+  void backend.transaction(async ({ channel }) => {
+    // @ts-expect-error missing identity
+    channel("project:1").todo.add({});
+  });
   // @ts-expect-error a schema that retains Queries requires the queries map
   createBackend({ database, authenticate: () => "alice", mutations: handlers, loaders });
 }

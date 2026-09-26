@@ -45,12 +45,19 @@ const queuedOutput: Promise<{ todos: Todo[] }> = client.queries.enqueue.findTodo
 client.queries.findTodos({ text: 'x' });
 void [directCall, queuedOutput];
 declare const queryContext: QueryContext<{}>;
-// @ts-expect-error A Query context has no changes.
-queryContext.changes;
-// @ts-expect-error A Query context has no publish.
-queryContext.publish({ channel: 'todos' });
-// @ts-expect-error A Query handler cannot use Mutation effects.
-const effectfulQuery: Queries<{}>['findTodos'] = async ({ ctx }) => { ctx.changes.add({ model: 'Todo', identity: { id: 'x' } }); return { todos: [], nextCursor: null }; };
+// @ts-expect-error A Query context has no membership writer.
+queryContext.channel('todos');
+// @ts-expect-error A Query context has no change declaration.
+queryContext.touch.todo({ id: 'x' });
+// @ts-expect-error A Query handler cannot use Mutation declarations.
+const effectfulQuery: Queries<{}>['findTodos'] = async ({ ctx }) => { ctx.touch.todo({ id: 'x' }); return { todos: [], nextCursor: null }; };
+declare const mutationContext: actionBackend.MutationContext<{}>;
+// @ts-expect-error A composite identity names every component.
+mutationContext.channel('tenant:t').project.add({ id: 'p' });
+// @ts-expect-error The old publish API is gone.
+mutationContext.publish({ channel: 'todos' });
+// @ts-expect-error The old changes collector is gone.
+mutationContext.changes.add({ model: 'Todo', identity: { id: 'x' } });
 // @ts-expect-error Query Model outputs are identity objects.
 const bareQueryOutput: FindTodosHandlerOutput = { todos: ['x'], nextCursor: null };
 const wrongKindVersion: Queries<{}>['getTodos'] = {

@@ -1,4 +1,5 @@
 import type { Call, CallOutcome, GeneratedClient } from './client.ts';
+import { Project, Todo } from './backend.ts';
 import type { NoteCreate, OpenTodoOutput, AddTodoInput, AddTodoOutput, EditOutput, EditAndReadOutput, FindTodosOutput, TodoCreate, TodoUpdate, TodoDelete, TodoIdentity, ProjectIdentity, PingOutput } from './generated.ts';
 import type { AddTodoHandlerOutput, AddTodoV1Input, EditAndReadHandlerOutput, EditHandlerOutput, AddTodoV1HandlerOutput, FindTodosHandlerOutput, GetTodosV1HandlerOutput, MutationContext, PingHandlerOutput, QueryContext, RemoveTodoHandlerOutput, Mutations, Queries, Loaders, StateListHandlerOutput, StateListV1HandlerOutput } from './backend.ts';
 
@@ -99,7 +100,8 @@ const removeHandlerResult: RemoveTodoHandlerOutput = undefined;
 const editHandlerResult: EditHandlerOutput = undefined;
 // The handler supplies the output identity; input A and output B are independent.
 const output: EditAndReadHandlerOutput = { todo: { id: "B" } };
-const mutationContext = (ctx: MutationContext<Tx>) => [ctx.tx, ctx.userId, ctx.callId, ctx.changes, ctx.publish];
+// A composite identity names every component; a mixed list takes explicit references.
+const mutationContext = (ctx: MutationContext<Tx>) => [ctx.tx, ctx.userId, ctx.callId, ctx.channel('tenant:t').project.add({ tenantId: 't', id: 'p' }), ctx.touch.todo({ id: 't' }), ctx.channel('tenant:t').remove([Project({ tenantId: 't', id: 'p' }), Todo({ id: 't' })])];
 const queryContext = (ctx: QueryContext<Tx>) => [ctx.tx, ctx.userId, ctx.callId];
 const findOutput: FindTodosHandlerOutput = { todos: [{ id: 't' }], nextCursor: null };
 const oldGetTodos: GetTodosV1HandlerOutput = { todos: [] };
@@ -115,7 +117,7 @@ const handlers: Mutations<Tx> = {
   editAndRead: async ({ args }) => { void args.todo.id; return output; },
   sendEmail: { async v1({ args }) { void args.to; void args.subject; void args.body; } },
   // v1 of GetTodos stays a Mutation; its v2 is registered as a Query.
-  getTodos: async ({ ctx }) => { ctx.changes.add({ model: 'Todo', identity: { id: 't' } }); return oldGetTodos; },
+  getTodos: async ({ ctx }) => { ctx.touch.todo({ id: 't' }); return oldGetTodos; },
   stateList: { async v1() { return oldStateListOutput; }, async v2() { return stateListOutput; } },
   // Handlers receive the expanded create: every defaulted field is present.
   addNotes: async ({ args }) => { const id: string = args.note.id; const at: Date = args.note.at; const pinned: boolean = args.note.pinned; const tag: string | null = args.note.tag; const ids: string[] = args.many.map(n => n.id); void [at, pinned, tag, ids, args.maybe?.id]; return { saved: { id } }; },

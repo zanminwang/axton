@@ -67,14 +67,14 @@ async function replay(requests,{reject=false,fail=false,onError}={}){
   database:{transaction:body=>body({}),persistence:()=>fakePersistence(seen)},
   authenticate:()=>'alice',
   onError,
-  // The seeded change set (the update slot's t-1) plus one addition, published
-  // by default to one channel and explicitly to another: the fixture's settlement.
+  // The seeded change set (the update slot's t-1) plus one touch, both added
+  // to one Channel and the target to another: the fixture's settlement.
   mutations:{async send(){return {message:'sent'};}},
-  handlers:{async edit({input,changes,publish}){
+  handlers:{async edit({input,channel,touch}){
    handled.push(input);
-   changes.add({model:'Task',identity:{id:'t-2'}});
-   publish({channel:'shared'});
-   publish({channel:'other',records:[input.task]});
+   touch.task({id:'t-2'});
+   channel('shared').add([{model:'Task',identity:input.task.identity},{model:'Task',identity:{id:'t-2'}}]);
+   channel('other').task.add(input.task.identity);
    if(reject)throw new MutationRejected('task.refused');
    if(fail)throw new Error('boom');
   }},

@@ -497,11 +497,62 @@ fn backend_emitter_declares_handlers_loaders_and_references() {
             " book: { v1(call: LoaderCall<Tx, BookIdentity>): Promise<readonly (Book | null)[]> } | ((call: LoaderCall<Tx, BookIdentity>) => Promise<readonly (Book | null)[]>);"
         )
     );
-    assert!(ts.contains("export function Book(identity: BookIdentity): RecordRef { return { model: \"Book\", identity: encodeBookIdentity(identity) }; }"));
+    assert!(ts.contains("export function Book(identity: BookIdentity): Extract<RecordRef, { model: \"Book\" }> { return { model: \"Book\", identity }; }"));
     assert!(ts.contains("export interface AddBookInput {\n book: Book;\n}"));
     assert!(ts.contains("export function createBackend<Tx>("));
     assert!(!axton_compiler::typescript(&v).contains("backendConfig"));
 }
+#[test]
+fn backend_emitter_generates_channel_touch_and_contexts_per_schema() {
+    let v = compile("model Todo { id String @@id(id) }\nmodel Pin { todo String at DateTime @@id(todo, at) }\nmutation Edit(todo Todo.update)\nquery Look(id String) { todo Todo? }\nmutation Legacy { todo Todo.delete }").unwrap();
+    let ts = axton_compiler::backend_typescript(&v, "@axton/server");
+    // A discriminated reference per Model, and constructors narrowed to their own variant.
+    assert!(ts.contains("export type RecordRef = { readonly model: \"Todo\"; readonly identity: TodoIdentity } | { readonly model: \"Pin\"; readonly identity: PinIdentity };\n"), "{ts}");
+    assert!(ts.contains("export function Todo(identity: TodoIdentity): Extract<RecordRef, { model: \"Todo\" }> { return { model: \"Todo\", identity }; }"), "{ts}");
+    assert!(ts.contains("export function Pin(identity: PinIdentity): Extract<RecordRef, { model: \"Pin\" }> { return { model: \"Pin\", identity }; }"), "{ts}");
+    assert!(ts.contains("export interface ModelMembership<Identity> {\n add(identity: Identity): void;\n remove(identity: Identity): void;\n}\n"), "{ts}");
+    assert!(ts.contains("export interface Channel {\n todo: ModelMembership<TodoIdentity>;\n pin: ModelMembership<PinIdentity>;\n add(records: readonly RecordRef[]): void;\n remove(records: readonly RecordRef[]): void;\n}\n"), "{ts}");
+    assert!(ts.contains("export interface Touch {\n todo(identity: TodoIdentity): void;\n pin(identity: PinIdentity): void;\n}\n"), "{ts}");
+    // Concrete contexts: a Mutation, a legacy handler and an external
+    // transaction declare through the generated handles; a Query cannot.
+    assert!(ts.contains("export interface MutationContext<Tx> {\n tx: Tx;\n userId: string;\n callId: string;\n channel(name: string): Channel;\n touch: Touch;\n}\n"), "{ts}");
+    assert!(
+        ts.contains(
+            "export interface QueryContext<Tx> {\n tx: Tx;\n userId: string;\n callId: string;\n}\n"
+        ),
+        "{ts}"
+    );
+    assert!(ts.contains("export interface HandlerCall<Tx, Input> {\n input: Input;\n tx: Tx;\n userId: string;\n channel(name: string): Channel;\n touch: Touch;\n}\n"), "{ts}");
+    assert!(ts.contains("export interface TransactionCall<Tx> {\n tx: Tx;\n channel(name: string): Channel;\n touch: Touch;\n}\n"), "{ts}");
+    // `backend.transaction` hands its body the same generated handles.
+    assert!(
+        ts.contains(" return createRuntimeBackend<Tx, TransactionCall<Tx>>({ ...options,"),
+        "{ts}"
+    );
+    // The broad runtime contexts and the retired helpers are not re-exported.
+    assert!(ts.contains("export { CallRejected, MutationRejected, devAuth, type LoaderCall } from \"@axton/server\";\n"), "{ts}");
+    for retired in [
+        "type MutationContext,",
+        "type HandlerCall,",
+        "type RecordRef }",
+        "Publish",
+        "publish",
+        "changes",
+        "encodeTodoIdentity",
+    ] {
+        assert!(!ts.contains(retired), "{retired}: {ts}");
+    }
+    // Without Models, a Channel has only its mixed verbs and nothing to name.
+    let empty =
+        axton_compiler::backend_typescript(&compile("mutation Ping()").unwrap(), "@axton/server");
+    assert!(
+        empty.contains("export type RecordRef = never;\n"),
+        "{empty}"
+    );
+    assert!(empty.contains("export interface Channel {\n add(records: readonly RecordRef[]): void;\n remove(records: readonly RecordRef[]): void;\n}\n"), "{empty}");
+    assert!(empty.contains("export interface Touch {\n}\n"), "{empty}");
+}
+
 #[test]
 fn backend_emitter_groups_handler_versions_under_the_mutation_name() {
     let v = compile("model A { id String title String @@id(id) } mutation Edit { a A.update<title> @@version(2) }").unwrap();
@@ -861,6 +912,11 @@ fn model_accessors_are_unique_and_leave_the_channel_verbs_free() {
         "__proto__",
         "ToString",
         "Publish",
+        // A Channel handle is no function, so function members stay free too.
+        "Name",
+        "Length",
+        "Bind",
+        "Apply",
     ] {
         assert!(
             compile(&format!("model {name} {{ id UUID @@id(id) }}")).is_ok(),

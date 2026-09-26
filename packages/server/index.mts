@@ -3,9 +3,21 @@ import { createServer } from "node:http";
 import type { IncomingMessage, RequestListener, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket } from "ws";
+import {
+  effectsFor,
+  lowerFirst,
+  type RuntimeChannel,
+  type RuntimeTouch,
+} from "./effects.mts";
 import type { HostRequest, SettlementEffects } from "./host-contract.mts";
 import { isRetryableTransactionError } from "./retryable.mts";
 export { WebSocket } from "ws";
+export type {
+  RecordRef,
+  RuntimeChannel,
+  RuntimeModelMembership,
+  RuntimeTouch,
+} from "./effects.mts";
 const require = createRequire(import.meta.url);
 export type Native = {
   validateConfig(config: string): void;
@@ -204,50 +216,25 @@ export class MutationRejected extends Error {
 }
 /** The Mutation and Query spelling of the same business rejection contract. */
 export { MutationRejected as CallRejected };
-export interface RecordRef {
-  model: string;
-  identity: object;
-}
 /**
  * What `backend.transaction` hands its body: the application transaction and
- * the same `changes` and `publish` a handler receives. The body registers the
- * records it changed and the channels to publish to; the engine settles them
- * after the body returns, inside the same transaction.
+ * the same declaration handles a Mutation receives. `touch` declares a record
+ * the body changed; `channel(name)` adds or removes Channel members. The
+ * engine settles them after the body returns, inside the same transaction.
+ * A generated backend narrows both to its schema's Models.
  */
 export interface TransactionCall<Tx> {
   tx: Tx;
-  changes: Changes;
-  publish: Publish;
+  channel(name: string): RuntimeChannel;
+  touch: RuntimeTouch;
 }
-/**
- * One publication a handler asks for. `records` absent publishes the
- * mutation's final change set, additions made after the call included;
- * present, it names exactly what to publish (an empty array publishes
- * nothing). Publishing an unchanged record distributes its current stamp
- * and never advances it.
- */
-export type PublishArgs = {
-  channel: string;
-  records?: readonly (RecordRef | object)[];
-};
-export type Publish = (args: PublishArgs) => void;
-/**
- * The records one mutation changed. It starts with every record the uploaded
- * operations target; `add` reports a record the handler changed beyond those.
- * The framework stamps every member, reads it back through the loaders and
- * returns the authority in the receipt; publication is separate and opt-in.
- */
-export interface Changes {
-  readonly records: readonly RecordRef[];
-  /** A slot argument or `{ model, identity }`; duplicates of one record are kept once. */
-  add(record: RecordRef | object): void;
-}
+/** A legacy slot handler's call: its decoded input and the same declaration handles. */
 export interface HandlerCall<Tx, Input> {
   input: Input;
   tx: Tx;
   userId: string;
-  changes: Changes;
-  publish: Publish;
+  channel(name: string): RuntimeChannel;
+  touch: RuntimeTouch;
 }
 /** Loads name no channel: the same identity, version and stamp describe the same content on every delivery path. */
 export interface LoaderCall<Tx, Identity> {
@@ -264,16 +251,21 @@ export type Loader<Tx, Identity = any, Row = object> = (
 /** Every retained version of one mutation, or a bare function as shorthand for a v1-only contract. */
 export type HandlerRegistration<Tx> =
   Handler<Tx> | { [version: `v${number}`]: Handler<Tx> };
-/** Trusted framework context of a Mutation: it may change business state and publish. */
+/**
+ * Trusted framework context of a Mutation: it may change business state,
+ * declare records it changed beyond its inputs (`touch`) and add or remove
+ * Channel members (`channel(name)`). The handles close when the handler
+ * settles.
+ */
 export interface MutationContext<Tx> {
   tx: Tx;
   userId: string;
   callId: string;
-  changes: Changes;
-  publish: Publish;
+  channel(name: string): RuntimeChannel;
+  touch: RuntimeTouch;
 }
 /**
- * Trusted framework context of a Query. It carries no `changes` or `publish`:
+ * Trusted framework context of a Query. It carries no `channel` or `touch`:
  * a Query reads without business side effects. `tx` is still the
  * application's own transaction; the framework cannot inspect arbitrary SQL,
  * so honoring the read-only contract is the handler's responsibility.
@@ -343,38 +335,7 @@ function versioned<F>(
       );
   return table;
 }
-export const RECORD: unique symbol = Symbol("axton.record");
-function toRef(value: unknown, caller: string): RecordRef {
-  if (value !== null && typeof value === "object") {
-    const tagged = (value as { [RECORD]?: RecordRef })[RECORD];
-    if (tagged) return tagged;
-    const { model, identity } = value as Partial<RecordRef>;
-    if (typeof model === "string" && identity && typeof identity === "object")
-      return { model, identity };
-  }
-  throw new Error(
-    `${caller}: record must be a slot argument or { model, identity }`,
-  );
-}
-/** JSON with object keys sorted at every depth: one text per identity, whatever its key order. */
-function canonical(value: unknown): string {
-  if (value instanceof Date) return JSON.stringify(value.toISOString());
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (value !== null && typeof value === "object")
-    return `{${Object.keys(value)
-      .sort()
-      .map(
-        (key) =>
-          `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`,
-      )
-      .join(",")}}`;
-  return JSON.stringify(value) ?? "null";
-}
-function tag<T extends object>(value: T, ref: RecordRef): T {
-  Object.defineProperty(value, RECORD, { value: ref, enumerable: false });
-  return value;
-}
-/** Decode the API view in place while preserving JSON identities for record references. */
+/** Decode an operation value from its wire form into the API view (a DateTime becomes a Date). */
 function decodeActionValue(type: any, value: unknown): unknown {
   if (value == null) return value;
   if (type?.kind === "list")
@@ -394,9 +355,6 @@ function decodeActionRecord(
     if (Object.hasOwn(record, field.name))
       record[field.name] = decodeActionValue(field.type, record[field.name]);
   return record;
-}
-function lowerFirst(name: string): string {
-  return name.charAt(0).toLowerCase() + name.slice(1);
 }
 export interface BackendOptions<T> {
   config: object;
@@ -512,7 +470,13 @@ type MutationDescriptor = {
   version: number;
   slots?: MutationSlot[];
 };
-export function createBackend<T>(options: BackendOptions<T>) {
+/**
+ * `External` is what `backend.transaction` hands its body; a generated
+ * backend passes its own `TransactionCall`, typed by its schema's Models.
+ */
+export function createBackend<T, External extends object = TransactionCall<T>>(
+  options: BackendOptions<T>,
+) {
   const native = typedNative(
     options.native ??
       (require("../../bindings/node/axton-node.node") as Native),
@@ -544,7 +508,6 @@ export function createBackend<T>(options: BackendOptions<T>) {
         input?: {
           models?: {
             name: string;
-            identity?: string[];
             fields?: { name: string; type: unknown }[];
           }[];
         };
@@ -570,6 +533,8 @@ export function createBackend<T>(options: BackendOptions<T>) {
     loaders: modelNames,
   });
   native.validateConfig(config);
+  // Refuses Models whose accessors collide or take a Channel's add/remove.
+  const createEffects = effectsFor(schemaModels);
   // Every retained model read contract; a config without `models` retains each
   // model at the schema's own version, as the engine does.
   const retainedModels = new Map<string, number[]>();
@@ -709,76 +674,6 @@ export function createBackend<T>(options: BackendOptions<T>) {
     onError(error);
     return { error: error instanceof Error ? error.message : String(error) };
   };
-  /**
-   * The change set and membership intents one handler or one external
-   * transaction body accumulates; `add` keeps one entry per (model, identity).
-   *
-   * Temporary serialization of the existing `publish` helper onto the
-   * settlement's membership intents, until the generated Channel API replaces
-   * it (#140): `publish({channel, records})` declares each named record a
-   * member of `channel`, and `publish({channel})` declares every record of the
-   * final change set a member, including records added after the call and an
-   * Action's input targets. The engine then publishes each newly added member
-   * once and every later change of a member; there is no implicit publication.
-   */
-  const collect = () => {
-    const key = (ref: RecordRef) =>
-      `${ref.model}\u0000${canonical(ref.identity)}`;
-    const records: RecordRef[] = [];
-    const seen = new Set<string>();
-    const add = (ref: RecordRef) => {
-      if (seen.has(key(ref))) return;
-      seen.add(key(ref));
-      records.push(ref);
-    };
-    const changes: Changes = {
-      records,
-      add: (record) => add(toRef(record, "changes.add")),
-    };
-    // An Action's input targets: the engine infers them as changes, so they
-    // stay out of `changes`, but `publish({channel})` still covers them.
-    const targets: RecordRef[] = [];
-    const publishCalls: { channel: string; records?: RecordRef[] }[] = [];
-    const publish: Publish = ({ channel, records }) => {
-      if (typeof channel !== "string" || channel === "")
-        throw new Error("publish: channel must be a non-empty string");
-      if (records === undefined) {
-        publishCalls.push({ channel });
-        return;
-      }
-      if (!Array.isArray(records))
-        throw new Error("publish: records must be an array");
-      publishCalls.push({
-        channel,
-        records: records.map((record) => toRef(record, "publish")),
-      });
-    };
-    const changeSet = () => {
-      const covered = new Set<string>();
-      return [...targets, ...records].filter((ref) => {
-        if (covered.has(key(ref))) return false;
-        covered.add(key(ref));
-        return true;
-      });
-    };
-    return {
-      changes,
-      publish,
-      seed: add,
-      target: (ref: RecordRef) => targets.push(ref),
-      settlement: (): SettlementEffects => ({
-        changes: [...records] as SettlementEffects["changes"],
-        memberships: publishCalls.flatMap(({ channel, records: named }) =>
-          (named ?? changeSet()).map(({ model, identity }) => ({
-            channel,
-            model,
-            identity: identity as Record<string, unknown>,
-            present: true,
-          })),
-        ),
-      }),
-    };
-  };
   const host = (
     tx: T,
     session: Session,
@@ -799,15 +694,11 @@ export function createBackend<T>(options: BackendOptions<T>) {
             throw new Error(`Missing handler ${req.name} v${req.version}`);
           const shape = (slot: MutationSlot, raw: any) => {
             if (raw === null || raw === undefined) return null;
-            const ref: RecordRef = {
-              model: slot.model,
-              identity: raw.identity,
-            };
             if (slot.operation === "create")
-              return tag({ ...raw.identity, ...raw.data }, ref);
+              return { ...raw.identity, ...raw.data };
             if (slot.operation === "update")
-              return tag({ identity: raw.identity, patch: raw.patch }, ref);
-            return tag({ identity: raw.identity }, ref);
+              return { identity: raw.identity, patch: raw.patch };
+            return { identity: raw.identity };
           };
           const input: Record<string, unknown> = {};
           for (const slot of entry.slots) {
@@ -819,26 +710,27 @@ export function createBackend<T>(options: BackendOptions<T>) {
           }
           // The change set starts with every record the operations target,
           // in slot order.
-          const collected = collect();
+          const effects = createEffects();
           for (const slot of entry.slots) {
             const raw = req.arguments[slot.name] as any;
             for (const item of slot.cardinality === "list" ? raw : [raw])
               if (item !== null && item !== undefined)
-                collected.seed({ model: slot.model, identity: item.identity });
+                effects.seed({ model: slot.model, identity: item.identity });
           }
-          const { changes, publish } = collected;
           try {
             await entry.handler({
               input,
               tx,
               userId: req.owner,
-              changes,
-              publish,
+              channel: effects.channel,
+              touch: effects.touch,
             });
-            result = collected.settlement();
+            result = effects.settlement();
           } catch (error) {
             if (isRetryableTransactionError(error)) throw error;
             result = refusal(error);
+          } finally {
+            effects.close();
           }
         } else if (req.op === "handleAction") {
           const action = actionTable.get(`${req.name}:${req.version}`);
@@ -846,7 +738,6 @@ export function createBackend<T>(options: BackendOptions<T>) {
           if (!action || !handler)
             throw new Error(`Missing handler ${req.name} v${req.version}`);
           const args = { ...req.arguments };
-          const collected = collect();
           for (const input of action.inputs ?? []) {
             if (input.kind === "value") {
               const type = input.list
@@ -862,48 +753,46 @@ export function createBackend<T>(options: BackendOptions<T>) {
               ) ??
               schemaModels.find((candidate) => candidate.name === input.model);
             if (!model) throw new Error(`Missing Action model ${input.model}`);
-            const identityFields = model.identity ?? [];
-            const shape = (value: unknown): unknown => {
-              if (value === null || value === undefined) return null;
-              const record = value as Record<string, unknown>;
-              const identity = Object.fromEntries(
-                identityFields.map((field) => [field, record[field]]),
-              );
-              decodeActionRecord(record, model);
-              collected.target({ model: input.model!, identity });
-              return tag(record, { model: input.model!, identity });
-            };
+            // The engine infers each operand as an input target; the handler
+            // only sees the decoded record.
+            const shape = (value: unknown): unknown =>
+              value === null || value === undefined
+                ? null
+                : decodeActionRecord(value, model);
             const value = args[input.name];
             args[input.name] =
               input.cardinality === "list"
                 ? (value as unknown[]).map(shape)
                 : shape(value);
           }
-          // A Query context has no effect capabilities at runtime either:
+          // A Query context has no declaration handles at runtime either:
           // its settlement never carries changes or memberships.
           const query = (action.kind ?? "mutation") === "query";
+          const effects = query ? undefined : createEffects();
           try {
             const outputs = await handler({
-              ctx: query
-                ? { tx, userId: req.owner, callId: req.callId }
-                : {
+              ctx: effects
+                ? {
                     tx,
                     userId: req.owner,
                     callId: req.callId,
-                    changes: collected.changes,
-                    publish: collected.publish,
-                  },
+                    channel: effects.channel,
+                    touch: effects.touch,
+                  }
+                : { tx, userId: req.owner, callId: req.callId },
               args,
             } as Parameters<MutationHandler<T>>[0]);
             result = {
               outputs: outputs === undefined ? {} : outputs,
-              ...(query
-                ? { changes: [], memberships: [] }
-                : collected.settlement()),
+              ...(effects
+                ? effects.settlement()
+                : { changes: [], memberships: [] }),
             };
           } catch (error) {
             if (isRetryableTransactionError(error)) throw error;
             result = refusal(error);
+          } finally {
+            effects?.close();
           }
         } else if (req.op === "load") {
           // Dispatch is by model name and contract version; a version that
@@ -1038,28 +927,34 @@ export function createBackend<T>(options: BackendOptions<T>) {
     return result;
   };
   /**
-   * Runs `body` in one application transaction with a handler's `changes` and
-   * `publish`. After the body returns, the engine settles what it collected in
-   * the same transaction: one new stamp per changed record, published at that
+   * Runs `body` in one application transaction with a Mutation's `channel` and
+   * `touch`. After the body returns, the engine settles what it declared in
+   * the same transaction: one new stamp per touched record, published at that
    * stamp to each Channel it is a member of, and each newly added member
-   * published once. After the driver commits, the live subscribers of every
-   * channel published to are woken; a failure rolls back and wakes nobody.
-   * Not for use inside a handler, which already has a transaction.
+   * published once. The handles close when the body settles, whether it
+   * returns or throws. After the driver commits, the live subscribers of
+   * every channel published to are woken; a failure rolls back and wakes
+   * nobody. Answers the body's own value. Not for use inside a handler, which
+   * already has a transaction.
    */
-  const transaction = <R,>(
-    body: (call: TransactionCall<T>) => Promise<R>,
-  ): Promise<R> =>
+  const transaction = <R,>(body: (call: External) => Promise<R>): Promise<R> =>
     run(async (tx, session) => {
-      const collected = collect();
-      const result = await body({
-        tx,
-        changes: collected.changes,
-        publish: collected.publish,
-      });
+      const effects = createEffects();
+      let result: R;
+      try {
+        const call: TransactionCall<T> = {
+          tx,
+          channel: effects.channel,
+          touch: effects.touch,
+        };
+        result = await body(call as unknown as External);
+      } finally {
+        effects.close();
+      }
       await session.track(() =>
         native.settleExternal(
           config,
-          JSON.stringify(collected.settlement()),
+          JSON.stringify(effects.settlement()),
           host(tx, session),
         ),
       );

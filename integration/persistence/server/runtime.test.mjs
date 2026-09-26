@@ -63,6 +63,11 @@ test('backend validates config and complete registrations at startup',()=>{
  assert.throws(()=>createBackend({config:{...base,mutations:[{name:'bad',version:0,slots:[]}]},native,database:database(),authenticate,handlers:{},loaders:{task:async()=>[]}}),/invalid mutation descriptor/);
  assert.throws(()=>createBackend({config:base,native,database:database(),authenticate,handlers:{},loaders:{task:async()=>[]}}),/Missing handler edit for edit v1/);
  assert.throws(()=>createBackend({config:base,native,database:database(),authenticate,handlers:{edit:async()=>{}},loaders:{}}),/Missing loader task for Task v1/);
+ // A hand-written config gets the compiler's accessor rules: unique, and neither add nor remove.
+ const withModel=name=>({...base,schema:{...base.schema,models:[...base.schema.models,{...base.schema.models[0],name}]}});
+ const loaders={task:async()=>[],add:async()=>[]};
+ assert.throws(()=>createBackend({config:withModel('Add'),native,database:database(),authenticate,handlers:{edit:async()=>{}},loaders}),/Model Add generates the accessor add, which a Channel reserves/);
+ assert.throws(()=>createBackend({config:withModel('task'),native,database:database(),authenticate,handlers:{edit:async()=>{}},loaders}),/Models Task and task both generate the accessor task/);
 });
 test('loader registration names every retained model version and a function means v1 only',()=>{
  const base={...config,schema:structuredClone(schema)};

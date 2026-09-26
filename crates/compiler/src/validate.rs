@@ -4,7 +4,7 @@
 //! assembled here: [`crate::generate`] renders [`Validated`].
 use crate::parse::{ActionInputDecl, Declarations, FieldDecl, ModelDecl, Pos, SlotDecl, at};
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The validated schema: every declaration resolved and every rule applied,
 /// in source order. Plain data with no JSON; [`crate::generate`] turns it into
@@ -579,8 +579,8 @@ fn validate_action_slot(
 }
 
 /// Check the declarations and resolve them into the typed schema.
-/// Top-level identifiers the generated TypeScript and Dart clients, or the
-/// runtime packages they import, declare. A model or enum with one of these
+/// Top-level identifiers the generated TypeScript and Dart clients and the
+/// generated TypeScript backend, or the runtime packages they import, declare. A model or enum with one of these
 /// names would collide with them in the generated file.
 const GENERATED_NAMES: &[&str] = &[
     "BootstrapError",
@@ -597,6 +597,7 @@ const GENERATED_NAMES: &[&str] = &[
     "CallStatus",
     "CallStore",
     "CallSuccess",
+    "Channel",
     "Channels",
     "Client",
     "ClientClosedException",
@@ -605,8 +606,10 @@ const GENERATED_NAMES: &[&str] = &[
     "DirectMutations",
     "GeneratedClient",
     "GeneratedTransaction",
+    "HandlerCall",
     "LiveModels",
     "LivePort",
+    "ModelMembership",
     "Mutate",
     "MutatePort",
     "MutationContext",
@@ -623,6 +626,7 @@ const GENERATED_NAMES: &[&str] = &[
     "QueuedQueries",
     "ReadPort",
     "RebuildReport",
+    "RecordRef",
     "Rejection",
     "RuntimeConnection",
     "Scopes",
@@ -633,7 +637,9 @@ const GENERATED_NAMES: &[&str] = &[
     "SubscriptionStatus",
     "SyncServer",
     "SyncState",
+    "Touch",
     "Transaction",
+    "TransactionCall",
     "TxModels",
     "WritePort",
 ];
@@ -713,6 +719,31 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
             if f.nullable || f.list {
                 return Err(at(f.pos, "identity fields must be non-nullable scalars"));
             }
+        }
+    }
+    // The generated backend addresses a Model by its lower-first accessor in
+    // `touch` and in every Channel handle, beside the Channel's own `add` and
+    // `remove` for mixed record lists ([#140](https://github.com/zanminwang/axton/issues/140)).
+    let mut accessors: BTreeMap<String, &str> = BTreeMap::new();
+    for m in &d.models {
+        let accessor = format!("{}{}", m.name[..1].to_ascii_lowercase(), &m.name[1..]);
+        if accessor == "add" || accessor == "remove" {
+            return Err(at(
+                m.pos,
+                format!(
+                    "model {} generates the accessor {accessor}, which a Channel reserves for mixed record lists; rename the model",
+                    m.name
+                ),
+            ));
+        }
+        if let Some(other) = accessors.insert(accessor.clone(), &m.name) {
+            return Err(at(
+                m.pos,
+                format!(
+                    "models {other} and {} both generate the accessor {accessor}; rename one",
+                    m.name
+                ),
+            ));
         }
     }
     // Structure: relations, inverses, requirements and field types per model.

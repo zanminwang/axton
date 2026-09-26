@@ -792,6 +792,13 @@ fn rejects_model_and_enum_names_the_generated_client_uses() {
         "SubscriptionInitialization",
         "SubscriptionConnection",
         "SubscriptionClosedException",
+        // The backend declaration vocabulary ([#140](https://github.com/zanminwang/axton/issues/140)).
+        "Channel",
+        "Touch",
+        "ModelMembership",
+        "RecordRef",
+        "HandlerCall",
+        "TransactionCall",
     ] {
         let e = compile(&format!("model {name} {{ id UUID @@id(id) }}")).unwrap_err();
         assert!(e.contains("generated client"), "{name}: {e}");
@@ -812,6 +819,48 @@ fn rejects_model_and_enum_names_the_generated_client_uses() {
         "Order",
         "Scope",
         "Subscriptions",
+    ] {
+        assert!(
+            compile(&format!("model {name} {{ id UUID @@id(id) }}")).is_ok(),
+            "{name} should stay valid"
+        );
+    }
+}
+
+#[test]
+fn model_accessors_are_unique_and_leave_the_channel_verbs_free() {
+    // `ctx.touch.todo` and `ctx.channel(name).todo` use the lower-first
+    // accessor, so two Models must not share one.
+    let e = compile("model Todo { id String @@id(id) }\n\nmodel todo { id String @@id(id) }\n\n")
+        .unwrap_err();
+    assert!(
+        e.contains("models Todo and todo both generate the accessor todo"),
+        "{e}"
+    );
+    assert_eq!(line_of(&e), 3, "{e}");
+    // A Channel keeps `add` and `remove` for mixed record lists.
+    for name in ["Add", "add", "Remove", "remove"] {
+        let e = compile(&format!(
+            "model Other {{ id UUID @@id(id) }}\n\nmodel {name} {{ id UUID @@id(id) }}\n\n"
+        ))
+        .unwrap_err();
+        assert!(
+            e.contains(&format!(
+                "model {name} generates the accessor {}, which a Channel reserves for mixed record lists",
+                name.to_ascii_lowercase()
+            )),
+            "{name}: {e}"
+        );
+        assert_eq!(line_of(&e), 3, "{name}: {e}");
+    }
+    // No other accessor is reserved: dictionary keys are own properties.
+    for name in [
+        "Adds",
+        "Removal",
+        "Constructor",
+        "__proto__",
+        "ToString",
+        "Publish",
     ] {
         assert!(
             compile(&format!("model {name} {{ id UUID @@id(id) }}")).is_ok(),

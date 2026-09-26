@@ -288,7 +288,45 @@ impl Backend {
             HostRequest::Head { channel } => {
                 json!(s.tables.heads.get(&channel).copied().unwrap_or(0))
             }
-            HostRequest::Scan { .. } => json!([]),
+            HostRequest::Scan {
+                channel,
+                after,
+                limit,
+            } => {
+                // `SQL.SCAN`: the Channel's positions after `after` whose record
+                // is still a member, in cursor order, each with the record's
+                // current stamp, at most `limit`. Membership filters before the
+                // limit, so removed positions never fill a page.
+                let mut rows: Vec<(u64, String, String)> = s
+                    .tables
+                    .invalidations
+                    .iter()
+                    .filter(|((c, model, key), (cursor, _))| {
+                        *c == channel
+                            && *cursor > after
+                            && s.tables.memberships.contains(&(
+                                model.clone(),
+                                key.clone(),
+                                channel.clone(),
+                            ))
+                    })
+                    .map(|((_, model, key), (cursor, _))| (*cursor, model.clone(), key.clone()))
+                    .collect();
+                rows.sort();
+                rows.truncate(limit as usize);
+                let mut scanned = vec![];
+                for (cursor, model, key) in rows {
+                    let stamp = s
+                        .tables
+                        .stamps
+                        .get(&(model.clone(), key.clone()))
+                        .ok_or_else(|| format!("Record metadata missing for {model} {key}"))?;
+                    let identity: Value = serde_json::from_str(&key).map_err(|e| e.to_string())?;
+                    scanned.push(json!({"channel":channel,"cursor":cursor,"model":model,
+                        "identity":identity,"identityKey":key,"stamp":stamp}));
+                }
+                Value::Array(scanned)
+            }
             HostRequest::Savepoint { .. } => {
                 let snapshot = s.tables.clone();
                 s.savepoints.push(snapshot);
@@ -537,4 +575,51 @@ pub fn authority(receipt: &Value) -> Vec<(String, String, u64)> {
             )
         })
         .collect()
+}
+
+/// One delta pull of `cursors` by `alice`, declaring Todo and Project v1.
+pub fn pull(backend: &Backend, cursors: &[(&str, u64)]) -> axton_core::PullPage {
+    let cursors: Map<String, Value> = cursors
+        .iter()
+        .map(|(channel, cursor)| ((*channel).to_string(), json!(cursor)))
+        .collect();
+    let request = json!({"cursors":cursors,"models":{"Todo":1,"Project":1}});
+    let text = run(axton_server::process_pull(
+        &config(),
+        "alice",
+        request.to_string().as_bytes(),
+        backend,
+    ))
+    .unwrap();
+    axton_core::PullPage::decode(text.as_bytes()).unwrap()
+}
+
+/// One bounded Bootstrap page of `channel`'s interval `(after, until]`.
+pub fn bootstrap(
+    backend: &Backend,
+    channel: &str,
+    after: u64,
+    until: u64,
+) -> axton_core::BootstrapPage {
+    let request = json!({"mode":"bootstrap","channel":channel,"models":{"Todo":1,"Project":1},
+        "after":after,"until":until});
+    let text = run(axton_server::process_pull(
+        &config(),
+        "alice",
+        request.to_string().as_bytes(),
+        backend,
+    ))
+    .unwrap();
+    axton_core::BootstrapPage::decode(text.as_bytes()).unwrap()
+}
+
+/// One external settlement (`backend.transaction`): the records it reports
+/// changed and its ordered membership intents.
+pub fn settle(backend: &Backend, changes: Vec<Value>, memberships: Vec<Value>) {
+    run(axton_server::settle_external(
+        &config(),
+        &json!({"changes":changes,"memberships":memberships}),
+        backend,
+    ))
+    .unwrap();
 }

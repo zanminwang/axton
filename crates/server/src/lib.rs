@@ -703,6 +703,12 @@ async fn process_delta(
             previous = row.cursor;
             loading::insert(&mut records, key, row.stamp)?;
         }
+        // The scan answers only rows whose record is still a member of the
+        // Channel, filtered before the limit, so a removed position is a hole
+        // no page returns. A short scan means no eligible row remains up to the
+        // head, and the range ends there even when every position in it was a
+        // hole: an empty page that still advances. A full scan ends at its last
+        // eligible cursor, which is past `from`.
         let to = if rows.len() == limits::PULL_CHANGES {
             previous
         } else {

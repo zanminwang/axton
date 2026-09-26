@@ -39,7 +39,11 @@ export type SaveCallRequest = {
 };
 /** The channel's current head cursor. */
 export type HeadRequest = { op: "head"; channel: string };
-/** Invalidation rows after `after`, at most `limit` of them, in cursor order. */
+/**
+ * Invalidation rows after `after` whose record is still a member of the
+ * channel, at most `limit` of them, in cursor order. Membership filters before
+ * the limit; a removed record's row stays but is not answered.
+ */
 export type ScanRequest = {
   op: "scan";
   channel: string;

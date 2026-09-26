@@ -123,7 +123,9 @@ pub enum HostRequest {
     },
     /// The channel's current head cursor.
     Head { channel: String },
-    /// Invalidation rows after `after`, at most `limit` of them, in cursor order.
+    /// Invalidation rows after `after` whose record is still a member of the
+    /// channel, at most `limit` of them, in cursor order. Membership filters
+    /// before the limit; a removed record's row stays but is not answered.
     Scan {
         channel: String,
         after: u64,

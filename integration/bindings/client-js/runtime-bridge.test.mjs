@@ -441,7 +441,6 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
   assert.deepEqual([...eventTypes].sort(), [
     "callCompleted",
     "cancelEffect",
-    "changed",
     "effect",
     "observerChanged",
     "report",
@@ -506,9 +505,6 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
         assert.ok(
           ["records", "error", "protocol"].includes(event.diagnostic.kind),
         );
-        break;
-      case "changed":
-        assert.ok(event.tables.every((table) => typeof table === "string"));
         break;
       case "runtimeClosed":
         assert.deepEqual(Object.keys(event), ["type"]);
@@ -582,12 +578,7 @@ test("the bridge dispatches every fixture event and answers effects it has no ha
   });
   assert.equal(opened.clientId, "c");
   const seen = [];
-  for (const type of [
-    "callCompleted",
-    "observerChanged",
-    "report",
-    "changed",
-  ])
+  for (const type of ["callCompleted", "observerChanged", "report"])
     bridge.on(type, (event) => seen.push(event.type));
   const handled = [];
   bridge.onEffect("timer", (effectId, operation) =>
@@ -603,7 +594,6 @@ test("the bridge dispatches every fixture event and answers effects it has no ha
     "callCompleted",
     ...Array(5).fill("observerChanged"),
     ...Array(4).fill("report"),
-    "changed",
   ]);
   assert.deepEqual(handled, [["7", 250]]);
   const answered = submitted.filter((input) => input.type !== "callbackResult");
@@ -644,28 +634,6 @@ test("the bridge dispatches every fixture event and answers effects it has no ha
   assert.equal(bridge.closed, true);
 });
 
-test("a throwing listener does not stop the completion in the same drain batch", async () => {
-  const original = globalThis.reportError;
-  const reported = [];
-  globalThis.reportError = (error) => reported.push(error);
-  try {
-    await withBridge(async (bridge) => {
-      const failure = Error("listener failed");
-      const seen = [];
-      bridge.on("changed", () => {
-        throw failure;
-      });
-      bridge.on("changed", (event) => seen.push(event.tables));
-      assert.equal(await bridge.task(create("l", "A")), null);
-      assert.deepEqual(reported, [failure]);
-      assert.equal(seen.length, 1);
-      assert.ok(seen[0].includes("Entry"));
-    });
-  } finally {
-    if (original === undefined) delete globalThis.reportError;
-    else globalThis.reportError = original;
-  }
-});
 
 /**
  * A Bridge over a scripted runtime: `respond(command, requestId)` answers each
@@ -719,6 +687,59 @@ const watchSnapshot = (rows, closed) => ({
   ...(closed ? { closed: true } : {}),
 });
 
+test("a throwing listener does not stop the completion in the same drain batch", async () => {
+  const original = globalThis.reportError;
+  const reported = [];
+  globalThis.reportError = (error) => reported.push(error);
+  try {
+    const diagnostic = { kind: "error", message: "HTTP 503", status: 503 };
+    const { bridge } = await scripted((command, requestId) => [
+      { type: "report", diagnostic },
+      { type: "taskCompleted", requestId, ok: true, value: "done" },
+    ]);
+    const failure = Error("listener failed");
+    const seen = [];
+    bridge.on("report", () => {
+      throw failure;
+    });
+    bridge.on("report", (event) => seen.push(event.diagnostic));
+    assert.equal(await bridge.task({ kind: "status" }), "done");
+    assert.deepEqual(reported, [failure]);
+    assert.deepEqual(seen, [diagnostic]);
+  } finally {
+    if (original === undefined) delete globalThis.reportError;
+    else globalThis.reportError = original;
+  }
+});
+
+test("a settled hook runs while the completion is dispatched and a throw fails its task", async () => {
+  const { bridge } = await scripted((command, requestId) => [
+    { type: "taskCompleted", requestId, ok: true, value: { callId: "c1" } },
+    { type: "callCompleted", callId: "c1", outcome: { status: "succeeded" } },
+  ]);
+  const order = [];
+  bridge.on("callCompleted", (event) => order.push(`completed ${event.callId}`));
+  const value = await bridge.task(
+    { kind: "submitAction" },
+    { settled: ({ callId }) => order.push(`settled ${callId}`) },
+  );
+  order.push("continuation");
+  assert.deepEqual(value, { callId: "c1" });
+  assert.deepEqual(order, ["settled c1", "completed c1", "continuation"]);
+  const failure = Error("hook failed");
+  await assert.rejects(
+    bridge.task(
+      { kind: "submitAction" },
+      {
+        settled: () => {
+          throw failure;
+        },
+      },
+    ),
+    (error) => error === failure,
+  );
+});
+
 test("a failed task rejects with its message and the details the runtime gave it", async () => {
   const details = { code: "bootstrap.request_rejected", message: "HTTP 403" };
   const { bridge } = await scripted((command, requestId) => [
@@ -734,24 +755,45 @@ test("a failed task rejects with its message and the details the runtime gave it
   assert.equal("details" in plain, false, "no details, no property");
 });
 
-test("a snapshot published with its registering task is held until the observer is attached", async () => {
+test("an observer routed from its task's settled hook hears the snapshots published behind it", async () => {
   // The runtime queues an observer's first snapshot right after the task that
   // named it, in the same batch: it is dispatched before the task's
-  // continuation can register anybody.
-  const { bridge, publish } = await scripted((command, requestId) => [
-    { type: "taskCompleted", requestId, ok: true, value: { observerId: "3" } },
-    { type: "observerChanged", observerId: "3", snapshot: watchSnapshot([1]) },
-    { type: "observerChanged", observerId: "3", snapshot: watchSnapshot([2]) },
-  ]);
-  const { observerId } = await bridge.task({ kind: "watch" });
+  // continuation runs, but after its settled hook.
+  let next = 3;
+  const { bridge, publish } = await scripted((command, requestId) => {
+    const observerId = String(next++);
+    return [
+      { type: "taskCompleted", requestId, ok: true, value: { observerId } },
+      { type: "observerChanged", observerId, snapshot: watchSnapshot([1]) },
+      { type: "observerChanged", observerId, snapshot: watchSnapshot([2]) },
+    ];
+  });
   const seen = [];
-  const detach = bridge.observe(observerId, (snapshot) => seen.push(snapshot.rows));
-  assert.deepEqual(seen, [[2]], "only the latest held snapshot, delivered once");
+  let detach;
+  await bridge.task(
+    { kind: "watch" },
+    {
+      settled: ({ observerId }) =>
+        (detach = bridge.observe(observerId, (snapshot) =>
+          seen.push(snapshot.rows),
+        )),
+    },
+  );
+  assert.deepEqual(seen, [[1], [2]], "every snapshot, in order, once");
   publish({ type: "observerChanged", observerId: "3", snapshot: watchSnapshot([3]) });
-  assert.deepEqual(seen, [[2], [3]]);
+  assert.deepEqual(seen, [[1], [2], [3]]);
   detach();
   publish({ type: "observerChanged", observerId: "3", snapshot: watchSnapshot([4]) });
-  assert.deepEqual(seen, [[2], [3]], "a detached observer hears nothing");
+  assert.deepEqual(seen, [[1], [2], [3]], "a detached observer hears nothing");
+  // Attached only in the continuation, an observer missed what was
+  // dispatched before it: nothing is buffered for an unrouted observer.
+  const late = [];
+  const { observerId } = await bridge.task({ kind: "watch" });
+  assert.equal(observerId, "4");
+  bridge.observe(observerId, (snapshot) => late.push(snapshot.rows));
+  assert.deepEqual(late, []);
+  publish({ type: "observerChanged", observerId, snapshot: watchSnapshot([5]) });
+  assert.deepEqual(late, [[5]]);
 });
 
 test("a terminal snapshot ends its observer; a throwing observer is reported and hears the next one", async () => {
@@ -773,12 +815,6 @@ test("a terminal snapshot ends its observer; a throwing observer is reported and
     );
     assert.deepEqual(reported, [failure]);
     assert.deepEqual(seen, [[1], [2]], "nothing follows a terminal snapshot");
-    // A terminal snapshot held for an observer not attached yet ends it on attach.
-    publish({ type: "observerChanged", observerId: "6", snapshot: watchSnapshot([7], true) });
-    const late = [];
-    bridge.observe("6", (snapshot) => late.push(snapshot));
-    publish({ type: "observerChanged", observerId: "6", snapshot: watchSnapshot([8]) });
-    assert.deepEqual(late.map((snapshot) => snapshot.rows), [[7]]);
   } finally {
     if (original === undefined) delete globalThis.reportError;
     else globalThis.reportError = original;

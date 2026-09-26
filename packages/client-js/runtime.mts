@@ -26,7 +26,6 @@ export type ModelSyncState<Name extends string = string> = {
   pending: PendingMutation<Name>[];
   rejections: Rejection[];
 };
-/** The whole client's sync state: a local snapshot, not a network probe. */
 /** What a rebuild left in the old database file. */
 export type RebuildReport = {
   oldFile: string;
@@ -48,6 +47,7 @@ export type SchemaState = {
   } | null;
   lastRebuild: RebuildReport | null;
 };
+/** The whole client's sync state: a local snapshot, not a network probe. */
 export type ClientSyncState = {
   clientId: string;
   pending: number;
@@ -111,7 +111,10 @@ function decodeOutcome<T>(
     throw new CallError("action.observation_failed", "unknown", cause);
   }
 }
-/** The codes an `invoke` task fails with, and the execution each leaves. */
+/**
+ * Typed decoding: the codes an `invoke` task fails with, and the execution
+ * each leaves, as the Call API names them. Rust decides the code.
+ */
 const INVOKE_CODES: Record<string, "unknown" | "rejected"> = {
   "action.unavailable": "unknown",
   "action.execution_unknown": "unknown",
@@ -132,8 +135,6 @@ function invokeError(error: unknown): unknown {
     typeof message === "string" ? INVOKE_CODES[message] : undefined;
   return execution ? new CallError(message as string, execution, error) : error;
 }
-/** Report an application callback's failure without changing what was committed. */
-const reportActionCallbackError = reportCallbackError;
 
 /**
  * Hosts share the Rust-owned client runtime and supply only their carrier,
@@ -187,6 +188,14 @@ export function createClient<
           { callId: event.callId, outcome: event.outcome },
         ]),
       );
+    }
+    /**
+     * Async-context guard: a task submitted from inside a transaction
+     * callback would queue behind the transaction that awaits it. Only this
+     * language knows which async context a call comes from.
+     */
+    #inCallback(): boolean {
+      return this.#activePublicTx?.inCallback() ?? false;
     }
     static async open(options: {
       path: string;
@@ -262,13 +271,13 @@ export function createClient<
       });
     }
     mutate(mutation: object): Promise<number> {
-      if (this.#activePublicTx?.inCallback())
+      if (this.#inCallback())
         return Promise.reject(Error("transaction_active"));
       return this.#bridge.task({ kind: "enqueue", mutation });
     }
     /** One standalone Model write in its own local transaction. */
     direct(operation: object): Promise<void> {
-      if (this.#activePublicTx?.inCallback())
+      if (this.#inCallback())
         return Promise.reject(Error("transaction_active"));
       return this.transaction(async (tx) => {
         await tx.direct(operation);
@@ -337,8 +346,7 @@ export function createClient<
         return this.invokeDirectAction(name, version, args, decode, call);
       let outcome: DirectOutcome | undefined;
       try {
-        if (this.#activePublicTx?.inCallback())
-          throw Error("transaction_active");
+        if (this.#inCallback()) throw Error("transaction_active");
         ({ outcome } = await this.#untilClosed(
           this.#bridge.task({
             kind: "invoke",
@@ -366,8 +374,7 @@ export function createClient<
       args: object,
     ): Promise<void> {
       try {
-        if (this.#activePublicTx?.inCallback())
-          throw Error("transaction_active");
+        if (this.#inCallback()) throw Error("transaction_active");
         await this.#bridge.task({
           kind: "invalidateQueryOnce",
           name,
@@ -378,7 +385,10 @@ export function createClient<
         throw actionError(error);
       }
     }
-    /** A once caller settles with `client.closed` as soon as the client closes. */
+    /**
+     * Promise lifetime: a once caller settles with `client.closed` as soon as
+     * the public `close()` is called, before the runtime's own `client_closed`.
+     */
     #untilClosed<T>(task: Promise<T>): Promise<T> {
       return new Promise<T>((resolve, reject) => {
         this.#waitingOnce.add(reject);
@@ -387,7 +397,11 @@ export function createClient<
           .finally(() => this.#waitingOnce.delete(reject));
       });
     }
-    /** Internal Action seam: register after local commit, before any completion can arrive. */
+    /**
+     * Internal Action seam. `onCommitted` runs while the submission's
+     * completion is dispatched - after the local commit, before any later
+     * event - so the call's `callCompleted` can never outrun it.
+     */
     submitAction(
       name: string,
       version: number,
@@ -395,19 +409,21 @@ export function createClient<
       onCommitted?: (callId: string, ordinal: number) => void,
       options?: CallOptions,
     ): Promise<{ callId: string; ordinal: number }> {
-      if (this.#activePublicTx?.inCallback())
+      if (this.#inCallback())
         return Promise.reject(Error("transaction_active"));
-      return (async () => {
-        const submitted = (await this.#bridge.task({
-          kind: "submitAction",
-          name,
-          version,
-          args,
-          ...storeOption(options),
-        })) as { callId: string; ordinal: number };
-        onCommitted?.(submitted.callId, submitted.ordinal);
-        return submitted;
-      })();
+      let store: { store?: unknown };
+      try {
+        store = storeOption(options);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+      return this.#bridge.task(
+        { kind: "submitAction", name, version, args, ...store },
+        {
+          settled: ({ callId, ordinal }: { callId: string; ordinal: number }) =>
+            onCommitted?.(callId, ordinal),
+        },
+      );
     }
     onActionCompletion(listener: (completion: any) => void): () => void {
       this.#completionListeners.add(listener);
@@ -421,7 +437,7 @@ export function createClient<
           try {
             listener(completion);
           } catch (error) {
-            reportActionCallbackError(error);
+            reportCallbackError(error);
           }
     }
     /**
@@ -435,7 +451,7 @@ export function createClient<
       args: object,
       options?: CallOptions,
     ): Promise<{ outcome: DirectOutcome }> {
-      if (this.#activePublicTx?.inCallback()) throw Error("transaction_active");
+      if (this.#inCallback()) throw Error("transaction_active");
       const store = storeOption(options);
       try {
         return await this.#bridge.task({
@@ -481,6 +497,8 @@ export function createClient<
       options: ConnectionOptions = {},
     ): Promise<Connection> {
       if (this.#closed || this.#closing) throw Error("client_closed");
+      // Rust refuses a second connection too; this refuses it before a second
+      // set of effect adapters could replace the first one's handlers.
       if (this.#connecting || this.#connection)
         throw Error("connection already active");
       this.#connecting = true;
@@ -553,6 +571,8 @@ export function createClient<
     runPrerequisites(
       handlers: Record<string, (arguments_: RecordValue) => Promise<void>>,
     ): Promise<void> {
+      // The prerequisite adapter is one handler slot per client: a concurrent
+      // call joins the running task instead of replacing its handlers.
       if (this.#tasks) return this.#tasks;
       const stop = prerequisites(this.#effects, handlers);
       this.#tasks = this.#bridge
@@ -634,31 +654,36 @@ export function createClient<
       };
       let stopped = false;
       let unwatch: (() => void) | undefined;
-      this.#bridge.task({ kind: "watch", model, spec: { filter: where } }).then(
-        ({ observerId }: { observerId: string }) => {
-          // Claims the rows published behind the task, even when stopped
-          // already, so none is held for an observer nobody attaches.
-          const detach = this.#bridge.observe(observerId, (snapshot) => {
-            // A closed watch's last rows are the ones already delivered.
-            if (stopped || snapshot.closed) return;
-            try {
-              listener(snapshot.rows);
-            } catch (error) {
-              fail(error);
-            }
-          });
-          // The route stays until the runtime confirms nothing follows.
-          unwatch = () =>
-            void this.#bridge
-              .task({ kind: "unwatch", observerId })
-              .catch(() => {})
-              .finally(detach);
-          if (stopped) unwatch();
-        },
-        (error) => {
+      this.#bridge
+        .task(
+          { kind: "watch", model, spec: { filter: where } },
+          {
+            // Routed while the completion is dispatched: the first rows are
+            // published behind it in the same batch.
+            settled: ({ observerId }: { observerId: string }) => {
+              const detach = this.#bridge.observe(observerId, (snapshot) => {
+                // A closed watch's last rows are the ones already delivered.
+                if (stopped || snapshot.closed) return;
+                try {
+                  listener(snapshot.rows);
+                } catch (error) {
+                  fail(error);
+                }
+              });
+              // The route stays until the runtime confirms nothing follows.
+              unwatch = () =>
+                void this.#bridge
+                  .task({ kind: "unwatch", observerId })
+                  .catch(() => {})
+                  .finally(detach);
+              if (stopped) unwatch();
+            },
+          },
+        )
+        .catch((error) => {
+          // The first query failed: the runtime registered nothing.
           if (!stopped) fail(error);
-        },
-      );
+        });
       return () => {
         if (stopped) return;
         stopped = true;

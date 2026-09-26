@@ -57,13 +57,22 @@ export class Transaction {
     return work;
   }
   #call(command: RecordValue): Promise<any> {
+    // Object lifetime: an escaped transaction object refuses before admission.
     if (!this.#open) return Promise.reject(Error("transaction_closed"));
+    // Async-context guard: work from outside the innermost savepoint's context
+    // would carry the wrong scope token.
     if (this.#active && this.#context.getStore() !== this.#active) {
       this.#structural = Error("overlapping savepoint work");
       return Promise.reject(this.#structural);
     }
     return this.#queue(command);
   }
+  /**
+   * The callback returned. Promise lifetime decides "unawaited": a command
+   * the runtime already ran may not have settled here yet, which its lane
+   * cannot see. A failure is rethrown as the very object the command
+   * rejected with; the runtime refuses the commit for it as well.
+   */
   async finish(): Promise<void> {
     const outstanding = this.#pending > 0 || this.#scopes.size > 0;
     this.#open = false;
@@ -109,6 +118,7 @@ export class Transaction {
   }
   savepoint<T>(body: () => Promise<T>): Promise<T> {
     if (!this.#open) return Promise.reject(Error("transaction_closed"));
+    // Async-context guard, as in `#call`.
     if (this.#active && this.#context.getStore() !== this.#active) {
       this.#structural = Error("overlapping savepoints");
       return Promise.reject(this.#structural);
@@ -131,6 +141,9 @@ export class Transaction {
           this.#structural = Error("unawaited nested savepoint");
           throw this.#structural;
         }
+        // A command of this savepoint failed and the body swallowed it: the
+        // savepoint rejects with that error object and rolls back, the same
+        // outcome the runtime's accounting gives a failure in a savepoint.
         if (this.#failure !== failure) throw this.#failure;
         if (this.#structural) throw this.#structural;
         await this.#queue({ kind: "release", ...scopeOf(token) });

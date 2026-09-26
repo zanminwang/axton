@@ -1,4 +1,4 @@
-import type { ObserverSnapshot, TaskError } from "./bridge.mts";
+import type { ObserverSnapshot, TaskError, TaskHooks } from "./bridge.mts";
 import type { RecordValue } from "./values.mts";
 
 /**
@@ -116,7 +116,7 @@ function bootstrapError(scope: string, error: TaskError): unknown {
 
 /** The part of the Bridge the handles use; tests supply a scripted runtime. */
 export type SubscriptionBridge = {
-  task(command: RecordValue): Promise<any>;
+  task(command: RecordValue, hooks?: TaskHooks): Promise<any>;
   observe(
     observerId: string,
     listener: (snapshot: ObserverSnapshot) => void,
@@ -165,7 +165,7 @@ class Handle implements Subscription {
     this.#bridge = bridge;
     this.#report = report;
     // Replaced by the runtime's first snapshot, which it publishes behind the
-    // task that answered this identity: `attach` delivers it at once.
+    // task that answered this identity, in the same batch.
     this.#snapshot = frozen({
       active: true,
       initialization: state.startingCursor === null ? "pending" : "ready",
@@ -179,7 +179,7 @@ class Handle implements Subscription {
   get closed(): boolean {
     return this.#closed !== undefined;
   }
-  /** Route this identity's observer to the handle, from the snapshot held for it. */
+  /** Route this identity's observer to the handle, before its first snapshot. */
   attach(observerId: string): void {
     this.#bridge.observe(observerId, (snapshot) =>
       this.#receive(snapshot as StatusSnapshot),
@@ -291,17 +291,27 @@ export class Subscriptions {
    * command path, read the same identity and share one cached handle.
    */
   async subscribe(scope: string): Promise<Subscription> {
-    const { state, observerId } = (await this.#bridge.task({
-      kind: "scopeSubscribe",
-      scope,
-    })) as { state: SubscriptionState; observerId: string };
-    const existing = this.#handles.get(state.subscriptionId);
-    if (existing) return existing;
-    const handle = new Handle(state, this, this.#bridge, this.#report);
-    this.#handles.set(state.subscriptionId, handle);
-    // Synchronously in this continuation: the snapshot the runtime published
-    // behind the task is held by the Bridge until this claims it.
-    handle.attach(observerId);
+    let handle!: Handle;
+    await this.#bridge.task(
+      { kind: "scopeSubscribe", scope },
+      {
+        // While the completion is dispatched: the runtime publishes the
+        // observer's first snapshot behind it, in the same batch.
+        settled: ({
+          state,
+          observerId,
+        }: {
+          state: SubscriptionState;
+          observerId: string;
+        }) => {
+          const existing = this.#handles.get(state.subscriptionId);
+          if (existing) return void (handle = existing);
+          handle = new Handle(state, this, this.#bridge, this.#report);
+          this.#handles.set(state.subscriptionId, handle);
+          handle.attach(observerId);
+        },
+      },
+    );
     return handle;
   }
   /**

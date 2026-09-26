@@ -99,7 +99,11 @@ export type EffectBridge = {
 /** The longest delay a platform timer accepts. */
 const MAX_DELAY = 2_147_483_647;
 
-/** The direct-call deadline `connect` hands the runtime; the SDK keeps its own message for a bad value. */
+/**
+ * Typed encoding of the direct-call deadline `connect` hands the runtime: a
+ * value its `u64` field cannot decode would fail with a serde message, so the
+ * SDK refuses it with the runtime's own wording before installing adapters.
+ */
 export function directTimeout(options: ConnectionOptions): number {
   const millis = options.directTimeoutMs ?? 30_000;
   if (!Number.isSafeInteger(millis) || millis <= 0 || millis > MAX_DELAY)

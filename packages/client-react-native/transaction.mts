@@ -12,6 +12,10 @@ export class Transaction {
   #tail: Promise<unknown> = Promise.resolve();
   #pending = 0;
   #failure: unknown;
+  /**
+   * Without AsyncLocalStorage the callback guard is coarse: while a callback
+   * runs, every public call counts as inside it (see the README).
+   */
   #activeCallback = false;
   constructor(send: (command: RecordValue, scope?: string) => Promise<any>) {
     this.#send = send;
@@ -48,9 +52,15 @@ export class Transaction {
     return work;
   }
   #call(command: RecordValue): Promise<any> {
+    // Object lifetime: an escaped transaction object refuses before admission.
     if (!this.#open) return Promise.reject(Error("transaction_closed"));
     return this.#queue(command);
   }
+  /**
+   * The callback returned. Promise lifetime decides "unawaited", and a
+   * failure is rethrown as the very object the command rejected with; see
+   * the Node transaction.
+   */
   async finish(): Promise<void> {
     const outstanding = this.#pending > 0;
     this.#open = false;

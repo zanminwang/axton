@@ -704,6 +704,71 @@ test("close racing a committed submit still yields a terminal handle", async () 
   }
 });
 
+test("a completion in the same drained batch as its submission reaches the registered handle", async () => {
+  // A fake carrier whose runtime publishes the `submitAction` completion and
+  // the call's `callCompleted` in one batch: the handle is registered while
+  // the completion is dispatched, so the outcome that follows it in the same
+  // batch finds it (spec section 3).
+  let wake;
+  const outbox = [];
+  const later = () => setImmediate(() => wake("1"));
+  const native = {
+    runtimeOpen(request, wakeRuntime) {
+      wake = wakeRuntime;
+      outbox.push({
+        type: "taskCompleted",
+        requestId: JSON.parse(request).requestId,
+        ok: true,
+        value: {
+          clientId: "c",
+          schema: { rebuilt: false, pending: null, lastRebuild: null },
+        },
+      });
+      later();
+      return "1";
+    },
+    runtimeSubmit(runtimeId, message) {
+      const input = JSON.parse(message);
+      if (input.command?.kind === "submitAction")
+        outbox.push(
+          {
+            type: "taskCompleted",
+            requestId: input.requestId,
+            ok: true,
+            value: { callId: "call-1", ordinal: 1 },
+          },
+          {
+            type: "callCompleted",
+            callId: "call-1",
+            outcome: { status: "succeeded", result: { title: "A" } },
+          },
+        );
+      else if (input.type === "close") outbox.push({ type: "runtimeClosed" });
+      later();
+    },
+    runtimeDrain: () => JSON.stringify(outbox.splice(0)),
+    runtimeDetach() {},
+  };
+  const FakeClient = createClient(native, Transaction, () => {
+    throw Error("network not configured");
+  });
+  const client = await FakeClient.open({ path: "unused", schema: {} });
+  try {
+    const completions = [];
+    client.onActionCompletion((completion) => completions.push(completion));
+    const call = await client.invokeAction("Ping", 1, {}, (value) => ({
+      title: value.title,
+    }));
+    assert.equal(call.status, "succeeded");
+    assert.deepEqual(await call.wait(), { result: { title: "A" }, error: null });
+    assert.deepEqual(completions.map((completion) => completion.callId), [
+      "call-1",
+    ]);
+  } finally {
+    await client.close();
+  }
+});
+
 test("the store option travels beside args on both routes and is validated before submission", async () => {
   const binding = createRequire(import.meta.url)(
     "../../../bindings/node/axton-node.node",

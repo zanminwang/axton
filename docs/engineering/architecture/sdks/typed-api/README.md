@@ -2,10 +2,10 @@
 
 The typed API has two halves that never meet at runtime but share one compiled schema:
 
-- [Client](client.md) — The generic client runtime for TypeScript and Dart plus generated Model, Action and transaction classes.
+- [Client](client.md) — The generic client runtime for TypeScript and Dart plus generated Model, Mutation, Query and transaction classes.
 - [Server](server.md) — The TypeScript backend runtime: `createBackend`, handlers, loaders, publishing and the generated typed signatures.
 
-The compiler emits both halves from the same `.model` files ([Compiler / Generate](../../compiler/generate.md)), so the client Action input/output contract and retained backend handler registration agree.
+The compiler emits both halves from the same `.model` files ([Compiler / Generate](../../compiler/generate.md)), so the client operation input/output contract and retained backend handler registration agree.
 
 ## Code map
 

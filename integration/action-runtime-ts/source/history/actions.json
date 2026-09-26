@@ -90,6 +90,7 @@
             }
           }
         ],
+        "kind": "mutation",
         "name": "Change",
         "outputEnums": [],
         "outputs": [
@@ -152,6 +153,7 @@
             "operation": "delete"
           }
         ],
+        "kind": "mutation",
         "name": "Clear",
         "outputEnums": [],
         "outputs": [
@@ -220,6 +222,56 @@
         "requirements": [],
         "sequence": null,
         "version": 1
+      },
+      "2": {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "at",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          }
+        ],
+        "kind": "query",
+        "name": "Find",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "optional",
+            "handlerType": {
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "kind": "identity",
+              "model": "Todo"
+            },
+            "kind": "model",
+            "model": "Todo",
+            "modelReadVersion": 1,
+            "name": "todo",
+            "source": "handlerIdentity"
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 2
       }
     },
     "Mark": {
@@ -265,6 +317,7 @@
             "operation": "update"
           }
         ],
+        "kind": "mutation",
         "name": "Mark",
         "outputEnums": [],
         "outputs": [
@@ -292,6 +345,7 @@
           "models": []
         },
         "inputs": [],
+        "kind": "mutation",
         "name": "Ping",
         "outputEnums": [],
         "outputs": [],
@@ -577,6 +631,7 @@
             }
           }
         ],
+        "kind": "mutation",
         "name": "Put",
         "outputEnums": [
           {
@@ -657,6 +712,7 @@
             "operation": "delete"
           }
         ],
+        "kind": "mutation",
         "name": "RemoveMoment",
         "outputEnums": [],
         "outputs": [

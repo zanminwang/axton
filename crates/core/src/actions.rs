@@ -258,11 +258,27 @@ pub struct CallCompletion {
     pub outcome: ActionOutcome,
 }
 
+/// The backend business behavior a retained operation declares. It belongs
+/// to the `(name, version)` contract and is independent of the delivery path
+/// a client chooses. A descriptor without a kind is a Mutation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CallKind {
+    /// May change business state or perform external effects.
+    #[default]
+    Mutation,
+    /// Reads without business side effects: no Model operands, handler
+    /// changes, publications or sequence policy.
+    Query,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActionDescriptor {
     pub name: String,
     pub version: u64,
+    #[serde(default)]
+    pub kind: CallKind,
     pub inputs: Vec<ActionInputDescriptor>,
     pub outputs: Vec<ActionOutputDescriptor>,
     #[serde(default)]
@@ -392,6 +408,9 @@ impl Schema {
                 || !seen.insert((action.name.as_str(), action.version))
             {
                 return Err(invalid("invalid or duplicate Action descriptor"));
+            }
+            if action.kind == CallKind::Query {
+                validate_query(action)?;
             }
             let mut names = BTreeSet::new();
             let input_schema = input_schema(self, action)?;
@@ -541,6 +560,32 @@ impl Schema {
             _ => Ok(()),
         }
     }
+}
+/// A Query declares no business effect the framework could apply: no Model
+/// operands (so no inferred optimism or mutation readback) and no sequence
+/// policy. The same rule holds for parsed and hand-written descriptors.
+fn validate_query(action: &ActionDescriptor) -> Result<()> {
+    if action
+        .inputs
+        .iter()
+        .any(|input| matches!(input, ActionInputDescriptor::Model { .. }))
+    {
+        return Err(invalid(format!(
+            "Query {} v{} cannot take a Model operand",
+            action.name, action.version
+        )));
+    }
+    if action
+        .policy
+        .get("sequence")
+        .is_some_and(|sequence| !sequence.is_null())
+    {
+        return Err(invalid(format!(
+            "Query {} v{} cannot declare a sequence",
+            action.name, action.version
+        )));
+    }
+    Ok(())
 }
 pub fn validate_action_models(
     schema: &Schema,

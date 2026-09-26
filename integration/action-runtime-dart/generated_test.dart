@@ -66,7 +66,7 @@ void main() {
   );
 
   test(
-    'generated durable pump and direct action decode shared SDK outcomes',
+    'generated durable and direct routes of both kinds decode shared SDK outcomes',
     () async {
       final at = DateTime.utc(2026, 9, 23, 12);
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -93,7 +93,11 @@ void main() {
                   'callId': mutation['callId'],
                   'outcome': {
                     'status': 'succeeded',
-                    'result': mutation['name'] == 'Ping' ? null : result,
+                    'result': switch (mutation['name']) {
+                      'Ping' => null,
+                      'Now' => {'at': at.toIso8601String()},
+                      _ => result,
+                    },
                   },
                 },
               ],
@@ -112,7 +116,11 @@ void main() {
                 'callId': call['callId'],
                 'outcome': {
                   'status': 'succeeded',
-                  'result': call['name'] == 'Ping' ? null : result,
+                  'result': switch (call['name']) {
+                    'Ping' => null,
+                    'Now' => {'at': at.toIso8601String()},
+                    _ => result,
+                  },
                 },
               },
               'records': [],
@@ -131,38 +139,50 @@ void main() {
         directTimeout: const Duration(seconds: 2),
       );
       try {
-        final ActionCall<EchoOutput> call = await client.actions.echo(
+        final Call<EchoOutput> call = await client.mutations.echo(
           at: at,
           moods: [Mood.calm],
           maybe: null,
         );
-        final sdk.ActionCall<EchoOutput> sdkCall = call;
-        expect(sdkCall.status, sdk.ActionStatus.pending);
-        final ActionOutcome<EchoOutput> outcome = await call.wait().timeout(
+        final sdk.Call<EchoOutput> sdkCall = call;
+        expect(sdkCall.status, sdk.CallStatus.pending);
+        final CallOutcome<EchoOutput> outcome = await call.wait().timeout(
           const Duration(seconds: 3),
         );
-        final sdk.ActionOutcome<EchoOutput> sdkOutcome = outcome;
-        expect(sdkOutcome, isA<sdk.ActionSuccess<EchoOutput>>());
-        expect(outcome, isA<ActionSuccess<EchoOutput>>());
-        expect((outcome as ActionSuccess<EchoOutput>).result.result, at);
+        final sdk.CallOutcome<EchoOutput> sdkOutcome = outcome;
+        expect(sdkOutcome, isA<sdk.CallSuccess<EchoOutput>>());
+        expect(outcome, isA<CallSuccess<EchoOutput>>());
+        expect((outcome as CallSuccess<EchoOutput>).result.result, at);
         expect(outcome.result.moods, [Mood.calm, Mood.loud]);
-        final ActionCall<void> pingCall = await client.actions.ping();
-        final sdk.ActionCall<void> sdkPingCall = pingCall;
-        final ActionOutcome<void> pingOutcome = await sdkPingCall
+        final Call<void> pingCall = await client.mutations.ping();
+        final sdk.Call<void> sdkPingCall = pingCall;
+        final CallOutcome<void> pingOutcome = await sdkPingCall
             .wait()
             .timeout(const Duration(seconds: 3));
-        expect(pingOutcome, isA<ActionSuccess<void>>());
-        expect(pingCall.status, ActionStatus.succeeded);
-        final direct = await client.actions.call.echo(
+        expect(pingOutcome, isA<CallSuccess<void>>());
+        expect(pingCall.status, CallStatus.succeeded);
+        final direct = await client.mutations.call.echo(
           at: at,
           moods: [Mood.calm],
           maybe: null,
         );
         expect(direct.result, at);
         expect(direct.maybe, isNull);
-        await client.actions.call.ping();
+        await client.mutations.call.ping();
         expect(pumps, 2);
         expect(directs, 2);
+        // A default Query is direct: a final result and no queue row.
+        final NowOutput now = await client.queries.now(at: at);
+        expect(now.at, at);
+        expect(directs, 3);
+        expect((await client.syncState())['pending'], 0);
+        // Under enqueue it is durable and settles through the pump.
+        final Call<NowOutput> queued = await client.queries.enqueue.now(at: at);
+        final CallOutcome<NowOutput> queuedOutcome = await queued
+            .wait()
+            .timeout(const Duration(seconds: 3));
+        expect((queuedOutcome as CallSuccess<NowOutput>).result.at, at);
+        expect(pumps, 3);
         expect((await client.syncState())['pending'], 0);
       } finally {
         await connection.close();
@@ -198,11 +218,32 @@ void main() {
         libraryPath: Platform.environment['AXTON_DART_LIBRARY']!,
       );
       try {
-        final model_free.ActionCall<void> call = await free.actions.ping();
-        expect(call.status, model_free.ActionStatus.pending);
+        final model_free.Call<void> call = await free.mutations.ping();
+        expect(call.status, model_free.CallStatus.pending);
         expect((await free.syncState())['pending'], 1);
+        final model_free.Call<model_free.ClockOutput> clock = await free
+            .queries
+            .enqueue
+            .clock(at: DateTime.utc(2026));
+        expect((await free.syncState())['pending'], 2);
+        // Without a connection a direct Query fails instead of enqueueing.
+        await expectLater(
+          free.queries.clock(at: DateTime.utc(2026)),
+          throwsA(
+            isA<model_free.CallError>().having(
+              (error) => error.code,
+              'code',
+              'action.unavailable',
+            ),
+          ),
+        );
+        expect((await free.syncState())['pending'], 2);
         await free.close();
-        expect(await call.wait(), isA<model_free.ActionFailure<void>>());
+        expect(await call.wait(), isA<model_free.CallFailure<void>>());
+        expect(
+          await clock.wait(),
+          isA<model_free.CallFailure<model_free.ClockOutput>>(),
+        );
       } finally {
         await free.close();
       }
@@ -210,13 +251,18 @@ void main() {
   );
 
   test('generated store selector is persisted beside durable args', () async {
-    await client.actions.ping(store: const PingStore.none());
-    await client.actions.ping(store: const PingStore.all());
+    await client.mutations.ping(store: const PingStore.none());
+    await client.mutations.ping(store: const PingStore.all());
+    final at = DateTime.utc(2026);
+    await client.queries.enqueue.now(at: at, store: const NowStore.none());
     final frozen = jsonDecode((await client.client.freeze())!) as Map;
     final mutations = (frozen['mutations'] as List).cast<Map>();
     expect(mutations[0]['store'], false);
     expect(mutations[0]['args'], isEmpty);
     expect(mutations[1].containsKey('store'), isFalse);
+    expect(mutations[2]['name'], 'Now');
+    expect(mutations[2]['store'], false);
+    expect(mutations[2]['args'], {'at': at.toIso8601String()});
   });
 
   test('generated open forwards the direct timeout', () async {
@@ -235,11 +281,11 @@ void main() {
     'model operand and omitted update fields use generated wire codecs',
     () async {
       final at = DateTime.utc(2026, 9, 23);
-      await client.actions.touch(
+      await client.mutations.touch(
         note: Note(id: 'n', at: at, mood: Mood.loud, label: null),
         changed: const TouchChangedUpdate(id: 'n'),
       );
-      await client.actions.touch(
+      await client.mutations.touch(
         note: Note(id: 'other', at: at, mood: Mood.calm, label: null),
       );
       final frozen = jsonDecode((await client.client.freeze())!) as Map;

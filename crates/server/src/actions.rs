@@ -6,7 +6,7 @@ use crate::{
     Config, Error, Host, Result, code, internal, principal, request_invalid, storage_invalid,
 };
 use axton_core::{
-    ActionInputDescriptor, ActionIntent, ActionOutcome, AuthorityRecord, CallCompletion,
+    ActionInputDescriptor, ActionIntent, ActionOutcome, AuthorityRecord, CallCompletion, CallKind,
     DirectActionRequest, DirectActionResponse, ExecutionState, PushReceipt, PushRequest, Rejection,
     canonical_json, normalize_action_args, normalize_call_id, validate_action_result,
 };
@@ -233,6 +233,12 @@ async fn execute_fresh(
             publications,
         } => (outputs, changes, publications),
     };
+    // A Query's contract has no business effects. A settlement that reports
+    // any is refused before the framework stamps, reads back or publishes it,
+    // whatever host produced it; the caller rolls back its savepoint.
+    if action.kind == CallKind::Query && (!extra.is_empty() || !publications.is_empty()) {
+        return Err(Error::code(code::QUERY_EFFECTS_FORBIDDEN));
+    }
     for record in &extra {
         readback::insert(&mut changes, readback::resolve(config, record)?)?;
     }

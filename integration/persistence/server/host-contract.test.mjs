@@ -66,7 +66,8 @@ async function replay(requests,{reject=false,fail=false,onError}={}){
   onError,
   // The seeded change set (the update slot's t-1) plus one addition, published
   // by default to one channel and explicitly to another: the fixture's settlement.
-  handlers:{async send(){return {message:'sent'};},async edit({input,changes,publish}){
+  mutations:{async send(){return {message:'sent'};}},
+  handlers:{async edit({input,changes,publish}){
    handled.push(input);
    changes.add({model:'Task',identity:{id:'t-2'}});
    publish({channel:'shared'});

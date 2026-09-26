@@ -54,7 +54,7 @@ nav:
           - How AXTON works: concepts.md
           - Find an interface: api-index.md
       - Schema:
-          - Define models and mutations: schema/define.md
+          - Define models, mutations and queries: schema/define.md
           - Schema and compiler reference: schema/reference.md
       - Frontend:
           - Set up the client: frontend/setup.md

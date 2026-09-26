@@ -1,5 +1,6 @@
 //! Parse: schema text to declarations with token positions. No semantic rule
 //! lives here; [`crate::validate`] consumes the result.
+use axton_core::CallKind;
 use serde_json::{Map, Value, json};
 #[derive(Clone, Debug)]
 struct Token {
@@ -425,6 +426,8 @@ pub struct MutationDecl {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActionDecl {
     pub name: String,
+    /// `mutation Name(...)` or `query Name(...)`.
+    pub kind: CallKind,
     pub version: u64,
     pub inputs: Vec<ActionInputDecl>,
     pub outputs: Vec<ActionOutputDecl>,
@@ -504,18 +507,30 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
             return Err(p.err("expected declaration after directive"));
         }
         let pos = p.pos();
+        if p.peek() == "action" {
+            return Err(p.err(
+                "action declarations were replaced: declare mutation Name(...) or query Name(...)",
+            ));
+        }
         let kind = p.take();
         let name = p.ident()?;
+        // `mutation Name(` and `query Name(` are operations; the older
+        // `mutation Name { slots }` block keeps its own grammar below.
+        let operation = match kind.as_str() {
+            "query" => Some(CallKind::Query),
+            "mutation" if p.peek() == "(" => Some(CallKind::Mutation),
+            _ => None,
+        };
         if (leading_version_seen || leading_sequence.is_some())
-            && kind != "action"
+            && operation.is_none()
             && kind != "model"
         {
             return Err(p.err(format!("declaration directives are unsupported on {kind}")));
         }
         if kind == "model" && leading_sequence.is_some() {
-            return Err(p.err("sequence requires action"));
+            return Err(p.err("sequence requires mutation"));
         }
-        if kind == "action" {
+        if let Some(operation) = operation {
             p.need("(")?;
             let mut inputs = vec![];
             while !p.eat(")") {
@@ -551,6 +566,7 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
             }
             d.actions.push(ActionDecl {
                 name,
+                kind: operation,
                 version: leading_version,
                 inputs,
                 outputs,

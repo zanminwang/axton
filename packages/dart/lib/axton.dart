@@ -3,13 +3,13 @@ library;
 export 'src/client.dart';
 export 'src/actions.dart'
     show
-        ActionCall,
-        ActionOutcome,
-        ActionSuccess,
-        ActionFailure,
-        ActionStatus,
-        ActionStore,
-        ActionError;
+        Call,
+        CallOutcome,
+        CallSuccess,
+        CallFailure,
+        CallStatus,
+        CallStore,
+        CallError;
 export 'src/port.dart';
 export 'src/sync_state.dart';
 export 'src/subscriptions.dart'

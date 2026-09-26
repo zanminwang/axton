@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ActionRegistry,
-  ActionError,
+  CallError,
 } from "../../../packages/client-js/actions.mts";
 import { Client } from "../../../packages/client-js/index.mts";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
@@ -105,7 +105,7 @@ test("missing WeakRef rejects before registration", () => {
   assert.throws(
     () => registry.assertSupported(),
     (error) =>
-      error instanceof ActionError &&
+      error instanceof CallError &&
       error.code === "action.unsupported_runtime",
   );
   assert.equal(registry.routingCount, 0);
@@ -467,7 +467,7 @@ test("direct invocation decodes a committed response and maps unavailable transp
     await assert.rejects(
       client.invokeDirectAction("Ping", 1, {}, () => undefined),
       (error) =>
-        error instanceof ActionError && error.code === "action.unavailable",
+        error instanceof CallError && error.code === "action.unavailable",
     );
     const connection = await client.connect({
       url: "http://unused",
@@ -566,7 +566,7 @@ test("a throwing direct completion listener leaves the committed result intact",
     await assert.rejects(
       client.invokeDirectAction("Ping", 1, {}, () => undefined),
       (error) =>
-        error instanceof ActionError &&
+        error instanceof CallError &&
         error.code === "handler.failed" &&
         error.execution === "rejected",
     );
@@ -615,12 +615,12 @@ test("standalone direct writes and Actions reject from an active transaction cal
       await assert.rejects(
         client.invokeAction("Ping", 1, {}, () => undefined),
         (error) =>
-          error instanceof ActionError && error.code === "transaction_active",
+          error instanceof CallError && error.code === "transaction_active",
       );
       await assert.rejects(
         client.invokeDirectAction("Ping", 1, {}, () => undefined),
         (error) =>
-          error instanceof ActionError && error.code === "transaction_active",
+          error instanceof CallError && error.code === "transaction_active",
       );
     });
     assert.equal((await client.syncState()).pending, 0);
@@ -729,7 +729,7 @@ test("the store option travels beside args on both routes and is validated befor
       client.invokeAction("Ping", 1, { store: "biz" }, () => undefined, {
         store: { missing: false },
       }),
-      (error) => error instanceof ActionError,
+      (error) => error instanceof CallError,
     );
     assert.equal((await client.syncState()).pending, 0);
     await client.invokeAction("Ping", 1, { store: "biz" }, () => undefined, {

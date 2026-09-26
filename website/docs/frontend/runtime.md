@@ -1,6 +1,6 @@
 # Client runtime
 
-The generated client is the whole client: besides the [typed Model and Action APIs](client-api.md) it carries the runtime members described here, for escape-hatch reads, savepoints, connection control, recovery and prerequisites. TypeScript returns promises and Dart returns futures unless stated otherwise. Native validation failures reject the call; Dart reports them as `StateError`.
+The generated client is the whole client: besides the [typed Model, Mutation and Query APIs](client-api.md) it carries the runtime members described here, for escape-hatch reads, savepoints, connection control, recovery and prerequisites. TypeScript returns promises and Dart returns futures unless stated otherwise. Native validation failures reject the call; Dart reports them as `StateError`.
 
 ## Opening and schema changes
 
@@ -19,9 +19,9 @@ The generated client is the whole client: besides the [typed Model and Action AP
     );
     ```
 
-The compiled schema is embedded in the generated client. `client.clientId` is a read-only, persistent identity for that database, used for retry deduplication. Use one active client per database and a separate file per signed-in user. Do not duplicate a database and then let both copies independently send Actions under the same client identity.
+The compiled schema is embedded in the generated client. `client.clientId` is a read-only, persistent identity for that database, used for retry deduplication. Use one active client per database and a separate file per signed-in user. Do not duplicate a database and then let both copies independently send calls under the same client identity.
 
-When the schema compiled into the client differs from the one the database was built for, the runtime decides at open ([local storage](storage.md)): an added Model or nullable field is applied in place; anything else leaves the file untouched and opens a fresh database file beside it, `local.sqlite.1`, which resynchronises from the backend. If the old file still holds unsent Actions, it stays open for them instead; `syncState().schema.pending` tells you, and once they are sent you call `rebuild()`:
+When the schema compiled into the client differs from the one the database was built for, the runtime decides at open ([local storage](storage.md)): an added Model or nullable field is applied in place; anything else leaves the file untouched and opens a fresh database file beside it, `local.sqlite.1`, which resynchronises from the backend. If the old file still holds unsent calls, it stays open for them instead; `syncState().schema.pending` tells you, and once they are sent you call `rebuild()`:
 
 === "TypeScript"
 
@@ -46,7 +46,7 @@ When the schema compiled into the client differs from the one the database was b
     }
     ```
 
-`rebuild()` switches the same client to the new file and rejects while unsent Actions remain. `rebuild({ discardPending: true })`, or `discardPending: true` at open, rebuilds at once; the report names `leftPending` Actions and `leftDirect` local-only records that stay in `oldFile`. Nothing is moved between schemas and the old file is never deleted by the runtime. `migration` is still accepted for compatibility and ignored.
+`rebuild()` switches the same client to the new file and rejects while unsent calls remain. `rebuild({ discardPending: true })`, or `discardPending: true` at open, rebuilds at once; the report names `leftPending` calls and `leftDirect` local-only records that stay in `oldFile`. Nothing is moved between schemas and the old file is never deleted by the runtime. `migration` is still accepted for compatibility and ignored.
 
 ## Escape-hatch reads
 
@@ -90,7 +90,7 @@ TypeScript's `readSql` takes an optional positional second argument; Dart uses n
 
 ## Transactions and savepoints
 
-`client.transaction(callback)` commits the callback's result or rolls back on failure; see [transactions](client-api.md#transactions). Standalone Model CRUD runs in its own local transaction; a durable Action privately commits its intent and optimism together. Inside a transaction, `tx.transaction` is the runtime transaction; on Node and Dart it also offers `savepoint(callback)`, a nested scope that rolls back on failure and returns its callback's result (React Native's does not).
+`client.transaction(callback)` commits the callback's result or rolls back on failure; see [transactions](client-api.md#transactions). Standalone Model CRUD runs in its own local transaction; a durable call privately commits its intent and any inferred optimism together. Inside a transaction, `tx.transaction` is the runtime transaction; on Node and Dart it also offers `savepoint(callback)`, a nested scope that rolls back on failure and returns its callback's result (React Native's does not).
 
 === "TypeScript"
 
@@ -130,7 +130,7 @@ TypeScript's `readSql` takes an optional positional second argument; Dart uses n
     });
     ```
 
-Await every call and nested callback. Savepoints must be properly nested, not run concurrently. An escaped transaction, unfinished operation or overlapping savepoint fails. Inside the transaction use `tx` reads; an outer `client` read can wait behind the current transaction. A captured Action call fails promptly with `transaction_active`.
+Await every call and nested callback. Savepoints must be properly nested, not run concurrently. An escaped transaction, unfinished operation or overlapping savepoint fails. Inside the transaction use `tx` reads; an outer `client` read can wait behind the current transaction. A captured Mutation or Query call fails promptly with `transaction_active`.
 
 ## Server connection
 
@@ -178,7 +178,7 @@ AXTON manages these phases automatically:
 
 For either source, a page applies as one transaction and names a range for each channel it covers. A channel already covered by its cursor is left alone. A range spanning the current cursor applies: for example, at cursor `100`, a range `90 → 120` advances the channel to `120`, and each record's stamp decides whether its content is newer. A range starting beyond the current cursor is a gap. Then nothing from the page applies, and HTTP recovery fetches the missing range. Pages update SQLite and watches through the same engine logic.
 
-Durable Action submission runs independently through `POST /sync/mutations`; direct calls use `POST /sync/actions` with the configured finite timeout. A connection with no subscribed channels can still submit Actions without opening a socket.
+Durable submission of Mutations and queued Queries runs independently through `POST /sync/mutations`; direct calls use `POST /sync/actions` with the configured finite timeout. A connection with no subscribed channels can still submit calls without opening a socket.
 
 A `bootstrap()` load is a third, independent work class on the same connection: one bounded `POST /sync/pull` at a time across all channels, asked for while the connection is running and not paused, retried with the same backoff after a transport failure, and taking turns between channels that have one registered. It does not hold up the socket, the catch-up request or Action submission, and pausing the connection defers its next page instead of failing it. Progress is committed page by page, so closing the client or losing the network resumes where it stopped.
 
@@ -200,7 +200,7 @@ All controls return promise/future void. Pause/close cancel network activity and
 
 ## Pending work and recovery
 
-`client.syncState()` returns `{ clientId, pending, beforeImages, cursors, channels, rejections, schema }`. `pending` counts queued work; `schema` is `{ rebuilt, pending, lastRebuild }` from the open-time schema check ([opening and schema changes](#opening-and-schema-changes)); `beforeImages` is a diagnostic count; `cursors` maps channels to received positions; `channels` lists desired subscriptions; `rejections` contains `{ ordinal, code }` entries. `client.models.<name>.syncState(identity)` returns one record's `{ pending, rejections }`: pending entries carry an ordinal, Action name, phase, prerequisite states and `diverged` when replay failed over newer authority. Both are local snapshots, not network probes.
+`client.syncState()` returns `{ clientId, pending, beforeImages, cursors, channels, rejections, schema }`. `pending` counts queued work; `schema` is `{ rebuilt, pending, lastRebuild }` from the open-time schema check ([opening and schema changes](#opening-and-schema-changes)); `beforeImages` is a diagnostic count; `cursors` maps channels to received positions; `channels` lists desired subscriptions; `rejections` contains `{ ordinal, code }` entries. `client.models.<name>.syncState(identity)` returns one record's `{ pending, rejections }`: pending entries carry an ordinal, Mutation or Query name, phase, prerequisite states and `diverged` when replay failed over newer authority. Both are local snapshots, not network probes.
 
 === "TypeScript"
 
@@ -237,11 +237,11 @@ All controls return promise/future void. Pause/close cancel network activity and
 | `dismissRejection(ordinal)` | Remove a handled rejection from the durable local inbox; does not retry it |
 | `drop(ordinal)` | Remove eligible unsent work and recompute local state; frozen/sent work cannot be cancelled this way |
 
-Phases are `queued` (not frozen) and `frozen` (request retained for sending or retry); a receipt completes a frozen Action and removes it, so there is no phase after `frozen`. An ordinal is local bookkeeping. To retry a rejected business operation, make a new Action call after resolving the cause. See [sync and recovery](sync.md).
+Phases are `queued` (not frozen) and `frozen` (request retained for sending or retry); a receipt completes a frozen call and removes it, so there is no phase after `frozen`. An ordinal is local bookkeeping. To retry a rejected business operation, make a new call after resolving the cause. See [sync and recovery](sync.md).
 
 ## Prerequisites
 
-A schema can require host I/O, such as an upload, before a durable Action can be sent. The local change remains visible while this work is pending.
+A schema can require host I/O, such as an upload, before a durable call can be sent. The local change remains visible while this work is pending.
 
 === "TypeScript"
 

@@ -55,6 +55,7 @@
           "operation": "create"
         }
       ],
+      "kind": "mutation",
       "name": "AddTodo",
       "outputEnums": [],
       "outputs": [
@@ -116,6 +117,7 @@
           "operation": "update"
         }
       ],
+      "kind": "mutation",
       "name": "SetTodoDone",
       "outputEnums": [],
       "outputs": [

@@ -38,6 +38,6 @@ Verified 2026-09-15: `cargo test -p axton-sqlite --test push --locked`, `node --
 
 ## 11. Risks and Technical Debt
 
-**Accepted limitation.** `self` is the only argument expression. The compiler message says "currently"; no issue tracks an extension. Stated for authors in the [schema reference](../../../../website/docs/schema/reference.md#mutations).
+**Accepted limitation.** `self` is the only argument expression. The compiler message says "currently"; no issue tracks an extension. Stated for authors in the [schema reference](../../../../website/docs/schema/define.md#relations-prerequisites-and-ordering).
 
 **Accepted limitation.** The Rust API accepts opaque prerequisite keys; a non-JSON key has no `name`, so a run of `runPrerequisites` fails it with `missing prerequisite handler` rather than skipping it. Affects only Rust callers that also use the SDK runner; they settle such keys through `set_readiness`.

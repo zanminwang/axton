@@ -2,7 +2,7 @@
 
 Two phones, one shared list. Alice and Bob each run the same React Native app against their own local SQLite database; the app writes locally first and synchronizes through an application-owned TypeScript backend on PostgreSQL. This is the example behind [#31](https://github.com/zanminwang/axton/issues/31).
 
-The app has two actions: add a task and mark it done. Everything else (assignment, replies, editing, deleting) is deliberately absent so the schema, backend and screen stay readable.
+The app has two Mutations: add a task and mark it done. Everything else (assignment, replies, editing, deleting) is deliberately absent so the schema, backend and screen stay readable.
 
 ## Layout
 
@@ -75,10 +75,10 @@ Each installation keeps its own database file and client identity under Applicat
 ## Walkthrough
 
 1. **Two tables.** `models/todo.model` declares `User(id, name)` and `Todo(id, title, done, createdById)` with `createdBy` as a reference. The backend adds no other application tables; AXTON's own sync tables come from `packages/postgres/migration.sql`.
-2. **Two Actions.** `AddTodo` creates a task; `SetTodoDone` updates only `done`. The generated client exposes `client.actions.addTodo` and `client.actions.setTodoDone` for durable local commits. Each returns an `ActionCall` whose `wait()` yields the backend result or a rejection. `client.actions.call.setTodoDone` executes directly and returns its committed result. The generated backend requires one typed handler per retained Action version.
-3. **Backend rules.** `server.mts` trims the title and refuses empty ones, requires the creator to be the authenticated user and `done` to start false, and turns only a proven primary-key collision into `todo.id_conflict`. Handlers throw `ActionRejected` for these business refusals, add a `Todo` identity to changed records, and publish on channel `todo:demo` in the same database transaction. AXTON reads the record through the Loader and returns a snapshot in the Action result.
+2. **Two Mutations.** `AddTodo` creates a task; `SetTodoDone` updates only `done`. The generated client exposes `client.mutations.addTodo` and `client.mutations.setTodoDone` for durable local commits. Each returns a `Call` whose `wait()` yields the backend result or a rejection. `client.mutations.call.setTodoDone` executes directly and returns its committed result. The generated backend requires one typed `mutations` handler per retained version.
+3. **Backend rules.** `server.mts` trims the title and refuses empty ones, requires the creator to be the authenticated user and `done` to start false, and turns only a proven primary-key collision into `todo.id_conflict`. Handlers throw `CallRejected` for these business refusals, add a `Todo` identity to changed records, and publish on channel `todo:demo` in the same database transaction. AXTON reads the record through the Loader and returns a snapshot in the Mutation result.
 4. **Local watch.** `mobile/src/todo.ts` opens the generated client on a per-user database, registers the durable subscription with `client.scopes.subscribe('todo:demo')`, and exposes `watch`, `add` and `setDone`. The registration is durable and offline-capable, and its origin is the first acknowledged head, so the screen fills with what is published from then on. `add` and `setDone` return after the local commit; the screen renders from watch callbacks only, never from a second in-memory store.
-5. **Offline and back.** Without a network, adds and completions commit locally and queue in SQLite. Killing and relaunching the app keeps the rows, the queue, the client identity and the subscription with its committed delivery position. On reconnect the engine pushes the queued create before its dependent update, catches up the changes it missed over HTTP from that position, then follows the live stream; reconnecting never rewinds the position and never reloads the Scope from the beginning. `integration/e2e/todo.test.mjs` verifies the current Action flow with native SQLite clients and PostgreSQL. After building a new app, `integration/platform/run_todo_ios_smoke.sh` can exercise the flow on two simulators with a per-phone network fault; the recorded simulator run below predates the Action migration.
+5. **Offline and back.** Without a network, adds and completions commit locally and queue in SQLite. Killing and relaunching the app keeps the rows, the queue, the client identity and the subscription with its committed delivery position. On reconnect the engine pushes the queued create before its dependent update, catches up the changes it missed over HTTP from that position, then follows the live stream; reconnecting never rewinds the position and never reloads the Scope from the beginning. `integration/e2e/todo.test.mjs` verifies the current Mutation flow with native SQLite clients and PostgreSQL. After building a new app, `integration/platform/run_todo_ios_smoke.sh` can exercise the flow on two simulators with a per-phone network fault; the recorded simulator run below predates the Action migration.
 
 Engine-owned tables, cursors and receipts are described in [client storage](../../docs/engineering/architecture/client/storage/README.md) and the [guarantees](../../docs/engineering/guarantees.md).
 
@@ -93,7 +93,7 @@ The e2e runner covers the happy path, every rejection code, an unknown identity,
 
 ## Evidence
 
-The original two-device smoke evidence below was recorded before the Action migration. It establishes the mobile host and screen behavior at that commit; the current Action schema and generated bindings are covered by the host E2E suite above.
+The original two-device smoke evidence below was recorded before the Action migration. It establishes the mobile host and screen behavior at that commit; the current Mutation schema and generated bindings are covered by the host E2E suite above.
 
 Verified 2026-09-15 on branch `codex/todo-mobile` on the working tree later committed as `bd1678c` and rebased onto `c54ff70` (React Native support, #100); the SDK follow-up between those commits changed only build tooling and test timeouts with Xcode 26.5 (17F42), the iOS 26.5 simulator runtime (23F77), two disposable iPhone 17 simulators, Node 26.4.0, cargo 1.98.1, CocoaPods 1.16.2, Expo 57.0.22, React Native 0.86.3 and React 19.2.3.
 

@@ -78,14 +78,14 @@ export type {
 } from "./subscriptions.mts";
 import {
   ActionRegistry,
-  ActionError,
+  CallError,
   actionError,
-  type ActionCall,
-  type ActionOptions,
+  type Call,
+  type CallOptions,
 } from "./actions.mts";
 
 /** The native command field for an Action's store option, beside its args. */
-function storeOption(options?: ActionOptions): { store?: unknown } {
+function storeOption(options?: CallOptions): { store?: unknown } {
   return options?.store === undefined ? {} : { store: options.store };
 }
 /** Report an application callback's failure without changing what was committed. */
@@ -284,10 +284,10 @@ export function createClient<
       version: number,
       args: object,
       decode: (value: unknown) => T,
-      options?: ActionOptions,
-    ): Promise<ActionCall<T>> {
+      options?: CallOptions,
+    ): Promise<Call<T>> {
       this.#actions.assertSupported();
-      let call: ActionCall<T> | undefined;
+      let call: Call<T> | undefined;
       try {
         await this.submitAction(
           name,
@@ -309,7 +309,7 @@ export function createClient<
       version: number,
       args: object,
       decode: (value: unknown) => T,
-      options?: ActionOptions,
+      options?: CallOptions,
     ): Promise<T> {
       let applied: {
         completions: {
@@ -327,16 +327,16 @@ export function createClient<
         throw actionError(error);
       }
       const outcome = applied.completions[0]?.outcome;
-      if (!outcome) throw new ActionError("action.observation_failed");
+      if (!outcome) throw new CallError("action.observation_failed");
       if (outcome.status === "failed")
-        throw new ActionError(
+        throw new CallError(
           outcome.code ?? "action.failed",
           outcome.execution === "rejected" ? "rejected" : "unknown",
         );
       try {
         return decode(outcome.result);
       } catch (cause) {
-        throw new ActionError("action.observation_failed", "unknown", cause);
+        throw new CallError("action.observation_failed", "unknown", cause);
       }
     }
     /** Internal Action seam: register after local commit, synchronously before waking work. */
@@ -345,7 +345,7 @@ export function createClient<
       version: number,
       args: object,
       onCommitted?: (callId: string, ordinal: number) => void,
-      options?: ActionOptions,
+      options?: CallOptions,
     ): Promise<{ callId: string; ordinal: number }> {
       if (this.#activePublicTx?.inCallback())
         return Promise.reject(Error("transaction_active"));
@@ -382,7 +382,7 @@ export function createClient<
       name: string,
       version: number,
       args: object,
-      options?: ActionOptions,
+      options?: CallOptions,
     ) {
       if (this.#activePublicTx?.inCallback()) throw Error("transaction_active");
       const direct = this.#direct;

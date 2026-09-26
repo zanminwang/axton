@@ -6,8 +6,9 @@ model Todo {
  @@version(2)
 }
 
-@version(2) action AddTodo(todo Todo.create)
-@version(2) action UpdateTodo(todo Todo.update<title>)
-action DeleteTodo(todo Todo.delete)
-action SendEmail(to String, subject String, body String) { messageId String }
-@version(2) action SearchTodos(query String?) { todos Todo[] first Todo? count Int labels String[] hint String? }
+@version(2) mutation AddTodo(todo Todo.create)
+@version(2) mutation UpdateTodo(todo Todo.update<title>)
+mutation DeleteTodo(todo Todo.delete)
+mutation SendEmail(to String, subject String, body String) { messageId String }
+@version(3) query SearchTodos(query String?) { todos Todo[] first Todo? count Int labels String[] hint String? }
+@version(2) mutation RetitleTodos(query String, title String) { todos Todo[] first Todo? }

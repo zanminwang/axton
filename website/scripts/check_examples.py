@@ -1,5 +1,9 @@
 """Typecheck client snippets directly from the maintained Markdown sources.
 
+Snippets fenced with title="action-contract" are checked against the
+Mutation and Query fixture in integration/action-contract; the others against
+the round-trip Entry fixture.
+
 Run after scripts/build.sh, npm ci at the root, and Dart package resolution.
 The real HTTP/SQLite behavior is covered by integration/e2e/run.sh.
 """
@@ -27,8 +31,8 @@ def snippets(language, sources=None, *, context='ordinary'):
         text = (ROOT / source).read_text()
         pattern = r'^(?P<indent> *)```' + fences + r'(?P<meta>[^\n]*)\n(?P<code>.*?)^(?P=indent)```'
         for match in re.finditer(pattern, text, re.M | re.S):
-            is_action = match['meta'].strip() == 'title="action-contract"'
-            if is_action != (context == 'action'):
+            is_operation = match['meta'].strip() == 'title="action-contract"'
+            if is_operation != (context == 'operation'):
                 continue
             code = re.sub(r'^import .*?;\n', '', textwrap.dedent(match['code']), flags=re.M | re.S)
             line = text[:match.start()].count('\n') + 1
@@ -59,16 +63,16 @@ declare const stop: () => void;
                         '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
                         '--allowImportingTsExtensions', str(ts)], cwd=ROOT, check=True)
     with tempfile.TemporaryDirectory(prefix='.docs-check-', dir=ROOT / 'integration/action-contract') as temp:
-        action = Path(temp) / 'examples.mts'
-        action.write_text('''import type { TodoCreate } from '../generated.ts';
+        operation = Path(temp) / 'examples.mts'
+        operation.write_text('''import type { TodoCreate } from '../generated.ts';
 import type { GeneratedClient } from '../client.ts';
 declare const client: GeneratedClient;
 ''' + '\n'.join(f'// {source}\nasync function example{i}() {{\n{code}\n}}'
-                  for i, (source, code) in enumerate(snippets('ts', context='action'))))
+                  for i, (source, code) in enumerate(snippets('ts', context='operation'))))
         subprocess.run([str(ROOT / 'node_modules/.bin/tsc'), '--noEmit', '--strict',
                         '--exactOptionalPropertyTypes', '--skipLibCheck', '--target', 'ES2022',
                         '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
-                        '--allowImportingTsExtensions', str(action)], cwd=ROOT, check=True)
+                        '--allowImportingTsExtensions', str(operation)], cwd=ROOT, check=True)
     with tempfile.TemporaryDirectory(prefix='.docs-check-', dir=ROOT / 'packages/dart') as temp:
         directory = Path(temp)
         dart = directory / 'examples.dart'
@@ -95,24 +99,15 @@ Future<void> uploadFile(dynamic key) async {}
 import '../generated.dart';
 late GeneratedClient client;
 ''' + '\n'.join(f'// {source}\nFuture<void> example{i}() async {{\n{code}\n}}'
-                  for i, (source, code) in enumerate(snippets('dart', context='action'))))
+                  for i, (source, code) in enumerate(snippets('dart', context='operation'))))
         subprocess.run(['dart', 'analyze', str(dart)], cwd=ROOT / 'integration/action-contract', check=True)
     with tempfile.TemporaryDirectory(prefix='.docs-check-', dir=ROOT / 'integration/e2e/fixtures/round-trip') as temp:
         backend = Path(temp) / 'backend.mts'
         backend.write_text('''import { PrismaClient, type Prisma } from '@prisma/client';
-import { createBackend, devAuth, Entry, MutationRejected, type Handlers, type Loaders } from '../generated/backend.ts';
+import { createBackend, Entry } from '../generated/backend.ts';
 import { prisma } from '../../../../../packages/postgres/index.mts';
-import type { Database, Publish } from '../../../../../packages/server/index.mts';
-type Tx = Prisma.TransactionClient;
-declare function canEdit(tx: Tx, userId: string, identity: { id: string }): Promise<boolean>;
-declare function loadVisibleEntry(tx: Tx, userId: string, identity: { id: string }): Promise<Entry | null>;
-declare const changes: ReturnType<typeof Entry>[];
 declare const db: PrismaClient;
-declare const database: Database<Prisma.TransactionClient>;
-declare const handlers: Handlers<Prisma.TransactionClient>;
-declare const loaders: Loaders<Prisma.TransactionClient>;
 declare const backend: ReturnType<typeof createBackend<Prisma.TransactionClient>>;
-declare const publish: Publish;
 ''' + '\n'.join(f'// {source}\nasync function example{i}() {{\n{code.replace("export const", "const")}\n}}'
                   for i, (source, code) in enumerate(snippets('ts', BACKEND_SOURCES))))
         subprocess.run([str(ROOT / 'node_modules/.bin/tsc'), '--noEmit', '--strict',
@@ -121,13 +116,18 @@ declare const publish: Publish;
                         '--allowImportingTsExtensions', str(backend)], cwd=ROOT, check=True)
     with tempfile.TemporaryDirectory(prefix='.docs-check-', dir=ROOT / 'integration/action-contract') as temp:
         backend = Path(temp) / 'backend.mts'
-        backend.write_text('''import { Todo, ActionRejected, type ActionContext, type Handlers, type Loaders, type TodoIdentity } from '../backend.ts';
+        backend.write_text('''import { Todo, CallRejected, createBackend, devAuth, type MutationContext, type Mutations, type Queries, type Loaders, type TodoIdentity } from '../backend.ts';
+import type { Database } from '../../../packages/server/index.mts';
 type Tx = unknown;
+declare const database: Database<Tx>;
+declare const mutations: Mutations<Tx>;
+declare const queries: Queries<Tx>;
+declare const loaders: Loaders<Tx>;
 declare function saveTodo(tx: Tx, todo: unknown): Promise<void>;
-declare function visibleTodoIds(tx: Tx, userId: string): Promise<string[]>;
+declare function searchTodos(tx: Tx, userId: string, text: string, cursor: string | null): Promise<{ ids: string[]; next: string | null }>;
 declare function loadVisibleTodo(tx: Tx, userId: string, id: TodoIdentity): Promise<Todo | null>;
 ''' + '\n'.join(f'// {source}\nasync function example{i}() {{\n{code}\n}}'
-                  for i, (source, code) in enumerate(snippets('ts', BACKEND_SOURCES, context='action'))))
+                  for i, (source, code) in enumerate(snippets('ts', BACKEND_SOURCES, context='operation'))))
         subprocess.run([str(ROOT / 'node_modules/.bin/tsc'), '--noEmit', '--strict',
                         '--exactOptionalPropertyTypes', '--skipLibCheck', '--target', 'ES2022',
                         '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
@@ -140,7 +140,7 @@ declare function loadVisibleTodo(tx: Tx, userId: string, id: TodoIdentity): Prom
             subprocess.run([str(ROOT / 'target/debug/axton'), 'compile', str(directory),
                             str(directory / 'generated')], cwd=ROOT, check=True)
             print(f'Compiled schema from {source}')
-    print(f"Typechecked {len(snippets('ts')) + len(snippets('ts', BACKEND_SOURCES))} TypeScript, {len(snippets('ts', context='action')) + len(snippets('ts', BACKEND_SOURCES, context='action'))} Action TypeScript, {len(snippets('dart'))} Dart and {len(snippets('dart', context='action'))} Action Dart documentation snippets.")
+    print(f"Typechecked {len(snippets('ts')) + len(snippets('ts', BACKEND_SOURCES))} TypeScript, {len(snippets('ts', context='operation')) + len(snippets('ts', BACKEND_SOURCES, context='operation'))} Mutation/Query TypeScript, {len(snippets('dart'))} Dart and {len(snippets('dart', context='operation'))} Mutation/Query Dart documentation snippets.")
 
 
 if __name__ == '__main__':

@@ -55,4 +55,4 @@ Executed 2026-09-25: `cargo test -p axton-core -p axton-server --locked`, `bash 
 ## 11. Risks and Technical Debt
 
 - **Accepted limitation (planned change).** The per-channel limit is the fixed 50 ([#11](https://github.com/zanminwang/axton/issues/11)), and a bootstrap page carries at most the same 50 records. Snapshot transport instead of a cursor walk is [#14](https://github.com/zanminwang/axton/issues/14).
-- **Accepted limitation.** An `error` change is not retried by the protocol; the record is corrected the next time it is published or returned by an Action output with storage enabled.
+- **Accepted limitation.** An `error` change is not retried by the protocol; the record is corrected the next time it is published or returned by a Mutation or Query output with storage enabled.

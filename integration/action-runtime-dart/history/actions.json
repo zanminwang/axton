@@ -52,6 +52,7 @@
             }
           }
         ],
+        "kind": "mutation",
         "name": "Echo",
         "outputEnums": [
           {
@@ -100,6 +101,47 @@
         "version": 1
       }
     },
+    "Now": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": []
+        },
+        "inputs": [
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "list": false,
+            "name": "at",
+            "nullable": false,
+            "required": true,
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          }
+        ],
+        "kind": "query",
+        "name": "Now",
+        "outputEnums": [],
+        "outputs": [
+          {
+            "cardinality": "single",
+            "kind": "value",
+            "name": "at",
+            "source": "handlerValue",
+            "type": {
+              "kind": "scalar",
+              "name": "dateTime"
+            }
+          }
+        ],
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "version": 1
+      }
+    },
     "Ping": {
       "1": {
         "input": {
@@ -107,6 +149,7 @@
           "models": []
         },
         "inputs": [],
+        "kind": "mutation",
         "name": "Ping",
         "outputEnums": [],
         "outputs": [],
@@ -190,6 +233,7 @@
             "operation": "update"
           }
         ],
+        "kind": "mutation",
         "name": "Touch",
         "outputEnums": [],
         "outputs": [

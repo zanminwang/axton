@@ -1,46 +1,46 @@
 import 'dart:async';
 
-enum ActionStatus { pending, succeeded, failed }
+enum CallStatus { pending, succeeded, failed }
 
 /// A failed execution or an inability to observe its final result.
-final class ActionError implements Exception {
+final class CallError implements Exception {
   final String code;
   final String execution;
   final Object? cause;
-  const ActionError(this.code, {this.execution = 'unknown', this.cause});
+  const CallError(this.code, {this.execution = 'unknown', this.cause});
 
   @override
-  String toString() => 'ActionError($code, execution: $execution)';
+  String toString() => 'CallError($code, execution: $execution)';
 }
 
-sealed class ActionOutcome<T> {
-  const ActionOutcome();
+sealed class CallOutcome<T> {
+  const CallOutcome();
 }
 
-final class ActionSuccess<T> extends ActionOutcome<T> {
+final class CallSuccess<T> extends CallOutcome<T> {
   final T result;
-  const ActionSuccess(this.result);
+  const CallSuccess(this.result);
 }
 
-final class ActionFailure<T> extends ActionOutcome<T> {
-  final ActionError error;
-  const ActionFailure(this.error);
+final class CallFailure<T> extends CallOutcome<T> {
+  final CallError error;
+  const CallFailure(this.error);
 }
 
 /// Base of the generated per-Action `store` selectors. A selector chooses
 /// which explicit Model outputs also update local Models; results are the
 /// same either way.
-abstract class ActionStore {
-  const ActionStore();
+abstract class CallStore {
+  const CallStore();
 
   /// The wire form beside business args: null for the default (store all),
   /// false for none, or a map of output names to booleans.
   Object? toWire();
 }
 
-abstract interface class ActionCall<T> {
-  ActionStatus get status;
-  Future<ActionOutcome<T>> wait();
+abstract interface class Call<T> {
+  CallStatus get status;
+  Future<CallOutcome<T>> wait();
 }
 
 abstract interface class ActionWeakState {
@@ -56,18 +56,18 @@ final class _WeakState implements ActionWeakState {
 
 abstract class _PendingState {
   void complete(Map<String, dynamic> outcome);
-  void fail(ActionError error);
+  void fail(CallError error);
 }
 
 final class _CallState<T> implements _PendingState {
   final T Function(dynamic) decode;
   final void Function(_PendingState) retain;
-  final Completer<ActionOutcome<T>> _done = Completer<ActionOutcome<T>>();
-  ActionStatus status = ActionStatus.pending;
+  final Completer<CallOutcome<T>> _done = Completer<CallOutcome<T>>();
+  CallStatus status = CallStatus.pending;
 
   _CallState(this.decode, this.retain);
 
-  Future<ActionOutcome<T>> wait() {
+  Future<CallOutcome<T>> wait() {
     if (!_done.isCompleted) retain(this);
     return _done.future;
   }
@@ -78,15 +78,15 @@ final class _CallState<T> implements _PendingState {
     if (outcome['status'] == 'succeeded') {
       try {
         final value = decode(outcome['result']);
-        status = ActionStatus.succeeded;
-        _done.complete(ActionSuccess<T>(value));
+        status = CallStatus.succeeded;
+        _done.complete(CallSuccess<T>(value));
       } catch (error) {
-        fail(ActionError('action.observation_failed', cause: error));
+        fail(CallError('action.observation_failed', cause: error));
       }
       return;
     }
     fail(
-      ActionError(
+      CallError(
         outcome['code'] as String? ?? 'action.failed',
         execution: outcome['execution'] as String? ?? 'rejected',
       ),
@@ -94,20 +94,20 @@ final class _CallState<T> implements _PendingState {
   }
 
   @override
-  void fail(ActionError error) {
+  void fail(CallError error) {
     if (_done.isCompleted) return;
-    status = ActionStatus.failed;
-    _done.complete(ActionFailure<T>(error));
+    status = CallStatus.failed;
+    _done.complete(CallFailure<T>(error));
   }
 }
 
-final class _ActionHandle<T> implements ActionCall<T> {
+final class _ActionHandle<T> implements Call<T> {
   final _CallState<T> _state;
   _ActionHandle(this._state);
   @override
-  ActionStatus get status => _state.status;
+  CallStatus get status => _state.status;
   @override
-  Future<ActionOutcome<T>> wait() => _state.wait();
+  Future<CallOutcome<T>> wait() => _state.wait();
 }
 
 /// Per-client completion routing. Weak slots do not retain abandoned handles.
@@ -127,10 +127,10 @@ final class ActionObservers {
 
   void _sweep() => _routes.removeWhere((_, ref) => ref.target == null);
 
-  ActionCall<T> register<T>(String callId, T Function(dynamic) decode) {
+  Call<T> register<T>(String callId, T Function(dynamic) decode) {
     if (_closed) {
       final state = _CallState<T>(decode, (_) {});
-      state.fail(const ActionError('client.closed'));
+      state.fail(const CallError('client.closed'));
       return _ActionHandle<T>(state);
     }
     _sweep();
@@ -163,7 +163,7 @@ final class ActionObservers {
     _routes.clear();
     _active.clear();
     for (final state in states) {
-      state.fail(const ActionError('client.closed'));
+      state.fail(const CallError('client.closed'));
     }
   }
 }

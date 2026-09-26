@@ -1,12 +1,12 @@
-# Direct Actions
+# Direct calls
 
 ## 1. Introduction and Goals
 
-Direct Actions use request/response delivery for a typed final result. They share the Action executor, per-call identity and Model result rules with [durable Action pushes](push.md), but have no durable client queue or inferred local optimism.
+A direct call uses request/response delivery for a typed final result: the default route of a Query and the `mutations.call` override of a Mutation ([Mutations and Queries](../schema/actions.md)). It shares the operation executor, per-call identity and Model result rules with [durable pushes](push.md), but has no durable client queue or inferred local optimism. Internal names keep the earlier Action spelling: the `/sync/actions` endpoint, `ActionStore` and the `action.*` codes.
 
 ## 3. Context and Scope
 
-`POST /sync/actions` carries `{call: {callId, name, version, args, store?}, models}`. `callId` is a UUID generated once by the client; `models` declares the Model read contracts needed for results and authority. Ordinary-only Actions may use an empty `models` map. The response carries one correlated `completion` and `records` of authority. The client validates correlation and applies authority after the server commits.
+`POST /sync/actions` carries `{call: {callId, name, version, args, store?}, models}`. `callId` is a UUID generated once by the client; `models` declares the Model read contracts needed for results and authority. An operation with only ordinary outputs and inputs may use an empty `models` map. The request carries no kind: the server takes it from the retained descriptor for `name` and `version`. The response carries one correlated `completion` and `records` of authority. The client validates correlation and applies authority after the server commits.
 
 ## 5. Building Block View
 
@@ -14,7 +14,7 @@ Wire envelopes, normalization and `ActionStore`: [core/actions.rs](../../../../c
 
 ## 6. Runtime View
 
-The server authenticates the request, claims its call ID in the application transaction, then either returns the saved response or invokes the retained handler version. The same transaction contains business writes, Model Loader snapshots, stamps, publications and the saved response. A repeated call ID replays the stored outcome without re-running the handler or Loader. Direct request/response has a finite transport timeout; a client timeout may leave execution status unknown because the transaction could have committed.
+The server authenticates the request, claims its call ID in the application transaction, then either returns the saved response or invokes the retained handler version. Both kinds are claimed and saved, so a Query also stores call metadata. A Query settlement that carries changes or publications is the call's `query.effects_forbidden` rejection before any stamp, readback or publication ([enforcement](../schema/actions.md#8-crosscutting-concepts)). The same transaction contains business writes, Model Loader snapshots, stamps, publications and the saved response. A repeated call ID replays the stored outcome without re-running the handler or Loader. Direct request/response has a finite transport timeout; a client timeout may leave execution status unknown because the transaction could have committed. A direct call that cannot reach the server fails; it is never moved to the durable queue.
 
 ### Store policy
 
@@ -30,4 +30,5 @@ A successful Model output is the Loader snapshot at that invocation. Its record 
 
 - **One call ID has one committed outcome, and replay does not re-execute application code.** Evidence: [server Action tests](../../../../crates/server/tests/actions.rs) and [PostgreSQL conformance](../../../../integration/persistence/server/driver-conformance.test.mjs).
 - **`store` removes only output-only authority, joins the call identity and replays unchanged.** Evidence: [server store tests](../../../../crates/server/tests/action_store.rs), [PostgreSQL persistence](../../../../integration/persistence/server/actions.test.mjs) and [end-to-end](../../../../integration/action-e2e/action.test.mts).
-- **The direct response is validated against the requested Action and Model contracts.** Evidence: [core Action contracts](../../../../crates/core/tests/contracts.rs).
+- **A Query settlement with changes or publications is rejected before framework handling on this path too.** Evidence: [server Action tests](../../../../crates/server/tests/actions.rs) `forged_query_effects_are_rejected_on_the_direct_path_too`.
+- **The direct response is validated against the requested operation and Model contracts.** Evidence: [core Action contracts](../../../../crates/core/tests/contracts.rs).

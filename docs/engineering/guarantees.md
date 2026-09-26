@@ -2,7 +2,7 @@
 
 The behavioral contract of the Rust sync core. These are requirements, not a claim that every case is implemented or tested. [Coverage review](testing/review.md) records known gaps and decisions still needed; [component documentation](architecture.md) owns API, encoding, schema and adapter rules.
 
-Simulation exercises these behaviors across clients and message sequences. Real-database tests must also verify claims that depend on persistence or transaction semantics. IDs remain stable so scenarios can refer to them. Existing references to a mutation describe the retained queue and replay machinery; generated application APIs expose Actions for backend work and local-only Model CRUD for local writes.
+Simulation exercises these behaviors across clients and message sequences. Real-database tests must also verify claims that depend on persistence or transaction semantics. IDs remain stable so scenarios can refer to them. Existing references to a mutation describe the retained queue and replay machinery; generated application APIs expose Mutations and Queries for backend work and local-only Model CRUD for local writes.
 
 ## Failure isolation
 
@@ -32,19 +32,20 @@ Applications use individual operations as they would ordinary API calls. This ap
 
 P6 and P7 are implemented: handler rejections, loader refusals, an unsupported mutation version (`mutation_version_unsupported`), a handler failure (`handler.failed`), a loader failure (`loader.failed`) and an undeclared or unretained changed model (`model_version_unsupported`) each roll back only that mutation's savepoint and become its rejection. The only failures that still take down the whole delivery are the request envelope and authentication (`400`/`401`), client identity and order (`403 client.owner_mismatch`, `409 gap`/`overlap`), and infrastructure — a failed `rollback` or a persistence fault in `claim`, `saveReceipt`, `advanceStamp`, `ensureStamp`, `publish` or `scan`. See [Server / Push](architecture/server/engine/push.md#9-architecture-decisions) and [#95](https://github.com/zanminwang/axton/issues/95).
 
-## Q. Action outcomes
+## Q. Call outcomes
 
 | ID | Required behavior |
 | --- | --- |
-| Q1 | A durable Action commits canonical intent and inferred local Model operations together. It may have no Model operations. Frozen intent bytes and call ID remain unchanged across retries and reopen. |
+| Q1 | A durable call (a Mutation by default, a Query through `enqueue`) commits canonical intent and inferred local Model operations together. It may have no Model operations; a queued Query never has any. Frozen intent bytes and call ID remain unchanged across retries and reopen. |
 | Q2 | Each committed call ID has one immutable backend outcome. Claim, business writes, Loader result snapshots, stamps, publications and saved response share the application transaction. A replay returns the stored outcome without re-running the handler or Loader; no backend TTL or automatic pruning removes it. |
-| Q3 | A queued Action handle reports local acceptance before backend completion. Its `wait()` resolves with either its typed result or an `ActionError`; an initial local failure rejects before the handle exists. Client result objects live in memory, while queue/completion state persists. |
-| Q4 | Direct Actions use a finite request/response timeout, skip durable queueing and automatic optimism, and do not drain unrelated queued work. The direct response applies committed authority using the same stamp and pending-replay rules as a receipt. A timeout may leave execution unknown. |
+| Q3 | A durable call's handle reports local acceptance before backend completion. Its `wait()` resolves with either its typed result or a `CallError`; an initial local failure rejects before the handle exists. Client result objects live in memory, while queue/completion state persists. |
+| Q4 | Direct calls (a Query by default, a Mutation through `call`) use a finite request/response timeout, skip durable queueing and automatic optimism, never fall back to the queue, and do not drain unrelated queued work. The direct response applies committed authority using the same stamp and pending-replay rules as a receipt. A timeout may leave execution unknown. |
 | Q5 | A Model output is the versioned Loader snapshot for its invocation, not the batch-final record authority or the current optimistic local view. Explicit Model outputs use handler-returned identity objects. Nullable outputs, lists and void preserve their declared shapes. |
-| Q6 | Diagnostic callback exceptions after commit cannot replace the Action outcome, re-execute the handler or become transport errors; SDK runtimes report them through their uncaught-error channel. |
+| Q6 | Diagnostic callback exceptions after commit cannot replace the call outcome, re-execute the handler or become transport errors; SDK runtimes report them through their uncaught-error channel. |
 | Q7 | A call's `store` option controls only the additional authority its explicit Model outputs contribute. Authority required by mutation inputs and handler-reported changes is always kept, results are unchanged, and the policy is persisted with the durable call and part of its call identity. |
+| Q8 | A Query's settlement carries no business changes or publications: one that does is rejected for that call alone, before any stamp, readback or publication, on both delivery paths and for any host. This constrains what the framework applies, not what trusted handler code can do with its own transaction. |
 
-See [Action protocol](architecture/protocol/actions.md), [server execution](architecture/server/engine/README.md) and [typed client](architecture/sdks/typed-api/client.md). Tool behavior remains [#143](https://github.com/zanminwang/axton/issues/143).
+See [Mutations and Queries](architecture/schema/actions.md), [direct call protocol](architecture/protocol/actions.md), [server execution](architecture/server/engine/README.md) and [typed client](architecture/sdks/typed-api/client.md). Tool behavior remains [#143](https://github.com/zanminwang/axton/issues/143).
 
 ## A. Authority and settlement
 

@@ -8,19 +8,19 @@ import { createClient } from "../../packages/client-js/runtime.mts";
 import {
   Client,
   Transaction,
-  type ActionCall,
-  type ActionOutcome,
+  type Call,
+  type CallOutcome,
 } from "../../packages/client-js/index.mts";
 import { GeneratedClient } from "./client.ts";
-import { makeActions } from "./generated.ts";
+import { makeMutations, makeQueries } from "./generated.ts";
 
-test("generated Action codecs retain null, lists, omitted patches and DateTime identity", async () => {
+test("generated operation codecs retain null, lists, omitted patches and DateTime identity", async () => {
   const calls: {
     name: string;
     version: number;
     args: Record<string, unknown>;
   }[] = [];
-  const actions = makeActions({
+  const port = {
     async invokeAction(
       name: string,
       version: number,
@@ -60,9 +60,11 @@ test("generated Action codecs retain null, lists, omitted patches and DateTime i
             : { todo: null, echoed: "2026-01-01T00:00:00.000Z" },
       );
     },
-  });
+  };
+  const mutations = makeMutations(port);
+  const queries = makeQueries(port);
   const at = new Date("2026-01-01T00:00:00.000Z");
-  await actions.put({
+  await mutations.put({
     todo: { id: "one", title: "A", at, status: "open", note: null },
     when: at,
     statuses: ["open", "closed"],
@@ -82,26 +84,26 @@ test("generated Action codecs retain null, lists, omitted patches and DateTime i
     statuses: ["open", "closed"],
     note: null,
   });
-  await actions.change({ at });
+  await mutations.change({ at });
   assert.deepEqual(calls[1]?.args, { todo: null, at: at.toISOString() });
-  await actions.change({ todo: { id: "one", title: "B" }, at });
+  await mutations.change({ todo: { id: "one", title: "B" }, at });
   assert.deepEqual(calls[2]?.args, {
     todo: { id: "one", title: "B" },
     at: at.toISOString(),
   });
-  await actions.clear({ todo: [{ id: "one" }] });
+  await mutations.clear({ todo: [{ id: "one" }] });
   assert.deepEqual(calls[3]?.args, { todo: [{ id: "one" }] });
-  await actions.mark({ moment: { at, title: "X" } });
+  await mutations.mark({ moment: { at, title: "X" } });
   assert.deepEqual(calls[4]?.args, {
     moment: { at: at.toISOString(), title: "X" },
   });
-  const result = await actions.call.change({ at });
+  const result = await mutations.call.change({ at });
   assert.ok(result.echoed instanceof Date);
   assert.equal(result.todo, null);
-  const removed = await actions.call.removeMoment({ moment: { at } });
+  const removed = await mutations.call.removeMoment({ moment: { at } });
   assert.ok(removed.moment.at instanceof Date);
   assert.equal(removed.moment.at.toISOString(), at.toISOString());
-  const put = await actions.call.put({
+  const put = await mutations.call.put({
     todo: { id: "one", title: "A", at, status: "open", note: null },
     when: at,
     statuses: ["open"],
@@ -110,9 +112,23 @@ test("generated Action codecs retain null, lists, omitted patches and DateTime i
   assert.equal(put.status, "closed");
   assert.ok(put.todo.at instanceof Date);
   assert.ok(put.echoed instanceof Date);
+  // Find is a Query at v2: direct by default, durable under enqueue.
+  const found = await queries.find({ at });
+  assert.equal(found.todo, null);
+  await queries.enqueue.find({ at });
+  assert.deepEqual(
+    calls.slice(-2).map(({ name, version }) => ({ name, version })),
+    [
+      { name: "Find", version: 2 },
+      { name: "Find", version: 2 },
+    ],
+  );
+  assert.equal("find" in mutations, false);
+  assert.equal("find" in mutations.call, false);
+  assert.equal("put" in queries, false);
 });
 
-test("generated Actions resolve through the native pump and direct transport while Models stay local", async () => {
+test("generated routes resolve through the native pump and direct transport while Models stay local", async () => {
   const directory = await mkdtemp(join(tmpdir(), "axton-generated-actions-"));
   const native = createRequire(import.meta.url)(
     "../../bindings/node/axton-node.node",
@@ -186,17 +202,38 @@ test("generated Actions resolve through the native pump and direct transport whi
       url: "http://unused",
       token: "alice",
     });
-    const call: ActionCall<void> = await client.actions.ping({});
-    const settled: ActionOutcome<void> = await call.wait();
+    const call: Call<void> = await client.mutations.ping({});
+    const settled: CallOutcome<void> = await call.wait();
     assert.equal(settled.error, null);
     assert.equal(call.status, "succeeded");
     assert.deepEqual(await call.wait(), settled);
     assert.equal(pushes, 1);
-    const found = await client.actions.call.find({ at: new Date(row.at) });
+    // The default Query route is direct: no queue row, a final result.
+    const found = await client.queries.find({ at: new Date(row.at) });
     assert.equal(found.todo?.title, "server");
     assert.ok(found.todo?.at instanceof Date);
+    assert.equal(pushes, 1);
+    assert.equal((await client.syncState()).pending, 0);
     await connection.close();
-    const pending = await client.actions.change({
+    // Offline, direct routes fail instead of silently enqueueing.
+    for (const direct of [
+      () => client!.queries.find({ at: new Date(row.at) }),
+      () => client!.mutations.call.ping({}),
+    ])
+      await assert.rejects(direct, (error: { code?: string }) => {
+        assert.equal(error.code, "action.unavailable");
+        return true;
+      });
+    assert.equal((await client.syncState()).pending, 0);
+    // A queued Query is a durable intent with no local optimism.
+    const before = await client.models.todo.get({ id: "one" });
+    const queued: Call<{ todo: unknown }> = await client.queries.enqueue.find({
+      at: new Date(row.at),
+    });
+    assert.equal(queued.status, "pending");
+    assert.equal((await client.syncState()).pending, 1);
+    assert.deepEqual(await client.models.todo.get({ id: "one" }), before);
+    const pending = await client.mutations.change({
       todo: { id: "one", title: "optimistic" },
       at: new Date(row.at),
     });
@@ -212,9 +249,10 @@ test("generated Actions resolve through the native pump and direct transport whi
     );
     assert.equal(directCalls, 1);
     assert.equal(pushes, 1);
-    assert.equal((await client.syncState()).pending, 1);
+    assert.equal((await client.syncState()).pending, 2);
     await client.close();
     assert.equal((await pending.wait()).error?.code, "client.closed");
+    assert.equal((await queued.wait()).error?.code, "client.closed");
   } finally {
     Client.open = originalOpen;
     await client?.close();
@@ -222,9 +260,9 @@ test("generated Actions resolve through the native pump and direct transport whi
   }
 });
 
-test("generated Actions forward store options beside encoded args", async () => {
+test("every generated route forwards store options beside encoded args", async () => {
   const seen: { name: string; args: unknown; options: unknown }[] = [];
-  const actions = makeActions({
+  const port = {
     async invokeAction(
       name: string,
       _version: number,
@@ -250,17 +288,23 @@ test("generated Actions forward store options beside encoded args", async () => 
       seen.push({ name, args, options });
       return decode({ todo: null });
     },
-  });
+  };
+  const mutations = makeMutations(port);
+  const queries = makeQueries(port);
   const at = new Date("2026-01-01T00:00:00.000Z");
-  await actions.ping({}, { store: false });
-  const found = await actions.call.find({ at }, { store: { todo: false } });
+  await mutations.ping({}, { store: false });
+  await mutations.call.ping({}, { store: false });
+  const found = await queries.find({ at }, { store: { todo: false } });
   assert.equal(found.todo, null);
-  await actions.find({ at });
+  await queries.enqueue.find({ at }, { store: { todo: true } });
+  await queries.find({ at });
   assert.deepEqual(seen[0], { name: "Ping", args: {}, options: { store: false } });
-  assert.deepEqual(seen[1], {
+  assert.deepEqual(seen[1], { name: "Ping", args: {}, options: { store: false } });
+  assert.deepEqual(seen[2], {
     name: "Find",
     args: { at: at.toISOString() },
     options: { store: { todo: false } },
   });
-  assert.equal(seen[2]?.options, undefined);
+  assert.deepEqual(seen[3]?.options, { store: { todo: true } });
+  assert.equal(seen[4]?.options, undefined);
 });

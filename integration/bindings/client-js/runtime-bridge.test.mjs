@@ -875,3 +875,67 @@ console.log("opened");
   assert.equal(stdout.trim(), "opened");
   assert.ok(Date.now() - started < 15000);
 });
+
+test("a callback whose task was refused in the same batch never runs", async () => {
+  // A close admitted right behind the transaction: the runtime publishes the
+  // callback effect, cancels it and refuses the task in one batch, and the
+  // Bridge starts callbacks from a deferred continuation.
+  const { bridge } = await scripted((command, requestId) =>
+    command.kind === "transaction"
+      ? [
+          {
+            type: "effect",
+            effectId: "5",
+            operation: { kind: "callback", transactionId: "tx1", requestId },
+          },
+          { type: "cancelEffect", effectId: "5" },
+          {
+            type: "taskCompleted",
+            requestId,
+            ok: false,
+            value: null,
+            error: "client_closed",
+          },
+          { type: "runtimeClosed" },
+        ]
+      : [],
+  );
+  let ran = false;
+  await assert.rejects(
+    bridge.transaction(async () => {
+      ran = true;
+    }),
+    /client_closed/,
+  );
+  // The continuation that would start the body was queued before the
+  // rejection was delivered; one more macrotask covers anything it chained.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(ran, false, "the refused callback's body did not run");
+  assert.equal(bridge.closed, true);
+});
+
+test("a callback whose effect was cancelled never runs, even while its task is pending", async () => {
+  const { bridge, publish } = await scripted((command, requestId) =>
+    command.kind === "transaction"
+      ? [
+          {
+            type: "effect",
+            effectId: "7",
+            operation: { kind: "callback", transactionId: "tx2", requestId },
+          },
+          { type: "cancelEffect", effectId: "7" },
+        ]
+      : [],
+  );
+  let ran = false;
+  const transaction = bridge.transaction(async () => {
+    ran = true;
+  });
+  const outcome = transaction.catch((error) => error);
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(ran, false, "a cancelled callback effect does not start");
+  publish({ type: "runtimeClosed" });
+  assert.match((await outcome).message, /client_closed/);
+  assert.equal(ran, false);
+});

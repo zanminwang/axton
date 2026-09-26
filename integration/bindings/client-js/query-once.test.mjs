@@ -343,7 +343,8 @@ test("a failed refresh settles every waiter, releases its flight and keeps the s
         waiter,
         (error) =>
           error instanceof CallError &&
-          error.code === "action.execution_unknown",
+          error.code === "action.execution_unknown" &&
+          error.cause?.message === "network down 2",
       );
     assert.equal(state.requests, 2);
     assert.deepEqual((await once(client)).tags, ["v1", "x"]);

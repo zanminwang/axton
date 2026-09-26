@@ -58,7 +58,13 @@ export type ClientSyncState = {
   schema: SchemaState;
 };
 import type { QuerySpec, RecordValue } from "./values.mts";
-import { Bridge, reportCallbackError, type NativeCarrier } from "./bridge.mts";
+import {
+  Bridge,
+  reportCallbackError,
+  type NativeCarrier,
+  type TaskError,
+  type TaskHooks,
+} from "./bridge.mts";
 export type { NativeCarrier } from "./bridge.mts";
 import type { ServerOptions, ServerConnection } from "./live.mts";
 import { Subscriptions, type Subscription } from "./subscriptions.mts";
@@ -133,7 +139,22 @@ function invokeError(error: unknown): unknown {
     return new CallError("action.unavailable", "unknown", error);
   const execution =
     typeof message === "string" ? INVOKE_CODES[message] : undefined;
-  return execution ? new CallError(message as string, execution, error) : error;
+  return execution
+    ? new CallError(message as string, execution, directCause(error))
+    : error;
+}
+/**
+ * What a direct call failed on, as the runtime's `details` report it: the
+ * transport's message and the HTTP status it carried, or the deadline. A
+ * failure without a message (`action.unavailable`) keeps the task's error.
+ */
+function directCause(error: unknown): unknown {
+  const details = (error as TaskError | null)?.details;
+  if (typeof details?.message !== "string") return error;
+  return Object.assign(
+    Error(details.message),
+    typeof details.status === "number" ? { status: details.status } : {},
+  );
 }
 
 /**
@@ -153,14 +174,23 @@ export function createClient<
   },
 >(
   native: NativeCarrier,
-  Transaction: new (
+  Transaction: (new (
     send: (command: RecordValue, scope?: string) => Promise<any>,
-  ) => Tx,
+  ) => Tx) & {
+    /**
+     * `inCallback()` identifies the callback's own async context. Without
+     * it, `inCallback()` holds for every caller while a callback runs.
+     */
+    readonly exactCallbackGuard?: boolean;
+  },
   createServerConnection: (options: ServerOptions) => ServerConnection,
 ) {
   return class Client {
     #tasks: Promise<void> | undefined;
-    #connection: Connection | undefined;
+    /** The live connection, and how to stop its effects without a task. */
+    #connection: { handle: Connection; halt(): void } | undefined;
+    /** Public transactions submitted and not yet settled. */
+    #transactions = 0;
     #completionListeners = new Set<(completion: any) => void>();
     #actions = new ActionRegistry();
     /** Once callers still waiting: closing the client settles them at once. */
@@ -197,6 +227,31 @@ export function createClient<
     #inCallback(): boolean {
       return this.#activePublicTx?.inCallback() ?? false;
     }
+    /**
+     * Refuse a call from inside a transaction callback with
+     * `transaction_active`: any task it submitted would park behind the
+     * transaction that awaits it. Where the guard knows the callback's async
+     * context (Node) it covers every task; where it only knows that some
+     * callback runs (React Native) it covers the Mutation and Query calls
+     * (`writes`), so an unrelated caller's read or transaction still waits
+     * its turn.
+     */
+    #guard(writes = false): void {
+      if (
+        (writes || Transaction.exactCallbackGuard === true) &&
+        this.#inCallback()
+      )
+        throw Error("transaction_active");
+    }
+    /** Submit an ordinary task behind the guard. */
+    #task(command: RecordValue, hooks?: TaskHooks): Promise<any> {
+      try {
+        this.#guard();
+      } catch (error) {
+        return Promise.reject(error);
+      }
+      return this.#bridge.task(command, hooks);
+    }
     static async open(options: {
       path: string;
       schema: object;
@@ -213,45 +268,51 @@ export function createClient<
      * and is answered only after the runtime confirmed the commit.
      */
     async transaction<T>(body: (tx: Tx) => Promise<T>): Promise<T> {
+      this.#guard();
       let result!: T;
-      await this.#bridge.transaction(async (transactionId) => {
-        const tx = new Transaction((command, scope) =>
-          this.#bridge.transactionCommand(transactionId, scope, command),
-        );
-        try {
-          this.#activePublicTx = tx;
+      this.#transactions++;
+      try {
+        await this.#bridge.transaction(async (transactionId) => {
+          const tx = new Transaction((command, scope) =>
+            this.#bridge.transactionCommand(transactionId, scope, command),
+          );
           try {
-            result = await tx.runCallback(() => body(tx));
-          } finally {
-            this.#activePublicTx = undefined;
+            this.#activePublicTx = tx;
+            try {
+              result = await tx.runCallback(() => body(tx));
+            } finally {
+              this.#activePublicTx = undefined;
+            }
+            await tx.finish();
+          } catch (error) {
+            // No unawaited command outlives the callback that issued it.
+            await tx.finish().catch(() => {});
+            throw error;
           }
-          await tx.finish();
-        } catch (error) {
-          // No unawaited command outlives the callback that issued it.
-          await tx.finish().catch(() => {});
-          throw error;
-        }
-      });
+        });
+      } finally {
+        this.#transactions--;
+      }
       return result;
     }
     read(model: string, identity: object): Promise<RecordValue | null> {
-      return this.#bridge.task({ kind: "read", key: { model, identity } });
+      return this.#task({ kind: "read", key: { model, identity } });
     }
     query(model: string, where: RecordValue = {}): Promise<RecordValue[]> {
-      return this.#bridge.task({ kind: "query", model, filter: where });
+      return this.#task({ kind: "query", model, filter: where });
     }
     readSql(sql: string, parameters: unknown[] = []): Promise<RecordValue[]> {
-      return this.#bridge.task({ kind: "sql", sql, parameters });
+      return this.#task({ kind: "sql", sql, parameters });
     }
     querySpec(model: string, query: QuerySpec = {}): Promise<RecordValue[]> {
-      return this.#bridge.task({ kind: "querySpec", model, query });
+      return this.#task({ kind: "querySpec", model, query });
     }
     related(
       model: string,
       identity: object,
       relation: string,
     ): Promise<RecordValue | null> {
-      return this.#bridge.task({
+      return this.#task({
         kind: "related",
         key: { model, identity },
         relation,
@@ -263,7 +324,7 @@ export function createClient<
       source: string,
       relation: string,
     ): Promise<RecordValue[]> {
-      return this.#bridge.task({
+      return this.#task({
         kind: "referencing",
         key: { model, identity },
         source,
@@ -271,14 +332,20 @@ export function createClient<
       });
     }
     mutate(mutation: object): Promise<number> {
-      if (this.#inCallback())
-        return Promise.reject(Error("transaction_active"));
+      try {
+        this.#guard(true);
+      } catch (error) {
+        return Promise.reject(error);
+      }
       return this.#bridge.task({ kind: "enqueue", mutation });
     }
     /** One standalone Model write in its own local transaction. */
     direct(operation: object): Promise<void> {
-      if (this.#inCallback())
-        return Promise.reject(Error("transaction_active"));
+      try {
+        this.#guard(true);
+      } catch (error) {
+        return Promise.reject(error);
+      }
       return this.transaction(async (tx) => {
         await tx.direct(operation);
       });
@@ -346,7 +413,7 @@ export function createClient<
         return this.invokeDirectAction(name, version, args, decode, call);
       let outcome: DirectOutcome | undefined;
       try {
-        if (this.#inCallback()) throw Error("transaction_active");
+        this.#guard(true);
         ({ outcome } = await this.#untilClosed(
           this.#bridge.task({
             kind: "invoke",
@@ -374,7 +441,7 @@ export function createClient<
       args: object,
     ): Promise<void> {
       try {
-        if (this.#inCallback()) throw Error("transaction_active");
+        this.#guard(true);
         await this.#bridge.task({
           kind: "invalidateQueryOnce",
           name,
@@ -409,10 +476,9 @@ export function createClient<
       onCommitted?: (callId: string, ordinal: number) => void,
       options?: CallOptions,
     ): Promise<{ callId: string; ordinal: number }> {
-      if (this.#inCallback())
-        return Promise.reject(Error("transaction_active"));
       let store: { store?: unknown };
       try {
+        this.#guard(true);
         store = storeOption(options);
       } catch (error) {
         return Promise.reject(error);
@@ -451,7 +517,7 @@ export function createClient<
       args: object,
       options?: CallOptions,
     ): Promise<{ outcome: DirectOutcome }> {
-      if (this.#inCallback()) throw Error("transaction_active");
+      this.#guard(true);
       const store = storeOption(options);
       try {
         return await this.#bridge.task({
@@ -473,7 +539,8 @@ export function createClient<
      * cancelled here; the Downlink worker sees the committed change and
      * reconciles its own session.
      */
-    subscribeScope(scope: string): Promise<Subscription> {
+    async subscribeScope(scope: string): Promise<Subscription> {
+      this.#guard();
       return this.#subscriptions.subscribe(scope);
     }
     /** The Scope surface the generated `scopes` facade delegates to, with no logic of its own. */
@@ -484,7 +551,8 @@ export function createClient<
       return this.subscribeScope(channel);
     }
     /** Remove whatever registration this Scope name has; its handle stops. */
-    unsubscribe(channel: string): Promise<void> {
+    async unsubscribe(channel: string): Promise<void> {
+      this.#guard();
       return this.#subscriptions.unsubscribeScope(channel);
     }
     /**
@@ -497,6 +565,7 @@ export function createClient<
       options: ConnectionOptions = {},
     ): Promise<Connection> {
       if (this.#closed || this.#closing) throw Error("client_closed");
+      this.#guard();
       // Rust refuses a second connection too; this refuses it before a second
       // set of effect adapters could replace the first one's handlers.
       if (this.#connecting || this.#connection)
@@ -537,7 +606,15 @@ export function createClient<
         }
         let closed = false;
         const control = async (event: string) => {
-          if (!closed) await this.#bridge.task({ kind: "connection", event });
+          if (!closed) await this.#task({ kind: "connection", event });
+        };
+        // Stop this connection's effects here, without a task: the effect
+        // handlers are uninstalled and its platform work aborted.
+        const halt = () => {
+          closed = true;
+          stop();
+          if (this.#connection?.handle === connection)
+            this.#connection = undefined;
         };
         const connection: Connection = {
           pause: () => control("pause"),
@@ -545,19 +622,17 @@ export function createClient<
           wake: () => control("wake"),
           close: async () => {
             if (closed) return;
-            closed = true;
-            stop();
+            this.#guard();
+            halt();
             try {
               await this.#bridge.task({ kind: "connection", event: "stop" });
             } catch (error) {
               // A closed runtime already ended the connection.
               if (!this.#bridge.closed) throw error;
-            } finally {
-              if (this.#connection === connection) this.#connection = undefined;
             }
           },
         };
-        this.#connection = connection;
+        this.#connection = { handle: connection, halt };
         return connection;
       } finally {
         this.#connecting = false;
@@ -573,6 +648,11 @@ export function createClient<
     ): Promise<void> {
       // The prerequisite adapter is one handler slot per client: a concurrent
       // call joins the running task instead of replacing its handlers.
+      try {
+        this.#guard();
+      } catch (error) {
+        return Promise.reject(error);
+      }
       if (this.#tasks) return this.#tasks;
       const stop = prerequisites(this.#effects, handlers);
       this.#tasks = this.#bridge
@@ -586,22 +666,22 @@ export function createClient<
     }
     /** Protocol seams for tests and tools; the connection never uses them. */
     freeze(): Promise<string | null> {
-      return this.#bridge.task({ kind: "freeze" });
+      return this.#task({ kind: "freeze" });
     }
     /** The completions in its value were already delivered as `callCompleted`. */
     acknowledge(sequence: number, receipt: object) {
-      return this.#bridge.task({ kind: "ack", sequence, receipt });
+      return this.#task({ kind: "ack", sequence, receipt });
     }
     applyPull(page: object) {
-      return this.#bridge.task({ kind: "pull", page });
+      return this.#task({ kind: "pull", page });
     }
     /** The client's sync state, or one record's when `model` and `identity` are given. */
     syncState(): Promise<ClientSyncState>;
     syncState(model: string, identity: object): Promise<ModelSyncState>;
     syncState(model?: string, identity?: object) {
       return model === undefined
-        ? this.#bridge.task({ kind: "status" })
-        : this.#bridge.task({ kind: "recordStatus", key: { model, identity } });
+        ? this.#task({ kind: "status" })
+        : this.#task({ kind: "recordStatus", key: { model, identity } });
     }
     /**
      * Leave an incompatible database behind and open a fresh file for the
@@ -614,20 +694,20 @@ export function createClient<
     rebuild(
       options: { discardPending?: boolean } = {},
     ): Promise<RebuildReport> {
-      return this.#bridge.task({ kind: "rebuild", ...options });
+      return this.#task({ kind: "rebuild", ...options });
     }
     pendingTasks(): Promise<RecordValue[]> {
-      return this.#bridge.task({ kind: "tasks" });
+      return this.#task({ kind: "tasks" });
     }
     setReadiness(key: string, state: "ready" | "pending" | "failed") {
-      return this.#bridge.task({ kind: "readiness", key, state });
+      return this.#task({ kind: "readiness", key, state });
     }
     /** The dropped call completes through `callCompleted`, once. */
     drop(ordinal: number) {
-      return this.#bridge.task({ kind: "drop", ordinal }).then(() => undefined);
+      return this.#task({ kind: "drop", ordinal }).then(() => undefined);
     }
     dismissRejection(ordinal: number) {
-      return this.#bridge.task({ kind: "dismiss", ordinal });
+      return this.#task({ kind: "dismiss", ordinal });
     }
     /**
      * Observe a local query. The runtime runs it on the committed state,
@@ -654,36 +734,34 @@ export function createClient<
       };
       let stopped = false;
       let unwatch: (() => void) | undefined;
-      this.#bridge
-        .task(
-          { kind: "watch", model, spec: { filter: where } },
-          {
-            // Routed while the completion is dispatched: the first rows are
-            // published behind it in the same batch.
-            settled: ({ observerId }: { observerId: string }) => {
-              const detach = this.#bridge.observe(observerId, (snapshot) => {
-                // A closed watch's last rows are the ones already delivered.
-                if (stopped || snapshot.closed) return;
-                try {
-                  listener(snapshot.rows);
-                } catch (error) {
-                  fail(error);
-                }
-              });
-              // The route stays until the runtime confirms nothing follows.
-              unwatch = () =>
-                void this.#bridge
-                  .task({ kind: "unwatch", observerId })
-                  .catch(() => {})
-                  .finally(detach);
-              if (stopped) unwatch();
-            },
+      this.#task(
+        { kind: "watch", model, spec: { filter: where } },
+        {
+          // Routed while the completion is dispatched: the first rows are
+          // published behind it in the same batch.
+          settled: ({ observerId }: { observerId: string }) => {
+            const detach = this.#bridge.observe(observerId, (snapshot) => {
+              // A closed watch's last rows are the ones already delivered.
+              if (stopped || snapshot.closed) return;
+              try {
+                listener(snapshot.rows);
+              } catch (error) {
+                fail(error);
+              }
+            });
+            // The route stays until the runtime confirms nothing follows.
+            unwatch = () =>
+              void this.#bridge
+                .task({ kind: "unwatch", observerId })
+                .catch(() => {})
+                .finally(detach);
+            if (stopped) unwatch();
           },
-        )
-        .catch((error) => {
-          // The first query failed: the runtime registered nothing.
-          if (!stopped) fail(error);
-        });
+        },
+      ).catch((error) => {
+        // The first query failed: the runtime registered nothing.
+        if (!stopped) fail(error);
+      });
       return () => {
         if (stopped) return;
         stopped = true;
@@ -699,11 +777,20 @@ export function createClient<
       this.#subscriptions.close();
       return (this.#closing ??= this.#finishClose());
     }
+    /**
+     * Close is priority control: the runtime's `close` waits for no task, so
+     * it is never parked behind a callback that holds the transaction. It
+     * rolls that transaction back, fails every task and cancels every effect;
+     * the connection's handlers are uninstalled here without a task.
+     */
     async #finishClose(): Promise<void> {
+      // A `connect` admitted behind an open transaction would wait for it:
+      // then the runtime closes first and refuses it.
+      const closing = this.#transactions > 0 ? this.#bridge.close() : undefined;
       await this.#started;
-      await this.#connection?.close();
+      this.#connection?.halt();
       try {
-        await this.#bridge.close();
+        await (closing ?? this.#bridge.close());
       } finally {
         this.#closed = true;
         this.#subscriptions.closed();

@@ -444,9 +444,59 @@ test("direct attempt is bounded even when transport ignores abort", async () => 
         client.callAction("Ping", 1, {}),
         (error) =>
           error.code === "action.execution_unknown" &&
-          error.execution === "unknown",
+          error.execution === "unknown" &&
+          error.cause instanceof Error &&
+          error.cause.message === "direct call timed out" &&
+          !("status" in error.cause),
       );
       await connection.close();
+    },
+  );
+});
+
+test("a direct call's transport failure and refused refresh become its cause", async () => {
+  await scripted(
+    async () => {
+      throw Object.assign(Error("action failed: 503 busy"), { status: 503 });
+    },
+    async (client) => {
+      const connection = await client.connect({ url: "http://unused", token: "token" });
+      const error = await client.callAction("Ping", 1, {}).catch((error) => error);
+      assert.equal(error.code, "action.execution_unknown");
+      assert.equal(error.execution, "unknown");
+      assert.ok(error.cause instanceof Error);
+      assert.equal(error.cause.message, "action failed: 503 busy");
+      assert.equal(error.cause.status, 503);
+      // The typed path keeps the same cause.
+      const typed = await client
+        .invokeDirectAction("Ping", 1, {}, () => "unreachable")
+        .catch((error) => error);
+      assert.equal(typed.code, "action.execution_unknown");
+      assert.equal(typed.cause.message, "action failed: 503 busy");
+      assert.equal(typed.cause.status, 503);
+      await connection.close();
+    },
+  );
+  await scripted(
+    async () => {
+      throw Object.assign(Error("expired"), { status: 401 });
+    },
+    async (client) => {
+      const connection = await client.connect(
+        { url: "http://unused", token: "token" },
+        {
+          refreshAuth: async () => {
+            throw Error("refresh refused");
+          },
+        },
+      );
+      const error = await client.callAction("Ping", 1, {}).catch((error) => error);
+      assert.equal(error.code, "action.execution_unknown");
+      assert.equal(error.cause.message, "refresh refused");
+      await connection.close();
+      // Stopped: unavailable, with no transport cause to report.
+      const stopped = await client.callAction("Ping", 1, {}).catch((error) => error);
+      assert.equal(stopped.code, "action.unavailable");
     },
   );
 });
@@ -544,7 +594,9 @@ test("direct auth retry keeps the same body and close bounds a hanging refresh",
       );
       await assert.rejects(
         client.callAction("Ping", 1, {}),
-        (error) => error.code === "action.execution_unknown",
+        (error) =>
+          error.code === "action.execution_unknown" &&
+          error.cause?.message === "direct call timed out",
       );
       await connection.close();
     },
@@ -631,25 +683,49 @@ test("a waiting direct network response leaves local reads free and cannot apply
 
 test("close aborts an uncooperative push and its late receipt never applies", async () => {
   const pushed = deferred();
+  const late = deferred();
   let signal;
+  let receipt;
+  // The effect ids the runtime asked the SDK to push, and every effect answer
+  // the SDK submitted.
+  const pushes = [];
+  const answered = [];
+  const carrier = {
+    runtimeOpen: (request, wake) => native.runtimeOpen(request, wake),
+    runtimeSubmit(runtimeId, message) {
+      const input = JSON.parse(message);
+      if (input.type === "effectResult") answered.push(input.effectId);
+      native.runtimeSubmit(runtimeId, message);
+    },
+    runtimeDrain(runtimeId) {
+      const text = native.runtimeDrain(runtimeId);
+      for (const event of JSON.parse(text))
+        if (event.type === "effect" && event.operation.route === "push")
+          pushes.push(event.effectId);
+      return text;
+    },
+    runtimeDetach: (runtimeId) => native.runtimeDetach(runtimeId),
+  };
   await scripted(
     (kind, body, abort) => {
       assert.equal(kind, "push");
       signal = abort;
       const batch = JSON.parse(body);
-      const receipt = JSON.stringify({
-        clientId: batch.clientId,
-        batchSequence: batch.batchSequence,
-        rejections: [],
-        records: [],
-        completions: batch.mutations.map((mutation) => ({
-          callId: mutation.callId,
-          outcome: { status: "succeeded", result: null },
-        })),
-      });
       pushed.resolve();
-      // Ignores its abort signal: the late receipt still arrives.
-      return new Promise((resolve) => setTimeout(() => resolve(receipt), 30));
+      // Ignores its abort signal: the receipt still arrives, when the test says.
+      receipt = late.promise.then(() =>
+        JSON.stringify({
+          clientId: batch.clientId,
+          batchSequence: batch.batchSequence,
+          rejections: [],
+          records: [],
+          completions: batch.mutations.map((mutation) => ({
+            callId: mutation.callId,
+            outcome: { status: "succeeded", result: null },
+          })),
+        }),
+      );
+      return receipt;
     },
     async (client) => {
       const completions = [];
@@ -659,11 +735,76 @@ test("close aborts an uncooperative push and its late receipt never applies", as
       await pushed.promise;
       await connection.close();
       assert.equal(signal.aborted, true, "close aborted the request");
-      await settled(60);
-      assert.deepEqual(completions, [], "the late receipt settled nothing");
+      late.resolve();
+      await receipt;
+      // The executor's continuation of the resolved request has run.
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(pushes.length, 1);
+      assert.equal(answered.includes(pushes[0]), false, "the late receipt was never answered");
+      // A task admitted after it: whatever the runtime had to apply was applied first.
       assert.equal((await client.syncState()).pending, 1);
+      assert.deepEqual(completions, [], "the late receipt settled nothing");
     },
+    { carrier },
   );
+});
+
+test("client close is priority control while a callback holds the transaction", async () => {
+  const within = async (promise, ms) => {
+    let timer;
+    try {
+      return await Promise.race([
+        promise.then(() => "settled"),
+        new Promise((resolve) => (timer = setTimeout(() => resolve("timeout"), ms))),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const sockets = [];
+  const directory = await mkdtemp(join(tmpdir(), "axton-close-callback-"));
+  const Client = createClient(native, Transaction, () => ({
+    push: () => new Promise(() => {}),
+    open: (subscribe, signal) => sockets.push(signal),
+  }));
+  const client = await Client.open({
+    path: join(directory, "db"),
+    schema: await entrySchema(),
+  });
+  const gate = deferred();
+  try {
+    const connection = await client.connect({ url: "http://unused", token: "token" });
+    await client.subscribe("scope");
+    await eventually(() => sockets.length === 1, "the socket");
+    const entered = deferred();
+    const finished = deferred();
+    const transaction = client.transaction(async (tx) => {
+      try {
+        await tx.direct({ model: "Entry", op: "create", identity: { id: "c" }, values: { text: "A", note: null } });
+        entered.resolve();
+        // External I/O the callback waits on while it holds the transaction.
+        await gate.promise;
+        await tx.read("Entry", { id: "c" });
+      } catch (error) {
+        finished.resolve(error);
+        throw error;
+      }
+      finished.resolve(undefined);
+    });
+    const outcome = transaction.catch((error) => error);
+    await entered.promise;
+    assert.equal(await within(client.close(), 2000), "settled", "close waits for no task");
+    assert.equal((await outcome).message, "client_closed", "the transaction rejects client_closed");
+    assert.equal(sockets[0].aborted, true, "the connection's platform work was aborted");
+    gate.resolve();
+    const late = await finished.promise;
+    assert.match(late?.message ?? "", /^(transaction_closed|client_closed)$/, "the callback's later command fails");
+    await connection.close();
+  } finally {
+    gate.resolve();
+    await client.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("closed connection controls cannot affect a replacement connection", async () => {
@@ -770,7 +911,24 @@ test("a rebuild wakes the sleeping downlink lane without another start", async (
   // opened its socket, the lane has nothing to do until it is woken.
   const sockets = [];
   let connects = 0;
-  const Client = createClient(native, Transaction, () => {
+  // The effects the runtime asked for and has not cancelled: none of them
+  // answers here, so without a timer among them the runtime cannot act again
+  // until an input wakes it.
+  const outstanding = new Map();
+  const carrier = {
+    runtimeOpen: (request, wake) => native.runtimeOpen(request, wake),
+    runtimeSubmit: (runtimeId, message) => native.runtimeSubmit(runtimeId, message),
+    runtimeDrain(runtimeId) {
+      const text = native.runtimeDrain(runtimeId);
+      for (const event of JSON.parse(text))
+        if (event.type === "effect") outstanding.set(event.effectId, event.operation.kind);
+        else if (event.type === "cancelEffect") outstanding.delete(event.effectId);
+      return text;
+    },
+    runtimeDetach: (runtimeId) => native.runtimeDetach(runtimeId),
+  };
+  const asleep = () => [...outstanding.values()].every((kind) => kind === "socket" || kind === "http");
+  const Client = createClient(carrier, Transaction, () => {
     connects++;
     return {
       push: (kind, body, signal) =>
@@ -793,15 +951,19 @@ test("a rebuild wakes the sleeping downlink lane without another start", async (
     const reported = [];
     connection = await client.connect({ url: "http://127.0.0.1:1", token: "t" }, { onError: (error) => reported.push(error) });
     await eventually(() => sockets.length === 1, "the first handshake");
-    await settled(50);
-    assert.equal(sockets.length, 1, "the lane sleeps until woken");
+    // A task admitted after the handshake: every effect the runtime asked for
+    // before it has been dispatched when it completes.
+    await client.syncState();
+    assert.equal(sockets.length, 1);
+    assert.ok(asleep(), `the lane sleeps until woken: ${[...outstanding.values()]}`);
     await client.rebuild({ discardPending: true });
     await eventually(() => sockets.length === 2, "the carried Scope subscribed again after the rebuild");
     assert.deepEqual(sockets[1].subscribe.channels, ["scope"]);
     assert.equal(sockets[0].signal.aborted, true, "the old socket was abandoned");
     assert.equal(sockets[1].signal.aborted, false, "the new socket stays");
-    await settled(50);
+    await client.syncState();
     assert.equal(sockets.length, 2, "one session per wake");
+    assert.ok(asleep(), `the new session sleeps too: ${[...outstanding.values()]}`);
     assert.equal(connects, 1, "no second connect");
     assert.deepEqual(reported, []);
   } finally {

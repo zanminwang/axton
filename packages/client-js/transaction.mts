@@ -10,6 +10,8 @@ type Frame = { scope?: string };
  * async-context ownership of savepoints, unawaited work and first failure.
  */
 export class Transaction {
+  /** `inCallback()` knows the callback's own async context. */
+  static readonly exactCallbackGuard = true;
   #send: (command: RecordValue, scope?: string) => Promise<any>;
   #open = true;
   /** Settles once every command submitted so far has settled. */

@@ -214,3 +214,45 @@ test('stop unregisters the watch by its observer id; a watch stopped before regi
   assert.deepEqual(early, []);
  } finally { await client.close(); }
 });
+
+test('inside a callback, every task of the outer client rejects promptly with transaction_active', async () => {
+ const dir = await mkdtemp(join(tmpdir(), 'axton-runtime-guard-'));
+ const client = await Client.open({ path: join(dir, 'client.sqlite'), schema });
+ try {
+  await client.direct(create('e', 'A'));
+  const outcomes = {};
+  const message = (promise) => within(promise.then(() => 'ran', error => error.message), 1000);
+  const rows = [];
+  let watchError;
+  await client.transaction(async tx => {
+   // The transaction's own commands are not the outer client's.
+   await tx.direct(update('e', 'inside'));
+   outcomes.read = await message(client.read('Entry', { id: 'e' }));
+   outcomes.transaction = await message(client.transaction(async () => { rows.push('nested body ran'); }));
+   outcomes.query = await message(client.query('Entry'));
+   outcomes.readSql = await message(client.readSql('SELECT 1 AS one'));
+   outcomes.querySpec = await message(client.querySpec('Entry'));
+   outcomes.syncState = await message(client.syncState());
+   outcomes.recordState = await message(client.syncState('Entry', { id: 'e' }));
+   outcomes.subscribe = await message(client.subscribe('scope'));
+   outcomes.subscribeScope = await message(client.subscribeScope('scope'));
+   outcomes.unsubscribe = await message(client.unsubscribe('scope'));
+   outcomes.rebuild = await message(client.rebuild());
+   outcomes.pendingTasks = await message(client.pendingTasks());
+   outcomes.setReadiness = await message(client.setReadiness('k', 'ready'));
+   outcomes.drop = await message(client.drop(1));
+   outcomes.dismissRejection = await message(client.dismissRejection(1));
+   outcomes.runPrerequisites = await message(client.runPrerequisites({}));
+   const stopped = new Promise(resolve => client.watch('Entry', {}, value => rows.push(value), error => resolve(error)));
+   watchError = await within(stopped, 1000);
+   assert.equal((await tx.read('Entry', { id: 'e' })).text, 'inside');
+  });
+  for (const [method, outcome] of Object.entries(outcomes))
+   assert.equal(outcome, 'transaction_active', method);
+  assert.equal(watchError?.message, 'transaction_active', 'watch reports the refusal to onError');
+  assert.deepEqual(rows, [], 'no nested body ran and no watch delivered');
+  // Nothing was left parked behind the transaction.
+  assert.equal((await client.read('Entry', { id: 'e' })).text, 'inside');
+  assert.deepEqual((await client.syncState()).channels, []);
+ } finally { await client.close(); await rm(dir, { recursive: true, force: true }); }
+});

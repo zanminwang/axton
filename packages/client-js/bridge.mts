@@ -54,9 +54,16 @@ export type TaskHooks = {
    */
   settled?: (value: any) => void;
 };
-/** A `transaction` task's callback and, once it failed, what it threw. */
+/**
+ * A `transaction` task's callback: its request, the effect that asked for it
+ * once published, whether the runtime cancelled that effect and, once it
+ * failed, what it threw.
+ */
 type Callback = {
+  requestId: string;
   start(effectId: string, transactionId: string): void;
+  effectId?: string;
+  cancelled?: true;
   thrown?: { value: unknown };
 };
 type Event = { type: string; [field: string]: any };
@@ -186,13 +193,19 @@ export class Bridge {
       (resolve) => (start = resolve),
     );
     const callback: Callback = {
+      requestId: "",
       start: (effectId, transactionId) => start({ effectId, transactionId }),
     };
     const done = this.#submitRouted((requestId) => {
+      callback.requestId = requestId;
       this.#callbacks.set(requestId, callback);
       return { type: "task", requestId, command: { kind: "transaction" } };
     });
     void started.then(async ({ effectId, transactionId }) => {
+      // The batch that asked for the callback may also have cancelled it and
+      // settled its task - a close admitted right behind it. The body of a
+      // refused transaction never runs, and nobody wants its answer.
+      if (callback.cancelled || !this.#routes.has(callback.requestId)) return;
       let result: RecordValue;
       try {
         await run(transactionId);
@@ -413,9 +426,11 @@ export class Bridge {
       case "observerChanged":
         this.#emit(event.type, event);
         return this.#snapshot(event.observerId, event.snapshot);
+      case "cancelEffect":
+        this.#cancelCallback(event.effectId);
+        return this.#emit(event.type, event);
       case "callCompleted":
       case "report":
-      case "cancelEffect":
         return this.#emit(event.type, event);
     }
   }
@@ -459,6 +474,7 @@ export class Bridge {
           ok: false,
           error: "unknown transaction",
         });
+      callback.effectId = effectId;
       return callback.start(effectId, operation.transactionId);
     }
     const handler = this.#effects.get(operation.kind);
@@ -472,6 +488,12 @@ export class Bridge {
     } catch (error) {
       reportCallbackError(error);
     }
+  }
+
+  /** A cancelled callback effect: its callback must not start any more. */
+  #cancelCallback(effectId: string): void {
+    for (const callback of this.#callbacks.values())
+      if (callback.effectId === effectId) callback.cancelled = true;
   }
 
   /** The runtime ended: settle every route, detach and finish `close()`. */

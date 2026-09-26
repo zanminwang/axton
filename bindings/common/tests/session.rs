@@ -653,6 +653,222 @@ fn incompatible_schema_reports_pending_work_and_rebuild_switches_files() {
     assert!(path.exists(), "the old file is kept");
 }
 
+/// Open `path` under a schema its file no longer fits while the file still
+/// holds unsent work: the handle keeps the old file until `rebuild` switches
+/// it to a fresh one in place.
+fn rebuildable(host: &mut RuntimeHost, path: &std::path::Path) -> Value {
+    let schema: Value =
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
+    let mut breaking = schema.clone();
+    breaking["models"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"due","nullable":false,"type":{"kind":"scalar","name":"string"}}));
+    let id = host
+        .call(json!({"op":"open","path":path,"schema":schema}))
+        .unwrap()["value"]["handle"]
+        .clone();
+    host.call(json!({"op":"direct","handle":id,"operation":{"model":"Entry","op":"create","identity":{"id":"e"},"values":{"text":"A","note":null}}})).unwrap();
+    host.call(json!({"op":"enqueue","handle":id,"mutation":{"name":"Edit","operations":[{"model":"Entry","op":"update","identity":{"id":"e"},"values":{"text":"B"}}]}})).unwrap();
+    host.call(json!({"op":"close","handle":id})).unwrap();
+    let opened = host
+        .call(json!({"op":"open","path":path,"schema":breaking}))
+        .unwrap()["value"]
+        .clone();
+    assert_eq!(opened["schema"]["pending"]["pending"], 1);
+    opened["handle"].clone()
+}
+/// The committed delivery positions of the handle's replica.
+fn cursors(host: &mut RuntimeHost, id: &Value) -> Value {
+    host.call(json!({"op":"status","handle":id})).unwrap()["value"]["cursors"].clone()
+}
+/// The epoch of the session an `open` action begins.
+fn epoch(action: &Value) -> u64 {
+    assert_eq!(action["type"], "open", "{action}");
+    action["epoch"].as_u64().unwrap()
+}
+
+/// A rebuild under a running Downlink lane keeps it running: the next pump,
+/// with no second `start`, tells the host to abandon the old replica's I/O and
+/// opens a session for the carried Scope under a new epoch. Nothing the old
+/// socket or its catch-up still delivers reaches the fresh file, before or
+/// after the new handshake, and the next request id is one never issued
+/// before ([#162](https://github.com/zanminwang/axton/issues/162)).
+#[test]
+fn a_rebuild_keeps_a_running_downlink_lane_running_under_fresh_identifiers() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let id = rebuildable(&mut host, &dir.path().join("db"));
+    let old = streaming(&mut host, &id).as_u64().unwrap();
+    let gap = json!({"cursors":{"book":{"from":2,"to":3,"head":3}},"changes":[]});
+    let recovered = downlink(
+        &mut host,
+        &id,
+        json!({"event":"message","epoch":old,"body":gap.to_string()}),
+    );
+    let pull = requested(&recovered[0]).as_u64().unwrap();
+    assert_eq!(recovered[0]["bootstrap"], false, "an ordinary catch-up");
+    assert!(
+        host.call(json!({"op":"rebuild","handle":id})).is_err(),
+        "unsent work refuses the rebuild"
+    );
+    assert_eq!(
+        pump(&mut host, &id),
+        json!([]),
+        "a refused rebuild leaves the lane and its session untouched"
+    );
+
+    host.call(json!({"op":"rebuild","handle":id,"discardPending":true}))
+        .unwrap();
+    let status = host.call(json!({"op":"status","handle":id})).unwrap()["value"].clone();
+    assert_eq!(status["channels"], json!(["book"]), "the Scope is carried");
+    assert_eq!(status["cursors"], json!({}), "with no origin");
+    let resumed = pump(&mut host, &id);
+    assert_eq!(
+        resumed[0],
+        json!({"type":"reset"}),
+        "the old I/O is abandoned first, without another start: {resumed}"
+    );
+    let new = epoch(&resumed[1]);
+    assert!(new > old, "epoch {new} after {old}");
+    assert_eq!(
+        serde_json::from_str::<Value>(resumed[1]["subscribe"].as_str().unwrap()).unwrap()["channels"],
+        json!(["book"])
+    );
+    assert_eq!(resumed.as_array().unwrap().len(), 2, "{resumed}");
+    // Whatever the old socket and catch-up still deliver belongs to nothing.
+    let late = json!({"cursors":{"book":{"from":0,"to":3,"head":3}},"changes":[]}).to_string();
+    for stale in [
+        json!({"event":"message","epoch":old,"body":late}),
+        json!({"event":"overflow","epoch":old}),
+        json!({"event":"response","request":pull,"body":late}),
+        json!({"event":"closed","epoch":old}),
+    ] {
+        assert_eq!(
+            downlink(&mut host, &id, stale.clone()),
+            json!([]),
+            "{stale}"
+        );
+    }
+    assert_eq!(cursors(&mut host, &id), json!({}));
+    let ack = json!({"type":"subscribed","cursors":{"book":5}}).to_string();
+    assert_eq!(
+        downlink(
+            &mut host,
+            &id,
+            json!({"event":"message","epoch":new,"body":ack})
+        ),
+        json!([{"type":"changed","scopes":["book"]},{"type":"acknowledged","scopes":["book"]}]),
+        "the new handshake commits the carried Scope's first boundary"
+    );
+    assert_eq!(cursors(&mut host, &id), json!({"book":5}));
+    for stale in [
+        json!({"event":"response","request":pull,"body":late}),
+        json!({"event":"failed","request":pull}),
+        json!({"event":"closed","epoch":old}),
+    ] {
+        assert_eq!(
+            downlink(&mut host, &id, stale.clone()),
+            json!([]),
+            "{stale}"
+        );
+    }
+    assert_eq!(cursors(&mut host, &id), json!({"book":5}));
+    let gap = json!({"cursors":{"book":{"from":7,"to":8,"head":8}},"changes":[]});
+    let repair = downlink(
+        &mut host,
+        &id,
+        json!({"event":"message","epoch":new,"body":gap.to_string()}),
+    );
+    let fresh = requested(&repair[0]).as_u64().unwrap();
+    assert!(fresh > pull, "request {fresh} after {pull}");
+}
+
+/// The same transition with a historical page in flight: its answer, however
+/// late, completes nothing on the fresh replica, and the next page is asked
+/// for under a request id the old one never held
+/// ([#162](https://github.com/zanminwang/axton/issues/162)).
+#[test]
+fn a_rebuild_fences_a_bootstrap_request_in_flight() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let id = rebuildable(&mut host, &dir.path().join("db"));
+    let subscription = host
+        .call(json!({"op":"scopeSubscribe","handle":id,"scope":"book"}))
+        .unwrap()["value"]["subscriptionId"]
+        .clone();
+    host.call(
+        json!({"op":"scopeBootstrap","handle":id,"scope":"book","subscriptionId":subscription}),
+    )
+    .unwrap();
+    let old = epoch(&downlink(&mut host, &id, json!({"event":"start"}))[0]);
+    let ack = json!({"type":"subscribed","cursors":{"book":7}}).to_string();
+    let acknowledged = downlink(
+        &mut host,
+        &id,
+        json!({"event":"message","epoch":old,"body":ack}),
+    );
+    let load = acknowledged
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["type"] == "request" && a["bootstrap"] == true)
+        .unwrap_or_else(|| panic!("a bootstrap request: {acknowledged}"))["request"]
+        .as_u64()
+        .unwrap();
+
+    host.call(json!({"op":"rebuild","handle":id,"discardPending":true}))
+        .unwrap();
+    let resumed = pump(&mut host, &id);
+    assert_eq!(resumed[0], json!({"type":"reset"}), "{resumed}");
+    let new = epoch(&resumed[1]);
+    assert!(new > old, "epoch {new} after {old}");
+    let carried = host
+        .call(json!({"op":"scopeState","handle":id,"scope":"book"}))
+        .unwrap()["value"]
+        .clone();
+    assert_ne!(carried["subscriptionId"], subscription, "a fresh identity");
+    let page = json!({"mode":"bootstrap","channel":"book","from":0,"to":7,"until":7,"head":9,"records":[]}).to_string();
+    for stale in [
+        json!({"event":"response","request":load,"body":page}),
+        json!({"event":"failed","request":load,"status":400}),
+    ] {
+        assert_eq!(
+            downlink(&mut host, &id, stale.clone()),
+            json!([]),
+            "{stale}"
+        );
+    }
+    let state = host
+        .call(json!({"op":"scopeBootstrapState","handle":id,"scope":"book","subscriptionId":carried["subscriptionId"]}))
+        .unwrap()["value"]
+        .clone();
+    assert_eq!(
+        state["run"], 0,
+        "no run of the fresh identity was touched: {state}"
+    );
+    assert_eq!(state["error"], Value::Null);
+    // The new session commits the origin and a new load asks for its first
+    // page under an id no earlier request held.
+    downlink(
+        &mut host,
+        &id,
+        json!({"event":"message","epoch":new,"body":ack}),
+    );
+    host.call(json!({"op":"scopeBootstrap","handle":id,"scope":"book","subscriptionId":carried["subscriptionId"]}))
+        .unwrap();
+    let woken = downlink(&mut host, &id, json!({"event":"wake"}));
+    let fresh = woken
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["type"] == "request" && a["bootstrap"] == true)
+        .unwrap_or_else(|| panic!("a bootstrap request: {woken}"))["request"]
+        .as_u64()
+        .unwrap();
+    assert!(fresh > load, "request {fresh} after {load}");
+}
+
 /// The Scope commands the SDK handles are built on: register durable intent,
 /// read the committed state, and remove exactly the registration an identity
 /// names ([#150](https://github.com/zanminwang/axton/issues/150)). An

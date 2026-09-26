@@ -99,6 +99,15 @@ pub enum DownlinkAction {
     Acknowledged { scopes: Vec<String> },
     /// Nothing to do for `millis`; then pump again.
     Wait { millis: u64 },
+    /// The replica under the lane was rebuilt: abandon the socket and every
+    /// request - ordinary or historical - the host still holds for it, and
+    /// forget their state, without reporting anything. Always first in the
+    /// answer of the first pump after the rebuild, and announced once. It
+    /// replaces a `close` for the old session, which could otherwise reach a
+    /// socket opened after it; what the abandoned I/O still delivers names an
+    /// epoch or request id the worker never issues again, so it is ignored
+    /// ([#162](https://github.com/zanminwang/axton/issues/162)).
+    Reset,
 }
 
 /// Inbound work that a full page queue may never drop: the handshake, an
@@ -224,7 +233,9 @@ pub struct DownlinkWorker {
     /// Another pull is needed once the one in flight ends (an overflow while
     /// pulling: the lost frames may lie beyond the answer).
     again: bool,
-    /// Allocates the ids the host correlates catch-up answers by.
+    /// Allocates the ids the host correlates catch-up answers by. Like the
+    /// session's epoch it only grows for the worker's lifetime, a rebuild
+    /// included, so an answer to an abandoned request never matches a new one.
     requests: u64,
     /// A session an enqueued event ended; the next pump tells the host to close
     /// its socket.
@@ -234,6 +245,9 @@ pub struct DownlinkWorker {
     /// its acknowledgement establishes: a Scope that has been unsubscribed, or
     /// recreated, since is another subscription and takes nothing from it.
     expected: BTreeMap<String, u64>,
+    /// The replica was rebuilt since the last pump: the next one tells the
+    /// host to abandon the old replica's I/O before anything else.
+    reset: bool,
 }
 
 /// Whether an HTTP status is a refusal the server decided, which no retry can
@@ -372,6 +386,49 @@ impl DownlinkWorker {
         }
     }
 
+    /// The replica under the lane was rebuilt in place
+    /// ([`Client::rebuild`]): everything this worker held was measured against
+    /// the old file, so every session, queue, request slot and retry is
+    /// dropped, and the host is told to abandon its I/O by the first pump
+    /// ([`DownlinkAction::Reset`]). The application's intent survives - a
+    /// running lane opens a session for the carried Scopes on that pump with
+    /// no further `start`, a paused one waits for `resume`, a stopped one for
+    /// `start` - and so do the epoch and request id allocators, the fence
+    /// against whatever the abandoned socket and requests still deliver. The
+    /// fresh replica's subscription generation cannot fence them: it restarts
+    /// and may equal the old one. No database work: the binding calls this
+    /// right after a successful rebuild, and never after a failed one
+    /// ([#162](https://github.com/zanminwang/axton/issues/162)).
+    pub fn reset_for_rebuild(&mut self) {
+        // Closing without a `close` action: the host's reset abandons it.
+        self.session.close();
+        self.control.clear();
+        self.pages.clear();
+        self.active = None;
+        self.bootstrap = None;
+        self.loaded = None;
+        self.again = false;
+        self.closing = None;
+        self.expected.clear();
+        self.driver.restart();
+        let running = self.driver.running();
+        // A started lane re-evaluates the persisted barriers and the
+        // historical schedule before any I/O, as `start` does; the rotation
+        // and the backoff belonged to the old ledger.
+        self.loading = Loading {
+            dirty: running,
+            ..Loading::default()
+        };
+        self.reopened = running;
+        self.reset = true;
+    }
+
+    /// The next catch-up or historical request id: one id space, never reused.
+    fn allocate(&mut self) -> Result<u64> {
+        self.requests = allocate(self.requests, "downlink request id")?;
+        Ok(self.requests)
+    }
+
     /// Whether `request` is the catch-up in flight. An answer or failure of any
     /// other belongs to a session that is gone.
     fn answers(&self, request: u64) -> bool {
@@ -495,6 +552,11 @@ impl DownlinkWorker {
         entropy: u64,
     ) -> Result<Vec<DownlinkAction>> {
         let mut actions = vec![];
+        // The host abandons the old replica's I/O before it opens or requests
+        // anything for the new one.
+        if std::mem::take(&mut self.reset) {
+            actions.push(DownlinkAction::Reset);
+        }
         self.flush(&mut actions);
         // A committed subscribe or unsubscribe invalidates the session: the
         // lane starts over with the new channel set, without backoff.
@@ -833,16 +895,16 @@ impl DownlinkWorker {
         let request = task.request(client.declared_models());
         let body = String::from_utf8(request.encode()?)
             .map_err(|_| invalid("a bootstrap request must be UTF-8"))?;
-        self.requests += 1;
+        let id = self.allocate()?;
         self.loading.rotation = Some(task.state.scope.clone());
         self.bootstrap = Some(PendingBootstrap {
-            id: self.requests,
+            id,
             subscription_id: task.state.subscription_id,
             run: task.state.run,
             request,
         });
         actions.push(DownlinkAction::Request {
-            request: self.requests,
+            request: id,
             body,
             bootstrap: true,
         });
@@ -946,13 +1008,11 @@ impl DownlinkWorker {
         let Some(body) = client.downlink_request()? else {
             return Ok(());
         };
-        self.requests += 1;
-        self.active = Some(Pending {
-            id: self.requests,
-            request: PullRequest::decode(body.as_bytes())?,
-        });
+        let request = PullRequest::decode(body.as_bytes())?;
+        let id = self.allocate()?;
+        self.active = Some(Pending { id, request });
         actions.push(DownlinkAction::Request {
-            request: self.requests,
+            request: id,
             body,
             bootstrap: false,
         });

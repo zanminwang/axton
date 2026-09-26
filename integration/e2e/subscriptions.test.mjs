@@ -3,9 +3,11 @@
 // origin is established once per subscription identity. Real Node client, native
 // Rust engine, HTTP and WebSocket against the round-trip backend on PostgreSQL.
 //
-// What is published before the origin stays on the server until #151's explicit
-// bootstrap() loads it; everything published after it arrives, across a
-// disconnect and across closing and reopening the local database.
+// What is published before the origin stays on the server unless the explicit
+// bootstrap() loads it, which this scenario never calls: everything published
+// after the origin arrives, across a disconnect and across closing and
+// reopening the local database. The load itself is
+// [bootstrap.test.mjs](bootstrap.test.mjs).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -15,6 +17,8 @@ import { createExample } from './fixtures/round-trip/server.mts';
 import { GeneratedClient } from './fixtures/round-trip/generated/client.ts';
 
 const CHANNEL = 'book:demo';
+/** The `bootstrap` part of a status snapshot for a registration that never asked for a load. */
+const notRequested = { phase: 'not-requested', error: null };
 
 async function wait(predicate, label, timeout = 10000) {
  const deadline = Date.now() + timeout;
@@ -70,7 +74,7 @@ test('a new subscription starts at the acknowledged head and keeps that origin a
   client = await GeneratedClient.open({ path });
   const subscription = await client.scopes.subscribe(CHANNEL);
   assert.equal(subscription.scope, CHANNEL);
-  assert.deepEqual(subscription.status, { active: true, initialization: 'pending', connection: 'offline' });
+  assert.deepEqual(subscription.status, { active: true, initialization: 'pending', connection: 'offline', bootstrap: notRequested });
   assert.deepEqual(await ledger(client), { subscription_id: 1, starting_cursor: null, cursor: null });
   assert.equal(await client.scopes.subscribe(CHANNEL), subscription, 'a repeated registration answers the same handle');
 
@@ -127,7 +131,7 @@ test('a new subscription starts at the acknowledged head and keeps that origin a
   const resumed = await client.scopes.subscribe(CHANNEL);
   assert.deepEqual(
    resumed.status,
-   { active: true, initialization: 'ready', connection: 'offline' },
+   { active: true, initialization: 'ready', connection: 'offline', bootstrap: notRequested },
    'the reopened handle reads the committed boundary at once: no second initialization is pending',
   );
 
@@ -143,7 +147,7 @@ test('a new subscription starts at the acknowledged head and keeps that origin a
    assert.equal(final.starting_cursor, S, 'the second session did not re-initialize');
    assert.equal(final.subscription_id, 1, 'the subscription identity is the same one');
    assert.ok(final.cursor > afterOutage.cursor, 'the cursor resumed from where it was committed');
-   assert.equal(await client.models.entry.get({ id: 'old-entry' }), null, 'still no implicit historical load; #151 owns bootstrap()');
+   assert.equal(await client.models.entry.get({ id: 'old-entry' }), null, 'still no implicit historical load: bootstrap() is explicit and was never called');
   } finally {
    await reconnected.close();
   }

@@ -4,14 +4,15 @@ mod actions;
 pub mod error;
 pub mod host;
 pub mod live;
+mod loading;
 mod readback;
 pub use actions::{ActionResponse, execute_action, process_action, process_action_push};
 use axton_core::{
-    AuthorityRecord, CursorRange, PullPage, PullRequest, PushReceipt, PushRequest, RecordKey,
-    Rejection, Schema, limits, read_counter,
+    CursorRange, PullPage, PullRequest, PushReceipt, PushRequest, RecordKey, Rejection, Schema,
+    limits, read_counter,
 };
 pub use error::{Error, code};
-use host::{Acknowledged, Claimed, Handled, Head, HostExt, HostRequest, Invalidation, Loaded};
+use host::{Acknowledged, Claimed, Handled, Head, HostExt, HostRequest, Invalidation};
 use readback::{Changes, Outcome};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -624,11 +625,14 @@ pub async fn process_push(
         .await?;
     Ok(text)
 }
-/// Serve one pull for every channel it names: scan each channel after its
-/// cursor, load every changed record once at the version the client
-/// declared, and answer a page whose changes are receipt-shaped records. A
-/// record one loader call cannot read fails alone: the call is retried one
-/// identity at a time and the failing identities become `error` changes.
+/// The one pull entry point every binding, route and direct backend caller
+/// shares. The request's `mode` selects what it serves, before either mode
+/// decodes: an absent mode is the ordinary delta pull over every channel a
+/// client follows, `"bootstrap"` is one bounded page of a Scope's historical
+/// interval (`loading::process_bootstrap`), and any other present value is
+/// refused.
+/// Both modes run in the caller's transaction and make no extra host calls
+/// ([Protocol / Pull](../../../docs/engineering/architecture/protocol/pull.md)).
 pub async fn process_pull(
     config: &Config,
     owner: &str,
@@ -636,6 +640,25 @@ pub async fn process_pull(
     host: &impl Host,
 ) -> Result<String> {
     principal(owner)?;
+    match axton_core::pull_mode(bytes).as_deref() {
+        None => process_delta(config, owner, bytes, host).await,
+        Some(axton_core::BOOTSTRAP_MODE) => {
+            loading::process_bootstrap(config, owner, bytes, host).await
+        }
+        Some(_) => Err(request_invalid("pull mode must be absent or \"bootstrap\"")),
+    }
+}
+/// Serve one pull for every channel it names: scan each channel after its
+/// cursor, load every changed record once at the version the client
+/// declared, and answer a page whose changes are receipt-shaped records. A
+/// record one loader call cannot read fails alone: the call is retried one
+/// identity at a time and the failing identities become `error` changes.
+async fn process_delta(
+    config: &Config,
+    owner: &str,
+    bytes: &[u8],
+    host: &impl Host,
+) -> Result<String> {
     let request = PullRequest::decode(bytes).map_err(request_invalid)?;
     config.check_declared(&request.models)?;
     let mut cursors: BTreeMap<String, CursorRange> = BTreeMap::new();
@@ -660,23 +683,9 @@ pub async fn process_pull(
         }
         let mut previous = *from;
         for row in &rows {
-            if row.channel != *channel || row.cursor <= previous || row.cursor > maximum {
-                return Err(storage_invalid("invalid invalidation order"));
-            }
+            let key = loading::validate_row(config, channel, maximum, previous, row)?;
             previous = row.cursor;
-            if !config.loaders.contains(&row.model) {
-                return Err(Error::new(code::LOADER_UNREGISTERED, "unregistered loader"));
-            }
-            let key = config
-                .schema
-                .record_key(&row.model, &row.identity)
-                .map_err(storage_invalid)?;
-            if row.identity_key != key.encoded_identity().map_err(storage_invalid)? {
-                return Err(storage_invalid("noncanonical identity"));
-            }
-            let encoded = key.encoded().map_err(internal)?;
-            let entry = records.entry(encoded).or_insert((key, row.stamp));
-            entry.1 = entry.1.max(row.stamp);
+            loading::insert(&mut records, key, row.stamp)?;
         }
         let to = if rows.len() == limits::PULL_CHANGES {
             previous
@@ -692,114 +701,16 @@ pub async fn process_pull(
             },
         );
     }
-    // Loaders read every changed record grouped by model, at the declared
-    // version; a model the client did not declare is not in its read contract.
-    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (encoded, (key, _)) in &records {
-        groups
-            .entry(key.model.clone())
-            .or_default()
-            .push(encoded.clone());
-    }
-    let mut states: BTreeMap<String, std::result::Result<Value, String>> = BTreeMap::new();
-    for (model, encoded_keys) in groups {
-        let version = *request.models.get(&model).ok_or_else(|| {
-            Error::new(
-                code::MODEL_VERSION_UNSUPPORTED,
-                format!("model {model} is not declared by the client"),
-            )
-            .with_details(json!({"model":model}))
-        })?;
-        let contract = config
-            .contract(&model, version)
-            .ok_or_else(|| internal(format!("model {model} v{version} is not retained")))?;
-        let identities: Vec<Value> = encoded_keys
-            .iter()
-            .map(|k| records[k].0.identity.clone())
-            .collect();
-        let loaded: Loaded = host
-            .call_typed(HostRequest::Load {
-                model: model.clone(),
-                version,
-                identities: identities.clone(),
-                owner: owner.into(),
-            })
-            .await?;
-        // A record whose read fails in any way fails alone: a refusal or a
-        // thrown error answered as data, a row the served contract does not
-        // accept, or a batched answer that cannot be matched to its records.
-        let normalize = |state: Option<Value>| -> std::result::Result<Value, String> {
-            match state {
-                None => Ok(Value::Null),
-                Some(state) => contract
-                    .normalize_state(&model, &state)
-                    .map_err(|_| code::LOADER_INVALID.to_string()),
-            }
-        };
-        let outcome: Vec<std::result::Result<Value, String>> = match loaded {
-            Loaded::Rows(rows) if rows.len() == encoded_keys.len() => {
-                rows.into_iter().map(normalize).collect()
-            }
-            Loaded::Rows(_) if encoded_keys.len() == 1 => {
-                vec![Err(code::LOADER_INVALID.to_string())]
-            }
-            refused @ (Loaded::Refused { .. } | Loaded::Failed { .. })
-                if encoded_keys.len() == 1 =>
-            {
-                vec![Err(refusal_code(refused))]
-            }
-            _ => {
-                // One call for many records could not say which record failed:
-                // ask for each on its own so the others still get their rows.
-                let mut each = Vec::with_capacity(encoded_keys.len());
-                for identity in &identities {
-                    let one: Loaded = host
-                        .call_typed(HostRequest::Load {
-                            model: model.clone(),
-                            version,
-                            identities: vec![identity.clone()],
-                            owner: owner.into(),
-                        })
-                        .await?;
-                    each.push(match one {
-                        Loaded::Rows(mut rows) if rows.len() == 1 => normalize(rows.remove(0)),
-                        Loaded::Rows(_) => Err(code::LOADER_INVALID.to_string()),
-                        refused => Err(refusal_code(refused)),
-                    });
-                }
-                each
-            }
-        };
-        for (encoded, state) in encoded_keys.iter().zip(outcome) {
-            states.insert(encoded.clone(), state);
-        }
-    }
-    let changes = records
-        .iter()
-        .map(|(encoded, (key, stamp))| {
-            let (state, error) = match states.remove(encoded) {
-                Some(Ok(state)) => (state, None),
-                Some(Err(code)) => (Value::Null, Some(code)),
-                None => (Value::Null, None),
-            };
-            AuthorityRecord {
-                model: key.model.clone(),
-                identity: key.identity.clone(),
-                stamp: *stamp,
-                state,
-                error,
-            }
-        })
-        .collect();
+    let changes = loading::resolve_records(
+        config,
+        owner,
+        &request.models,
+        records.into_values().collect(),
+        host,
+    )
+    .await?;
     let page = PullPage { cursors, changes };
     String::from_utf8(page.encode().map_err(internal)?).map_err(internal)
-}
-/// The code a refused or failed load contributes to a record's `error`.
-fn refusal_code(loaded: Loaded) -> String {
-    match loaded {
-        Loaded::Refused { rejection } => rejection,
-        Loaded::Failed { .. } | Loaded::Rows(_) => code::LOADER_FAILED.into(),
-    }
 }
 /// Settle a business change made outside a handler, in the application's
 /// transaction: the same `{changes, publications}` shape a handler answers

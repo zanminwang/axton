@@ -841,3 +841,95 @@ test('onError defaults to console.error so nothing is dropped silently',async()=
   assert.ok(seen.some(args=>args[0]?.message==='batched'),'the batched failure was logged');
  }finally{console.error=original;}
 });
+// A bounded bootstrap request on the same `/sync/pull` route: one channel, the
+// committed historical progress B and the fixed subscription origin S (#151).
+const bootstrapBody=(channel,after,until,models={Task:1})=>JSON.stringify({mode:'bootstrap',channel,models,after,until});
+const bootstrap=(channel,after,until)=>backend.pull('alice',bootstrapBody(channel,after,until)).then(JSON.parse);
+/** Publish `count` fresh records to one channel, one cursor each. */
+const fill=(channel,prefix,count)=>backend.transaction(async({tx,changes,publish})=>{
+ for(let i=0;i<count;i++){await write(tx,`${prefix}-${i}`,`title ${i}`);changes.add({model:'Task',identity:{id:`${prefix}-${i}`}});}
+ publish({channel});
+});
+test('a bounded bootstrap request pages the historical interval and stops at the fixed origin',async()=>{
+ await fill('boot','boot',60);
+ const origin=await head('boot');assert.equal(origin,60);
+ // Publications above S keep arriving; the walk must not chase the head.
+ await fill('boot','boot-late',5);
+ const later=await head('boot');assert.equal(later,origin+5);
+ const first=await bootstrap('boot',0,origin);
+ assert.equal(first.mode,'bootstrap');assert.equal(first.channel,'boot');
+ assert.equal(first.from,0);assert.equal(first.to,50);assert.equal(first.until,origin);assert.equal(first.head,later);
+ assert.notEqual(first.to,first.until,'a full scan below the origin continues');
+ assert.equal(first.records.length,50);
+ assert.deepEqual(first.records[0].state,{title:'title 0'});
+ assert.equal(first.records[0].stamp,await recordStamp('boot-0'));
+ const second=await bootstrap('boot',first.to,origin);
+ assert.equal(second.from,50);assert.equal(second.to,origin);assert.equal(second.until,origin);
+ assert.equal(second.to,second.until,'the interval is complete');
+ assert.equal(second.records.length,10);
+ assert.ok(second.records.every(r=>r.error===undefined&&r.state!==null));
+ assert.deepEqual([...new Set([...first.records,...second.records].map(r=>r.identity.id))].length,60,'every historical record once');
+ assert.ok(second.records.every(r=>!r.identity.id.startsWith('boot-late')),'nothing above the origin is loaded');
+ // An exhausted interval is an empty terminal page carrying the current head.
+ const done=await bootstrap('boot',origin,origin);
+ assert.deepEqual(done,{mode:'bootstrap',channel:'boot',from:origin,to:origin,until:origin,head:await head('boot'),records:[]});
+ // An empty Scope completes at zero, and an origin above the head is refused.
+ assert.deepEqual(await bootstrap('boot-empty',0,0),{mode:'bootstrap',channel:'boot-empty',from:0,to:0,until:0,head:0,records:[]});
+ await assert.rejects(()=>bootstrap('boot',0,later+1),/ahead of head/);
+});
+test('a record republished above the origin leaves the historical interval between pages',async()=>{
+ await fill('moved','moved',60);
+ const origin=await head('moved');
+ const first=await bootstrap('moved',0,origin);
+ assert.equal(first.to,50);assert.equal(first.records.length,50);
+ // `moved-55` sits in (50, origin]; republishing it moves its only row above
+ // the origin, where the subscription's own delivery covers it.
+ await external(backend,'moved',[{model:'Task',identity:{id:'moved-55'}}]);
+ assert.ok((await invalidations('moved-55')).some(([channel,cursor])=>channel==='moved'&&cursor>origin));
+ const second=await bootstrap('moved',first.to,origin);
+ assert.equal(second.to,origin,'the interval still completes at the fixed origin');
+ assert.equal(second.head,await head('moved'));
+ assert.equal(second.records.length,9);
+ assert.ok(!second.records.some(r=>r.identity.id==='moved-55'),'the republished record is no longer historical');
+});
+test('a bootstrap page reads content and stamps at its own repeatable-read snapshot',async()=>{
+ await backend.transaction(async({tx,changes,publish})=>{await write(tx,'coherent','first');changes.add({model:'Task',identity:{id:'coherent'}});publish({channel:'coherent'});});
+ const origin=await head('coherent');const before=await recordStamp('coherent');
+ // A concurrent transaction rewrites and republishes the record after the page
+ // transaction has read its head; the page must still answer its own snapshot.
+ let changed=false;
+ const reader=createBackend({config:{...config,mutations:[]},database:{transaction:run,persistence:tx=>{const storage=store(tx);return {call:async r=>{
+  const result=await storage.call(r);
+  if(r.op==='head'&&!changed){changed=true;await backend.transaction(async({tx:other,changes,publish})=>{await write(other,'coherent','second');changes.add({model:'Task',identity:{id:'coherent'}});publish({channel:'coherent'});});}
+  return result;
+ }}}},authenticate,handlers:{},loaders:{task:async({ids,tx})=>readTasks({ids,tx})}});
+ const page=JSON.parse(await reader.pull('alice',bootstrapBody('coherent',0,origin)));
+ assert.ok(changed,'the concurrent publication committed during the page');
+ assert.equal(page.head,origin,'the head the page reports is its snapshot head');
+ assert.equal(page.to,origin);
+ assert.deepEqual(page.records,[{model:'Task',identity:{id:'coherent'},stamp:before,state:{title:'first'}}],'cursor, stamp and content come from one snapshot');
+ assert.equal(await recordStamp('coherent'),before+1,'the concurrent write did commit');
+ assert.ok(await head('coherent')>origin);
+});
+test('the pull route dispatches by mode over HTTP and refuses any other mode',async()=>{
+ await fill('route','route',2);
+ const origin=await head('route');
+ const server=await backend.listen({port:0});
+ try{
+  const post=body=>fetch(`${server.url}/sync/pull`,{method:'POST',headers:{authorization:'Bearer alice'},body});
+  const page=await post(bootstrapBody('route',0,origin));assert.equal(page.status,200);
+  const decoded=await page.json();
+  assert.equal(decoded.mode,'bootstrap');assert.equal(decoded.to,origin);assert.equal(decoded.records.length,2);
+  const ordinary=await post(pullBody({route:0}));assert.equal(ordinary.status,200);
+  assert.equal((await ordinary.json()).mode,undefined,'an absent mode still answers an ordinary page');
+  for(const mode of ['snapshot',null,1]){
+   const refused=await post(JSON.stringify({mode,channel:'route',models:{Task:1},after:0,until:origin}));
+   assert.equal(refused.status,400,`mode ${JSON.stringify(mode)}`);
+   assert.deepEqual(await refused.json(),{code:'request.invalid'});
+  }
+  const malformed=await post(bootstrapBody('  ',0,origin));assert.equal(malformed.status,400);
+ }finally{await server.close();}
+ // The same dispatch through the direct backend call, with no HTTP in between.
+ await assert.rejects(()=>backend.pull('alice',JSON.stringify({mode:'snapshot',channel:'route',models:{Task:1},after:0,until:origin})),/mode/);
+ await assert.rejects(()=>bootstrap('route',2,1),/request.invalid|origin/);
+});

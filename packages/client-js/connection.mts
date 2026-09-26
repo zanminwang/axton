@@ -1,4 +1,4 @@
-import type { DownlinkSignal } from "./subscriptions.mts";
+import type { BootstrapRun, DownlinkSignal } from "./subscriptions.mts";
 export type Transport = (
   kind: string,
   body: string,
@@ -192,7 +192,16 @@ export async function startConnection(
 export type DownlinkAction =
   | { type: "open"; epoch: number; subscribe: string }
   | { type: "close"; epoch: number; reason: string | null }
-  | { type: "request"; request: number; body: string }
+  /**
+   * `POST /sync/pull`. An ordinary catch-up belongs to the open session, so the
+   * session's cancellation abandons it and its failure ends the session. A
+   * `bootstrap` page belongs to the lane: it outlives the session, its failure
+   * ends none, and only `pause` and `close` abandon it
+   * ([#151](https://github.com/zanminwang/axton/issues/151)).
+   */
+  | { type: "request"; request: number; body: string; bootstrap: boolean }
+  /** A committed bootstrap transition; the registry projects it onto the subscription's status. */
+  | ({ type: "bootstrap" } & BootstrapRun)
   | { type: "wake"; lane: "push" }
   | { type: "report"; reports: ReportDetails[] }
   | { type: "changed"; scopes: string[] }
@@ -277,6 +286,12 @@ export async function startDownlinkLane(
 ): Promise<DownlinkLane> {
   let stopped = false;
   let session: Session | undefined;
+  /**
+   * What abandons the historical pages in flight. They belong to the lane, not
+   * to a socket, so only `pause` and `close` abandon them and a replaced socket
+   * leaves them alone ([#151](https://github.com/zanminwang/axton/issues/151)).
+   */
+  let loading = new AbortController();
   /** Catch-up requests of the open session that have not answered yet. */
   let outstanding = 0;
   // Every enqueue bumps this and the loop re-checks it before sleeping, so a
@@ -318,6 +333,18 @@ export async function startDownlinkLane(
     }
     notify();
   };
+  /** The HTTP status a transport error carried, for Rust to tell a refusal from a transport failure. */
+  const statusOf = (error: unknown) =>
+    (error as { status?: number })?.status ?? null;
+  /** A 401 the application can clear: refresh once, reporting a failed refresh. */
+  const refresh = async (error: unknown) => {
+    if (statusOf(error) !== 401 || !options.refreshAuth) return;
+    try {
+      await options.refreshAuth();
+    } catch (refreshError) {
+      options.onError?.(refreshError);
+    }
+  };
   /** A socket or request that failed: report it, refresh once, tell Rust. */
   const fail = async (
     current: Session,
@@ -328,14 +355,36 @@ export async function startDownlinkLane(
     abandon(current);
     if (session === current) session = undefined;
     options.onError?.(error);
-    if ((error as { status?: number })?.status === 401 && options.refreshAuth) {
-      try {
-        await options.refreshAuth();
-      } catch (refreshError) {
-        options.onError?.(refreshError);
-      }
-    }
+    await refresh(error);
     await enqueue(event);
+  };
+  /**
+   * One historical page. It rides on no session: its failure ends none, and the
+   * worker decides from the status whether the server refused it or the
+   * transport did.
+   */
+  const load = (request: number, body: string) => {
+    const signal = loading.signal;
+    network.push("pull", body, signal).then(
+      (text) => enqueue({ event: "response", request, body: text }),
+      async (error) => {
+        if (stopped) return;
+        // A page this lane abandoned itself - `pause` - is not the
+        // application's failure, as an abandoned session's request is not; the
+        // worker is still told, so it clears its slot and asks again on
+        // `resume`.
+        if (!signal.aborted) {
+          options.onError?.(error);
+          await refresh(error);
+        }
+        await enqueue({
+          event: "failed",
+          request,
+          reason: String((error as { message?: string })?.message ?? error),
+          status: signal.aborted ? null : statusOf(error),
+        });
+      },
+    );
   };
   const execute = (action: DownlinkAction) => {
     switch (action.type) {
@@ -361,6 +410,7 @@ export async function startDownlinkLane(
         return;
       }
       case "request": {
+        if (action.bootstrap) return load(action.request, action.body);
         const current = session;
         if (!current || current.ended) return;
         report({ lane: "requests", outstanding: ++outstanding });
@@ -383,6 +433,7 @@ export async function startDownlinkLane(
               event: "failed",
               request: action.request,
               reason: String((error as { message?: string })?.message ?? error),
+              status: statusOf(error),
             });
           },
         );
@@ -409,6 +460,13 @@ export async function startDownlinkLane(
       case "acknowledged":
         report({ lane: action.type, scopes: action.scopes });
         return;
+      // A committed bootstrap transition: transport state to project, never a
+      // decision to make here.
+      case "bootstrap": {
+        const { type, ...run } = action;
+        report({ lane: "bootstrap", run });
+        return;
+      }
       // The loop sleeps for it; nothing to execute.
       case "wait":
         return;
@@ -462,11 +520,13 @@ export async function startDownlinkLane(
     async pause() {
       if (stopped) return;
       if (session) abandon(session);
+      loading.abort();
       report({ lane: "paused" });
       await enqueue({ event: "pause" });
     },
     async resume() {
       if (stopped) return;
+      loading = new AbortController();
       report({ lane: "resumed" });
       await enqueue({ event: "resume" });
     },
@@ -479,6 +539,7 @@ export async function startDownlinkLane(
       stopped = true;
       if (session) abandon(session);
       session = undefined;
+      loading.abort();
       report({ lane: "stopped" });
       await enqueue({ event: "stop" });
       notify();

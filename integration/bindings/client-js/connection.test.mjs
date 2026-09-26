@@ -376,7 +376,7 @@ test("a downlink catch-up is answered by its own request id", async () => {
   const { events, lane } = downlinkLane(
     [
       [{ type: "open", epoch: 1, subscribe: "{}" }],
-      [{ type: "request", request: 7, body: '{"cursors":{}}' }],
+      [{ type: "request", request: 7, body: '{"cursors":{}}', bootstrap: false }],
     ],
     {
       push: (kind, body) => {
@@ -404,7 +404,7 @@ test("a failed downlink catch-up reports the failure by request id", async () =>
   const { events, lane } = downlinkLane(
     [
       [{ type: "open", epoch: 1, subscribe: "{}" }],
-      [{ type: "request", request: 3, body: '{"cursors":{}}' }],
+      [{ type: "request", request: 3, body: '{"cursors":{}}', bootstrap: false }],
     ],
     {
       push: () => new Promise((resolve, reject) => (answer = { resolve, reject })),
@@ -420,7 +420,133 @@ test("a failed downlink catch-up reports the failure by request id", async () =>
     event: "failed",
     request: 3,
     reason: "pull failed: 500",
+    status: null,
   });
   assert.match(reported[0].message, /pull failed: 500/);
+  await downlink.close();
+});
+
+/**
+ * A bootstrap page is fetched from the same route as a catch-up, but it belongs
+ * to the lane and not to a socket: no session has to be open, its failure ends
+ * none, and the status travels so Rust can tell a refusal from a transport
+ * failure ([#151](https://github.com/zanminwang/axton/issues/151)).
+ */
+test("a downlink bootstrap page runs without a session and reports its status", async () => {
+  const pulls = [];
+  const signals = [];
+  let answer;
+  const reported = [];
+  const body = '{"mode":"bootstrap","channel":"a","models":{},"after":0,"until":7}';
+  const { events, lane } = downlinkLane(
+    [
+      [{ type: "request", request: 9, body, bootstrap: true }],
+      [],
+      [{ type: "request", request: 10, body, bootstrap: true }],
+      [
+        {
+          type: "bootstrap",
+          scope: "a",
+          subscriptionId: 1,
+          state: "loading",
+          run: 1,
+          cursor: 40,
+          barrier: null,
+          error: null,
+        },
+      ],
+    ],
+    {
+      push: (kind, pushed, signal) => {
+        pulls.push({ kind, body: pushed });
+        signals.push(signal);
+        return new Promise((resolve, reject) => (answer = { resolve, reject }));
+      },
+      open() {
+        throw Error("a bootstrap page opens no socket");
+      },
+    },
+    { onError: (error) => reported.push(error) },
+  );
+  const downlink = await lane;
+  await settled();
+  assert.deepEqual(pulls, [{ kind: "pull", body }], "the same endpoint");
+  answer.resolve('{"mode":"bootstrap","channel":"a","from":0,"to":40,"until":7,"head":9,"records":[]}');
+  await settled();
+  assert.equal(
+    events.find((e) => e.event === "response").request,
+    9,
+    "answered by its own id",
+  );
+  // The next one fails with a status: the worker, not the host, decides what a
+  // refusal means, and no session was ended by it.
+  answer.reject(Object.assign(Error("pull failed: 400"), { status: 400 }));
+  await settled();
+  assert.deepEqual(events.find((e) => e.event === "failed"), {
+    event: "failed",
+    request: 10,
+    reason: "pull failed: 400",
+    status: 400,
+  });
+  assert.ok(!events.some((e) => e.event === "closed"), "no session was ended");
+  assert.match(reported[0].message, /pull failed: 400/);
+  await downlink.close();
+  assert.ok(
+    signals.every((signal) => signal.aborted),
+    "closing the lane abandons the pages in flight",
+  );
+});
+
+/**
+ * A page the lane abandoned itself is not the application's failure: `pause`
+ * aborts it silently, the worker still hears `failed` so it can clear its slot,
+ * and `resume` fetches again on a fresh cancellation
+ * ([#151](https://github.com/zanminwang/axton/issues/151)).
+ */
+test("pausing the downlink lane abandons its bootstrap page without reporting it", async () => {
+  const reported = [];
+  const body = '{"mode":"bootstrap","channel":"a","models":{},"after":0,"until":7}';
+  const script = [[{ type: "request", request: 4, body, bootstrap: true }], []];
+  let pulls = 0;
+  const { events, lane } = downlinkLane(
+    script,
+    {
+      push: (kind, pushed, signal) => {
+        pulls++;
+        return new Promise((resolve, reject) => {
+          signal.addEventListener("abort", () => reject(Error("connection_closed")), {
+            once: true,
+          });
+        });
+      },
+      open() {
+        throw Error("a bootstrap page opens no socket");
+      },
+    },
+    { onError: (error) => reported.push(error) },
+  );
+  const downlink = await lane;
+  await settled();
+  assert.equal(pulls, 1, "the page went out");
+  await downlink.pause();
+  await settled();
+  assert.deepEqual(reported, [], "its own cancellation is not an application failure");
+  assert.deepEqual(events.find((e) => e.event === "failed"), {
+    event: "failed",
+    request: 4,
+    reason: "connection_closed",
+    status: null,
+  });
+  // Resume fetches again, on a cancellation of its own: the pause does not
+  // reach the next page.
+  script.push([{ type: "request", request: 5, body, bootstrap: true }]);
+  await downlink.resume();
+  await settled();
+  assert.equal(pulls, 2, "the resumed page went out");
+  assert.equal(
+    events.filter((e) => e.event === "failed").length,
+    1,
+    "the old pause abandoned nothing of the resumed page",
+  );
   await downlink.close();
 });

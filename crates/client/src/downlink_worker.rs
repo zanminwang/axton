@@ -46,11 +46,15 @@ pub enum DownlinkEvent {
         request: u64,
         body: String,
     },
-    /// The request this id names failed; `reason` is what the host reported.
+    /// The request this id names failed; `reason` is what the host reported and
+    /// `status` the HTTP status it carried, when it had one. A status in the
+    /// 4xx range is a refusal the server decided, not a transport failure.
     Failed {
         request: u64,
         #[serde(default)]
         reason: Option<String>,
+        #[serde(default)]
+        status: Option<u16>,
     },
 }
 
@@ -64,9 +68,24 @@ pub enum DownlinkAction {
     /// Close the socket of this epoch and abandon its request, if any. A
     /// `reason` is a protocol violation the host reports as an error.
     Close { epoch: u64, reason: Option<String> },
-    /// `POST /sync/pull` with `body`, one request for every subscribed channel;
-    /// its answer is a `response` event of this id, a failure is `failed`.
-    Request { request: u64, body: String },
+    /// `POST /sync/pull` with `body`; its answer is a `response` event of this
+    /// id, a failure is `failed`. An ordinary catch-up carries every subscribed
+    /// channel and belongs to the open session, so the session's cancellation
+    /// abandons it and its failure ends the session. A `bootstrap` request is
+    /// one Scope's historical page on the same route: it belongs to the lane,
+    /// not to a socket, so it outlives the session, its failure ends none, and
+    /// only `pause` and `close` abandon it.
+    Request {
+        request: u64,
+        body: String,
+        bootstrap: bool,
+    },
+    /// A bootstrap run changed and the change is committed: the phase, the
+    /// historical progress, the fixed barrier and the stored failure of one
+    /// registration. The SDKs publish it as the subscription's load status; no
+    /// delivery decision depends on it
+    /// ([#151](https://github.com/zanminwang/axton/issues/151)).
+    Bootstrap(BootstrapState),
     /// A page applied and may have settled a batch: wake the push lane.
     Wake { lane: &'static str },
     /// What the last page could not apply; the host hands it to the application.
@@ -101,6 +120,77 @@ struct Pending {
     request: PullRequest,
 }
 
+/// The one historical page request in flight, across every Scope: the id the
+/// host correlates its answer by, the registration and run it belongs to, and
+/// the request that answer must be a page of. It names no socket epoch - a load
+/// belongs to the client, not to a session - so replacing the socket neither
+/// cancels nor restarts it, and the answer is validated against what is
+/// committed when it arrives.
+struct PendingBootstrap {
+    id: u64,
+    subscription_id: u64,
+    run: u64,
+    request: BootstrapRequest,
+}
+
+/// What the host reported about the historical request in flight, waiting for
+/// the pump that may commit it. It is held apart from the session's control
+/// queue, which an ended session discards: an answer must survive the socket.
+enum Loaded {
+    /// The body the request answered with.
+    Page(String),
+    /// The request did not answer. `status` is the HTTP status the host had.
+    Failed {
+        status: Option<u16>,
+        reason: Option<String>,
+    },
+}
+
+/// The historical schedule: whose turn it is and when the next page may be
+/// asked for. It is the lane's own retry policy applied to one work class, so
+/// no page is ever in flight twice and no failure is retried in a tight loop.
+#[derive(Default)]
+struct Loading {
+    /// Whether anything may have become schedulable since the last enumeration:
+    /// the lane started, a wake arrived - every commit wakes it - or a page
+    /// committed. Without it every pump would query the ledger for nothing.
+    dirty: bool,
+    /// The Scope whose page was asked for last: the rotation's position.
+    rotation: Option<String>,
+    /// Transport failures in a row, and the time before which none is retried.
+    /// There is no overall timeout: waiting for connectivity is not a failure.
+    attempt: u32,
+    due: u64,
+}
+impl Loading {
+    /// A commit may have made work schedulable.
+    fn wake(&mut self) {
+        self.dirty = true;
+    }
+    /// The lane started or resumed: nothing is deferred any more.
+    fn restart(&mut self, now: u64) {
+        *self = Self {
+            dirty: true,
+            rotation: self.rotation.take(),
+            attempt: 0,
+            due: now,
+        };
+    }
+    /// A transport failure: hold the next attempt back, keeping the run.
+    fn defer(&mut self, now: u64, entropy: u64) {
+        let delay = ConnectionDriver::backoff(self.attempt, entropy);
+        self.attempt = self.attempt.saturating_add(1);
+        self.due = now.saturating_add(delay);
+        self.dirty = true;
+    }
+    /// The request answered: the transport works, and the ledger may have more.
+    fn answered(&mut self, now: u64) {
+        self.attempt = 0;
+        self.due = now;
+        self.dirty = true;
+    }
+}
+
 /// Streamed page frames held in the queue. Beyond this the queue is discarded
 /// whole and every channel recovers from the durable cursor: the server log is
 /// the durable queue, the cursor the pointer into it. Control work is queued
@@ -120,8 +210,17 @@ pub struct DownlinkWorker {
     /// when every channel it names connects to its cursor; a page with a gap
     /// stays until a pull connects it or covers it.
     pages: VecDeque<PullPage>,
-    /// The one HTTP request in flight.
+    /// The one ordinary catch-up in flight.
     active: Option<Pending>,
+    /// The one historical page request in flight, across every Scope. It is a
+    /// second slot, not a second queue: the ordinary cursor path never sees it.
+    bootstrap: Option<PendingBootstrap>,
+    /// What the host reported about that request, for the next pump to apply.
+    loaded: Option<Loaded>,
+    /// Whose turn the next historical page is, and when it may be asked for.
+    loading: Loading,
+    /// The lane started and has not re-evaluated the persisted barriers yet.
+    reopened: bool,
     /// Another pull is needed once the one in flight ends (an overflow while
     /// pulling: the lost frames may lie beyond the answer).
     again: bool,
@@ -135,6 +234,14 @@ pub struct DownlinkWorker {
     /// its acknowledgement establishes: a Scope that has been unsubscribed, or
     /// recreated, since is another subscription and takes nothing from it.
     expected: BTreeMap<String, u64>,
+}
+
+/// Whether an HTTP status is a refusal the server decided, which no retry can
+/// clear: a deterministic request or read-contract failure. Authentication
+/// (401), a timeout (408) and rate limiting (429) are transport conditions the
+/// lane retries instead, as is every server error.
+fn refused(status: u16) -> bool {
+    (400..500).contains(&status) && !matches!(status, 401 | 408 | 429)
 }
 
 /// Collect one page's outcome into the actions: the push lane wakes and the
@@ -193,10 +300,21 @@ impl DownlinkWorker {
                 self.end(None);
                 self.closing = None;
                 self.driver.start(now);
+                // Persisted loads resume without another call from the
+                // frontend, and every barrier is re-evaluated before any I/O.
+                self.loading.restart(now);
+                self.reopened = true;
             }
             DownlinkEvent::Stop => {
                 self.end(None);
                 self.driver.stop();
+                // The lane is gone for good: its request is abandoned and its
+                // answer belongs to nobody. The durable task is untouched and
+                // the next start picks it up.
+                self.bootstrap = None;
+                self.loaded = None;
+                self.loading = Loading::default();
+                self.reopened = false;
             }
             DownlinkEvent::Pause => {
                 if self.session.open() {
@@ -205,8 +323,14 @@ impl DownlinkWorker {
                 }
                 self.driver.pause();
             }
-            DownlinkEvent::Resume => self.driver.resume(now),
-            DownlinkEvent::Wake => self.driver.wake(),
+            DownlinkEvent::Resume => {
+                self.driver.resume(now);
+                self.loading.restart(now);
+            }
+            DownlinkEvent::Wake => {
+                self.driver.wake();
+                self.loading.wake();
+            }
             DownlinkEvent::Message { epoch, body } => {
                 if self.session.current(epoch) {
                     self.frame(client, &body, now, entropy);
@@ -224,14 +348,24 @@ impl DownlinkWorker {
                 }
             }
             DownlinkEvent::Response { request, body } => {
-                if self.answers(request) {
+                if self.loads(request) {
+                    self.loaded = Some(Loaded::Page(body));
+                } else if self.answers(request) {
                     self.control.push_back(Control::Response(body));
                 }
             }
-            DownlinkEvent::Failed { request, .. } => {
-                // The host has reported the failure already; the session ends
-                // and the lane retries with backoff.
-                if self.answers(request) {
+            DownlinkEvent::Failed {
+                request,
+                reason,
+                status,
+            } => {
+                // A historical page that failed ends no session: it is retried
+                // on its own schedule, or refused if the server decided so.
+                if self.loads(request) {
+                    self.loaded = Some(Loaded::Failed { status, reason });
+                } else if self.answers(request) {
+                    // The host has reported the failure already; the session
+                    // ends and the lane retries with backoff.
                     self.fail(client, None, now, entropy);
                 }
             }
@@ -242,6 +376,11 @@ impl DownlinkWorker {
     /// other belongs to a session that is gone.
     fn answers(&self, request: u64) -> bool {
         self.active.as_ref().is_some_and(|p| p.id == request)
+    }
+    /// Whether `request` is the historical page in flight. The two slots share
+    /// one id space, so one test decides which work an answer belongs to.
+    fn loads(&self, request: u64) -> bool {
+        self.bootstrap.as_ref().is_some_and(|p| p.id == request)
     }
 
     /// One frame of the current socket: the handshake is validated for order
@@ -363,28 +502,73 @@ impl DownlinkWorker {
             self.invalidate(now);
             self.flush(&mut actions);
         }
-        self.process(client, now, entropy, &mut actions)?;
+        // A lane that just started re-evaluates every persisted barrier before
+        // it issues anything: a run whose delivery reached its barrier while
+        // the client was closed completes without another request.
+        if std::mem::take(&mut self.reopened) && self.resume(client, &mut actions)? {
+            return Ok(actions);
+        }
+        let committed = self.process(client, now, entropy, &mut actions)?;
         self.flush(&mut actions);
+        self.barriers(client, &mut actions)?;
+        self.historical(client, now, entropy, committed, &mut actions)?;
+        // The two schedules are read together and answered with one sleep: the
+        // load's next attempt is its own, so the socket's backoff must never
+        // hold a page back ([#151](https://github.com/zanminwang/axton/issues/151)).
+        let load = self.load_due(now);
+        let mut socket = None;
         if !self.session.open() {
             match self.driver.next(now) {
                 ConnectionAction::Sync => self.begin(client, now, &mut actions)?,
-                ConnectionAction::Wait { millis } => actions.push(DownlinkAction::Wait { millis }),
+                ConnectionAction::Wait { millis } => socket = Some(millis),
                 ConnectionAction::Idle => {}
             }
         }
+        self.rest(load, socket, &mut actions);
         Ok(actions)
+    }
+
+    /// When the historical schedule next wants a pump, in millis from `now`:
+    /// `None` when it wants none - a page is in flight, nothing became
+    /// schedulable, or the lane is paused or stopped - and zero when it is due
+    /// already, which is the one case that asks for no sleep at all.
+    fn load_due(&self, now: u64) -> Option<u64> {
+        if !self.driver.active() || self.bootstrap.is_some() || !self.loading.dirty {
+            return None;
+        }
+        Some(self.loading.due.saturating_sub(now))
+    }
+
+    /// The lane's one sleep: the earlier of the two schedules, so neither work
+    /// class waits on the other's. The socket's is answered whatever else this
+    /// pump found, because with no session open nothing else will wake it; the
+    /// load's alone is answered only when the pump gave the host nothing else
+    /// to do, so a deferred page never delays work already queued. A schedule
+    /// that is due now asks for no sleep: the host pumps again as soon as the
+    /// actions come back.
+    fn rest(&self, load: Option<u64>, socket: Option<u64>, actions: &mut Vec<DownlinkAction>) {
+        let millis = match (load, socket) {
+            (Some(load), Some(socket)) => load.min(socket),
+            (None, Some(socket)) => socket,
+            (Some(load), None) if actions.is_empty() => load,
+            _ => return,
+        };
+        if millis > 0 || actions.is_empty() {
+            actions.push(DownlinkAction::Wait { millis });
+        }
     }
 
     /// Consume the queues: every control event, which a page that cannot apply
     /// yet never holds back, then streamed pages from the front until one
     /// commits. A page leaves the queue only by being applied or covered.
+    /// `true` when a commit landed, so this pump holds no other.
     fn process<S: ClientStore>(
         &mut self,
         client: &mut Client<S>,
         now: u64,
         entropy: u64,
         actions: &mut Vec<DownlinkAction>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         while self.session.open() {
             let Some(control) = self.control.pop_front() else {
                 break;
@@ -400,11 +584,12 @@ impl DownlinkWorker {
                 Control::Response(body) => self.response(client, &body, now, entropy, actions)?,
             };
             if committed {
-                return Ok(());
+                return Ok(true);
             }
         }
         // Pages wait while a pull is in flight: its answer moves the cursors
-        // they are measured against.
+        // they are measured against. A historical page is in neither queue and
+        // holds nothing back.
         while self.session.open() && self.active.is_none() {
             let Some(front) = self.pages.front().cloned() else {
                 break;
@@ -413,13 +598,254 @@ impl DownlinkWorker {
             settle(&progress, actions);
             if progress.disposition == "recover" {
                 // The gap stays at the front until a pull connects or covers it.
-                return self.pull(client, actions);
+                self.pull(client, actions)?;
+                return Ok(false);
             }
             self.pages.pop_front();
             if progress.disposition == "applied" {
-                return Ok(());
+                return Ok(true);
             }
         }
+        Ok(false)
+    }
+
+    /// The lane started: complete every persisted run whose fixed barrier
+    /// delivery has already reached. `true` when it committed, so the pump
+    /// holds that one commit and the host pumps again for the session.
+    fn resume<S: ClientStore>(
+        &mut self,
+        client: &mut Client<S>,
+        actions: &mut Vec<DownlinkAction>,
+    ) -> Result<bool> {
+        let waiting = client.bootstrap_barriers()?;
+        let settled = client.settle_bootstrap_barriers(&waiting)?;
+        let committed = !settled.is_empty();
+        for state in settled {
+            actions.push(DownlinkAction::Bootstrap(state));
+        }
+        Ok(committed)
+    }
+
+    /// Committed delivery progress may have reached a fixed barrier: complete
+    /// every run of a Scope this pump moved. The Scopes are the ones the commit
+    /// announced, so a barrier is settled by the transaction that reached it
+    /// and by nothing else; a run still short of its barrier writes nothing
+    /// ([`Client::settle_bootstrap_barriers`]).
+    fn barriers<S: ClientStore>(
+        &mut self,
+        client: &mut Client<S>,
+        actions: &mut Vec<DownlinkAction>,
+    ) -> Result<()> {
+        let moved: Vec<String> = actions
+            .iter()
+            .filter_map(|action| match action {
+                DownlinkAction::Changed { scopes } => Some(scopes.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        if moved.is_empty() {
+            return Ok(());
+        }
+        for state in client.settle_bootstrap_barriers(&moved)? {
+            actions.push(DownlinkAction::Bootstrap(state));
+        }
+        Ok(())
+    }
+
+    /// The historical work class: apply what the request in flight answered,
+    /// then ask for the next page. Neither step touches the socket, the live
+    /// cursors or the ordinary catch-up slot, and neither runs when this pump
+    /// has already committed - one commit per pump, so foreground work and
+    /// delivery interleave with a load.
+    fn historical<S: ClientStore>(
+        &mut self,
+        client: &mut Client<S>,
+        now: u64,
+        entropy: u64,
+        committed: bool,
+        actions: &mut Vec<DownlinkAction>,
+    ) -> Result<()> {
+        if committed || self.answered(client, now, entropy, actions)? {
+            return Ok(());
+        }
+        self.schedule(client, now, actions)
+    }
+
+    /// Apply what the host reported about the historical request in flight;
+    /// `true` when it committed. A page is refused unless it answers the
+    /// request that asked for it, and every test the ledger makes is against
+    /// what is committed now, so an answer that outlived its run writes
+    /// nothing. A transport failure keeps the run and defers the same page; a
+    /// refusal the server decided fails the run until an explicit retry.
+    fn answered<S: ClientStore>(
+        &mut self,
+        client: &mut Client<S>,
+        now: u64,
+        entropy: u64,
+        actions: &mut Vec<DownlinkAction>,
+    ) -> Result<bool> {
+        // The slot is emptied only by an answer to the request it holds: taking
+        // both at once would clear it on every pump.
+        let Some(loaded) = self.loaded.take() else {
+            return Ok(false);
+        };
+        let Some(pending) = self.bootstrap.take() else {
+            return Ok(false);
+        };
+        let scope = pending.request.channel.clone();
+        let body = match loaded {
+            Loaded::Failed { status, reason } => {
+                if !status.is_some_and(refused) {
+                    // Offline or interrupted: the run is untouched and the same
+                    // page is asked for again once the backoff has passed
+                    // ([`DownlinkWorker::load_due`] carries it to the sleep).
+                    self.loading.defer(now, entropy);
+                    return Ok(false);
+                }
+                self.loading.answered(now);
+                let detail = reason.map(|r| format!(": {r}")).unwrap_or_default();
+                return self.refuse(
+                    client,
+                    &pending,
+                    BootstrapError::new(
+                        REQUEST_REJECTED,
+                        format!(
+                            "the bootstrap request for {scope} was refused with HTTP {}{detail}",
+                            status.unwrap_or_default()
+                        ),
+                        vec![],
+                    ),
+                    actions,
+                );
+            }
+            Loaded::Page(body) => body,
+        };
+        self.loading.answered(now);
+        let page = match BootstrapPage::decode(body.as_bytes()) {
+            Ok(page) if page.answers(&pending.request) => page,
+            Ok(page) => {
+                return self.refuse(
+                    client,
+                    &pending,
+                    BootstrapError::new(
+                        PROTOCOL_INVALID,
+                        format!(
+                            "a bootstrap page ({}, {}] of {} does not answer the request ({}, {}] of {scope}",
+                            page.from, page.to, page.channel, pending.request.after,
+                            pending.request.until
+                        ),
+                        vec![],
+                    ),
+                    actions,
+                );
+            }
+            Err(e) => {
+                return self.refuse(
+                    client,
+                    &pending,
+                    BootstrapError::new(
+                        PROTOCOL_INVALID,
+                        format!("invalid bootstrap page for {scope}: {e}"),
+                        vec![],
+                    ),
+                    actions,
+                );
+            }
+        };
+        let applied = client.apply_bootstrap_page(
+            &scope,
+            pending.subscription_id,
+            pending.run,
+            pending.request.after,
+            &page,
+        )?;
+        // What the page could not apply is the application's, whether or not
+        // the run survived it.
+        if let Some(report) = applied.report().filter(|r| !r.reports.is_empty()) {
+            actions.push(DownlinkAction::Report {
+                reports: report.reports.clone(),
+            });
+        }
+        let Some(state) = applied.state() else {
+            return Ok(false);
+        };
+        actions.push(DownlinkAction::Bootstrap(state.clone()));
+        Ok(true)
+    }
+
+    /// Store a failure the ledger cannot see for itself and announce it;
+    /// `false` when the answer named no run this client still holds, in which
+    /// case nothing was written and nothing is announced.
+    ///
+    /// The registration is checked on the committed reader first, because
+    /// naming one that is gone - unsubscribed, or replaced by another identity
+    /// while the page was in flight - is how the ledger reports a closed
+    /// subscription: with an error. An error here would leave the pump, discard
+    /// the actions it had gathered and end the live session, and a stale answer
+    /// must do none of that.
+    fn refuse<S: ClientStore>(
+        &mut self,
+        client: &mut Client<S>,
+        pending: &PendingBootstrap,
+        error: BootstrapError,
+        actions: &mut Vec<DownlinkAction>,
+    ) -> Result<bool> {
+        let scope = &pending.request.channel;
+        let held = client
+            .subscription_state(scope)?
+            .is_some_and(|state| state.subscription_id == pending.subscription_id);
+        if !held {
+            return Ok(false);
+        }
+        if !client.fail_bootstrap(scope, pending.subscription_id, pending.run, error)? {
+            return Ok(false);
+        }
+        let state = client.bootstrap_state(scope, pending.subscription_id)?;
+        actions.push(DownlinkAction::Bootstrap(state));
+        Ok(true)
+    }
+
+    /// Ask for one historical page when none is in flight: the next run in the
+    /// rotation, from the progress it committed, bounded by its own origin. The
+    /// read that picks it is closed before the action leaves, so no transaction
+    /// and no pump waits on the network.
+    fn schedule<S: ClientStore>(
+        &mut self,
+        client: &mut Client<S>,
+        now: u64,
+        actions: &mut Vec<DownlinkAction>,
+    ) -> Result<()> {
+        // With no network configuration - a lane that never started, or a
+        // paused one - there is nothing to issue a request to.
+        if self.bootstrap.is_some() || !self.driver.active() || !self.loading.dirty {
+            return Ok(());
+        }
+        // A deferred page stays deferred; the pump answers for the sleep.
+        if self.loading.due > now {
+            return Ok(());
+        }
+        let Some(task) = client.bootstrap_schedule(self.loading.rotation.as_deref())? else {
+            // Nothing is schedulable: a wake says when to look again.
+            self.loading.dirty = false;
+            return Ok(());
+        };
+        let request = task.request(client.declared_models());
+        let body = String::from_utf8(request.encode()?)
+            .map_err(|_| invalid("a bootstrap request must be UTF-8"))?;
+        self.requests += 1;
+        self.loading.rotation = Some(task.state.scope.clone());
+        self.bootstrap = Some(PendingBootstrap {
+            id: self.requests,
+            subscription_id: task.state.subscription_id,
+            run: task.state.run,
+            request,
+        });
+        actions.push(DownlinkAction::Request {
+            request: self.requests,
+            body,
+            bootstrap: true,
+        });
         Ok(())
     }
 
@@ -474,6 +900,12 @@ impl DownlinkWorker {
         }
         let committed = !initialization.initialized.is_empty();
         if committed {
+            // A load registered before its subscription had an origin has
+            // nothing to bound its interval, so the schedule passed it over.
+            // The boundary this transaction committed is that bound: without
+            // this wake the run would wait for some unrelated commit
+            // ([#151](https://github.com/zanminwang/axton/issues/151)).
+            self.loading.wake();
             actions.push(DownlinkAction::Changed {
                 scopes: initialization.initialized,
             });
@@ -522,6 +954,7 @@ impl DownlinkWorker {
         actions.push(DownlinkAction::Request {
             request: self.requests,
             body,
+            bootstrap: false,
         });
         Ok(())
     }

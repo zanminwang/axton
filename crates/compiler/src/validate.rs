@@ -583,6 +583,10 @@ fn validate_action_slot(
 /// runtime packages they import, declare. A model or enum with one of these
 /// names would collide with them in the generated file.
 const GENERATED_NAMES: &[&str] = &[
+    "BootstrapError",
+    "BootstrapFailedException",
+    "BootstrapPhase",
+    "BootstrapStatus",
     "Call",
     "CallError",
     "CallFailure",
@@ -595,6 +599,7 @@ const GENERATED_NAMES: &[&str] = &[
     "CallSuccess",
     "Channels",
     "Client",
+    "ClientClosedException",
     "ClientSyncState",
     "Connection",
     "DirectMutations",

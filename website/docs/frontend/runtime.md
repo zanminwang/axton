@@ -180,6 +180,8 @@ For either source, a page applies as one transaction and names a range for each 
 
 Durable submission of Mutations and queued Queries runs independently through `POST /sync/mutations`; direct calls use `POST /sync/actions` with the configured finite timeout. A connection with no subscribed channels can still submit calls without opening a socket.
 
+A `bootstrap()` load is a third, independent work class on the same connection: one bounded `POST /sync/pull` at a time across all channels, asked for while the connection is running and not paused, retried with the same backoff after a transport failure, and taking turns between channels that have one registered. It does not hold up the socket, the catch-up request or Action submission, and pausing the connection defers its next page instead of failing it. Progress is committed page by page, so closing the client or losing the network resumes where it stopped.
+
 Reconnection and subscription changes repeat catch-up from saved progress; a new session is not a new starting point, and an acknowledged position below saved progress is reported through `onError` rather than rewinding the channel. The client checks that every HTTP response and queued WebSocket page belongs to the current session before applying it. Pause and close cancel requests and sockets; resume creates a new session. The runtime does not poll for remote changes.
 
 ## Connection controls

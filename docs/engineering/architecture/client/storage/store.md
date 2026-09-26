@@ -25,6 +25,8 @@ Values cross as JSON: booleans become integers, arrays and objects become JSON t
 
 The store enforces the constraints the framework DDL declares, so an invariant written as a `CHECK` cannot be violated by any engine path: `axton_subscription`'s cursor pair, for instance, is either both NULL or both set ([Reconciliation](reconciliation.md)). A violating write fails the statement and the transaction rolls back like any other error.
 
+Not every invariant can be a `CHECK`. SQLite's `ALTER TABLE` cannot add one, so columns added to an existing table - the five `bootstrap_` columns of `axton_subscription` ([#151](https://github.com/zanminwang/axton/issues/151)) - are validated by the engine instead, on every read and every write of the row, rather than by the file. A store-level rule is also the wrong place for a rule about *which* row a write may touch: a historical page is fenced by the subscription identity, the run and the committed progress it claims to continue, tests the write repeats inside its own transaction ([Pull](../engine/pull.md)).
+
 Code: [client/store.rs](../../../../../crates/client/src/store.rs) (contract), [sqlite/lib.rs](../../../../../crates/sqlite/src/lib.rs) (implementation).
 
 ## 10. Quality Requirements
@@ -33,8 +35,9 @@ Code: [client/store.rs](../../../../../crates/client/src/store.rs) (contract), [
 - **Savepoints nest and roll back independently** (basis of guarantee L3). Evidence: `savepoints_nest_and_rollback_independently`.
 - **Read paths refuse writes; a second writer fails instead of hanging.** Evidence: `queries_refuse_writes_and_arrays_travel_as_json_text`, `second_writer_waits_then_fails_on_conflicting_immediate_transaction`.
 - **A declared `CHECK` refuses the write the engine attempted.** Evidence: [sqlite/tests/subscriptions.rs](../../../../../crates/sqlite/tests/subscriptions.rs) `the_table_refuses_a_half_initialized_cursor_pair`.
+- **An invariant the file cannot declare is refused by the engine on the way in and on the way out.** Evidence: [sqlite/tests/bootstrap.rs](../../../../../crates/sqlite/tests/bootstrap.rs) `a_stored_failure_is_bounded`, `bootstrap_state_is_serializable`, `a_failed_commit_leaves_neither_authority_nor_progress`.
 
-Tests read, not executed.
+The store's own tests were read, not executed. The bootstrap ledger tests above were executed on 2026-09-25 with `cargo test -p axton-sqlite --locked`.
 
 ## 11. Risks and Technical Debt
 

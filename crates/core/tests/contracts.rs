@@ -1264,6 +1264,159 @@ fn action_store_canonical_form_drops_explicit_true_after_validation() {
     assert!(unknown.normalize(&schema).is_err());
 }
 
+#[test]
+fn bootstrap_request_fixture_cases_decode_as_declared() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/bootstrap-request.json"
+    ))
+    .unwrap();
+    let canonical = &fixture["canonical"];
+    let request = BootstrapRequest::decode(canonical["wire"].as_str().unwrap().as_bytes()).unwrap();
+    assert_eq!(request.channel, canonical["channel"].as_str().unwrap());
+    assert_eq!(request.after, canonical["after"].as_u64().unwrap());
+    assert_eq!(request.until, canonical["until"].as_u64().unwrap());
+    assert_eq!(
+        request.models,
+        [("Comment".into(), 1), ("Entry".into(), 2)].into()
+    );
+    assert_eq!(
+        String::from_utf8(request.encode().unwrap()).unwrap(),
+        canonical["wire"].as_str().unwrap(),
+        "the canonical bytes are stable"
+    );
+    for case in fixture["request"].as_array().unwrap() {
+        let decoded = BootstrapRequest::decode(case["wire"].as_str().unwrap().as_bytes());
+        assert_eq!(
+            decoded.is_ok(),
+            case["valid"].as_bool().unwrap(),
+            "{}: {decoded:?}",
+            case["name"]
+        );
+        if let Ok(request) = decoded {
+            assert_eq!(
+                BootstrapRequest::decode(&request.encode().unwrap()).unwrap(),
+                request,
+                "{}",
+                case["name"]
+            );
+        }
+    }
+    // A bootstrap request is not an ordinary pull request and the reverse.
+    let ordinary = br#"{"models":{"Entry":1},"cursors":{"a":0}}"#;
+    assert!(BootstrapRequest::decode(ordinary).is_err());
+    assert!(PullRequest::decode(canonical["wire"].as_str().unwrap().as_bytes()).is_err());
+}
+
+#[test]
+fn bootstrap_page_fixture_cases_decode_as_declared() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/bootstrap-page.json"
+    ))
+    .unwrap();
+    let canonical = &fixture["canonical"];
+    let page = BootstrapPage::decode(canonical["wire"].as_str().unwrap().as_bytes()).unwrap();
+    assert_eq!(page.channel, canonical["channel"].as_str().unwrap());
+    assert_eq!(page.from, canonical["from"].as_u64().unwrap());
+    assert_eq!(page.to, canonical["to"].as_u64().unwrap());
+    assert_eq!(page.until, canonical["until"].as_u64().unwrap());
+    assert_eq!(page.head, canonical["head"].as_u64().unwrap());
+    assert_eq!(
+        page.records.len(),
+        canonical["records"].as_u64().unwrap() as usize
+    );
+    assert_eq!(page.records[2].error.as_deref(), Some("loader.failed"));
+    assert!(page.records[2].is_error() && page.records[2].state.is_null());
+    assert_eq!(page.terminal(), canonical["terminal"].as_bool().unwrap());
+    assert_eq!(
+        String::from_utf8(page.encode().unwrap()).unwrap(),
+        canonical["wire"].as_str().unwrap(),
+        "the canonical bytes are stable"
+    );
+    for case in fixture["page"].as_array().unwrap() {
+        let decoded = BootstrapPage::decode(case["wire"].as_str().unwrap().as_bytes());
+        assert_eq!(
+            decoded.is_ok(),
+            case["valid"].as_bool().unwrap(),
+            "{}: {decoded:?}",
+            case["name"]
+        );
+        if let Ok(page) = decoded {
+            assert_eq!(
+                BootstrapPage::decode(&page.encode().unwrap()).unwrap(),
+                page,
+                "{}",
+                case["name"]
+            );
+            assert_eq!(
+                page.terminal(),
+                case["terminal"].as_bool().unwrap(),
+                "{}",
+                case["name"]
+            );
+        }
+    }
+    // One page carries at most the shared per-scan limit.
+    let record =
+        |i: usize| json!({"model":"Entry","identity":{"id":i.to_string()},"stamp":1,"state":null});
+    let over = fixture["overLimit"]["records"].as_u64().unwrap() as usize;
+    assert_eq!(over, limits::PULL_CHANGES + 1);
+    let wire = |count: usize| {
+        json!({"mode":"bootstrap","channel":"a","from":0,"to":50,"until":100,"head":100,
+               "records":(0..count).map(record).collect::<Vec<_>>()})
+        .to_string()
+    };
+    assert!(BootstrapPage::decode(wire(limits::PULL_CHANGES).as_bytes()).is_ok());
+    assert!(BootstrapPage::decode(wire(over).as_bytes()).is_err());
+    // An ordinary pull page and a bootstrap page never decode as each other.
+    assert!(PullPage::decode(canonical["wire"].as_str().unwrap().as_bytes()).is_err());
+}
+
+#[test]
+fn a_bootstrap_page_answers_only_the_request_it_continues() {
+    let request = |after: u64, until: u64| BootstrapRequest {
+        channel: "a".into(),
+        models: [("Entry".to_string(), 1)].into(),
+        after,
+        until,
+    };
+    let page = |channel: &str, from: u64, to: u64, until: u64| BootstrapPage {
+        channel: channel.into(),
+        from,
+        to,
+        until,
+        head: 200,
+        records: vec![],
+    };
+    let asked = request(40, 100);
+    // A terminal page and a nonterminal page that advanced both answer it.
+    let terminal = page("a", 40, 100, 100);
+    assert!(terminal.answers(&asked) && terminal.terminal());
+    let nonterminal = page("a", 40, 60, 100);
+    assert!(nonterminal.answers(&asked) && !nonterminal.terminal());
+    // Another channel, another origin, or another starting point is not an
+    // answer to this request.
+    assert!(!page("b", 40, 100, 100).answers(&asked), "another channel");
+    assert!(!page("a", 40, 100, 120).answers(&asked), "another origin");
+    assert!(!page("a", 0, 100, 100).answers(&asked), "another `from`");
+    // A nonterminal page must advance: repeating `from` would loop the client.
+    let stalled = page("a", 40, 40, 100);
+    assert!(
+        !stalled.terminal() && !stalled.answers(&asked),
+        "no progress"
+    );
+    // `to == from` is fine when that finishes the interval.
+    let exhausted = request(100, 100);
+    let empty = page("a", 100, 100, 100);
+    assert!(empty.answers(&exhausted) && empty.terminal());
+    // Backwards progress is refused by `validate` and by `answers`.
+    let backwards = BootstrapPage {
+        to: 30,
+        ..page("a", 40, 30, 100)
+    };
+    assert!(!backwards.answers(&asked));
+    assert!(backwards.validate().is_err());
+}
+
 fn kind_schema(action: Value) -> Result<Schema> {
     Schema::from_value(json!({
         "enums":[],

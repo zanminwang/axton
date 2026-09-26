@@ -300,6 +300,20 @@ fn an_external_settlement_advances_one_stamp_per_record_and_distributes_it_at_th
         let err = run(axton_server::settle_external(&config(), &settlement, &host)).unwrap_err();
         assert_eq!(err.code, axton_server::code::HOST_INVALID, "{bad}: {err}");
     }
+    // A publication naming no channel is refused: a blank name is no more a
+    // channel than an empty one, and nothing is published for it.
+    for blank in ["", " ", "\t\n"] {
+        let host = Fixed::new(json!([]), json!({"cursor":3,"stamp":9}));
+        let err = run(axton_server::settle_external(
+            &config(),
+            &json!({"changes":[{"model":"Entry","identity":{"id":"e"}}],
+                    "publications":[{"channel":blank}]}),
+            &host,
+        ))
+        .unwrap_err();
+        assert_eq!(err.code, axton_server::code::PUBLISH_INVALID, "{blank:?}");
+        assert!(host.published.lock().unwrap().is_empty(), "{blank:?}");
+    }
     // A rejection or a malformed settlement is refused before any host call.
     for bad in [
         json!({"rejection":"x"}),

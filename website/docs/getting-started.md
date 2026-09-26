@@ -79,7 +79,7 @@ The backend trims titles, rejects empty ones (`todo.title_empty`), requires the 
 | [generate.sh](https://github.com/zanminwang/axton/blob/main/examples/todo/generate.sh) | Compiles the schema into `generated/node` and `generated/mobile` |
 | [server.mts](https://github.com/zanminwang/axton/blob/main/examples/todo/server.mts) | Handlers, loaders, development authentication and database setup |
 | [seed.mts](https://github.com/zanminwang/axton/blob/main/examples/todo/seed.mts) | Create-if-missing demo users and tasks |
-| [mobile/src/todo.ts](https://github.com/zanminwang/axton/blob/main/examples/todo/mobile/src/todo.ts) | Opens the generated client per user, subscribes to `todo:demo` for changes from then on, exposes `watch`, `add` and `setDone` |
+| [mobile/src/todo.ts](https://github.com/zanminwang/axton/blob/main/examples/todo/mobile/src/todo.ts) | Opens the generated client per user, subscribes to `todo:demo` for changes from then on, calls `bootstrap()` in the background so a fresh install also gets the tasks published earlier, exposes `watch`, `add` and `setDone` |
 | [mobile/src/TodoScreen.tsx](https://github.com/zanminwang/axton/blob/main/examples/todo/mobile/src/TodoScreen.tsx) | The one screen, rendered from watch callbacks |
 
 Next, [define your own schema](schema/define.md), browse the [API reference](api-index.md), or use the [client setup guide](frontend/setup.md).

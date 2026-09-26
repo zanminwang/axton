@@ -14,4 +14,5 @@ pg_ctl -D "$cluster/data" -l "$cluster/log" -o "-p $port -h 127.0.0.1 -k $cluste
 export DATABASE_URL="postgresql://$(id -un)@127.0.0.1:$port/postgres"
 node --test "$root/integration/e2e/round-trip.test.mjs"
 node --test "$root/integration/e2e/subscriptions.test.mjs"
+node --test "$root/integration/e2e/bootstrap.test.mjs"
 node --test "$root/integration/e2e/parity.test.mjs"

@@ -1,6 +1,8 @@
 //! Client engine over per-model SQLite tables. No state lives in memory between calls.
 pub mod actions;
 pub mod authority;
+pub mod bootstrap;
+mod bootstrap_ledger;
 pub mod connection;
 pub mod ddl;
 mod defaults;
@@ -23,6 +25,10 @@ pub mod transport;
 
 pub use actions::{ActionCallOptions, SubmittedCall};
 pub use axton_core::*;
+pub use bootstrap::{
+    BootstrapApply, BootstrapError, BootstrapPhase, BootstrapRecordFailure, BootstrapState,
+    BootstrapTask, PROTOCOL_INVALID, RECORDS_FAILED, REQUEST_REJECTED, SUBSCRIPTION_CLOSED,
+};
 pub use connection::*;
 pub use downlink_worker::*;
 pub use live::*;
@@ -205,6 +211,7 @@ pub struct Client<S: ClientStore> {
     watchers: Vec<(BTreeSet<String>, Sender<()>)>,
     session: Option<Session>,
     last_changed: BTreeSet<String>,
+    last_bootstrap: BTreeSet<String>,
     pulls: PullLedger,
     schema_state: SchemaState,
     origin: Option<Origin<S>>,
@@ -263,6 +270,32 @@ pub struct AbandonedCall {
 /// Marker a transaction leaves in its changed set when it subscribes or
 /// unsubscribes a channel; stripped before the set reaches watchers.
 pub(crate) const SUBSCRIPTION_MARK: &str = "axton_subscription:";
+/// Marker a transaction leaves in its changed set when it changes a Scope's
+/// bootstrap state ([#151](https://github.com/zanminwang/axton/issues/151)).
+/// A load request changes no membership, so - unlike [`SUBSCRIPTION_MARK`] - it
+/// bumps neither the subscription generation nor a channel epoch: registering a
+/// load must not make the open live session stale or a pull in flight. It is
+/// stripped like the other mark, and the Scopes it named are read back through
+/// [`Client::last_bootstrap_scopes`].
+pub(crate) const BOOTSTRAP_MARK: &str = "axton_bootstrap:";
+
+/// Take every mark with `prefix` out of `changed` and answer with the names
+/// they carried. A mark is a signal about a transaction, never a table, so it
+/// never reaches a watcher or a host's changed-table list.
+fn strip_marks(changed: &mut BTreeSet<String>, prefix: &str) -> BTreeSet<String> {
+    let marks: Vec<String> = changed
+        .iter()
+        .filter(|t| t.starts_with(prefix))
+        .cloned()
+        .collect();
+    marks
+        .into_iter()
+        .map(|mark| {
+            changed.remove(&mark);
+            mark[prefix.len()..].to_string()
+        })
+        .collect()
+}
 
 /// In-memory memory of the pulls this client issued and of how many times each
 /// channel's subscription changed since open. A page whose request predates the
@@ -291,17 +324,8 @@ impl PullLedger {
     }
     /// Apply the subscription changes a committed transaction recorded.
     fn absorb(&mut self, changed: &mut BTreeSet<String>) {
-        let marks: Vec<String> = changed
-            .iter()
-            .filter(|t| t.starts_with(SUBSCRIPTION_MARK))
-            .cloned()
-            .collect();
-        for mark in marks {
-            changed.remove(&mark);
-            *self
-                .epochs
-                .entry(mark[SUBSCRIPTION_MARK.len()..].to_string())
-                .or_insert(0) += 1;
+        for channel in strip_marks(changed, SUBSCRIPTION_MARK) {
+            *self.epochs.entry(channel).or_insert(0) += 1;
             self.generation += 1;
         }
     }
@@ -407,6 +431,7 @@ impl<S: ClientStore> Client<S> {
             watchers: vec![],
             session: None,
             last_changed: BTreeSet::new(),
+            last_bootstrap: BTreeSet::new(),
             pulls: PullLedger::default(),
             schema_state: SchemaState::default(),
             origin: None,
@@ -618,6 +643,12 @@ impl<S: ClientStore> Client<S> {
     pub fn last_changed(&self) -> &BTreeSet<String> {
         &self.last_changed
     }
+    /// The Scopes whose bootstrap state the last committed transaction changed.
+    /// The scheduler reads its work from [`Client::bootstrap_tasks`]; this says
+    /// whether a commit touched any of it at all.
+    pub fn last_bootstrap_scopes(&self) -> &BTreeSet<String> {
+        &self.last_bootstrap
+    }
     pub fn session_active(&self) -> bool {
         self.session.is_some()
     }
@@ -627,6 +658,7 @@ impl<S: ClientStore> Client<S> {
         rx
     }
     fn notify(&mut self, mut changed: BTreeSet<String>) {
+        self.last_bootstrap = strip_marks(&mut changed, BOOTSTRAP_MARK);
         self.pulls.absorb(&mut changed);
         self.watchers.retain(|(tables, sender)| {
             if tables.iter().any(|t| changed.contains(t)) {

@@ -11,6 +11,15 @@ export function scopeMisuse(client:GeneratedClient,subscription:Subscription){
  subscription.scope='other';
  // @ts-expect-error the first Scope API deliberately omits a get-only accessor
  void client.scopes.get('project:123');
+ // The load status is part of that immutable snapshot, and this milestone
+ // introduces no task-cancel or forced-refresh API
+ // ([#151](https://github.com/zanminwang/axton/issues/151)).
+ // @ts-expect-error a load status is immutable too
+ subscription.status.bootstrap.phase='complete';
+ // @ts-expect-error a registered task cannot be cancelled
+ void subscription.bootstrap.cancel();
+ // @ts-expect-error there is no forced refresh
+ void subscription.refresh();
 }
 
 // Creation defaults (#27): only a create input may omit defaulted fields.

@@ -135,12 +135,12 @@ export async function createExample() {
       await seed(backend);
     },
     /**
-     * Publish the seed users and tasks again, creating nothing new. A
-     * subscription starts at the first head its handshake acknowledges
-     * ([#150](https://github.com/zanminwang/axton/issues/150)), so a client that
-     * subscribes after startup receives the seeds only when they are published
-     * again. Loading a Scope's history explicitly is
-     * [#151](https://github.com/zanminwang/axton/issues/151)'s `bootstrap()`.
+     * Publish the seed users and tasks again, creating nothing new: what a
+     * backend job does when it wants existing rows redistributed. An app meets
+     * them instead through `subscription.bootstrap()`
+     * ([#151](https://github.com/zanminwang/axton/issues/151)), which is what
+     * `mobile/src/todo.ts` calls; this stays for the tests that are about
+     * republication itself.
      */
     publishSeeds() {
       return seed(backend);

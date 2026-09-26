@@ -50,9 +50,13 @@ export async function openTodoSession(options: {
   });
   // A subscription is durable and starts at the first head the server
   // acknowledges: from then on the phone receives what is published on the Scope.
-  // TODO(#151): call the explicit `bootstrap()` here to load the tasks the list
-  // already held; today they arrive only when the backend publishes them again.
-  await client.scopes.subscribe(channel);
+  // What the list already held was published before that origin, so this
+  // installation asks for it explicitly. The call registers its work when it is
+  // made and runs in the background: the screen renders what is already local
+  // and fills in as pages commit, so nothing here waits for the whole Scope.
+  // Its rejection is a sync failure like any other and goes to the same channel.
+  const subscription = await client.scopes.subscribe(channel);
+  subscription.bootstrap().catch(options.onConnectionError);
   const session: TodoSession = {
     watch(listener, onError) {
       return client.models.todo.watch(

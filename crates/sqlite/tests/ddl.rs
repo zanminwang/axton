@@ -242,3 +242,72 @@ fn a_queue_without_the_divergence_column_gains_it_in_place() {
             .any(|(name, _, _)| name == "diverged")
     );
 }
+
+/// A subscription ledger from before the bootstrap columns
+/// ([#151](https://github.com/zanminwang/axton/issues/151)) gains them in
+/// place: the identities and the committed delivery boundaries stay, and the
+/// added fields read as a load that was never requested. Opening again changes
+/// nothing.
+#[test]
+fn a_subscription_ledger_without_bootstrap_columns_gains_them_in_place() {
+    use axton_client::{BootstrapPhase, Client};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let entry: Schema = Schema::from_value(
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap(),
+    )
+    .unwrap();
+    let before = {
+        let mut c = Client::open(SqliteStore::open(&path).unwrap(), entry.clone()).unwrap();
+        let waiting = c.ensure_subscription("waiting").unwrap();
+        let live = c.ensure_subscription("live").unwrap();
+        c.initialize_subscriptions(
+            &std::collections::BTreeMap::from([("live".into(), live.subscription_id)]),
+            &std::collections::BTreeMap::from([("live".into(), 12)]),
+        )
+        .unwrap();
+        (waiting.subscription_id, live.subscription_id)
+    };
+    let mut store = SqliteStore::open(&path).unwrap();
+    for column in [
+        "bootstrap_state",
+        "bootstrap_run",
+        "bootstrap_cursor",
+        "bootstrap_barrier",
+        "bootstrap_error",
+    ] {
+        store
+            .execute_batch(&format!(
+                "ALTER TABLE axton_subscription DROP COLUMN {column}"
+            ))
+            .unwrap();
+    }
+    drop(store);
+
+    for pass in ["the first open", "the second open"] {
+        let mut c = Client::open(SqliteStore::open(&path).unwrap(), entry.clone()).unwrap();
+        assert!(!c.schema_state().rebuilt, "{pass}: opened in place");
+        let waiting = c.subscription_state("waiting").unwrap().unwrap();
+        assert_eq!(waiting.subscription_id, before.0, "{pass}");
+        assert_eq!((waiting.starting_cursor, waiting.cursor), (None, None));
+        let live = c.subscription_state("live").unwrap().unwrap();
+        assert_eq!(live.subscription_id, before.1, "{pass}");
+        assert_eq!(
+            (live.starting_cursor, live.cursor),
+            (Some(12), Some(12)),
+            "{pass}: the committed boundary is kept"
+        );
+        for (scope, id) in [("waiting", before.0), ("live", before.1)] {
+            let state = c.bootstrap_state(scope, id).unwrap();
+            assert_eq!(state.state, BootstrapPhase::NotRequested, "{pass} {scope}");
+            assert_eq!((state.run, state.cursor, state.barrier), (0, 0, None));
+            assert_eq!(state.error, None);
+        }
+    }
+    let mut store = SqliteStore::open(&path).unwrap();
+    assert!(
+        columns(&mut store, "axton_subscription")
+            .iter()
+            .any(|(name, _, _)| name == "bootstrap_state")
+    );
+}

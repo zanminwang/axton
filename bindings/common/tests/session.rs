@@ -782,6 +782,139 @@ fn scope_commands_register_read_and_remove_one_identity() {
     host.call(json!({"op":"rollback","handle":id})).unwrap();
 }
 
+/// The Bootstrap commands behind the SDK's `bootstrap()`: registration is a
+/// local write that needs no connection, the stored run is readable by the same
+/// identity, and the lane asks for the first page once an origin exists
+/// ([#151](https://github.com/zanminwang/axton/issues/151)).
+#[test]
+fn bootstrap_commands_register_read_and_schedule_one_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let schema: Value =
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
+    let id = host
+        .call(json!({"op":"open","path":dir.path().join("db"),"schema":schema}))
+        .unwrap()["value"]["handle"]
+        .clone();
+    let registered = host
+        .call(json!({"op":"scopeSubscribe","handle":id,"scope":"book"}))
+        .unwrap()["value"]
+        .clone();
+    let subscription = registered["subscriptionId"].clone();
+    // Registered offline, before #150 commits an origin: durable intent, and
+    // nothing for the lane to ask for yet.
+    let requested = host
+        .call(
+            json!({"op":"scopeBootstrap","handle":id,"scope":"book","subscriptionId":subscription}),
+        )
+        .unwrap();
+    assert_eq!(
+        requested["value"],
+        json!({"scope":"book","subscriptionId":subscription,"state":"requested","run":1,"cursor":0,"barrier":null,"error":null})
+    );
+    assert_eq!(requested["changed"], true, "the registration committed");
+    assert_eq!(
+        host.call(json!({"op":"scopeBootstrapState","handle":id,"scope":"book","subscriptionId":subscription}))
+            .unwrap()["value"],
+        requested["value"],
+        "the stored run reads back unchanged"
+    );
+    let started = downlink(&mut host, &id, json!({"event":"start"}));
+    assert!(
+        !started
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["type"] == "request"),
+        "no origin, no interval: {started}"
+    );
+    // The acknowledgement commits the origin, which is the bound the interval
+    // was missing, so the page is asked for in the host loop that ran it.
+    let epoch = started[0]["epoch"].clone();
+    let acknowledged = downlink(
+        &mut host,
+        &id,
+        json!({"event":"message","epoch":epoch,"body":json!({"type":"subscribed","cursors":{"book":7}}).to_string()}),
+    );
+    let page = acknowledged
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["type"] == "request" && a["bootstrap"] == true)
+        .unwrap_or_else(|| panic!("a bootstrap request: {acknowledged}"))
+        .clone();
+    assert_eq!(
+        serde_json::from_str::<Value>(page["body"].as_str().unwrap()).unwrap(),
+        json!({"mode":"bootstrap","channel":"book","models":{"Entry":1},"after":0,"until":7}),
+        "the interval is bounded by the committed origin"
+    );
+    // Nothing asks twice: the wake the SDK sends after a commit finds that
+    // request already in flight.
+    let woken = downlink(&mut host, &id, json!({"event":"wake"}));
+    assert!(
+        !woken
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["type"] == "request" && a["bootstrap"] == true),
+        "one request at a time: {woken}"
+    );
+    // The answer commits its authority and its progress together, and the
+    // committed run travels to the host as one `bootstrap` action.
+    let applied = downlink(
+        &mut host,
+        &id,
+        json!({"event":"response","request":page["request"],"body":json!({"mode":"bootstrap","channel":"book","from":0,"to":7,"until":7,"head":9,"records":[]}).to_string()}),
+    );
+    assert_eq!(
+        applied[0],
+        json!({"type":"bootstrap","scope":"book","subscriptionId":subscription,"state":"catching_up","run":1,"cursor":7,"barrier":9,"error":null}),
+        "the terminal page fixed the barrier; delivery at 7 has not reached 9"
+    );
+    assert_eq!(
+        host.call(json!({"op":"scopeBootstrapState","handle":id,"scope":"book","subscriptionId":subscription}))
+            .unwrap()["value"]["state"],
+        "catching_up"
+    );
+    // A malformed identity names no registration, and neither does another one.
+    for malformed in [json!(null), json!("1"), json!(0), json!(-1), json!(1.5)] {
+        assert!(
+            host.call(
+                json!({"op":"scopeBootstrap","handle":id,"scope":"book","subscriptionId":malformed})
+            )
+            .is_err(),
+            "a malformed subscription id is refused: {malformed}"
+        );
+    }
+    for op in ["scopeBootstrap", "scopeBootstrapState"] {
+        let error = host
+            .call(json!({"op":op,"handle":id,"scope":"book","subscriptionId":99}))
+            .expect_err("another identity");
+        // The refusal crosses the binding with its stable prefix intact: it is
+        // what both SDKs match to raise their own `subscription.closed`.
+        assert!(
+            error.to_string().starts_with("subscription.closed:"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("is closed"), "{error}");
+        assert!(
+            host.call(json!({"op":op,"handle":id,"scope":"absent","subscriptionId":1}))
+                .is_err(),
+            "{op} for a Scope that is not subscribed"
+        );
+    }
+    // Load work is not transaction work: it owns its own local transaction.
+    host.call(json!({"op":"begin","handle":id})).unwrap();
+    for op in ["scopeBootstrap", "scopeBootstrapState"] {
+        assert!(
+            host.call(json!({"op":op,"handle":id,"scope":"book","subscriptionId":subscription}))
+                .is_err(),
+            "{op} is refused while a client transaction is open"
+        );
+    }
+    host.call(json!({"op":"rollback","handle":id})).unwrap();
+}
+
 /// Closing the client is not unsubscribing: the rows and their boundaries
 /// survive it, and only `scopeUnsubscribe` removes one.
 #[test]

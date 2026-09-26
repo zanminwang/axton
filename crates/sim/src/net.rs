@@ -22,6 +22,26 @@ pub enum Message {
         client: usize,
         bytes: Vec<u8>,
     },
+    /// One bounded historical page request of a Scope's interval, carrying the
+    /// run it belongs to so a late answer can be fenced against the ledger
+    /// ([#151](https://github.com/zanminwang/axton/issues/151)).
+    Load {
+        client: usize,
+        scope: String,
+        subscription_id: u64,
+        run: u64,
+        after: u64,
+        bytes: Vec<u8>,
+    },
+    /// The page that request was answered with, still carrying its correlation.
+    LoadPage {
+        client: usize,
+        scope: String,
+        subscription_id: u64,
+        run: u64,
+        after: u64,
+        bytes: Vec<u8>,
+    },
     PushFailed {
         client: usize,
         sequence: u64,
@@ -36,6 +56,8 @@ impl Message {
             | Message::Receipt { client, .. }
             | Message::Pull { client, .. }
             | Message::Page { client, .. }
+            | Message::Load { client, .. }
+            | Message::LoadPage { client, .. }
             | Message::PushFailed { client, .. } => *client,
         }
     }

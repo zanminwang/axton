@@ -540,4 +540,82 @@ void main() {
       }
     },
   );
+
+  /// A page the lane abandoned itself is not the application's failure: `pause`
+  /// aborts it silently, the worker still hears `failed` so it can clear its
+  /// slot, and `resume` fetches again on a cancellation of its own. The
+  /// TypeScript twin is `pausing the downlink lane abandons its bootstrap page
+  /// without reporting it`
+  /// ([#151](https://github.com/zanminwang/axton/issues/151)).
+  test(
+    'pausing the downlink lane abandons its bootstrap page without reporting it',
+    () async {
+      const body =
+          '{"mode":"bootstrap","channel":"a","models":{},"after":0,"until":7}';
+      final reported = <Object>[];
+      final events = <Map<String, dynamic>>[];
+      final script = <List<dynamic>>[
+        [
+          {'type': 'request', 'request': 4, 'body': body, 'bootstrap': true},
+        ],
+        <dynamic>[],
+      ];
+      final network = _ScriptedSession();
+      final lane = await DownlinkLane.start(
+        command: (event) async {
+          events.add(event);
+          if (event['event'] != 'next') return const [];
+          return script.isEmpty ? const [] : script.removeAt(0);
+        },
+        network: network,
+        wakePush: () {},
+        onError: reported.add,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(network.pulls, 1, reason: 'the page went out');
+      await lane.pause();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(
+        reported,
+        isEmpty,
+        reason: 'its own cancellation is not an application failure',
+      );
+      final failed = events.firstWhere((e) => e['event'] == 'failed');
+      expect(failed['request'], 4);
+      expect(failed['status'], isNull);
+      // Resume fetches again, on a cancellation of its own: the pause does not
+      // reach the next page.
+      script.add([
+        {'type': 'request', 'request': 5, 'body': body, 'bootstrap': true},
+      ]);
+      await lane.resume();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(network.pulls, 2, reason: 'the resumed page went out');
+      expect(events.where((e) => e['event'] == 'failed').length, 1);
+      await lane.close();
+    },
+  );
 }
+
+/// A downlink network whose pages answer only when the lane abandons them: the
+/// scripted host of the test above.
+class _ScriptedSession extends ServerSession {
+  _ScriptedSession()
+    : super(SyncServer(url: 'http://127.0.0.1:1', token: _token));
+  int pulls = 0;
+  @override
+  Future<String> pull(String body, Future<void> cancellation) {
+    pulls++;
+    final answer = Completer<String>();
+    unawaited(
+      cancellation.then((_) {
+        if (!answer.isCompleted) {
+          answer.completeError(StateError('connection_paused_or_closed'));
+        }
+      }),
+    );
+    return answer.future;
+  }
+}
+
+String _token() => 'secret';

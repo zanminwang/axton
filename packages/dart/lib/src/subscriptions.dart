@@ -16,30 +16,83 @@ enum SubscriptionInitialization { pending, ready }
 /// delivers normally, not that all history is loaded.
 enum SubscriptionConnection { offline, connecting, catchingUp, live, stopped }
 
+/// What the durable load of a Scope's published history is doing
+/// ([#151](https://github.com/zanminwang/axton/issues/151)).
+/// `waitingForInitialization` is a requested run with no starting boundary to
+/// bound its interval yet, `catchingUp` a loaded interval whose completion
+/// barrier ordinary delivery has not reached, and `complete` says the initial
+/// publication coverage was processed - not that a snapshot was taken, nor that
+/// the Scope is currently fresh.
+enum BootstrapPhase {
+  notRequested,
+  waitingForInitialization,
+  loading,
+  catchingUp,
+  complete,
+  failed,
+}
+
+/// The stored failure of a load, as its status publishes it. The failed page's
+/// record reports stay in the ledger and are not part of this.
+class BootstrapError {
+  final String code;
+  final String message;
+  const BootstrapError({required this.code, required this.message});
+  @override
+  bool operator ==(Object other) =>
+      other is BootstrapError && other.code == code && other.message == message;
+  @override
+  int get hashCode => Object.hash(code, message);
+  @override
+  String toString() => 'BootstrapError($code: $message)';
+}
+
+/// One immutable snapshot of a subscription's durable load.
+class BootstrapStatus {
+  final BootstrapPhase phase;
+  final BootstrapError? error;
+  const BootstrapStatus({required this.phase, this.error});
+  @override
+  bool operator ==(Object other) =>
+      other is BootstrapStatus && other.phase == phase && other.error == error;
+  @override
+  int get hashCode => Object.hash(phase, error);
+  @override
+  String toString() => 'BootstrapStatus(${phase.name}, error: $error)';
+}
+
 /// One immutable subscription status snapshot.
 class SubscriptionStatus {
   /// Whether this handle still names a live registration.
   final bool active;
   final SubscriptionInitialization initialization;
   final SubscriptionConnection connection;
+
+  /// The durable load of this Scope's published history, as it was last
+  /// committed.
+  final BootstrapStatus bootstrap;
   const SubscriptionStatus({
     required this.active,
     required this.initialization,
     required this.connection,
+    this.bootstrap = const BootstrapStatus(phase: BootstrapPhase.notRequested),
   });
   @override
   bool operator ==(Object other) =>
       other is SubscriptionStatus &&
       other.active == active &&
       other.initialization == initialization &&
-      other.connection == connection;
+      other.connection == connection &&
+      other.bootstrap == bootstrap;
   @override
-  int get hashCode => Object.hash(active, initialization, connection);
+  int get hashCode =>
+      Object.hash(active, initialization, connection, bootstrap);
   @override
   String toString() =>
       'SubscriptionStatus(active: $active, '
       'initialization: ${initialization.name}, '
-      'connection: ${connection.name})';
+      'connection: ${connection.name}, '
+      'bootstrap: $bootstrap)';
 }
 
 /// Work attempted through a handle that is closed: unsubscribed, or stopped
@@ -49,6 +102,120 @@ class SubscriptionClosedException implements Exception {
   const SubscriptionClosedException();
   @override
   String toString() => 'subscription.closed';
+}
+
+/// This process stopped waiting because its client closed. The durable task is
+/// untouched: a reopened client resumes it without a new call.
+class ClientClosedException implements Exception {
+  final String code = 'client_closed';
+  const ClientClosedException();
+  @override
+  String toString() => 'client_closed';
+}
+
+/// A load run failed, and this is the failure the ledger stored for it. A later
+/// explicit call retries that run; this one stays failed.
+class BootstrapFailedException implements Exception {
+  final String code;
+  final String message;
+  const BootstrapFailedException(this.code, this.message);
+  @override
+  String toString() => '$code: $message';
+}
+
+/// A later run of the same registration was observed than the one this call is
+/// attached to: its own outcome can no longer be observed, and a waiter never
+/// completes from another run's, so a rapid retry cannot turn an earlier failed
+/// call into a success ([#151](https://github.com/zanminwang/axton/issues/151)).
+class BootstrapSupersededException implements Exception {
+  final String code = 'bootstrap.superseded';
+  final String scope;
+  const BootstrapSupersededException(this.scope);
+  @override
+  String toString() =>
+      'bootstrap.superseded: the bootstrap run of $scope this call waited for '
+      'was superseded';
+}
+
+/// The stable prefix the engine refuses a registration this client no longer
+/// holds with (`axton_client::SUBSCRIPTION_CLOSED`). An engine error carries a
+/// message and no code, so this is what a closed registration is recognized by;
+/// a `bootstrap()` that raced the removal then fails the way a call through an
+/// already closed handle does.
+const _closedRegistration = 'subscription.closed:';
+bool _refusedAsClosed(Object error) =>
+    (error is StateError ? error.message : '$error').contains(
+      _closedRegistration,
+    );
+
+/// One registration's durable load, as the native commands answer it and the
+/// worker announces it after every committed transition. `cursor` is how far
+/// the historical interval has been loaded and `barrier` the delivery position
+/// completion waits for, fixed by the final historical page.
+class BootstrapRun {
+  final String scope;
+  final int subscriptionId;
+
+  /// The stored column value: `not_requested`, `requested`, `loading`,
+  /// `catching_up`, `complete` or `failed`.
+  final String state;
+
+  /// The retry fence: every call and every response belongs to one run.
+  final int run;
+  final int cursor;
+  final int? barrier;
+  final BootstrapError? error;
+  const BootstrapRun({
+    required this.scope,
+    required this.subscriptionId,
+    required this.state,
+    required this.run,
+    required this.cursor,
+    this.barrier,
+    this.error,
+  });
+  factory BootstrapRun.fromRecord(Map<String, dynamic> record) {
+    final failure = record['error'] as Map<String, dynamic>?;
+    return BootstrapRun(
+      scope: record['scope'] as String,
+      subscriptionId: record['subscriptionId'] as int,
+      state: record['state'] as String,
+      run: record['run'] as int,
+      cursor: record['cursor'] as int,
+      barrier: record['barrier'] as int?,
+      error: failure == null
+          ? null
+          : BootstrapError(
+              code: failure['code'] as String,
+              message: failure['message'] as String,
+            ),
+    );
+  }
+
+  /// How far this run has got. A phase never moves backwards within one run.
+  int get rank => switch (state) {
+    'requested' => 1,
+    'loading' => 2,
+    'catching_up' => 3,
+    'complete' || 'failed' => 4,
+    _ => 0,
+  };
+
+  /// The public phase of this stored state. The worker writes `loading` on the
+  /// first applied page, so a requested run whose interval is already bounded
+  /// is loading as far as the caller is concerned; one without a starting
+  /// boundary is waiting for #150 initialization.
+  BootstrapPhase phase({required bool initialized}) => switch (state) {
+    'requested' =>
+      initialized
+          ? BootstrapPhase.loading
+          : BootstrapPhase.waitingForInitialization,
+    'loading' => BootstrapPhase.loading,
+    'catching_up' => BootstrapPhase.catchingUp,
+    'complete' => BootstrapPhase.complete,
+    'failed' => BootstrapPhase.failed,
+    _ => BootstrapPhase.notRequested,
+  };
 }
 
 /// One stored subscription, as the native Scope commands answer it. A boundary
@@ -83,11 +250,18 @@ class DownlinkSignal {
   final int? epoch;
   final int? outstanding;
   final List<String> scopes;
+
+  /// One registration's durable load, as the worker announces it after every
+  /// committed transition: `scope`, `subscriptionId`, `state`, `run`, `cursor`,
+  /// `barrier` and `error`
+  /// ([#151](https://github.com/zanminwang/axton/issues/151)).
+  final Map<String, dynamic>? run;
   const DownlinkSignal._(
     this.lane, {
     this.epoch,
     this.outstanding,
     this.scopes = const [],
+    this.run,
   });
   const DownlinkSignal.opened(int epoch) : this._('opened', epoch: epoch);
   const DownlinkSignal.ended(int epoch) : this._('ended', epoch: epoch);
@@ -100,6 +274,8 @@ class DownlinkSignal {
     : this._('acknowledged', scopes: scopes);
   const DownlinkSignal.changed(List<String> scopes)
     : this._('changed', scopes: scopes);
+  const DownlinkSignal.bootstrap(Map<String, dynamic> run)
+    : this._('bootstrap', run: run);
 }
 
 /// The native commands and host services the registry needs; the client owns
@@ -115,6 +291,15 @@ class SubscriptionCommands {
   /// for one Scope keep their order.
   final Future<void> Function(String scope) removeScope;
 
+  /// Register or explicitly retry the durable load of this identity, and answer
+  /// its stored run.
+  final Future<BootstrapRun> Function(String scope, int subscriptionId)
+  requestBootstrap;
+
+  /// The stored run of this identity, read through the same serialized path.
+  final Future<BootstrapRun> Function(String scope, int subscriptionId)
+  bootstrapState;
+
   /// A committed membership change: wake the lanes, as every commit does.
   final void Function() committed;
   const SubscriptionCommands({
@@ -122,8 +307,26 @@ class SubscriptionCommands {
     required this.state,
     required this.remove,
     required this.removeScope,
+    required this.requestBootstrap,
+    required this.bootstrapState,
     required this.committed,
   });
+}
+
+/// The load commands of one identity, bound by the registry, and the wake a
+/// commit owes the lanes.
+class _Load {
+  final Future<BootstrapRun> Function() request;
+  final Future<BootstrapRun> Function() read;
+  final void Function() committed;
+  const _Load(this.request, this.read, this.committed);
+}
+
+/// One caller of `bootstrap()`, attached to the run the command answered with.
+class _Waiter {
+  final int run;
+  final Completer<void> completer = Completer<void>();
+  _Waiter(this.run);
 }
 
 /// The lane state every handle's connection is projected from.
@@ -149,7 +352,12 @@ class Subscription {
   final int subscriptionId;
   final _Lane _lane;
   final Future<void> Function() _remove;
+  final _Load _load;
   SubscriptionInitialization _initialization;
+
+  /// The last committed run this handle has seen; phases never move backwards.
+  BootstrapRun? _run;
+  final _waiters = <_Waiter>[];
 
   /// This handle committed its own removal: further removals are a no-op.
   bool _removed = false;
@@ -159,7 +367,7 @@ class Subscription {
   bool _stopped = false;
   final _sinks = <MultiStreamController<SubscriptionStatus>>[];
   late SubscriptionStatus _snapshot;
-  Subscription._(SubscriptionState state, this._lane, this._remove)
+  Subscription._(SubscriptionState state, this._lane, this._remove, this._load)
     : scope = state.scope,
       subscriptionId = state.subscriptionId,
       _initialization = state.startingCursor == null
@@ -186,7 +394,23 @@ class Subscription {
         : _lane.acknowledged.contains(scope)
         ? SubscriptionConnection.live
         : SubscriptionConnection.connecting,
+    bootstrap: _bootstrap(),
   );
+
+  /// What the stored run projects to; the stored record reports are not part of
+  /// the public failure.
+  BootstrapStatus _bootstrap() {
+    final run = _run;
+    if (run == null) {
+      return const BootstrapStatus(phase: BootstrapPhase.notRequested);
+    }
+    return BootstrapStatus(
+      phase: run.phase(
+        initialized: _initialization == SubscriptionInitialization.ready,
+      ),
+      error: run.error,
+    );
+  }
 
   /// Publish a new snapshot when anything changed.
   void _refresh() {
@@ -209,6 +433,122 @@ class Subscription {
     _refresh();
   }
 
+  /// Read what is committed for this identity's load. A handle taken after a
+  /// restart names a task that may already be running or finished, and no
+  /// further transition has to commit for its status to be true.
+  void _observe() {
+    final zone = Zone.current;
+    unawaited(
+      _load.read().then(
+        _applyBootstrap,
+        onError: (Object error, StackTrace stack) {
+          if (!_closed) zone.handleUncaughtError(error, stack);
+        },
+      ),
+    );
+  }
+
+  /// One committed transition of this identity's load. The waiters of that run
+  /// are settled by it whatever the status already shows, so a re-read that
+  /// raced ahead of a lane signal cannot swallow an earlier run's outcome; the
+  /// status itself never moves backwards.
+  void _applyBootstrap(BootstrapRun run) {
+    if (_closed) return;
+    if (run.subscriptionId != subscriptionId) return;
+    if (run.state == 'complete') {
+      _settle(run.run, null);
+    } else if (run.state == 'failed') {
+      // A failed run always carries its stored failure; the ledger refuses any
+      // other pairing.
+      final failure =
+          run.error ??
+          BootstrapError(
+            code: 'bootstrap.failed',
+            message: 'the bootstrap of $scope failed',
+          );
+      _settle(run.run, BootstrapFailedException(failure.code, failure.message));
+    }
+    _supersede(run.run);
+    final known = _run;
+    if (known != null &&
+        (run.run < known.run ||
+            (run.run == known.run && run.rank < known.rank))) {
+      return;
+    }
+    _run = run;
+    _refresh();
+  }
+
+  /// Waiters of a run older than the one just observed. Their run is over and
+  /// its outcome is no longer observable, and an older call must never complete
+  /// from a newer run, so they are failed rather than left attached forever.
+  void _supersede(int run) {
+    final stale = _waiters.where((waiter) => waiter.run < run).toList();
+    if (stale.isEmpty) return;
+    _waiters.removeWhere((waiter) => waiter.run < run);
+    for (final waiter in stale) {
+      waiter.completer.completeError(BootstrapSupersededException(scope));
+    }
+  }
+
+  void _settle(int run, Object? error) {
+    final settled = _waiters.where((waiter) => waiter.run == run).toList();
+    if (settled.isEmpty) return;
+    _waiters.removeWhere((waiter) => waiter.run == run);
+    for (final waiter in settled) {
+      if (error == null) {
+        waiter.completer.complete();
+      } else {
+        waiter.completer.completeError(error);
+      }
+    }
+  }
+
+  /// Prepare this Scope's published history. The registration is submitted when
+  /// the call is made, whether or not the returned Future is awaited; the Future
+  /// completes only after the completion transaction commits. Calls during one
+  /// active run share it, a call after a valid completion completes locally -
+  /// offline too - and a call after a terminal failure explicitly retries the
+  /// saved run.
+  Future<void> bootstrap() {
+    if (_closed) return Future.error(const SubscriptionClosedException());
+    // Eager: the registration is submitted when the call is made, not when the
+    // returned Future is awaited.
+    return _register(_load.request());
+  }
+
+  Future<void> _register(Future<BootstrapRun> submitted) async {
+    final BootstrapRun run;
+    try {
+      run = await submitted;
+    } on Object catch (error) {
+      if (_closed) throw _closedError();
+      // The removal committed between the command and this handle's close: the
+      // engine refused a registration that is gone, and this call is one
+      // through a closed subscription however the two raced.
+      if (_refusedAsClosed(error)) throw const SubscriptionClosedException();
+      rethrow;
+    }
+    // A closed client or handle takes nothing further, not even the wake: the
+    // controller it would go through is closed too.
+    if (_closed) throw _closedError();
+    // The commit wakes the lanes the way a membership change does; without it
+    // the registered run waits for the next commit or reconnection.
+    _load.committed();
+    final waiter = _Waiter(run.run);
+    _waiters.add(waiter);
+    _applyBootstrap(run);
+    // A transition that committed between the command and this waiter would
+    // otherwise be missed: re-read the stored run through the same serialized
+    // path and apply it.
+    if (_waiters.isNotEmpty) _observe();
+    return waiter.completer.future;
+  }
+
+  Exception _closedError() => _stopped
+      ? const ClientClosedException()
+      : const SubscriptionClosedException();
+
   /// Removed durably through this handle, or stopped with the client.
   void _close({required bool removed}) {
     if (_closed) return;
@@ -216,6 +556,18 @@ class Subscription {
       _removed = true;
     } else {
       _stopped = true;
+    }
+    // A removal took the epoch's load state with the row; a client close leaves
+    // the durable task exactly where it was. Either way this process stops
+    // waiting for it.
+    final waiting = _waiters.toList();
+    _waiters.clear();
+    for (final waiter in waiting) {
+      waiter.completer.completeError(
+        removed
+            ? const SubscriptionClosedException()
+            : const ClientClosedException(),
+      );
     }
     _refresh();
     // A closed handle has no changes left: its streams end after that last
@@ -279,8 +631,16 @@ class Subscriptions {
       state,
       _lane,
       () => _removeIdentity(state.scope, state.subscriptionId),
+      _Load(
+        () => _commands.requestBootstrap(state.scope, state.subscriptionId),
+        () => _commands.bootstrapState(state.scope, state.subscriptionId),
+        _commands.committed,
+      ),
     );
     _handles[state.subscriptionId] = handle;
+    // A task of this identity may already be running from before this handle:
+    // read what is committed for it, so its status needs no new transition.
+    handle._observe();
     // The lane learns of committed membership from Rust; it is only woken here.
     _commands.committed();
     return handle;
@@ -378,6 +738,11 @@ class Subscriptions {
         for (final scope in signal.scopes) {
           _reload(scope);
         }
+      case 'bootstrap':
+        // A committed load transition. Another epoch's run belongs to no handle
+        // this registry still holds.
+        final run = BootstrapRun.fromRecord(signal.run!);
+        _handles[run.subscriptionId]?._applyBootstrap(run);
     }
     _publish();
   }

@@ -19,6 +19,8 @@ export type {
 } from "../client-js/connection.mts";
 export type { ServerOptions } from "../client-js/live.mts";
 export type {
+  BootstrapPhase,
+  BootstrapStatus,
   Subscription,
   SubscriptionState,
   SubscriptionStatus,

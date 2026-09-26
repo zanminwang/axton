@@ -65,10 +65,13 @@ import type { ServerOptions, ServerConnection } from "./live.mts";
 import { Events } from "./events.mts";
 import {
   Subscriptions,
+  type BootstrapRun,
   type Subscription,
   type SubscriptionState,
 } from "./subscriptions.mts";
 export type {
+  BootstrapPhase,
+  BootstrapStatus,
   Subscription,
   SubscriptionState,
   SubscriptionStatus,
@@ -185,6 +188,17 @@ export function createClient<
         this.#exclusive(() =>
           this.#send({ op: "scopeState", scope }),
         ) as Promise<SubscriptionState | null>,
+      // Registration and the state read of one identity's durable load: local
+      // commands on the same serialized path, so calls for one Scope keep their
+      // order ([#151](https://github.com/zanminwang/axton/issues/151)).
+      requestBootstrap: (scope, subscriptionId) =>
+        this.#exclusive(() =>
+          this.#send({ op: "scopeBootstrap", scope, subscriptionId }),
+        ) as Promise<BootstrapRun>,
+      bootstrapState: (scope, subscriptionId) =>
+        this.#exclusive(() =>
+          this.#send({ op: "scopeBootstrapState", scope, subscriptionId }),
+        ) as Promise<BootstrapRun>,
       remove: async (scope, subscriptionId) =>
         (
           await this.#exclusive(() =>

@@ -13,6 +13,7 @@ Use this index to find the interface you call or implement. Local Model examples
 | `client.actions.<name>`, `ActionCall<Output>` | Accept durable work locally; inspect `status` or await `wait()` for the final outcome | [Actions](frontend/client-api.md#actions) |
 | `client.actions.call.<name>` | Request a direct final result without queueing or automatic optimism | [Actions](frontend/client-api.md#actions) |
 | `client.scopes`, `Subscription` | Subscribe to a named channel and follow that registration's status | [Channels](frontend/client-api.md#channels) |
+| `subscription.bootstrap()`, `status.bootstrap` | Load what the channel held before this subscription started, and follow that load | [Channels](frontend/client-api.md#channels) |
 | `client.channels` | The retained spelling: subscribe or unsubscribe by channel name | [Channels](frontend/client-api.md#channels) |
 | `client.connection` | Pause, resume or wake background sync | [Connections](frontend/runtime.md#connection-controls) |
 | `client.syncState`, `client.close` | Inspect pending work and release resources | [Status and lifecycle](frontend/client-api.md#status-and-lifecycle) |

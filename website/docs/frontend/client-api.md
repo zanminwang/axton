@@ -267,9 +267,29 @@ The TypeScript/React Native Action observer requires a working `WeakRef`; a runt
 
 `client.scopes.subscribe(channel)` persists the desired subscription, wakes a running connection and answers with a handle for that registration: the same channel answers with the same handle while it is subscribed. It resolves on the local commit, so it works with no network. `client.channels.subscribe / unsubscribe` are the retained spelling of the same registrations, by channel name.
 
-**Subscribing delivers later changes, not the channel's existing records.** The position the server acknowledges the first time a session is negotiated becomes that subscription's starting point; nothing published earlier is downloaded, and reconnecting keeps that starting point rather than jumping ahead. Use `watch` to observe what arrives. Loading existing records in one operation is planned as `bootstrap()` in [#151](https://github.com/zanminwang/axton/issues/151).
+**Subscribing delivers later changes, not the channel's existing records.** The position the server acknowledges the first time a session is negotiated becomes that subscription's starting point; nothing published earlier is downloaded, and reconnecting keeps that starting point rather than jumping ahead. Use `watch` to observe what arrives. To load what the channel already held, call `bootstrap()` on the handle:
 
-`status` is a snapshot with `active`, `initialization` (`pending` until the starting point is committed, then `ready`) and `connection` (`offline`, `connecting`, `catching-up`, `live`, `stopped`); `live` means the stream is healthy, not that all records have arrived. `watch(listener)` delivers the current snapshot and every change, and returns a function that stops observing (Dart returns a `Stream`). `unsubscribe()` removes this registration; work through a handle that was unsubscribed, or whose client was closed, fails with `subscription.closed`. Closing the client stops the handles and removes no subscription.
+=== "TypeScript"
+
+    ```ts
+    const followed = await client.scopes.subscribe('book:demo');
+    followed.bootstrap().catch(console.error);
+    console.log(followed.status.bootstrap.phase);
+    ```
+
+=== "Flutter"
+
+    ```dart
+    final followed = await client.scopes.subscribe('book:demo');
+    followed.bootstrap().catchError((Object error) => print(error));
+    print(followed.status.bootstrap.phase);
+    ```
+
+`bootstrap()` asks for everything published to the channel before this subscription's starting point. It registers that work when you call it, whether or not you await the returned `Promise`/`Future`, so it runs in the background while your screen shows what is already local. It resolves once that work is committed; calls made while it is running share one task, a call after it has completed resolves from local state even offline, and a call after a failure retries from the progress that was committed. Handle the rejection - a background call that nobody awaits is still a rejected `Promise`/`Future`.
+
+Completing it does **not** mean you have a point-in-time snapshot of the channel, that the data is currently fresh, or that every record loaded successfully: a record whose loader failed is reported through the connection's error channel and is corrected the next time it is delivered. What it does mean is that the records published before your starting point, and the changes up to the position the load finished at, have been processed. Later changes keep arriving the ordinary way.
+
+`status` is a snapshot with `active`, `initialization` (`pending` until the starting point is committed, then `ready`), `connection` (`offline`, `connecting`, `catching-up`, `live`, `stopped`) and `bootstrap`; `live` means the stream is healthy, not that all records have arrived. `bootstrap` is `{phase, error}`, where `phase` is `not-requested`, `waiting-for-initialization` (asked for, but the starting point it is bounded by is not committed yet), `loading`, `catching-up` (the history is loaded and the load is waiting for ordinary delivery to reach the position it finished at), `complete` or `failed` with the `{code, message}` that failed it. Waiting for connectivity is not a failure and has no timeout. `watch(listener)` delivers the current snapshot and every change, and returns a function that stops observing (Dart returns a `Stream`). `unsubscribe()` removes this registration; work through a handle that was unsubscribed, or whose client was closed, fails with `subscription.closed`. Closing the client stops the handles and removes no subscription. Unsubscribing also removes that registration's load: waiters get `subscription.closed`, and subscribing again starts the history over. Closing the client keeps the load: this process's waiters are rejected with `client_closed`, and the next client resumes it without another `bootstrap()` call.
 
 A channel name must match what your backend publishes to. A subscription is a request for data; loaders must still enforce read permissions. Unsubscribing stops that channel's synchronization and removes nothing: records, their stamps and pending edits stay. See [sync and recovery](sync.md) for cache and account-change behavior.
 

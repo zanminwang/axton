@@ -79,11 +79,13 @@ export async function createExample() {
       });
     },
     /**
-     * Publish the current `Entry` rows again, without changing them. A
-     * subscription's origin is the first head its handshake acknowledges
-     * ([#150](https://github.com/zanminwang/axton/issues/150)), so a client that
-     * subscribes after `initialize` receives the seeded rows only when they are
-     * published again. Whole-Scope loading is #151's `bootstrap()`.
+     * Publish the current `Entry` rows again, changing them: a new stamp and a
+     * new position. A subscription's origin is the first head its handshake
+     * acknowledges ([#150](https://github.com/zanminwang/axton/issues/150)), so
+     * a client that subscribes after `initialize` meets the seeded rows either
+     * this way or through `subscription.bootstrap()`
+     * ([#151](https://github.com/zanminwang/axton/issues/151)); `republish`
+     * below is the version that moves a position without touching the stamp.
      */
     async notify(ids: string[] = ["entry-1"], channel = "book:demo") {
       await backend.transaction(async ({ changes, publish }) => {

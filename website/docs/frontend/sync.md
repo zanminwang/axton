@@ -23,9 +23,25 @@ Local reads and writes go through the Rust engine and SQLite. A connection handl
 
 Here `render` is your UI's update function. Subscribing records the desired channel durably - it works offline and survives a restart - and wakes the connection; it does not wait for the initial data. `watch` emits again when synchronization commits records.
 
-**A subscription delivers changes from the moment it is established, not the channel's existing records.** The first time a connection negotiates a session for it, the position the server acknowledges becomes that subscription's starting point, and records published to the channel before that point are not downloaded. Expect an empty initial result on a new database, and expect it to stay empty until something is published. To make existing rows appear today, have your backend publish them again (see [background writes](../backend/api.md#background-writes)); loading a channel's existing records in one explicit operation is planned as `bootstrap()` in [#151](https://github.com/zanminwang/axton/issues/151).
+**A subscription delivers changes from the moment it is established, not the channel's existing records.** The first time a connection negotiates a session for it, the position the server acknowledges becomes that subscription's starting point, and records published to the channel before that point are not downloaded. On a new database the initial result is empty and stays empty until something is published. Ask for what the channel already held:
 
-The handle `subscribe` returns tells you where that is: `followed.status` has `initialization` (`pending` until the starting point is committed, then `ready`) and `connection` (`offline`, `connecting`, `catching-up`, `live` or `stopped`), and `followed.watch(status => …)` reports the current snapshot and every change. `live` means the stream is healthy, not that everything has arrived. `followed.unsubscribe()` removes this registration; later calls through that handle fail with `subscription.closed`.
+=== "TypeScript"
+
+    ```ts
+    const followed = await client.scopes.subscribe('book:demo');
+    followed.bootstrap().catch(console.error);
+    ```
+
+=== "Flutter"
+
+    ```dart
+    final followed = await client.scopes.subscribe('book:demo');
+    followed.bootstrap().catchError((Object error) => print(error));
+    ```
+
+`bootstrap()` loads what was published to the channel before this subscription's starting point. It starts when you call it, awaited or not, so a first screen can render local data immediately and fill in as the load commits; `await` it instead when the screen has nothing to show without it. The call is durable: it survives a restart and resumes without being called again, it waits for connectivity rather than failing, and a call that finds the work already done resolves offline. Completing it means that history and the changes up to the position the load finished at have been processed - not that you hold a snapshot, that the data is fresh now, or that every record loaded (a failed loader read is reported and corrected on the next delivery). See [`bootstrap()`](client-api.md#channels) for the full contract.
+
+The handle `subscribe` returns tells you where that is: `followed.status` has `initialization` (`pending` until the starting point is committed, then `ready`), `connection` (`offline`, `connecting`, `catching-up`, `live` or `stopped`) and `bootstrap` (`{phase, error}`), and `followed.watch(status => …)` reports the current snapshot and every change. `live` means the stream is healthy, not that everything has arrived. `followed.unsubscribe()` removes this registration, and the load with it; later calls through that handle fail with `subscription.closed`.
 
 Use channel names that your backend publishes to, and subscribe when the client needs to receive changes other clients make. A channel is not a database query or an authorization token. Loaders decide which requested records the authenticated user may see.
 
@@ -33,7 +49,7 @@ Use channel names that your backend publishes to, and subscribe when the client 
 
 **A subscription is not required to see your own result.** A durable Action's inferred local Model changes are optimistic. Its handle's `wait()` returns the final per-invocation result or an error. The receipt also carries batch-final authority for changed records, read through the Loader in the handler transaction. AXTON applies that authority and replays later pending edits over it. Thus the result snapshot and current local Model view can differ. A direct Action has no automatic local optimism or durable queue; its response carries its result and applies authority through the same local state path.
 
-Subscribe with `client.scopes.subscribe(channel)` as above when the client needs changes made elsewhere: by other users, by background jobs, or by handlers that touch records without reporting them. Subscription starts synchronization from the point it was established; it does not wait for initial data and does not fetch what the channel already held. Use `watch` to observe the records, and wait for an existing record to be available locally before updating it.
+Subscribe with `client.scopes.subscribe(channel)` as above when the client needs changes made elsewhere: by other users, by background jobs, or by handlers that touch records without reporting them. Subscription starts synchronization from the point it was established and does not wait for initial data; `bootstrap()` is what fetches what the channel already held. Use `watch` to observe the records, and wait for an existing record to be available locally before updating it.
 
 You can send Actions without subscribing to any channel. The receipt still corrects the local row to the server's batch-final state; what you do not receive is later changes from elsewhere. If you subscribe to a channel the handler publishes to, the page for your own change carries the same stamp as the receipt and rewrites nothing, whichever arrives first.
 

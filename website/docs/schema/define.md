@@ -71,7 +71,7 @@ query SearchTodos(text String, cursor String?) {
 query FindTodo(id String) { found Todo? }
 ```
 
-`AddTodo` implicitly returns the created `todo` as a full `Todo` and confirms each deleted identity in `removed`. Its handler supplies `relatedTodo` as a `TodoIdentity` object or `null`, plus `labels`. `DeleteTodo` returns a delete identity confirmation. `SendEmail` changes no Model, but it performs an external effect, so it is a Mutation; its handler returns the plain `messageId`. An operation with no outputs returns void. The required `note` argument accepts a string or `null`; omitting it is invalid.
+`AddTodo`'s result holds only its declared outputs: its handler supplies `relatedTodo` as a `TodoIdentity` object or `null`, plus `labels`. The created `todo` and the deleted `removed` records are inputs, not results; the caller has the backend's version of each locally once the call completes. An output may even share an input's name and name another record. `DeleteTodo` returns void; to return a deleted ID, declare it as scalar outputs such as `{ id String }` and return the value. `SendEmail` changes no Model, but it performs an external effect, so it is a Mutation; its handler returns the plain `messageId`. An operation with no outputs returns void. The required `note` argument accepts a string or `null`; omitting it is invalid.
 
 `SearchTodos` selects a list of identities resolved through the same Loader as Model results; `nextCursor` is an ordinary value your handler computes, and the framework does not infer pagination from it. `FindTodo` selects `found` by identity. A Query accepts ordinary scalar, enum and list inputs and returns ordinary or Model outputs. A Model `create`, `update` or `delete` operand, or `@sequence`, on a Query is a compile error at its source line.
 
@@ -87,7 +87,7 @@ Mutations and Queries share one namespace, so a name is declared once across bot
 | `client.queries.searchTodos` | Execute a Query directly and return its output (`queries.enqueue` queues it instead) |
 | `Mutations<Tx>.editEntry`, `Queries<Tx>.searchTodos` | Implement authoritative business logic for each operation |
 | `Loaders<Tx>.entry` | Return current records from your backend |
-| Backend `Entry(identity)` | Identify a changed record in `publish` or `changes.add` |
+| Backend `Entry(identity)` | Name a record in a mixed Channel list, `channel(name).add([Entry({ id })])` |
 
 An update operand is one flat object: the identity fields plus the changed fields it allows (`EntryUpdate<'text' | 'note'>` in TypeScript), both in the client call and in the handler's `args`. Dart exposes a typed update operand whose changed fields use `Present`.
 

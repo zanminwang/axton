@@ -42,10 +42,13 @@ pub enum Input {
     /// A command of the application callback that owns `transaction_id`:
     /// reads, writes, and `savepoint` / `release` / `rollbackSavepoint`.
     /// `scope` names the innermost open savepoint the command runs in, or is
-    /// absent at the transaction's top level. A command whose transaction or
-    /// scope is not the current one fails with `transaction_closed` and joins
-    /// nothing. These commands are serviced on their own lane, never behind
-    /// the ordinary queue their parent task is holding.
+    /// absent at the transaction's top level. A command naming a transaction
+    /// that is not open fails with `transaction_closed`; one naming a scope
+    /// that is not the innermost open one fails with `invalid transaction
+    /// scope`, a structural failure that rolls the whole unit back at the
+    /// callback's end. Neither joins the session. These commands are serviced
+    /// on their own lane, never behind the ordinary queue their parent task is
+    /// holding.
     #[serde(rename_all = "camelCase")]
     TransactionCommand {
         request_id: String,

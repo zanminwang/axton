@@ -196,7 +196,7 @@ TypeScript calls the returned object `Connection`; Dart calls it `RuntimeConnect
 | `close()` | Permanently stop this connection; the client database stays open |
 | `closed` (Dart) | Future that completes when the connection closes |
 
-All controls return promise/future void. Pause/close cancel network activity and discard responses from the canceled session. Persisted frozen requests remain available for retry. After close, call `client.connect` again to resume sync. `await client.close()` closes its connection and native database resources and is idempotent; subsequent client operations fail.
+All controls return promise/future void. Pause/close cancel network activity that is still in flight and discard what the canceled session later delivers; a direct call whose response had already arrived is still applied and answers its result. Persisted frozen requests remain available for retry. After close, call `client.connect` again to resume sync. `await client.close()` closes its connection and native database resources and is idempotent; subsequent client operations fail.
 
 ## Pending work and recovery
 

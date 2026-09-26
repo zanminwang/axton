@@ -245,7 +245,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     ) {
         self.effects.remove(effect_id);
         self.abandon_session(epoch);
-        self.error(error.message);
+        self.error_status(error.message, error.status);
         self.after_refresh(error.status, Waiter::Socket { epoch }, now, entropy);
     }
     /// The answer to a worker request, or its failure. An ordinary catch-up's
@@ -266,7 +266,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         match http_body(outcome) {
             Ok(body) => self.enqueue_downlink(DownlinkEvent::Response { request, body }),
             Err(error) => {
-                self.error(error.message.clone());
+                self.error_status(error.message.clone(), error.status);
                 let waiter = Waiter::Pull {
                     request,
                     reason: Some(error.message),
@@ -325,11 +325,11 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             _ => return,
         };
         if !outcome.ok {
-            let message = outcome
+            let (message, status) = outcome
                 .error
-                .map(|e| e.message)
-                .unwrap_or_else(|| "refreshAuth failed".into());
-            self.error(message);
+                .map(|e| (e.message, e.status))
+                .unwrap_or_else(|| ("refreshAuth failed".into(), None));
+            self.error_status(message, status);
         }
         for waiter in waiters {
             self.resume_waiter(waiter, outcome.ok, now, entropy);

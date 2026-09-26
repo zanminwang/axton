@@ -29,7 +29,9 @@
 //!
 //! A unit that committed queues [`Event::Changed`] before its own
 //! [`Event::TaskCompleted`], so an SDK that resolves the task and re-queries at
-//! once has already heard about the change it is about to read.
+//! once has already heard about the change it is about to read. The observers
+//! publish what the unit changed last, as [`Event::ObserverChanged`]
+//! snapshots: a watch's rows are always rows the unit committed.
 //!
 //! # Scheduling and transaction ownership
 //!
@@ -66,10 +68,10 @@
 //! an id that is not outstanding is ignored: that is the fence for cancelled,
 //! duplicate and stale answers) and turns it into a *ready continuation* or a
 //! Downlink worker event without touching the database. [`ClientRuntime::step`]
-//! then runs one unit: the application transaction's own lane first, then it
-//! alternates between one ordinary task and one *lane unit* - a ready
-//! continuation (a receipt, a direct response, a prerequisite outcome), else a
-//! Downlink pump, else a push-lane turn - so neither starves. Each unit holds
+//! then runs one unit: the application transaction's own lane first, then
+//! ordinary tasks and *lane units* - a ready continuation (a receipt, a direct
+//! response, a prerequisite outcome), else a Downlink pump, else a push-lane
+//! turn - in the order they were admitted, so neither starves. Each unit holds
 //! at most one local transaction and none is held across an effect: prepare,
 //! effect and apply are three units. Every ordinary task or continuation that
 //! committed wakes both lanes, as the SDKs' `work`/`channels` events did.
@@ -88,6 +90,8 @@
 //! - `direct`: direct Query/Mutation calls, Query once flights, their
 //!   deadlines and fences.
 //! - `prerequisites`: the prerequisite loop over application handlers.
+//! - `observers`: subscription status, Bootstrap waiters and local watches,
+//!   published as snapshots.
 //! - `commands`: the command set: the local reads, writes, Scope, status and
 //!   sync commands executed against the client. The former host-driven lane
 //!   and split direct-call commands (`connection` lifecycle events,
@@ -99,6 +103,7 @@ mod commands;
 mod direct;
 mod effects;
 mod lanes;
+mod observers;
 mod prerequisites;
 pub mod protocol;
 mod tasks;
@@ -131,6 +136,8 @@ pub struct ClientRuntime<S: ClientStore> {
     inbox: VecDeque<DownlinkEvent>,
     directs: direct::Directs,
     prerequisites: Option<prerequisites::Loop>,
+    /// Subscription and watch observers, and the Bootstrap waiters.
+    observers: observers::Observers,
     /// Admissions so far: ordinary tasks and effect results are numbered in
     /// arrival order, and lane work is scheduled by that order too.
     admitted: u64,
@@ -182,6 +189,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             inbox: VecDeque::new(),
             directs: direct::Directs::default(),
             prerequisites: None,
+            observers: observers::Observers::default(),
             admitted: 0,
             lane_since: None,
             issued: 0,
@@ -221,9 +229,32 @@ impl<S: ClientStore> ClientRuntime<S> {
             .ok_or_else(|| "runtime identifiers exhausted".to_string())?;
         Ok(self.issued)
     }
-    /// Settle one routed request: the only place a [`Event::TaskCompleted`]
-    /// is queued, so a request is completed at most once.
+    /// Settle one routed request. An engine refusal of a registration this
+    /// client no longer holds carries `{"code":"subscription.closed"}`, so no
+    /// SDK has to recognize it by its message.
     fn complete(&mut self, request_id: String, outcome: std::result::Result<Value, String>) {
+        match outcome {
+            Ok(value) => self.settle(request_id, Ok(value), None),
+            Err(error) => {
+                let details = error
+                    .contains(CLOSED_REGISTRATION)
+                    .then(|| json!({ "code": crate::SUBSCRIPTION_CLOSED }));
+                self.settle(request_id, Err(error), details)
+            }
+        }
+    }
+    /// Fail one routed request with a machine-readable reason.
+    fn fail(&mut self, request_id: String, error: impl Into<String>, details: Value) {
+        self.settle(request_id, Err(error.into()), Some(details));
+    }
+    /// The only place a [`Event::TaskCompleted`] is queued, so a request is
+    /// completed at most once.
+    fn settle(
+        &mut self,
+        request_id: String,
+        outcome: std::result::Result<Value, String>,
+        details: Option<Value>,
+    ) {
         self.tasks.release(&request_id);
         self.events.push(match outcome {
             Ok(value) => Event::TaskCompleted {
@@ -231,32 +262,46 @@ impl<S: ClientStore> ClientRuntime<S> {
                 ok: true,
                 value,
                 error: None,
+                details: None,
             },
             Err(error) => Event::TaskCompleted {
                 request_id,
                 ok: false,
                 value: Value::Null,
                 error: Some(error),
+                details,
             },
         });
     }
     /// Queue [`Event::Changed`] when a unit committed since `generation`.
     fn changed_since(&mut self, generation: u64) {
         if self.client.generation() != generation {
-            self.events.push(Event::Changed {
-                tables: self.client.last_changed().iter().cloned().collect(),
-            });
+            self.changed();
         }
+    }
+    /// Queue [`Event::Changed`] for the last commit; the watches re-run
+    /// before the unit ends.
+    fn changed(&mut self) {
+        self.observers.stale = true;
+        self.events.push(Event::Changed {
+            tables: self.client.last_changed().iter().cloned().collect(),
+        });
     }
     fn report(&mut self, diagnostic: Diagnostic) {
         self.events.push(Event::Report { diagnostic });
     }
     fn error(&mut self, message: impl Into<String>) {
+        self.error_status(message, None);
+    }
+    /// A failure the application hears about, with the HTTP status it carried.
+    fn error_status(&mut self, message: impl Into<String>, status: Option<u16>) {
         self.report(Diagnostic::Error {
             message: message.into(),
+            status,
         });
     }
-    fn signal(&mut self, signal: Value) {
-        self.events.push(Event::LaneSignal { signal });
-    }
 }
+
+/// The prefix every engine refusal of a closed registration carries
+/// ([`crate::SUBSCRIPTION_CLOSED`]).
+const CLOSED_REGISTRATION: &str = "subscription.closed:";

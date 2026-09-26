@@ -259,6 +259,7 @@ fn run(request_id: String, request: Value, mailbox: Receiver<Mail>, outbox: Arc<
                     ok: false,
                     value: Value::Null,
                     error: Some(e.to_string()),
+                    details: None,
                 },
                 Event::RuntimeClosed,
             ]);
@@ -270,6 +271,7 @@ fn run(request_id: String, request: Value, mailbox: Receiver<Mail>, outbox: Arc<
         ok: true,
         value: runtime.opened(),
         error: None,
+        details: None,
     }]);
     let served = catch_unwind(AssertUnwindSafe(|| serve(&mut runtime, &mailbox, &outbox)));
     if served.is_ok() {
@@ -286,6 +288,7 @@ fn run(request_id: String, request: Value, mailbox: Receiver<Mail>, outbox: Arc<
             Event::Report {
                 diagnostic: Diagnostic::Error {
                     message: "runtime panic".into(),
+                    status: None,
                 },
             },
             Event::RuntimeClosed,

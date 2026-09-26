@@ -44,6 +44,16 @@ pub(super) struct Connection {
     pub(super) refreshing: Option<String>,
     pub(super) waiters: Vec<Waiter>,
 }
+impl Connection {
+    /// The epoch of the open socket session, if one is open.
+    pub(super) fn session(&self) -> Option<u64> {
+        self.downlink.socket.as_ref().map(|(_, epoch)| *epoch)
+    }
+    /// Whether a catch-up request of the open session is out.
+    pub(super) fn catching_up(&self) -> bool {
+        self.downlink.outstanding > 0
+    }
+}
 #[derive(Default)]
 pub(super) struct PushLane {
     /// Ask the driver (or the cycle) what to do on the next lane unit.
@@ -66,10 +76,6 @@ pub(super) struct DownlinkLane {
     socket: Option<(String, u64)>,
     /// Catch-up requests of that session not answered yet.
     outstanding: u64,
-}
-
-fn signal_scopes(lane: &str, scopes: Vec<String>) -> Value {
-    json!({"lane": lane, "scopes": scopes})
 }
 
 impl<S: ClientStore + 'static> ClientRuntime<S> {
@@ -132,7 +138,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                     connection.paused = false;
                 }
                 self.wake_push();
-                self.signal(json!({"lane":"resumed"}));
             }
             "wake" => self.wake_lanes(),
             "stop" => self.stop_lanes(),
@@ -221,7 +226,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         }
         self.lanes.connection.pause();
         self.enqueue_downlink(DownlinkEvent::Pause);
-        self.signal(json!({"lane":"paused"}));
     }
 
     /// Stop: everything `pause` abandons, the lanes stop for good, direct
@@ -247,7 +251,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             .lanes
             .downlink
             .handle(&mut self.client, DownlinkEvent::Stop, 0, 0);
-        self.signal(json!({"lane":"stopped"}));
     }
 
     /// Cancel every lane effect: worker requests, timers and - with `push` -
@@ -392,7 +395,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         match effects::http_body(outcome) {
             Ok(body) => self.ready.push_back(effects::Ready::PushReceipt { body }),
             Err(error) => {
-                self.error(error.message);
+                self.error_status(error.message, error.status);
                 self.after_refresh(error.status, Waiter::Push, now, entropy);
             }
         }
@@ -523,7 +526,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                     connection.downlink.socket = effect.map(|id| (id, epoch));
                     connection.downlink.outstanding = 0;
                 }
-                self.signal(json!({"lane":"opened","epoch":epoch}));
             }
             DownlinkAction::Close { epoch, reason } => {
                 self.abandon_session(epoch);
@@ -563,20 +565,13 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 );
                 if !bootstrap && let Some(connection) = &mut self.connection {
                     connection.downlink.outstanding += 1;
-                    let outstanding = connection.downlink.outstanding;
-                    self.signal(json!({"lane":"requests","outstanding":outstanding}));
                 }
             }
-            DownlinkAction::Bootstrap(state) => {
-                let run = serde_json::to_value(state).unwrap_or(Value::Null);
-                self.signal(json!({"lane":"bootstrap","run":run}));
-            }
+            DownlinkAction::Bootstrap(state) => self.observe_run(state),
             DownlinkAction::Wake { .. } => self.wake_push(),
             DownlinkAction::Report { reports } => self.report(Diagnostic::Records { reports }),
-            DownlinkAction::Changed { scopes } => self.signal(signal_scopes("changed", scopes)),
-            DownlinkAction::Acknowledged { scopes } => {
-                self.signal(signal_scopes("acknowledged", scopes))
-            }
+            DownlinkAction::Changed { scopes } => self.scopes_changed(&scopes),
+            DownlinkAction::Acknowledged { scopes } => self.acknowledged(scopes),
             DownlinkAction::Wait { millis } => {
                 let Some(connection) = &mut self.connection else {
                     return;
@@ -599,9 +594,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         }
     }
     /// The session of `epoch` is over: its socket (if it is still the one
-    /// open) and its catch-up requests are abandoned, and the SDK hears the
-    /// session ended. Signals name their session, so a session already gone
-    /// is not announced twice.
+    /// open) and its catch-up requests are abandoned. A session already gone
+    /// is left alone.
     pub(super) fn abandon_session(&mut self, epoch: u64) {
         let pulls: Vec<String> = self
             .effects
@@ -626,7 +620,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         };
         connection.downlink.outstanding = 0;
         self.cancel_effect(&effect_id);
-        self.signal(json!({"lane":"ended","epoch":epoch}));
     }
     /// A catch-up of the session of `epoch` answered or failed.
     pub(super) fn settle_catch_up(&mut self, epoch: u64) {
@@ -637,8 +630,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             return;
         }
         connection.downlink.outstanding = connection.downlink.outstanding.saturating_sub(1);
-        let outstanding = connection.downlink.outstanding;
-        self.signal(json!({"lane":"requests","outstanding":outstanding}));
     }
     pub(super) fn downlink_timer_fired(&mut self, effect_id: &str) {
         if let Some(connection) = &mut self.connection
@@ -678,14 +669,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         self.wake_lanes();
     }
 
-    /// Close: the SDK hears the session end and the lanes stop.
+    /// Close: the lanes stop; their effects were already cancelled.
     pub(super) fn close_lanes(&mut self) {
-        let Some(connection) = self.connection.take() else {
-            return;
-        };
-        if let Some((_, epoch)) = connection.downlink.socket {
-            self.signal(json!({"lane":"ended","epoch":epoch}));
-        }
-        self.signal(json!({"lane":"stopped"}));
+        self.connection = None;
     }
 }

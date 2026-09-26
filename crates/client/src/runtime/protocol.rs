@@ -16,7 +16,7 @@
 //! | `transactionId` | the runtime, fresh per callback transaction | admit commands only into the transaction that owns them |
 //! | `scope` | the runtime, fresh per nested savepoint | admit commands only into the innermost open savepoint |
 //! | `callId` | the existing durable call identity | final Call outcomes; never replaced by a request id |
-//! | `observerId` | the runtime | route committed watch/subscription snapshots |
+//! | `observerId` | the runtime, unique for its lifetime | route watch/subscription snapshots ([`Event::ObserverChanged`]) |
 //!
 //! Admission is not completion: the carrier acknowledges that a message was
 //! copied into the runtime's mailbox, and the public Promise/Future resolves
@@ -153,7 +153,7 @@ pub enum SocketEvent {
 pub enum Event {
     /// The one terminal outcome of a submitted task or transaction command.
     /// The SDK removes the route before it runs application code and settles
-    /// it exactly once. `error` is the engine's message; no SDK branch depends
+    /// it exactly once. `error` is the human message; no SDK branch depends
     /// on its wording beyond the codes it already recognizes
     /// (`client_closed`, `transaction_closed`, `transaction_active`, …).
     #[serde(rename_all = "camelCase")]
@@ -165,6 +165,16 @@ pub enum Event {
         value: Value,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// The machine-readable reason of a failure, when it has one: an
+        /// object whose `code` the SDK maps to its public error instead of
+        /// matching `error`. Absent otherwise. A failure of a registration
+        /// this client no longer holds carries `{"code":"subscription.closed"}`;
+        /// a `scopeBootstrap` waiter fails with `{"code":"bootstrap.superseded"}`,
+        /// `{"code":"subscription.closed"}`, `{"code":"client_closed"}`, or the
+        /// stored failure of its run, `{"code", "message"}` (`error` is then
+        /// that stored message).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        details: Option<Value>,
     },
     /// Host work the runtime needs: execute it and answer with an
     /// [`Input::EffectResult`] (or, for a callback, an
@@ -184,9 +194,25 @@ pub enum Event {
     /// submission task completed, so this can never outrun its registration.
     #[serde(rename_all = "camelCase")]
     CallCompleted { call_id: String, outcome: Value },
-    /// Committed state of one observer: a watch's rows or a subscription's
-    /// status. The SDK delivers it to the language-level listeners; a
-    /// listener's exception changes nothing here.
+    /// The state of one observer, emitted only when it differs from the last
+    /// one emitted for it, and after the commit it describes. The SDK
+    /// delivers it to the language-level listeners; a listener's exception
+    /// changes nothing here. `snapshot` is one of:
+    ///
+    /// - a subscription observer (`scopeSubscribe`):
+    ///   `{"kind":"subscription","scope","subscriptionId","status":{"active",
+    ///   "initialization":"pending"|"ready","connection":"offline"|"connecting"|
+    ///   "catching-up"|"live"|"stopped","bootstrap":{"phase":"not-requested"|
+    ///   "waiting-for-initialization"|"loading"|"catching-up"|"complete"|
+    ///   "failed","error":null|{"code","message"}}}}` - the SDK
+    ///   `SubscriptionStatus`, verbatim;
+    /// - a watch observer (`watch`): `{"kind":"watch","rows":[…]}`.
+    ///
+    /// A terminal snapshot adds `"closed": true` and nothing follows it for
+    /// that observer: a subscription that was removed, replaced by a rebuild
+    /// or stopped with the runtime (`active: false`, `connection: "stopped"`),
+    /// or a watch ended by the runtime's close (carrying its last rows). An
+    /// `unwatch` ends a watch with no snapshot.
     #[serde(rename_all = "camelCase")]
     ObserverChanged {
         observer_id: String,
@@ -197,18 +223,9 @@ pub enum Event {
     /// bridge protocol violation.
     Report { diagnostic: Diagnostic },
     /// A local transaction committed and touched these tables (framework
-    /// tables included). Until watch observers move into the runtime, the
-    /// SDKs re-run their watched queries on it.
+    /// tables included). Watch observers re-run on it inside the runtime; the
+    /// SDKs need it for nothing and may ignore it.
     Changed { tables: Vec<String> },
-    /// Transport state of the connection lanes for the SDK's subscription
-    /// status projection; no decision depends on it. Transitional: it goes
-    /// once subscription observers move into the runtime. `signal` is the
-    /// SDKs' `DownlinkSignal`: `{"lane":"opened"|"ended","epoch":n}`,
-    /// `{"lane":"paused"|"resumed"|"stopped"}`,
-    /// `{"lane":"requests","outstanding":n}`,
-    /// `{"lane":"acknowledged"|"changed","scopes":[…]}` or
-    /// `{"lane":"bootstrap","run":{scope,subscriptionId,state,run,cursor,barrier,error}}`.
-    LaneSignal { signal: Value },
     /// The runtime is gone; nothing follows. The SDK drains it, releases its
     /// platform resources and detaches the carrier.
     RuntimeClosed,
@@ -273,8 +290,14 @@ pub enum Diagnostic {
     Records { reports: Vec<Report> },
     /// A lane or effect failure the application's `onError` would have seen:
     /// a transport error, a protocol violation the runtime closed a socket
-    /// for, a failed credential refresh.
-    Error { message: String },
+    /// for, a failed credential refresh, a watch that failed to re-run.
+    /// `status` is the HTTP status the failure carried, when it had one, so
+    /// the SDK can hand `onError` an error with that status.
+    Error {
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<u16>,
+    },
     /// The SDK violated the bridge contract: a malformed envelope or a
     /// duplicate active request id. Nothing executed for it.
     Protocol { message: String },
@@ -356,6 +379,7 @@ mod tests {
                     ok: true,
                     value: Value::Null,
                     error: None,
+                    details: None,
                 },
             ),
             (
@@ -365,6 +389,7 @@ mod tests {
                     ok: false,
                     value: Value::Null,
                     error: Some("transaction_closed".into()),
+                    details: None,
                 },
             ),
             (
@@ -415,9 +440,29 @@ mod tests {
                 },
             ),
             (
-                json!({"type":"laneSignal","signal":{"lane":"opened","epoch":3}}),
-                Event::LaneSignal {
-                    signal: json!({"lane":"opened","epoch":3}),
+                json!({"type":"taskCompleted","requestId":"44","ok":false,"value":null,"error":"no page","details":{"code":"bootstrap.request_rejected","message":"no page"}}),
+                Event::TaskCompleted {
+                    request_id: "44".into(),
+                    ok: false,
+                    value: Value::Null,
+                    error: Some("no page".into()),
+                    details: Some(json!({"code":"bootstrap.request_rejected","message":"no page"})),
+                },
+            ),
+            (
+                json!({"type":"observerChanged","observerId":"3","snapshot":{"kind":"watch","rows":[]}}),
+                Event::ObserverChanged {
+                    observer_id: "3".into(),
+                    snapshot: json!({"kind":"watch","rows":[]}),
+                },
+            ),
+            (
+                json!({"type":"report","diagnostic":{"kind":"error","message":"HTTP 503","status":503}}),
+                Event::Report {
+                    diagnostic: Diagnostic::Error {
+                        message: "HTTP 503".into(),
+                        status: Some(503),
+                    },
                 },
             ),
             (json!({"type":"runtimeClosed"}), Event::RuntimeClosed),

@@ -1,7 +1,8 @@
 //! The runtime owns the operation lifecycles
-//! ([#134](https://github.com/zanminwang/axton/issues/134), checkpoint 2):
-//! the connection lanes, the Downlink worker, direct calls, Query once,
-//! prerequisites and rebuild fencing, over a real SQLite store. The test is
+//! ([#134](https://github.com/zanminwang/axton/issues/134), checkpoints 2 and
+//! 3): the connection lanes, the Downlink worker, direct calls, Query once,
+//! prerequisites, rebuild fencing, and the observers - subscription status,
+//! Bootstrap waiters and local watches - over a real SQLite store. The test is
 //! the host: it answers every effect the runtime asks for, with a fixed
 //! clock that a fired timer advances. No sleeps, no threads.
 mod common;
@@ -190,14 +191,14 @@ impl Host {
             .map(|row| row["text"].clone())
     }
     /// Subscribe `book`, and on the socket that follows acknowledge `head`.
-    fn streaming(&mut self, head: u64) -> (String, u64) {
+    fn streaming(&mut self, head: u64) -> String {
         self.task("subscribe", json!({"kind":"scopeSubscribe","scope":"book"}));
         let events = self.run();
-        let epoch = signals(&events, "opened")[0]["epoch"].as_u64().unwrap();
+        assert_eq!(sockets(&events).len(), 1, "{events:?}");
         let socket = self.socket();
         self.frame(&socket, &ack(&[("book", head)]));
         self.run();
-        (socket, epoch)
+        socket
     }
     fn completion<'a>(&self, events: &'a [Value], id: &str) -> &'a Value {
         events
@@ -213,11 +214,34 @@ fn done(id: &str, value: Value) -> Value {
 fn failed(id: &str, error: &str) -> Value {
     json!({"type":"taskCompleted","requestId":id,"ok":false,"value":null,"error":error})
 }
-fn signals(events: &[Value], lane: &str) -> Vec<Value> {
+/// The socket effects asked for: one per session.
+fn sockets(events: &[Value]) -> Vec<Value> {
     events
         .iter()
-        .filter(|e| e["type"] == "laneSignal" && e["signal"]["lane"] == lane)
-        .map(|e| e["signal"].clone())
+        .filter(|e| e["type"] == "effect" && e["operation"]["kind"] == "socket")
+        .cloned()
+        .collect()
+}
+/// The subscription statuses published, in order.
+fn statuses(events: &[Value]) -> Vec<Value> {
+    events
+        .iter()
+        .filter(|e| e["type"] == "observerChanged" && e["snapshot"]["kind"] == "subscription")
+        .map(|e| e["snapshot"]["status"].clone())
+        .collect()
+}
+/// The `connection` of every subscription status published, in order.
+fn connections(events: &[Value]) -> Vec<String> {
+    statuses(events)
+        .iter()
+        .map(|s| s["connection"].as_str().unwrap().to_string())
+        .collect()
+}
+/// The Bootstrap phase of every subscription status published, in order.
+fn phases(events: &[Value]) -> Vec<String> {
+    statuses(events)
+        .iter()
+        .map(|s| s["bootstrap"]["phase"].as_str().unwrap().to_string())
         .collect()
 }
 fn position(events: &[Value], matches: impl Fn(&Value) -> bool) -> usize {
@@ -313,7 +337,7 @@ fn connect_starts_both_lanes_and_the_worker_streams_catches_up_and_applies() {
         subscribe,
         json!({"type":"subscribe","channels":["book"],"models":{"Entry":1}})
     );
-    let epoch = signals(&events, "opened")[0]["epoch"].as_u64().unwrap();
+    assert_eq!(sockets(&events).len(), 1);
     assert!(
         position(&events, |e| e["type"] == "taskCompleted"
             && e["requestId"] == "subscribe")
@@ -321,31 +345,27 @@ fn connect_starts_both_lanes_and_the_worker_streams_catches_up_and_applies() {
                 && e["effectId"] == socket.as_str()),
         "the registration commits before the socket is asked for"
     );
+    assert_eq!(connections(&events), ["connecting"]);
 
-    // The handshake commits the first boundary: `changed`, then the signals.
+    // The handshake commits the first boundary: `changed`, then the status.
     h.answer(&socket, json!({"ok":true,"value":{"event":"opened"}}));
     h.frame(&socket, &ack(&[("book", 0)]));
     let events = h.run();
     let committed = position(&events, |e| e["type"] == "changed");
-    assert!(committed < position(&events, |e| e["signal"]["lane"] == "changed"));
+    assert!(committed < position(&events, |e| e["type"] == "observerChanged"));
     assert_eq!(
-        signals(&events, "changed"),
-        [json!({"lane":"changed","scopes":["book"]})]
-    );
-    assert_eq!(
-        signals(&events, "acknowledged"),
-        [json!({"lane":"acknowledged","scopes":["book"]})]
+        statuses(&events),
+        [
+            json!({"active":true,"initialization":"ready","connection":"live","bootstrap":{"phase":"not-requested","error":null}})
+        ]
     );
     assert_eq!(h.client().cursor("book").unwrap(), Some(0));
 
-    // A streamed page applies in one transaction, announced before its signal.
+    // A streamed page applies in one transaction; the status is unchanged.
     h.frame(&socket, &page(0, 1, "e", "first"));
     let events = h.run();
-    assert!(
-        position(&events, |e| e["type"] == "changed"
-            && e["tables"].as_array().unwrap().contains(&json!("Entry")))
-            < position(&events, |e| e["signal"]["lane"] == "changed")
-    );
+    assert!(changes(&events, "Entry"));
+    assert_eq!(statuses(&events), Vec::<Value>::new());
     assert_eq!(h.text("e"), Some(json!("first")));
 
     // A gap asks for a catch-up over HTTP; a page streamed meanwhile waits.
@@ -356,10 +376,7 @@ fn connect_starts_both_lanes_and_the_worker_streams_catches_up_and_applies() {
         serde_json::from_str::<Value>(&body).unwrap(),
         json!({"cursors":{"book":1},"models":{"Entry":1}})
     );
-    assert_eq!(
-        signals(&events, "requests"),
-        [json!({"lane":"requests","outstanding":1})]
-    );
+    assert_eq!(connections(&events), ["catching-up"]);
     h.frame(&socket, &page(1, 2, "e", "queued"));
     assert!(
         !changes(&h.run(), "Entry"),
@@ -370,13 +387,7 @@ fn connect_starts_both_lanes_and_the_worker_streams_catches_up_and_applies() {
     h.ok(&pull, &page(1, 3, "e", "incoming overlap"));
     let events = h.run();
     assert!(changes(&events, "Entry"));
-    assert_eq!(
-        signals(&events, "requests"),
-        [
-            json!({"lane":"requests","outstanding":0}),
-            json!({"lane":"requests","outstanding":1})
-        ]
-    );
+    assert_eq!(connections(&events), ["live", "catching-up"]);
     let (_, body) = h.http("pull");
     assert_eq!(
         serde_json::from_str::<Value>(&body).unwrap()["cursors"],
@@ -384,15 +395,14 @@ fn connect_starts_both_lanes_and_the_worker_streams_catches_up_and_applies() {
     );
     assert_eq!(h.client().cursor("book").unwrap(), Some(3));
     assert_eq!(h.text("e"), Some(json!("incoming overlap")));
-    assert_eq!(signals(&events, "opened"), Vec::<Value>::new());
-    let _ = epoch;
+    assert_eq!(sockets(&events), Vec::<Value>::new());
 }
 
 #[test]
 fn a_direct_call_waits_without_the_writer_and_succeeds_only_after_its_apply_commits() {
     let mut h = host();
     h.connect(false);
-    let (socket, _) = h.streaming(0);
+    let socket = h.streaming(0);
     h.task("seed", create("e", "seed"));
     h.run();
     h.task("call", rename("server"));
@@ -528,7 +538,7 @@ fn the_push_lane_freezes_sends_settles_and_backs_off_with_one_shared_refresh() {
     // A 401 on the push and on the socket together: one refresh for both.
     // The commits of the subscription wake the push lane, which still has
     // its one batch out.
-    let (socket, _) = h.streaming(0);
+    let socket = h.streaming(0);
     assert_eq!(h.http("push").0, push, "one frozen batch in flight");
     h.fail(&push, "unauthorized", Some(401));
     h.fail(&socket, "unauthorized", Some(401));
@@ -539,7 +549,7 @@ fn the_push_lane_freezes_sends_settles_and_backs_off_with_one_shared_refresh() {
         h.outstanding("timer", None).is_empty(),
         "both wait for the refresh before backing off"
     );
-    assert_eq!(signals(&events, "ended").len(), 1);
+    assert_eq!(connections(&events), ["connecting"], "the session ended");
     h.answer(&refresh, json!({"ok":true,"value":null}));
     h.run();
     assert!(h.outstanding("refreshAuth", None).is_empty());
@@ -558,7 +568,8 @@ fn receipts_direct_applies_and_pages_each_commit_in_their_own_step_beside_a_boot
     let client_id = h.client().client_id().to_string();
     h.task("subscribe", json!({"kind":"scopeSubscribe","scope":"book"}));
     let events = h.run();
-    let subscription = h.completion(&events, "subscribe")["value"]["subscriptionId"].clone();
+    let subscription =
+        h.completion(&events, "subscribe")["value"]["state"]["subscriptionId"].clone();
     h.task(
         "load",
         json!({"kind":"scopeBootstrap","scope":"book","subscriptionId":subscription}),
@@ -609,13 +620,17 @@ fn receipts_direct_applies_and_pages_each_commit_in_their_own_step_beside_a_boot
     assert_eq!(h.text("e"), Some(json!("direct")));
     // The terminal page fixed the barrier at head 9, which live delivery
     // reaches in its own commits: the run completes whichever came first.
-    let runs = signals(&events, "bootstrap");
-    assert_eq!(runs[0]["run"]["barrier"], 9);
+    let run = h
+        .client()
+        .bootstrap_state("book", subscription.as_u64().unwrap())
+        .unwrap();
+    assert_eq!(run.barrier, Some(9));
     assert_eq!(
-        runs.last().unwrap()["run"]["state"],
-        "complete",
-        "delivery reached the barrier: {runs:?}"
+        phases(&events).last().map(String::as_str),
+        Some("complete"),
+        "delivery reached the barrier: {events:?}"
     );
+    assert_eq!(h.completion(&events, "load"), &done("load", Value::Null));
 
     // Duplicate and stale answers change nothing.
     let generation = h.client().generation();
@@ -639,7 +654,8 @@ fn pause_abandons_lane_io_without_backoff_resume_asks_again_and_stop_is_final() 
     let mut h = host();
     h.task("subscribe", json!({"kind":"scopeSubscribe","scope":"book"}));
     let events = h.run();
-    let subscription = h.completion(&events, "subscribe")["value"]["subscriptionId"].clone();
+    let subscription =
+        h.completion(&events, "subscribe")["value"]["state"]["subscriptionId"].clone();
     // Controls with no connection are no-ops.
     for event in ["pause", "resume", "wake", "stop"] {
         h.task(event, json!({"kind":"connection","event":event}));
@@ -686,8 +702,7 @@ fn pause_abandons_lane_io_without_backoff_resume_asks_again_and_stop_is_final() 
         "no backoff timer, nothing in flight: {:?}",
         h.open
     );
-    assert_eq!(signals(&events, "paused").len(), 1);
-    assert_eq!(signals(&events, "ended").len(), 1);
+    assert_eq!(connections(&events), ["offline"]);
     // Paused, nothing is asked for, even after a commit.
     h.task(
         "more",
@@ -698,7 +713,7 @@ fn pause_abandons_lane_io_without_backoff_resume_asks_again_and_stop_is_final() 
 
     h.task("resume", json!({"kind":"connection","event":"resume"}));
     let events = h.run();
-    assert_eq!(signals(&events, "resumed").len(), 1);
+    assert_eq!(connections(&events), ["connecting"]);
     let (_, resent) = h.http("push");
     assert_eq!(
         resent, body,
@@ -724,7 +739,7 @@ fn pause_abandons_lane_io_without_backoff_resume_asks_again_and_stop_is_final() 
     let events = h.run();
     assert!(events.contains(&failed("call", "action.unavailable")));
     assert!(cancelled(&events, &call) && cancelled(&events, &socket));
-    assert_eq!(signals(&events, "stopped").len(), 1);
+    assert_eq!(connections(&events), ["offline"]);
     assert!(h.open.is_empty(), "{:?}", h.open);
     // A stopped connection: invoke is unavailable, controls are no-ops, and a
     // new connect starts over.
@@ -827,7 +842,6 @@ fn a_direct_call_times_out_refreshes_once_on_401_and_fails_unavailable_at_close(
     let events = h.run();
     assert!(events.contains(&failed("closing", "action.unavailable")));
     assert!(cancelled(&events, &http));
-    assert_eq!(signals(&events, "stopped").len(), 1);
     assert_eq!(events.last().unwrap(), &json!({"type":"runtimeClosed"}));
     let late: Input = serde_json::from_value(json!({"type":"effectResult","effectId":http,"outcome":{"ok":true,"value":{"status":200,"body":renamed(&body, "late")}}})).unwrap();
     assert!(h.runtime.receive(late, h.now, ENTROPY).is_err());
@@ -1023,9 +1037,6 @@ fn a_rebuild_fences_old_lane_io_and_reopens_in_the_same_intent() {
     h.connect(false);
     let (old_push, _) = h.http("push");
     let old_socket = h.socket();
-    let old_epoch = h.open[&old_socket].clone();
-    let events = h.run();
-    let _ = events;
     h.frame(&old_socket, &ack(&[("book", 2)]));
     h.run();
     let (old_load, _) = h.http("pull");
@@ -1066,20 +1077,10 @@ fn a_rebuild_fences_old_lane_io_and_reopens_in_the_same_intent() {
     for id in [&old_socket, &old_pull, &old_load, &old_push] {
         assert!(cancelled(&events, id), "{id}: {events:?}");
     }
-    assert_eq!(
-        signals(&events, "ended"),
-        [json!({"lane":"ended","epoch":signals_epoch(&events, "ended")})]
-    );
-    // A new session follows without another connect, with a greater epoch.
+    // A new session follows without another connect.
     let socket = h.socket();
     assert_ne!(socket, old_socket);
-    let opened = signals(&events, "opened");
-    assert_eq!(opened.len(), 1);
-    let epoch = opened[0]["epoch"].as_u64().unwrap();
-    assert!(
-        epoch > 1,
-        "the epoch allocator survived: {epoch} after {old_epoch}"
-    );
+    assert_eq!(sockets(&events).len(), 1);
     assert!(changes(&events, "Entry"));
     // Old answers change nothing.
     let cursors = h.client().subscriptions().unwrap();
@@ -1105,9 +1106,6 @@ fn a_rebuild_fences_old_lane_io_and_reopens_in_the_same_intent() {
     h.frame(&socket, &ack(&[("book", 5)]));
     h.run();
     assert_eq!(h.client().cursor("book").unwrap(), Some(5));
-}
-fn signals_epoch(events: &[Value], lane: &str) -> Value {
-    signals(events, lane)[0]["epoch"].clone()
 }
 
 #[test]
@@ -1143,7 +1141,7 @@ fn a_stopped_lane_stays_stopped_through_a_rebuild_until_connect() {
     let events = h.run();
     assert_eq!(h.completion(&events, "rebuild")["ok"], true);
     assert!(h.open.is_empty(), "stopped: nothing restarts: {:?}", h.open);
-    assert!(signals(&events, "opened").is_empty());
+    assert!(sockets(&events).is_empty());
     h.connect(false);
     h.socket();
 }
@@ -1157,7 +1155,7 @@ fn a_stopped_lane_stays_stopped_through_a_rebuild_until_connect() {
 fn inbound_work_admitted_after_an_ordinary_task_runs_after_it() {
     let mut h = host();
     h.connect(false);
-    let (socket, _) = h.streaming(0);
+    let socket = h.streaming(0);
     h.frame(&socket, &page(0, 1, "live", "first"));
     h.run();
     assert_eq!(h.text("live"), Some(json!("first")));
@@ -1205,5 +1203,544 @@ fn inbound_work_admitted_after_an_ordinary_task_runs_after_it() {
     // a fresh session is asked for.
     assert_eq!(h.text("live"), Some(json!("first")));
     assert!(!changes(&events[..unsubscribed], "Entry"), "{events:?}");
-    assert!(!signals(&events, "opened").is_empty(), "{events:?}");
+    assert!(!sockets(&events).is_empty(), "{events:?}");
+}
+
+// --- Observers (checkpoint 3) ----------------------------------------------
+
+/// The snapshots one observer published, in order.
+fn snapshots(events: &[Value], observer: &Value) -> Vec<Value> {
+    events
+        .iter()
+        .filter(|e| e["type"] == "observerChanged" && &e["observerId"] == observer)
+        .map(|e| e["snapshot"].clone())
+        .collect()
+}
+fn status(initialization: &str, connection: &str, phase: &str) -> Value {
+    json!({"active":connection != "stopped","initialization":initialization,"connection":connection,"bootstrap":{"phase":phase,"error":null}})
+}
+fn failed_with(id: &str, error: &str, details: Value) -> Value {
+    json!({"type":"taskCompleted","requestId":id,"ok":false,"value":null,"error":error,"details":details})
+}
+fn completed(events: &[Value], id: &str) -> bool {
+    events
+        .iter()
+        .any(|e| e["type"] == "taskCompleted" && e["requestId"] == id)
+}
+impl Host {
+    /// Subscribe `scope` and answer its identity and observer.
+    fn subscribe(&mut self, id: &str, scope: &str) -> (u64, Value, Vec<Value>) {
+        self.task(id, json!({"kind":"scopeSubscribe","scope":scope}));
+        let events = self.run();
+        let value = self.completion(&events, id)["value"].clone();
+        (
+            value["state"]["subscriptionId"].as_u64().unwrap(),
+            value["observerId"].clone(),
+            events,
+        )
+    }
+    fn bootstrap(&mut self, id: &str, subscription: u64) {
+        self.task(
+            id,
+            json!({"kind":"scopeBootstrap","scope":"book","subscriptionId":subscription}),
+        );
+    }
+}
+
+/// The projection the SDK handles computed from lane signals, now computed
+/// by the runtime: every transition of the connection, published once, after
+/// the commit it describes; a removal ends the observer with one terminal
+/// snapshot, and a recreated registration is `connecting` until a session
+/// acknowledges it.
+#[test]
+fn subscription_status_follows_the_lanes_and_a_removal_closes_it_once() {
+    let mut h = host();
+    // Offline: the registration answers its observer, and the first snapshot
+    // follows the completion.
+    let (subscription, observer, events) = h.subscribe("subscribe", "book");
+    assert!(observer.is_string(), "{events:?}");
+    assert!(
+        position(&events, |e| e["type"] == "taskCompleted")
+            < position(&events, |e| e["type"] == "observerChanged")
+    );
+    assert_eq!(
+        snapshots(&events, &observer),
+        [
+            json!({"kind":"subscription","scope":"book","subscriptionId":subscription,"status":status("pending","offline","not-requested")})
+        ]
+    );
+    // The same identity answers the same observer and publishes nothing new.
+    let (again, same, events) = h.subscribe("again", "book");
+    assert_eq!((again, &same), (subscription, &observer));
+    assert_eq!(statuses(&events), Vec::<Value>::new());
+
+    // connect -> connecting (the socket is asked for) -> live on the handshake.
+    h.task("connect", json!({"kind":"connect"}));
+    let events = h.run();
+    assert_eq!(sockets(&events).len(), 1);
+    assert_eq!(connections(&events), ["connecting"]);
+    assert!(
+        position(&events, |e| e["requestId"] == "connect")
+            < position(&events, |e| e["type"] == "observerChanged")
+    );
+    let socket = h.socket();
+    h.answer(&socket, json!({"ok":true,"value":{"event":"opened"}}));
+    assert_eq!(
+        h.run(),
+        Vec::<Value>::new(),
+        "an open socket is not live yet"
+    );
+    h.frame(&socket, &ack(&[("book", 0)]));
+    let events = h.run();
+    assert!(
+        position(&events, |e| e["type"] == "changed")
+            < position(&events, |e| e["type"] == "observerChanged")
+    );
+    assert_eq!(
+        statuses(&events),
+        [status("ready", "live", "not-requested")]
+    );
+
+    // A gap asks for a catch-up: catching-up until it answers.
+    h.frame(&socket, &page(5, 6, "e", "gap"));
+    assert_eq!(connections(&h.run()), ["catching-up"]);
+    let (pull, _) = h.http("pull");
+    h.ok(&pull, &page(0, 6, "e", "caught up"));
+    let events = h.run();
+    assert_eq!(connections(&events), ["live"]);
+    assert_eq!(h.text("e"), Some(json!("caught up")));
+
+    // pause -> offline, resume -> connecting until the new session's handshake.
+    h.task("pause", json!({"kind":"connection","event":"pause"}));
+    assert_eq!(connections(&h.run()), ["offline"]);
+    h.task("resume", json!({"kind":"connection","event":"resume"}));
+    assert_eq!(connections(&h.run()), ["connecting"]);
+    let socket = h.socket();
+    h.frame(&socket, &ack(&[("book", 6)]));
+    assert_eq!(connections(&h.run()), ["live"]);
+
+    // The removal commits and ends the observer with one terminal snapshot.
+    h.task(
+        "unsubscribe",
+        json!({"kind":"scopeUnsubscribe","scope":"book","subscriptionId":subscription}),
+    );
+    let events = h.run();
+    assert_eq!(
+        h.completion(&events, "unsubscribe")["value"],
+        json!({"removed":true})
+    );
+    assert_eq!(
+        snapshots(&events, &observer),
+        [
+            json!({"kind":"subscription","scope":"book","subscriptionId":subscription,"status":status("ready","stopped","not-requested"),"closed":true})
+        ]
+    );
+    h.task("wake", json!({"kind":"connection","event":"wake"}));
+    h.task(
+        "twice",
+        json!({"kind":"scopeUnsubscribe","scope":"book","subscriptionId":subscription}),
+    );
+    let events = h.run();
+    assert_eq!(snapshots(&events, &observer), Vec::<Value>::new());
+    assert_eq!(
+        h.completion(&events, "twice")["value"],
+        json!({"removed":false})
+    );
+
+    // A recreated registration is a new identity with a new observer: the old
+    // session's handshake was not its own, so it is connecting until one is.
+    let (recreated, renewed, events) = h.subscribe("recreate", "book");
+    assert_ne!(recreated, subscription);
+    assert_ne!(renewed, observer);
+    assert_eq!(
+        snapshots(&events, &renewed)[0]["status"],
+        status("pending", "connecting", "not-requested")
+    );
+    let socket = h.socket();
+    h.frame(&socket, &ack(&[("book", 6)]));
+    let events = h.run();
+    assert_eq!(
+        snapshots(&events, &renewed).last().unwrap()["status"],
+        status("ready", "live", "not-requested")
+    );
+    // Stopping the connection takes every live handle offline.
+    h.task("stop", json!({"kind":"connection","event":"stop"}));
+    assert_eq!(connections(&h.run()), ["offline"]);
+}
+
+/// `bootstrap()` waits in the runtime: registration answers only after the
+/// completion of its run commits; calls during a run share it; a call after
+/// completion answers at once with no effect; a completion committed before
+/// the call runs is still its answer.
+#[test]
+fn bootstrap_waiters_answer_after_the_completion_commit_and_share_the_run() {
+    let mut h = host();
+    h.connect(false);
+    let (subscription, observer, _) = h.subscribe("subscribe", "book");
+    h.bootstrap("first", subscription);
+    let events = h.run();
+    assert!(!completed(&events, "first"), "{events:?}");
+    assert_eq!(phases(&events), ["waiting-for-initialization"]);
+    // A second call during the run shares it.
+    h.bootstrap("second", subscription);
+    let events = h.run();
+    assert!(!completed(&events, "second"), "{events:?}");
+    assert_eq!(statuses(&events), Vec::<Value>::new());
+
+    // The handshake bounds the interval: one page, which fixes the barrier.
+    let socket = h.socket();
+    h.frame(&socket, &ack(&[("book", 7)]));
+    let events = h.run();
+    assert_eq!(phases(&events), ["loading"]);
+    let (load, body) = h.http("pull");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["mode"],
+        "bootstrap"
+    );
+    h.ok(&load, &json!({"mode":"bootstrap","channel":"book","from":0,"to":7,"until":7,"head":9,"records":[]}).to_string());
+    let events = h.run();
+    assert_eq!(phases(&events), ["catching-up"]);
+    assert!(!completed(&events, "first") && !completed(&events, "second"));
+
+    // Delivery reaches the barrier: the completion commits, then both calls
+    // answer, then the status says so.
+    h.frame(&socket, &page(7, 9, "e", "delivered"));
+    let events = h.run();
+    let committed = position(&events, |e| e["type"] == "changed");
+    let first = position(&events, |e| *e == done("first", Value::Null));
+    let second = position(&events, |e| *e == done("second", Value::Null));
+    let published = position(&events, |e| e["observerId"] == observer);
+    assert!(committed < first && first < second && second < published);
+    assert_eq!(phases(&events), ["complete"]);
+
+    // A call after completion answers locally: no effect, no commit, no
+    // snapshot.
+    h.bootstrap("after", subscription);
+    assert_eq!(h.run(), vec![done("after", Value::Null)]);
+
+    // The completion of a new identity's run commits before its call runs:
+    // the call still answers with it.
+    let (other, _, _) = h.subscribe("other", "shelf");
+    h.task(
+        "load shelf",
+        json!({"kind":"scopeBootstrap","scope":"shelf","subscriptionId":other}),
+    );
+    h.run();
+    let socket = h.socket();
+    h.frame(&socket, &ack(&[("book", 9), ("shelf", 3)]));
+    h.run();
+    let (load, _) = h.http("pull");
+    h.ok(&load, &json!({"mode":"bootstrap","channel":"shelf","from":0,"to":3,"until":3,"head":3,"records":[]}).to_string());
+    // The page answers - and completes the run - ahead of the late call.
+    h.task(
+        "late",
+        json!({"kind":"scopeBootstrap","scope":"shelf","subscriptionId":other}),
+    );
+    let events = h.run();
+    let early = position(&events, |e| *e == done("load shelf", Value::Null));
+    let late = position(&events, |e| *e == done("late", Value::Null));
+    assert!(early < late, "{events:?}");
+    assert!(h.outstanding("http", Some("pull")).is_empty());
+}
+
+/// A failed run fails its waiters with its stored failure; an explicit call
+/// retries with a new run; a waiter whose run was replaced without its outcome
+/// being observed is superseded, never answered by the new run; a removal
+/// fails the rest `subscription.closed`.
+#[test]
+fn a_failed_run_fails_its_waiters_and_a_retry_supersedes_an_unobserved_run() {
+    let mut h = host();
+    h.connect(false);
+    let (subscription, observer, _) = h.subscribe("subscribe", "book");
+    let socket = h.socket();
+    h.frame(&socket, &ack(&[("book", 7)]));
+    h.run();
+    h.bootstrap("first", subscription);
+    h.run();
+    let (load, _) = h.http("pull");
+    h.fail(&load, "HTTP 403", Some(403));
+    let events = h.run();
+    let first = h.completion(&events, "first").clone();
+    assert_eq!(first["details"]["code"], "bootstrap.request_rejected");
+    assert_eq!(first["error"], first["details"]["message"]);
+    let failure = statuses(&events).last().unwrap()["bootstrap"].clone();
+    assert_eq!(failure["phase"], "failed");
+    assert_eq!(failure["error"], first["details"]);
+    let reported = events
+        .iter()
+        .find(|e| e["type"] == "report" && e["diagnostic"]["kind"] == "error")
+        .unwrap();
+    assert_eq!(
+        reported["diagnostic"],
+        json!({"kind":"error","message":"HTTP 403","status":403}),
+        "the failure reaches onError with its status"
+    );
+
+    // An explicit call retries: a new run, loading again.
+    h.bootstrap("retry", subscription);
+    let events = h.run();
+    assert!(!completed(&events, "retry"));
+    assert_eq!(phases(&events), ["loading"]);
+    let run = h.client().bootstrap_state("book", subscription).unwrap();
+    assert_eq!(run.run, 2);
+    // That run fails where no transition is observed (another writer of the
+    // same file); the next call starts run 3, and the waiter of run 2 can no
+    // longer see its own outcome.
+    assert!(
+        h.client()
+            .fail_bootstrap(
+                "book",
+                subscription,
+                2,
+                BootstrapError::new("bootstrap.protocol_invalid", "elsewhere", vec![]),
+            )
+            .unwrap()
+    );
+    h.bootstrap("again", subscription);
+    let events = h.run();
+    assert!(events.contains(&failed_with(
+        "retry",
+        "bootstrap.superseded",
+        json!({"code":"bootstrap.superseded"})
+    )));
+    assert!(!completed(&events, "again"));
+    assert_eq!(
+        h.client()
+            .bootstrap_state("book", subscription)
+            .unwrap()
+            .run,
+        3
+    );
+
+    // The removal takes the load state with the row: the waiter fails
+    // closed, then the observer ends.
+    h.task(
+        "unsubscribe",
+        json!({"kind":"scopeUnsubscribe","scope":"book","subscriptionId":subscription}),
+    );
+    let events = h.run();
+    let closed = position(&events, |e| {
+        *e == failed_with(
+            "again",
+            "subscription.closed",
+            json!({"code":"subscription.closed"}),
+        )
+    });
+    assert!(closed < position(&events, |e| e["observerId"] == observer));
+    assert_eq!(snapshots(&events, &observer)[0]["closed"], true);
+    // A call that reaches the engine after the row went is refused the same
+    // way, with the code the SDKs map.
+    h.bootstrap("gone", subscription);
+    let events = h.run();
+    let gone = h.completion(&events, "gone");
+    assert_eq!(gone["details"], json!({"code":"subscription.closed"}));
+    assert!(
+        gone["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("subscription.closed:")
+    );
+}
+
+/// A rebuild replaces every registration: waiters fail `subscription.closed`
+/// and every subscription observer ends; the watches stay and re-run against
+/// the new replica.
+#[test]
+fn a_rebuild_closes_every_subscription_observer_and_keeps_the_watches() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = Host::of(pending_rebuild(dir.path()), Some(dir));
+    let (subscription, observer, _) = h.subscribe("subscribe", "book");
+    h.bootstrap("load", subscription);
+    h.task("watch", json!({"kind":"watch","model":"Entry","spec":{}}));
+    let events = h.run();
+    let watch = h.completion(&events, "watch")["value"]["observerId"].clone();
+    assert_eq!(
+        snapshots(&events, &watch)[0]["rows"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    h.task("rebuild", json!({"kind":"rebuild","discardPending":true}));
+    let events = h.run();
+    assert!(events.contains(&failed_with(
+        "load",
+        "subscription.closed",
+        json!({"code":"subscription.closed"})
+    )));
+    let ended = snapshots(&events, &observer);
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0]["closed"], true);
+    assert_eq!(ended[0]["status"]["connection"], "stopped");
+    assert_eq!(
+        snapshots(&events, &watch),
+        [json!({"kind":"watch","rows":[]})],
+        "the unsent row stayed in the old file"
+    );
+    // The carried Scope is a fresh identity with its own observer.
+    let (fresh, renewed, _) = h.subscribe("again", "book");
+    assert_ne!(renewed, observer);
+    assert_ne!(fresh, subscription);
+}
+
+/// Close fails every waiter `client_closed` and ends every observer before
+/// `runtimeClosed`; the durable load is untouched.
+#[test]
+fn close_fails_waiters_and_ends_every_observer_before_runtime_closed() {
+    let mut h = host();
+    let (subscription, observer, _) = h.subscribe("subscribe", "book");
+    h.bootstrap("load", subscription);
+    h.task("watch", json!({"kind":"watch","model":"Entry"}));
+    let events = h.run();
+    let watch = h.completion(&events, "watch")["value"]["observerId"].clone();
+    h.submit(json!({"type":"close"}));
+    let events = h.run();
+    let load = position(&events, |e| {
+        *e == failed_with("load", "client_closed", json!({"code":"client_closed"}))
+    });
+    let subscription_end = position(&events, |e| e["observerId"] == observer);
+    let watch_end = position(&events, |e| e["observerId"] == watch);
+    assert!(load < subscription_end && subscription_end < watch_end);
+    assert_eq!(
+        events[subscription_end]["snapshot"],
+        json!({"kind":"subscription","scope":"book","subscriptionId":subscription,"status":status("pending","stopped","waiting-for-initialization"),"closed":true})
+    );
+    assert_eq!(
+        events[watch_end]["snapshot"],
+        json!({"kind":"watch","rows":[],"closed":true})
+    );
+    assert_eq!(events.last().unwrap(), &json!({"type":"runtimeClosed"}));
+    assert_eq!(
+        h.client()
+            .bootstrap_state("book", subscription)
+            .unwrap()
+            .state,
+        BootstrapPhase::Requested,
+        "the durable task stays for a reopen"
+    );
+}
+
+/// The watch loop in the runtime: the initial snapshot follows the
+/// registration, a commit re-runs every watch, an equal result is
+/// suppressed, `unwatch` stops it, and an open callback transaction's writes
+/// are invisible until they commit.
+#[test]
+fn watches_re_run_after_commits_and_publish_only_what_changed() {
+    let mut h = host();
+    h.task("seed", create("e", "first"));
+    h.task(
+        "all",
+        json!({"kind":"watch","model":"Entry","spec":{"filter":{}}}),
+    );
+    h.task(
+        "one",
+        json!({"kind":"watch","model":"Entry","spec":{"filter":{"id":"e"}}}),
+    );
+    let events = h.run();
+    let all = h.completion(&events, "all")["value"]["observerId"].clone();
+    let one = h.completion(&events, "one")["value"]["observerId"].clone();
+    assert_ne!(all, one);
+    let row = |id: &str, text: &str| json!({"id":id,"text":text,"note":null});
+    assert_eq!(
+        snapshots(&events, &all),
+        [json!({"kind":"watch","rows":[row("e", "first")]})]
+    );
+    assert!(
+        position(&events, |e| e["requestId"] == "all")
+            < position(&events, |e| e["observerId"] == all)
+    );
+    // Another record: the filtered watch re-runs to an equal result.
+    h.task("other", create("f", "second"));
+    let events = h.run();
+    assert!(
+        position(&events, |e| e["type"] == "changed")
+            < position(&events, |e| e["observerId"] == all)
+    );
+    assert_eq!(
+        snapshots(&events, &all),
+        [json!({"kind":"watch","rows":[row("e", "first"), row("f", "second")]})]
+    );
+    assert_eq!(snapshots(&events, &one), Vec::<Value>::new());
+    // A commit that touches no Model re-runs both and publishes nothing.
+    h.task("scope", json!({"kind":"scopeSubscribe","scope":"book"}));
+    let events = h.run();
+    assert!(events.iter().any(|e| e["type"] == "changed"));
+    assert!(snapshots(&events, &all).is_empty() && snapshots(&events, &one).is_empty());
+
+    // A callback's write is not visible until it commits.
+    h.task("tx", json!({"kind":"transaction"}));
+    let events = h.run();
+    let callback = events
+        .iter()
+        .find(|e| e["type"] == "effect" && e["operation"]["kind"] == "callback")
+        .unwrap()
+        .clone();
+    let transaction = callback["operation"]["transactionId"].clone();
+    h.submit(json!({"type":"transactionCommand","requestId":"write","transactionId":transaction,"command":{"kind":"direct","operation":{"model":"Entry","op":"update","identity":{"id":"e"},"values":{"text":"inside"}}}}));
+    let events = h.run();
+    assert!(events.contains(&done("write", Value::Null)));
+    assert!(
+        !events.iter().any(|e| e["type"] == "observerChanged"),
+        "{events:?}"
+    );
+    h.submit(json!({"type":"callbackResult","effectId":callback["effectId"],"transactionId":transaction,"ok":true}));
+    let events = h.run();
+    let committed = position(&events, |e| *e == done("tx", Value::Null));
+    assert!(committed < position(&events, |e| e["observerId"] == one));
+    assert_eq!(
+        snapshots(&events, &one),
+        [json!({"kind":"watch","rows":[row("e", "inside")]})]
+    );
+
+    // unwatch: nothing more for that observer, the other goes on.
+    h.task("stop", json!({"kind":"unwatch","observerId":one}));
+    h.task("edit", json!({"kind":"direct","operation":{"model":"Entry","op":"update","identity":{"id":"e"},"values":{"text":"after"}}}));
+    let events = h.run();
+    assert!(events.contains(&done("stop", Value::Null)));
+    assert!(snapshots(&events, &one).is_empty());
+    assert_eq!(snapshots(&events, &all).len(), 1);
+    // A watch the query cannot run for is refused, and registers nothing.
+    h.task("bad", json!({"kind":"watch","model":"Nope"}));
+    let events = h.run();
+    assert_eq!(h.completion(&events, "bad")["ok"], false);
+    assert!(!events.iter().any(|e| e["type"] == "observerChanged"));
+}
+
+/// A response already in hand when the connection stops is known to have
+/// executed: it is applied once the writer is free and the call completes
+/// with its outcome. A close applies nothing, a response in hand included.
+#[test]
+fn a_response_in_hand_survives_stop_but_not_close() {
+    let mut h = host();
+    h.connect(false);
+    h.task("seed", create("e", "seed"));
+    h.run();
+    h.task("call", rename("server"));
+    h.run();
+    let (http, body) = h.http("action");
+    // The stop is admitted first, the response right after it.
+    h.task("stop", json!({"kind":"connection","event":"stop"}));
+    h.ok(&http, &renamed(&body, "server"));
+    let events = h.run();
+    let stopped = position(&events, |e| *e == done("stop", Value::Null));
+    let call = position(&events, |e| e["requestId"] == "call");
+    assert!(stopped < call, "{events:?}");
+    assert_eq!(events[call]["ok"], true);
+    assert_eq!(
+        events[call]["value"]["outcome"]["status"], "succeeded",
+        "{events:?}"
+    );
+    assert_eq!(h.text("e"), Some(json!("server")));
+
+    h.connect(false);
+    h.task("closing", rename("closing"));
+    h.run();
+    let (http, body) = h.http("action");
+    h.ok(&http, &renamed(&body, "closing"));
+    h.submit(json!({"type":"close"}));
+    let events = h.run();
+    assert!(events.contains(&failed("closing", "action.unavailable")));
+    assert_eq!(events.last().unwrap(), &json!({"type":"runtimeClosed"}));
+    assert!(!changes(&events, "Entry"));
+    assert_eq!(h.text("e"), Some(json!("server")));
 }

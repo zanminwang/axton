@@ -86,6 +86,9 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 if self.lane_ready() && self.lane_since.is_none() {
                     self.lane_since = Some(self.admitted);
                 }
+                // A session that ended or a catch-up that answered is a
+                // transport fact the statuses show at once.
+                self.publish_statuses();
             }
             Input::Close => self.lifecycle = Lifecycle::Closing,
         }
@@ -94,7 +97,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     /// Run at most one local unit and say whether anything happened. Close
     /// goes first; an open transaction's lane and result come before
     /// anything else, which waits while a callback owns the writer. Otherwise
-    /// ordinary tasks and lane units take turns, so neither starves.
+    /// ordinary tasks and lane units run in admission order. The observers
+    /// publish what the unit changed before it ends.
     pub fn step(&mut self, now: u64, entropy: u64) -> bool {
         match self.lifecycle {
             Lifecycle::Closed => return false,
@@ -104,6 +108,13 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             }
             Lifecycle::Open => {}
         }
+        let ran = self.unit(now, entropy);
+        if ran {
+            self.publish();
+        }
+        ran
+    }
+    fn unit(&mut self, now: u64, entropy: u64) -> bool {
         if self.transaction.is_some() {
             return self.step_transaction();
         }
@@ -198,13 +209,27 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             "invoke" => self.invoke(&request_id, &command),
             "runPrerequisites" => self.run_prerequisites(&request_id, &command),
             "rebuild" => Some(self.rebuild(&command, now)),
+            "scopeSubscribe" => Some(self.subscribe_scope(&command)),
+            "scopeBootstrap" => self.bootstrap_scope(&request_id, &command),
+            "watch" => Some(self.watch(&command)),
+            "unwatch" => Some(self.unwatch(&command)),
             _ => Some(
                 commands::execute(&mut self.client, &mut self.lanes, &command)
                     .map_err(|e| e.to_string()),
             ),
         };
-        if kind != "rebuild" {
+        // `rebuild` and `scopeBootstrap` announce their own commit, ahead of
+        // what they settle.
+        if !matches!(kind, "rebuild" | "scopeBootstrap") {
             self.changed_since(generation);
+        }
+        if let Some(Ok(value)) = &outcome {
+            self.removed(kind, &command, value);
+            // The protocol seams settle calls too; every final outcome
+            // travels as `callCompleted`, after the commit that decided it.
+            if matches!(kind, "ack" | "pull" | "drop") {
+                self.seam_completions(value);
+            }
         }
         if self.client.generation() != generation {
             self.wake_lanes();
@@ -225,9 +250,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         self.fail_directs(direct::EXECUTION_UNKNOWN);
         self.rebuilt_prerequisites();
         self.rebuilt_lanes(now);
-        self.events.push(Event::Changed {
-            tables: self.client.last_changed().iter().cloned().collect(),
-        });
+        self.changed();
+        self.rebuilt_observers();
         for abandoned in report["abandonedCalls"].as_array().into_iter().flatten() {
             let frozen = abandoned["frozen"].as_bool().unwrap_or(false);
             self.events.push(Event::CallCompleted {
@@ -241,6 +265,18 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         }
         Ok(report)
     }
+    /// The `completions` of an `ack`, `pull` or `drop` answer, announced.
+    fn seam_completions(&mut self, value: &Value) {
+        for completion in value["completions"].as_array().into_iter().flatten() {
+            self.events.push(Event::CallCompleted {
+                call_id: completion["callId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                outcome: completion["outcome"].clone(),
+            });
+        }
+    }
     fn admit(&mut self, request_id: &str) -> bool {
         if self.tasks.admit(request_id) {
             return true;
@@ -253,7 +289,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     /// Priority close: roll back the open session, cancel every outstanding
     /// effect, fail the parked parent, its queued commands and every queued
     /// task with `client_closed`, fail direct calls as unavailable and the
-    /// prerequisite loop as closed, end the lanes, then announce the end.
+    /// prerequisite loop as closed, end the lanes and the observers, then
+    /// announce the end. Nothing is applied after it.
     fn close(&mut self) {
         let transaction = self.transaction.take();
         if transaction.is_some()
@@ -278,6 +315,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         self.ready.clear();
         self.inbox.clear();
         self.close_lanes();
+        self.close_observers();
         self.lifecycle = Lifecycle::Closed;
         self.events.push(Event::RuntimeClosed);
     }

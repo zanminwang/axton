@@ -10,8 +10,14 @@
 //! commit, with the response's own outcome - the invocation's snapshot, never
 //! a reread of the Model. A 401 refreshes credentials once, shared with the
 //! lanes, and sends the same body once more under the same deadline; every
-//! other failure, the deadline, and a rebuild leave the execution unknown; a
-//! stopped connection or a closed client makes the call unavailable.
+//! other failure, the deadline, and a rebuild leave the execution unknown.
+//!
+//! Stopping the connection fails a call still waiting on the network with
+//! `action.unavailable`, but a call whose response is already in hand is
+//! known to have executed: it is still applied once the writer is free and
+//! completes with its own outcome. Closing the client fails every call with
+//! `action.unavailable`, a response in hand included, and nothing is applied
+//! after [`Event::RuntimeClosed`].
 use super::effects::{EffectKind, Ready, Waiter};
 use super::*;
 use crate::{ActionCallOptions, ActionStore, ClientStore, QueryOnce, QueryOnceOptions};

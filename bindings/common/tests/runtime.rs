@@ -68,6 +68,17 @@ impl Carrier {
     fn completed(&mut self, id: &str) -> Value {
         self.until(|e| e["type"] == "taskCompleted" && e["requestId"] == id)
     }
+    /// Every event in order, up to and including the first that matches.
+    fn through(&mut self, matches: impl Fn(&Value) -> bool) -> Vec<Value> {
+        loop {
+            if let Some(found) = self.seen.iter().position(&matches) {
+                return self.seen.drain(..=found).collect();
+            }
+            let woken = self.wakes.recv_timeout(LOST_WAKE).expect("a wake was lost");
+            assert_eq!(woken, self.id);
+            self.seen.extend(actor::drain(self.id));
+        }
+    }
 }
 fn create(id: &str) -> Value {
     json!({"kind":"direct","operation":{"model":"Entry","op":"create","identity":{"id":id},"values":{"text":"hi"}}})
@@ -423,4 +434,64 @@ fn a_client_waiting_on_the_network_holds_no_writer_and_no_other_client_waits() {
     a.submit(json!({"type":"close"}));
     a.until(|e| e["type"] == "runtimeClosed");
     actor::detach(a.id);
+}
+
+/// Observer snapshots cross the carrier in the order the runtime published
+/// them: after the commit they describe and after the task that registered
+/// the observer, and the terminal ones before `runtimeClosed`.
+#[test]
+fn observer_snapshots_arrive_after_the_commit_they_describe() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut carrier, _) = Carrier::open(&dir.path().join("db"));
+    carrier.task(
+        "watch",
+        json!({"kind":"watch","model":"Entry","spec":{"filter":{}}}),
+    );
+    let events = carrier.through(|e| e["type"] == "observerChanged");
+    let kinds: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["taskCompleted", "observerChanged"], "{events:?}");
+    let watch = events[0]["value"]["observerId"].clone();
+    assert_eq!(events[1]["observerId"], watch);
+    assert_eq!(events[1]["snapshot"], json!({"kind":"watch","rows":[]}));
+
+    carrier.task("1", create("e"));
+    let events = carrier.through(|e| e["type"] == "observerChanged");
+    let kinds: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
+    assert_eq!(
+        kinds,
+        ["changed", "taskCompleted", "observerChanged"],
+        "{events:?}"
+    );
+    assert_eq!(
+        events[2]["snapshot"]["rows"],
+        json!([{"id":"e","text":"hi","note":null}])
+    );
+
+    carrier.task("subscribe", json!({"kind":"scopeSubscribe","scope":"book"}));
+    let events = carrier.through(|e| e["type"] == "observerChanged");
+    let kinds: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
+    assert_eq!(
+        kinds,
+        ["changed", "taskCompleted", "observerChanged"],
+        "the registration commits; the watch re-runs to an equal result: {events:?}"
+    );
+    let subscription = events[1]["value"]["observerId"].clone();
+    assert_eq!(events[2]["observerId"], subscription);
+    assert_eq!(events[2]["snapshot"]["status"]["connection"], "offline");
+
+    carrier.submit(json!({"type":"close"}));
+    let events = carrier.through(|e| e["type"] == "runtimeClosed");
+    let ended: Vec<&Value> = events
+        .iter()
+        .filter(|e| e["type"] == "observerChanged")
+        .map(|e| &e["observerId"])
+        .collect();
+    assert_eq!(ended, [&subscription, &watch]);
+    assert!(
+        events
+            .iter()
+            .filter(|e| e["type"] == "observerChanged")
+            .all(|e| e["snapshot"]["closed"] == true)
+    );
+    actor::detach(carrier.id);
 }

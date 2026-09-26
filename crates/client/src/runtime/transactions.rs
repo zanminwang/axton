@@ -219,9 +219,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         let outcome = match refusal {
             Some(refusal) => {
                 if let Err(e) = self.client.rollback_session() {
-                    self.report(Diagnostic::Error {
-                        message: format!("transaction rollback failed: {e}"),
-                    });
+                    self.error(format!("transaction rollback failed: {e}"));
                 }
                 Err(refusal)
             }

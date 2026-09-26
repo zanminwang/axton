@@ -557,3 +557,75 @@ fn a_direct_apply_that_fails_to_commit_fails_the_call_and_lets_nothing_escape() 
     )));
     assert_eq!(h.committed().unwrap()["text"], "server");
 }
+
+/// The protocol seams settle calls too: `drop` and `ack` announce every
+/// completion as `callCompleted`, after the commit and before the task's own
+/// answer, which keeps its value.
+#[test]
+fn drop_and_ack_announce_their_completions_as_call_completed() {
+    let mut h = harness();
+    let schema = {
+        let mut schema = serde_json::to_value(common::schema()).unwrap();
+        schema["actions"] = json!([{"name":"Ping","version":1,"inputs":[],"outputs":[]}]);
+        schema
+    };
+    let dir = tempfile::tempdir().unwrap();
+    h.runtime = ClientRuntime::new(
+        Client::open(
+            SqliteStore::open(dir.path().join("db")).unwrap(),
+            Schema::from_value(schema).unwrap(),
+        )
+        .unwrap(),
+    );
+    let ping = json!({"kind":"submitAction","name":"Ping","version":1,"args":{}});
+    h.task("dropped", ping.clone());
+    let events = h.run();
+    let dropped = events[events.len() - 1]["value"].clone();
+    h.task("drop", json!({"kind":"drop","ordinal":dropped["ordinal"]}));
+    let events = h.run();
+    let announced = position(&events, |e| e["type"] == "callCompleted");
+    assert_eq!(events[announced]["callId"], dropped["callId"]);
+    let answered = position(&events, |e| e["requestId"] == "drop");
+    assert!(announced < answered);
+    assert_eq!(
+        events[answered]["value"]["completions"][0]["callId"], dropped["callId"],
+        "the value is unchanged"
+    );
+
+    h.task("sent", ping);
+    let events = h.run();
+    let sent = events[events.len() - 1]["value"].clone();
+    h.task("freeze", json!({"kind":"freeze"}));
+    let events = h.run();
+    let push: Value =
+        serde_json::from_str(events[events.len() - 1]["value"].as_str().unwrap()).unwrap();
+    let client_id = h.runtime.client().client_id().to_string();
+    let receipt = json!({"clientId":client_id,"batchSequence":push["batchSequence"],"rejections":[],
+        "completions":[{"callId":sent["callId"],"outcome":{"status":"succeeded","result":null}}],"records":[]});
+    h.task(
+        "ack",
+        json!({"kind":"ack","sequence":push["batchSequence"],"receipt":receipt}),
+    );
+    let events = h.run();
+    let changed = position(&events, |e| e["type"] == "changed");
+    let announced = position(&events, |e| e["type"] == "callCompleted");
+    let answered = position(&events, |e| e["requestId"] == "ack");
+    assert!(changed < announced && announced < answered, "{events:?}");
+    assert_eq!(
+        events[announced],
+        json!({"type":"callCompleted","callId":sent["callId"],"outcome":{"status":"succeeded","result":null}})
+    );
+    assert_eq!(
+        events[answered]["value"]["completions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+fn position(events: &[Value], matches: impl Fn(&Value) -> bool) -> usize {
+    events
+        .iter()
+        .position(matches)
+        .unwrap_or_else(|| panic!("not found in {events:?}"))
+}

@@ -1,4 +1,11 @@
 //! One command/value contract shared by native language bridges.
+//!
+//! [`actor`] is the Rust-owned runtime carrier of
+//! [#134](https://github.com/zanminwang/axton/issues/134) and [`ffi`] its C
+//! ABI; [`RuntimeHost`] is the former synchronous command host, kept while the
+//! SDKs move to the actor.
+pub mod actor;
+pub mod ffi;
 use axton_client::*;
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};

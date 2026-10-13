@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.5](https://github.com/zanminwang/axton/compare/v0.5.4...v0.5.5) (2026-10-13)
+
+
+### Bug Fixes
+
+* **server:** keep idle live sockets alive (CAP-850) ([#273](https://github.com/zanminwang/axton/issues/273)) ([053d545](https://github.com/zanminwang/axton/commit/053d5458106416dfe4edfd34d53189bbb9935f38))
+
 ## [0.5.4](https://github.com/zanminwang/axton/compare/v0.5.3...v0.5.4) (2026-10-09)
 
 

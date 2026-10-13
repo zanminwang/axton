@@ -997,6 +997,20 @@ function attachLive(
     noServer: true,
     maxPayload: options.maxPayloadBytes ?? 1_048_576,
   });
+  const answered = new WeakSet<WebSocket>();
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  server.once("listening", () => {
+    heartbeat = setInterval(() => {
+      for (const socket of sockets.clients) {
+        if (socket.readyState !== WebSocket.OPEN) continue;
+        if (!answered.delete(socket)) {
+          socket.terminate();
+          continue;
+        }
+        socket.ping();
+      }
+    }, 30_000);
+  });
   let closing = false;
   const sessions = new Set<Promise<void>>();
   const upgrades = new Set<Promise<void>>();
@@ -1043,6 +1057,10 @@ function attachLive(
         return;
       }
       sockets.handleUpgrade(request, socket, head, (connection) => {
+        answered.add(connection);
+        const pong = () => answered.add(connection);
+        connection.on("pong", pong);
+        connection.once("close", () => connection.off("pong", pong));
         const session = serveLive(
           connection,
           owner!,
@@ -1067,6 +1085,7 @@ function attachLive(
     close: async () => {
       if (closing) return;
       closing = true;
+      clearInterval(heartbeat);
       const owned = [...upgrades, ...sessions];
       server.off("upgrade", upgrade);
       for (const socket of sockets.clients) socket.close(1001, "closing");

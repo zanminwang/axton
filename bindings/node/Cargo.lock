@@ -19,7 +19,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "axton-binding"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "axton-client",
  "axton-sqlite",
@@ -28,7 +28,7 @@ dependencies = [
 
 [[package]]
 name = "axton-client"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "axton-core",
  "axton-protocols",
@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "axton-core"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "chrono",
  "serde",
@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "axton-node"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "axton-binding",
  "axton-server",
@@ -66,7 +66,7 @@ dependencies = [
 
 [[package]]
 name = "axton-protocols"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "axton-core",
  "serde",
@@ -76,7 +76,7 @@ dependencies = [
 
 [[package]]
 name = "axton-server"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "axton-core",
  "axton-protocols",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "axton-sqlite"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "axton-client",
  "axton-core",

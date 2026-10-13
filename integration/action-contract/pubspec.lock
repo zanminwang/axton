@@ -7,7 +7,7 @@ packages:
       path: "../../packages/frontend/dart"
       relative: true
     source: path
-    version: "0.5.4"
+    version: "0.5.5"
   code_assets:
     dependency: transitive
     description:

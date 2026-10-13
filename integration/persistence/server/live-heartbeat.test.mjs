@@ -19,17 +19,11 @@ const gate = () => {
 async function fixture(t, { autoPong = true, idleProxy = false, held } = {}) {
   const accepted = gate();
   const diagnostics = [];
-  const state = { subscribed: 0, released: 0, activeTimers: new Set() };
+  const state = { subscribed: 0, released: 0, clearedTimers: [] };
   t.mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"], now: 0 });
-  const interval = globalThis.setInterval;
   const clear = globalThis.clearInterval;
-  t.mock.method(globalThis, "setInterval", (...args) => {
-    const timer = interval(...args);
-    state.activeTimers.add(timer);
-    return timer;
-  });
-  t.mock.method(globalThis, "clearInterval", (timer) => {
-    state.activeTimers.delete(timer);
+  const clearMock = t.mock.method(globalThis, "clearInterval", (timer) => {
+    if (timer !== undefined) state.clearedTimers.push(timer);
     return clear(timer);
   });
   const upgrade = WebSocketServer.prototype.handleUpgrade;
@@ -121,12 +115,23 @@ async function fixture(t, { autoPong = true, idleProxy = false, held } = {}) {
   }
   const socket = new WebSocket(url, { autoPong });
   t.after(async () => {
-    held?.release.resolve();
-    socket.terminate();
-    for (const connection of connections) connection.destroy();
-    await listener.close();
-    if (proxy) await new Promise((resolve) => proxy.close(resolve));
-    assert.deepEqual(diagnostics, []);
+    try {
+      held?.release.resolve();
+      const gone =
+        socket.readyState === WebSocket.CLOSED
+          ? undefined
+          : once(socket, "close");
+      socket.terminate();
+      for (const connection of connections) connection.destroy();
+      await listener.close();
+      await gone;
+      if (proxy) await new Promise((resolve) => proxy.close(resolve));
+      assert.deepEqual(diagnostics, []);
+    } finally {
+      // Restore the observer before resetting the timer implementation it wraps.
+      clearMock.mock.restore();
+      t.mock.timers.reset();
+    }
   });
   await once(socket, "open");
   const serverSocket = await accepted.promise;
@@ -193,9 +198,9 @@ test(
     });
     t.mock.timers.tick(30_000);
     await assert.doesNotReject(pong);
-    assert.equal(f.state.activeTimers.size, 1);
+    assert.equal(f.state.clearedTimers.length, 0);
     await f.listener.close();
-    assert.equal(f.state.activeTimers.size, 0);
+    assert.equal(f.state.clearedTimers.length, 1);
     assert.equal(f.state.released, 1);
   },
 );
@@ -218,7 +223,7 @@ test(
     });
     await gone;
     await turn();
-    assert.equal(f.state.activeTimers.size, 0);
+    assert.equal(f.state.clearedTimers.length, 1);
     assert.equal(
       closed,
       false,

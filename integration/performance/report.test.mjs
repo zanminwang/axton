@@ -8,13 +8,13 @@ test('median/range and nearest-rank p95 only with at least 100 observations',()=
 });
 const sample={scenario:'initial-sync',records:100,writes:0,status:'passed',serverDiagnostics:[],result:{diagnostics:[],
   timings:{initializationStartUs:100,storeOpenStartUs:100,storeOpenUs:1100,firstVisibleUs:3100,allVisibleUs:4100,bootstrapCompleteUs:5100}}};
-const result={compatibility:{version:1},machine:{cpu:'test'},samples:[sample]};
+const result={completed:true,compatibility:{version:1},machine:{cpu:'test'},samples:[sample]};
 test('failed samples remain visible and never enter latency statistics',()=>{
   const output=summarize({...result,samples:[sample,{...sample,status:'timeout',result:null}]})[0];
   assert.equal(output.passed,1);assert.equal(output.failed,1);assert.equal(output.metrics.storeOpenMs.median,1);
 });
 test('comparison rejects changed boundaries, environment, missing scenarios and failures',()=>{
   assert.ok(compare(result,result).every(x=>x.changePercent===0));
-  for (const changed of [{...result,compatibility:{}},{...result,machine:{}},{...result,samples:[]},
+  for (const changed of [{...result,completed:false},{...result,compatibility:{}},{...result,machine:{}},{...result,samples:[]},
     {...result,samples:[{...sample,status:'failed'}]}]) assert.throws(()=>compare(result,changed));
 });

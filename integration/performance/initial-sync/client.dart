@@ -14,6 +14,7 @@ Future<void> main(List<String> args) => runSample(args, (
   recorders.add(recorder);
   final visible = Completer<void>();
   final timings = <String, int>{};
+  final snapshots = <Map<String, int>>[];
   StreamSubscription<List<Entry>>? watch;
   GeneratedClient? client;
   List<Entry> last = [];
@@ -34,6 +35,7 @@ Future<void> main(List<String> args) => runSample(args, (
       (rows) {
         final at = clock.elapsedMicroseconds;
         last = rows;
+        snapshots.add({'atUs': at, 'rows': rows.length});
         // The initial empty snapshot is deliberately excluded.
         if (!timings.containsKey('firstVisibleUs') &&
             rows.any((row) => row.id.startsWith('seed-'))) {
@@ -68,6 +70,7 @@ Future<void> main(List<String> args) => runSample(args, (
     check(sync['pending'] == 0, 'initial sync has pending work');
     return {
       'timings': timings,
+      'snapshots': snapshots,
       'verifiedRows': count,
       'pending': sync['pending'],
     };

@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Diagnostics} from '../../packages/backend/server/api/diagnostics.mts';
+test('disabled diagnostics preserves the operation Promise without an async wrapper',()=>{
+  const operation=Promise.resolve(42);
+  assert.equal(new Diagnostics().span('test',{},()=>operation),operation);
+});
 test('backend receivers are optional and failures cannot replace an outcome',async()=>{
   for (const receiver of [undefined,{record(){throw Error('sink fault');}}]) {
     const trace=new Diagnostics(receiver);

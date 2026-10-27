@@ -731,7 +731,9 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
     _draining = true;
     try {
       while (!_detached) {
+        final span = tracing?.start('bridge.drain');
         final batch = _carrier.drain(runtimeId);
+        if (batch.isNotEmpty) span?.end({'events': batch.length});
         if (batch.isEmpty) return;
         for (final event in batch) {
           if (_detached) return;
@@ -820,7 +822,7 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
         : _observers[observerId];
     if (observer == null) return;
     final (zone, listener) = observer;
-    final span = tracing?.start('watch.dispatch', {'observerId': observerId});
+    final span = tracing?.start('watch.enqueue', {'observerId': observerId});
     try {
       zone.runUnaryGuarded(listener, snapshot);
     } finally {

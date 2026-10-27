@@ -68,12 +68,19 @@ export class Diagnostics {
         attributes: Object.freeze({ records: dropped, operationId }),
       });
   }
-  async span<T>(
+  span<T>(
     name: string,
     attributes: Record<string, unknown>,
     body: () => Promise<T>,
   ): Promise<T> {
     if (!this.receiver) return body();
+    return this.recordedSpan(name, attributes, body);
+  }
+  private async recordedSpan<T>(
+    name: string,
+    attributes: Record<string, unknown>,
+    body: () => Promise<T>,
+  ): Promise<T> {
     const parent = this.context.getStore();
     const spanId = String(++this.next),
       operationId = parent?.operationId ?? `${this.clockDomain}:${spanId}`;

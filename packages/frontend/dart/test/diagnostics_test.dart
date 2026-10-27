@@ -45,14 +45,12 @@ void main() {
       expect(carrier.openedRequest['diagnostics'], true);
       carrier.publish([trace()]);
       await Future<void>.delayed(Duration.zero);
-      expect(records.first.startUs, 10);
-      expect(records.first.durationUs, 20);
+      final native = records.firstWhere((r) => r.name == 'store.open');
+      expect(native.startUs, 10);
+      expect(native.durationUs, 20);
       expect(records.last.kind, 'loss');
       expect(records.last.attributes['records'], 2);
-      expect(
-        () => records.first.attributes['rows'] = 4,
-        throwsUnsupportedError,
-      );
+      expect(() => native.attributes['rows'] = 4, throwsUnsupportedError);
       await bridge.close();
       final off = FakeCarrier();
       final plain = await Bridge.open(

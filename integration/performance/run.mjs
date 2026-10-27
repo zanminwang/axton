@@ -8,7 +8,8 @@ import {fileURLToPath} from 'node:url';
 import {createInterface} from 'node:readline';
 import {Pool} from 'pg';
 import {startFixture,textBytes,fixtureBatchSize} from './fixture/server.mjs';
-import {printSummary,summarize} from './report.mjs';
+import {printSummary,summarize,metrics} from './report.mjs';
+import {poolLifecycle} from './support/postgres.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
 process.chdir(root);
@@ -53,11 +54,13 @@ assert.deepEqual(await buildIdentity(),built,'source/artifact changes require a 
 const databaseUrl=new URL(process.env.DATABASE_URL);
 assert.equal(databaseUrl.hostname,'127.0.0.1','disposable localhost PostgreSQL only');
 const admin=new Pool({connectionString:databaseUrl.href});
+const adminErrors=[];
+const closeAdmin=poolLifecycle(admin,error=>adminErrors.push(String(error)));
 let child,fixture,interrupted=false;
 const signal=()=>{interrupted=true;child?.kill('SIGTERM');};
 process.once('SIGINT',signal);process.once('SIGTERM',signal);
 const settings=(await admin.query("SELECT name,setting,unit FROM pg_settings WHERE name IN ('fsync','synchronous_commit','full_page_writes','shared_buffers','wal_level') ORDER BY name")).rows;
-const result={schemaVersion:1,createdAt:new Date().toISOString(),commit:command('git',['rev-parse','HEAD']),
+const result={schemaVersion:1,completed:false,createdAt:new Date().toISOString(),commit:command('git',['rev-parse','HEAD']),
   dirty:command('git',['status','--porcelain']).length>0,build:built,
   machine:{platform:platform(),release:release(),arch:arch(),cpu:cpus()[0]?.model,cpus:cpus().length,memoryBytes:totalmem(),
     node:process.version,dart:command(process.env.AXTON_DART??'dart',['--version']),rustc:command('rustc',['--version']),
@@ -69,7 +72,7 @@ const result={schemaVersion:1,createdAt:new Date().toISOString(),commit:command(
     initialCondition:'fresh process and SQLite files per sample; timed interval starts before open, process startup excluded',
     cacheCondition:'new PostgreSQL database per sample; fixture just written; OS/PostgreSQL caches are not flushed',
     liveCondition:'two initialized Stores in one process; await each local commit, do not await settlement before next write'},
-  parameters:options,samples:[]};
+  parameters:options,adminErrors,samples:[]};
 async function save() {
   result.summary=summarize(result);
   await mkdir(dirname(resolve(options.output)),{recursive:true});
@@ -109,10 +112,11 @@ async function execute(scenario,records,writes,directory,serverDiagnostics) {
   });
 }
 try {
+  scenarios:
   for (const scenario of ['initial-sync','live-sync']) for (const records of options.sizes)
     for (const writes of scenario==='initial-sync'?[0]:[1,options.writes].filter((n,i,a)=>a.indexOf(n)===i))
       for(let repetition=1;repetition<=options.samples;repetition++) {
-        if(interrupted) break;
+        if(interrupted) break scenarios;
         const sample={scenario,records,writes,repetition,status:'setup-failed',loadAverage:loadavg(),serverDiagnostics:[]};
         const database=`performance_${randomBytes(6).toString('hex')}`;
         const directory=await mkdtemp(join(tmpdir(),'axton-performance-client-'));
@@ -127,7 +131,9 @@ try {
           sample.serverDiagnostics.length=0;
           Object.assign(sample,await execute(scenario,records,writes,directory,sample.serverDiagnostics));
           if(sample.status==='passed') {
-            await fixture.verify(writes);assert.equal(dropped,0,'server diagnostics incomplete');
+            for (const values of Object.values(metrics(sample)))
+              assert.ok(values.every(value=>Number.isFinite(value)&&value>=0),'invalid timing observation');
+            sample.serverVerification=await fixture.verify(writes);assert.equal(dropped,0,'server diagnostics incomplete');
             sample.serverVerified=true;
           }
         } catch(error) {sample.status='failed';sample.error=String(error);}
@@ -140,11 +146,15 @@ try {
           result.samples.push(sample);await save();
         }
         console.error(`${scenario} N=${records} M=${writes} repetition=${repetition}: ${sample.status}`);
+        if(sample.status!=='passed') break scenarios;
       }
 } finally {
-  child?.kill('SIGKILL');await fixture?.close();await admin.end();await save();
+  child?.kill('SIGKILL');await fixture?.close();await closeAdmin();
+  const expected=options.sizes.length*(1+new Set([1,options.writes]).size)*options.samples;
+  result.completed=!interrupted&&adminErrors.length===0&&result.samples.length===expected&&result.samples.every(s=>s.status==='passed');
+  await save();
   process.removeListener('SIGINT',signal);process.removeListener('SIGTERM',signal);
 }
 printSummary(result);
 console.log(`JSON: ${resolve(options.output)}`);
-if(interrupted||result.samples.some(s=>s.status!=='passed'))process.exitCode=1;
+if(!result.completed)process.exitCode=1;

@@ -403,6 +403,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 let Some(watch) = self.observers.watches.get(&id) else {
                     continue;
                 };
+                let _span = tracing::info_span!(target: "axton::client", "watch.query", observerId = id, model = %watch.model).entered();
                 let rows = self
                     .client
                     .query(&watch.model, &watch.filter)

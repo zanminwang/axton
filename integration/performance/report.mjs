@@ -65,6 +65,7 @@ export function printSummary(result) {
   }
 }
 export function compare(before,after) {
+  assert.ok(before.completed&&after.completed,'cannot compare incomplete runs');
   assert.deepEqual(before.compatibility,after.compatibility,'incompatible fixture, timing boundaries, tracing, watch shape or runtime conditions');
   assert.deepEqual(before.machine,after.machine,'different machine/tool/database conditions');
   const a=summarize(before),b=summarize(after);

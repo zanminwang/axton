@@ -78,7 +78,8 @@ errors and trace loss fail the sample. A fast but incorrect sample never passes.
 
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,
-PostgreSQL settings and scenario parameters. It checkpoints after each sample.
+PostgreSQL settings and scenario parameters. It checkpoints after each sample,
+stops after the first failed sample, and marks partial runs `completed: false`.
 
 ```sh
 node integration/performance/report.mjs artifacts/performance/baseline.json
@@ -117,7 +118,7 @@ bridge receipt is not the source timestamp. A native span's identity is the pair
 promptly; exceptions are ignored. Receivers/exporters own file or network I/O.
 
 Stages cover Store open, SQLite COMMIT, complete-unit apply, watch publication,
-Dart watch dispatch/HTTP intervals, server native operations, preparation,
+Dart bridge drain/decode, watch enqueue/HTTP intervals, server native operations, preparation,
 materialization/persistence, Mutation execution, transactions and host callbacks.
 Native buffers cap records at 4,096 per drain/request and explicitly count loss;
 test recorders also cap retention and reject incomplete evidence.

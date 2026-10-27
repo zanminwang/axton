@@ -122,6 +122,12 @@ never replacements for the original samples. The old public helper and bridge
 request remain compatibility no-ops, and fresh namespaces omit the old table.
 The [fence-removal results](baselines/2026-10-27-fence-removal/README.md) retain
 the second full matrix, comparisons and remaining Store/delivery-plan conflicts.
+The [Store snapshot-read results](baselines/2026-10-27-store-reads/README.md)
+retain the third matrix. Initialized reads no longer claim Mutation progress;
+uploads retain ordering with a foreign-key-compatible lock. All burst cases
+still fail, and backend errors rise from 228 to 270. The
+[read concurrency audit](../../docs/engineering/architecture/server/read-concurrency.md)
+also records unchanged plan writes and local callback scheduling limits.
 
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,

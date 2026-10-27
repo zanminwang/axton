@@ -63,7 +63,9 @@ process.once('SIGINT',signal);process.once('SIGTERM',signal);
 const settings=(await admin.query("SELECT name,setting,unit FROM pg_settings WHERE name IN ('fsync','synchronous_commit','full_page_writes','shared_buffers','wal_level') ORDER BY name")).rows;
 const result={schemaVersion:1,completed:false,createdAt:new Date().toISOString(),commit:command('git',['rev-parse','HEAD']),
   dirty:command('git',['status','--porcelain']).length>0,build:built,
-  implementation:{publicationFence:'removed; Serializable and Store/record/Stream guards retained'},
+  implementation:{publicationFence:'removed; Serializable and Store/record/Stream guards retained',
+    storeBindingReads:'snapshot inspection; atomic claim for missing Store or unfinished Bootstrap',
+    storeProgressLock:'FOR NO KEY UPDATE; plan foreign-key KEY SHARE compatible'},
   machine:{platform:platform(),release:release(),arch:arch(),cpu:cpus()[0]?.model,cpus:cpus().length,memoryBytes:totalmem(),
     node:process.version,dart:command(process.env.AXTON_DART??'dart',['--version']),rustc:command('rustc',['--version']),
     cargo:command('cargo',['--version']),typescript:command(process.execPath,['node_modules/typescript/bin/tsc','--version']),

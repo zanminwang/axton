@@ -23,12 +23,16 @@ struct Binding {
     principal: String,
     stream: String,
 }
-async fn bind(owner: &str, context: &v05::RequestContext, host: &impl Host) -> Result<()> {
+async fn claim_binding(owner: &str, context: &v05::RequestContext, host: &impl Host) -> Result<()> {
     crate::principal(owner)?;
     let s:Binding=call(host,json!({"op":"claimStore","storeId":context.store_id,"principal":owner,"stream":context.stream})).await?;
     if s.principal != owner || s.stream != context.stream {
         return Err(Error::code("store.binding"));
     }
+    Ok(())
+}
+async fn bind(owner: &str, context: &v05::RequestContext, host: &impl Host) -> Result<()> {
+    claim_binding(owner, context, host).await?;
     let allowed: bool = call(host, json!({"op":"admit","owner":owner,"context":context})).await?;
     if !allowed {
         return Err(Error::code("stream.forbidden"));
@@ -59,6 +63,14 @@ async fn inspect_read_binding(
     }
     Ok(binding.is_some())
 }
+/// Delivery validates immutable ownership, not Mutation progress. Only a missing
+/// Store requires the atomic claim path; existing reads take no progress lock.
+async fn bind_delivery(owner: &str, context: &v05::RequestContext, host: &impl Host) -> Result<()> {
+    if !inspect_read_binding(owner, context, host).await? {
+        claim_binding(owner, context, host).await?;
+    }
+    Ok(())
+}
 #[tracing::instrument(target = "axton::server", name = "bootstrap.prepare", skip_all)]
 async fn prepare(
     config: &Config,
@@ -72,6 +84,9 @@ async fn prepare(
     )
     .await?;
     if !done {
+        // Bootstrap initialization writes Store state. Keep its claim/ordering
+        // guard, while a completed Store's reconnect remains a snapshot read.
+        claim_binding(owner, context, host).await?;
         let effects:BootstrapEffects=call(host,json!({"op":"handleBootstrap05","owner":owner,"storeId":context.store_id,"stream":context.stream})).await?;
         let declarations = effects
             .declarations
@@ -109,7 +124,7 @@ pub async fn handshake05(
         )
         .map_err(internal)?,
     };
-    bind(owner, &context, raw).await?;
+    bind_delivery(owner, &context, raw).await?;
     let host = Publication05::new(raw);
     prepare(config, owner, &context, &host).await?;
     let head: u64 = call(&host, json!({"op":"deliveryHead","stream":r.stream})).await?;
@@ -434,7 +449,7 @@ pub async fn process_delivery05(
 ) -> Result<String> {
     let r: v05::DeltaRequest = v05::decode(bytes).map_err(request_invalid)?;
     crate::mutation_batch::models(config, &r.context)?;
-    bind(owner, &r.context, raw).await?;
+    bind_delivery(owner, &r.context, raw).await?;
     let saved_intent = intent(&r)?;
     if let Some(c) = &r.continuation {
         let d:Option<v05::DeliveryResponse>=call(raw,json!({"op":"readDelivery","owner":owner,"context":r.context,"intent":saved_intent,"continuation":c})).await?;
@@ -505,7 +520,7 @@ pub async fn process_materialization05(
 ) -> Result<String> {
     let r: v05::MaterializationRequest = v05::decode(bytes).map_err(request_invalid)?;
     let versions = crate::mutation_batch::models(config, &r.context)?;
-    bind(owner, &r.context, raw).await?;
+    bind_delivery(owner, &r.context, raw).await?;
     if let v05::MaterializationOwner::Schema {
         previous_materialization,
     } = &r.owner
@@ -824,7 +839,7 @@ pub async fn process_live05(
 ) -> Result<String> {
     let mut r: v05::DeltaRequest = v05::decode(bytes).map_err(request_invalid)?;
     if r.continuation.is_none() {
-        bind(owner, &r.context, host).await?;
+        bind_delivery(owner, &r.context, host).await?;
         r.through = call(host, json!({"op":"deliveryHead","stream":r.context.stream})).await?;
     }
     process_delivery05(config, owner, &v05::encode(&r).map_err(internal)?, host).await

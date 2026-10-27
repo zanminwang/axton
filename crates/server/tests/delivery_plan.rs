@@ -12,7 +12,9 @@ impl Host for TestHost {
             let q = &r["request"];
             Ok(match (r["op"].as_str(), q["op"].as_str()) {
                 (Some("publicationFence"), _) => Value::Null,
-                (_, Some("claimStore")) => json!({"principal":"alice","stream":"User:alice"}),
+                (_, Some("claimStore" | "inspectStore")) => {
+                    json!({"principal":"alice","stream":"User:alice"})
+                }
                 (_, Some("admit")) => json!(true),
                 (_, Some("bootstrapState")) => json!(true),
                 (_, Some("deliveryHead")) => json!(45),

@@ -22,6 +22,13 @@ The SDK carries one validated immutable request through sequential `processBatch
 
 A member locks its Store before checking immutable principal/Stream binding, Batch sequence, digest, count and progress. Only the current Batch or the last completed Batch can replay. A valid next Batch prunes the older result set in the same transaction. Saved members run neither handler nor preparation.
 
+Existing Store ownership on delivery, materialization and completed reconnects is
+inspected without locking Mutation progress. First claims and unfinished Bootstrap
+initialization retain their guard. Progress writers use `FOR NO KEY UPDATE`, which
+still serializes uploads while allowing plan foreign-key checks on the immutable
+identity. See [read concurrency](read-concurrency.md) for the complete path audit
+and real same-Store liveness tests.
+
 Fresh work authorizes and performs business work in the same Serializable transaction. No namespace-wide publication lock is acquired. The business savepoint isolates an explicit typed refusal. A handler or Loader business refusal rolls back its effects, then saves rejection/progress outside that savepoint. Infrastructure, malformed Loader output or database failure aborts the outer transaction and leaves progress unchanged. The final saved member promotes current metadata to the last completed Batch.
 
 Explicit tracking and invalidation use the retained discovery/recheck and canonical Stream locks. New/live pairs always have a non-null discoverable position. Each actual transaction reserves at most one cursor per affected Stream, reused by every preparation publication. Reservation state is checked against `pg_current_xact_id()` so a reused caller-owned connection cannot carry it across COMMIT. Existing live tracking retains its cursor; invalidation reaches existing holders without enrolling others.

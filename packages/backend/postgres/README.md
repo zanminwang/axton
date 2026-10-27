@@ -21,4 +21,9 @@ table may remain unused; this migration does not drop it. The retired host opera
 and backend `acquirePublicationFence()` are compatibility no-ops. Serializable
 transactions, record/Stream guards and whole-transaction retries remain required.
 
+Initialized read requests inspect Store ownership with a snapshot SELECT. Progress
+writers retain `FOR NO KEY UPDATE`, compatible with delivery-plan foreign-key
+checks on the immutable Store identity. First claims and Bootstrap initialization
+remain protected. Plan expiry cleanup is a separate, unchanged write path.
+
 An installed legacy framework layout is refused without changing its data. This candidate supplies no old-namespace migration, local-file upgrade or compatibility bridge. Use fresh framework storage and review [protocol-5 adoption](https://github.com/zanminwang/axton/blob/main/docs/engineering/protocol5-adoption.md) before replacing an existing deployment.

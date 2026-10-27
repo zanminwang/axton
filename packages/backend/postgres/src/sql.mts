@@ -33,7 +33,9 @@ export const V05_STORE_INSERT =
 export const V05_STORE_INSPECT =
   "SELECT principal,stream FROM axton_store WHERE id=$1";
 export const V05_STORE_LOCK =
-  "SELECT principal,stream,last_processed_batch_id,progress,current_digest,current_count,last_digest,last_count FROM axton_store WHERE id=$1 FOR UPDATE";
+  // Progress writers remain exclusive with each other, while delivery-plan
+  // foreign-key checks may hold KEY SHARE on the immutable Store identity.
+  "SELECT principal,stream,last_processed_batch_id,progress,current_digest,current_count,last_digest,last_count FROM axton_store WHERE id=$1 FOR NO KEY UPDATE";
 export const V05_BATCH_BEGIN =
   "UPDATE axton_store SET current_digest=$3,current_count=$4 WHERE id=$1 AND last_processed_batch_id=$2-1 AND current_digest IS NULL AND progress=0 RETURNING id";
 export const V05_BATCH_PRUNE =

@@ -17,6 +17,30 @@ export function statistics(values) {
   return {n,median,min:sorted[0],max:sorted.at(-1),...(n>=100?{p95:sorted[Math.ceil(n*.95)-1]}:{})};
 }
 const ms = value => value/1000;
+// A named CreateEntry has one host action, and each fresh benchmark Store's
+// mutation ordinal starts at 1. The transaction span ends after adapter COMMIT.
+// Keep its source clock; never subtract it from the clients' Stopwatch.
+export function serverSettlements(sample) {
+  if(sample.scenario!=='live-sync')return [];
+  const records=sample.serverDiagnostics??[], transactions=new Map();
+  for(const r of records)if(r.source==='node'&&r.name==='server.transaction'&&r.attributes.outcome==='success')
+    transactions.set(`${r.clockDomain}/${r.attributes.operationId}`,r);
+  const observed=new Map();
+  for(const r of records) {
+    if(r.source!=='node'||r.name!=='host.handleAction'||r.attributes.mutation!=='CreateEntry'||r.attributes.outcome!=='success')continue;
+    // Server callId = Store identity : batch ID : durable Mutation ID.
+    const ordinal=Number(/:\d+:(\d+)$/.exec(r.attributes.callId??'')?.[1]);
+    const event=sample.result?.events?.[ordinal-1];
+    const tx=transactions.get(`${r.clockDomain}/${r.attributes.operationId}`);
+    if(!event||!tx)continue;
+    const committedUs=tx.startUs+tx.durationUs, previous=observed.get(event.id);
+    if(!previous||committedUs<previous.committedUs)observed.set(event.id,{
+      id:event.id,ordinal,callId:r.attributes.callId,clockDomain:tx.clockDomain,
+      transactionSpanId:tx.spanId,transactionStartUs:tx.startUs,committedUs,transactionDurationUs:tx.durationUs,
+    });
+  }
+  return [...observed.values()].sort((a,b)=>a.ordinal-b.ordinal);
+}
 export function metrics(sample) {
   if (sample.scenario==='initial-sync') {
     const t=sample.result.timings, start=t.initializationStartUs;
@@ -24,7 +48,9 @@ export function metrics(sample) {
       allVisibleMs:[ms(t.allVisibleUs-start)],bootstrapMs:[ms(t.bootstrapCompleteUs-start)]};
   }
   const events=sample.result.events;
+  const server=serverSettlements(sample);
   return {localCommitMs:events.map(e=>ms(e.localCommitUs-e.startUs)),
+    ...(server.length?{serverTransactionMs:server.map(e=>ms(e.transactionDurationUs))}:{}),
     settlementMs:events.map(e=>ms(e.settlementUs-e.startUs)),
     bVisibleMs:events.map(e=>ms(e.bVisibleUs-e.startUs)),
     allVisibleMs:[ms(sample.result.timings.allVisibleUs)],
@@ -87,11 +113,11 @@ export function printSummary(result) {
     console.log(`| ${n} | ${group.passed}/${group.runs} | ${show(x.storeOpenMs)} | ${show(x.firstVisibleMs)} | ${show(x.allVisibleMs)} | ${show(x.bootstrapMs)} |`);
   }
   console.log('\nLive sync:');
-  console.log('| Existing N | Writes M | Passed | Reports passed/failed | Local commit | Settlement | B visible | All B visible |');
-  console.log('|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
+  console.log('| Existing N | Writes M | Passed | Reports passed/failed | Local commit | Server transaction | A settlement | B visible | All B visible |');
+  console.log('|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
   for (const group of groups.filter(g=>g.key.startsWith('live-sync/'))) {
     const [,n,m]=group.key.split('/'),x=group.metrics;
-    console.log(`| ${n} | ${m} | ${group.passed}/${group.runs} | ${group.recordReports}/${group.failedRecordReports} | ${show(x.localCommitMs)} | ${show(x.settlementMs)} | ${show(x.bVisibleMs)} | ${show(x.allVisibleMs)} |`);
+    console.log(`| ${n} | ${m} | ${group.passed}/${group.runs} | ${group.recordReports}/${group.failedRecordReports} | ${show(x.localCommitMs)} | ${show(x.serverTransactionMs)} | ${show(x.settlementMs)} | ${show(x.bVisibleMs)} | ${show(x.allVisibleMs)} |`);
   }
   console.log('\nSelected stages: median summed span ms per run; nested/overlapping spans are not additive. Live includes both clients.');
   console.log('| Case | Server plan | Mutation execute | Local apply | Watch query | Bridge drain/decode |');

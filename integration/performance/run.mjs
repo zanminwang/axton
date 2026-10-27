@@ -8,7 +8,7 @@ import {fileURLToPath} from 'node:url';
 import {createInterface} from 'node:readline';
 import {Pool} from 'pg';
 import {startFixture,textBytes,fixtureBatchSize} from './fixture/server.mjs';
-import {printSummary,summarize,metrics,validateRecordReports} from './report.mjs';
+import {printSummary,summarize,metrics,validateRecordReports,serverSettlements} from './report.mjs';
 import {poolLifecycle} from './support/postgres.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
@@ -135,6 +135,10 @@ try {
           // connection error. Such a sample still fails; never hide that error.
           if(sample.result?.status==='passed') {
             validateRecordReports(sample);
+            if(scenario==='live-sync'&&options.diagnostics) {
+              sample.serverSettlements=serverSettlements(sample);
+              assert.equal(sample.serverSettlements.length,writes,'one source-clock server commit confirmation per write');
+            }
             for (const values of Object.values(metrics(sample)))
               assert.ok(values.every(value=>Number.isFinite(value)&&value>=0),'invalid timing observation');
             sample.serverVerification=await fixture.verify(writes);assert.equal(dropped,0,'server diagnostics incomplete');

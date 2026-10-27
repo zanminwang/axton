@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {statistics,summarize,compare,validateRecordReports} from './report.mjs';
+import {statistics,summarize,compare,validateRecordReports,serverSettlements} from './report.mjs';
 test('median/range and nearest-rank p95 only with at least 100 observations',()=>{
   assert.deepEqual(statistics([9,1,3,2]),{n:4,median:2.5,min:1,max:9});
   assert.equal(statistics(Array.from({length:100},(_,i)=>i+1)).p95,95);
@@ -9,6 +9,17 @@ test('median/range and nearest-rank p95 only with at least 100 observations',()=
 const sample={scenario:'initial-sync',records:100,writes:0,status:'passed',serverDiagnostics:[],result:{diagnostics:[],
   timings:{initializationStartUs:100,storeOpenStartUs:100,storeOpenUs:1100,firstVisibleUs:3100,allVisibleUs:4100,bootstrapCompleteUs:5100}}};
 const result={completed:true,compatibility:{version:1},machine:{cpu:'test'},samples:[sample]};
+test('server commit confirmations correlate successful transactions without crossing clocks',()=>{
+  const tx=(id,outcome,start=100)=>({source:'node',name:'server.transaction',clockDomain:'server',spanId:id,
+    startUs:start,durationUs:20,attributes:{operationId:id,outcome}});
+  const action=(operationId)=>({source:'node',name:'host.handleAction',clockDomain:'server',
+    attributes:{operationId,callId:'store:7:1',mutation:'CreateEntry',outcome:'success'}});
+  const sample={scenario:'live-sync',result:{events:[{id:'live-00000000'}]},
+    serverDiagnostics:[tx('failed','error'),action('failed'),tx('ok','success'),action('ok'),tx('repeat','success',200),action('repeat')]};
+  assert.deepEqual(serverSettlements(sample),[{id:'live-00000000',ordinal:1,callId:'store:7:1',clockDomain:'server',
+    transactionSpanId:'ok',transactionStartUs:100,committedUs:120,transactionDurationUs:20}]);
+  assert.deepEqual(serverSettlements({...sample,serverDiagnostics:[]}),[]);
+});
 test('failed samples remain visible and never enter latency statistics',()=>{
   const output=summarize({...result,samples:[sample,{...sample,status:'timeout',result:null}]})[0];
   assert.equal(output.passed,1);assert.equal(output.failed,1);assert.equal(output.metrics.storeOpenMs.median,1);

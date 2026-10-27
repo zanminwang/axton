@@ -58,6 +58,7 @@ describe their recorded environment, not dedicated hardware or phone performance
 | Initial | Bootstrap | Initialization start until `bootstrap()` returns. |
 | Live | Local commit | Before submitting each Mutation until its Call handle returns after local commit. |
 | Live | Settlement | That write's start until `Call.wait()` reports accepted local settlement, not the server's commit timestamp. |
+| Live | Server transaction | Server transaction entry until the adapter returns after COMMIT, including retries. Its end is a server commit confirmation in the Node clock domain. |
 | Live | B visible | That write's start until B's watch contains its identity. |
 
 Initial timing starts before application-data configuration/native-library loading,
@@ -71,6 +72,11 @@ Both clients use one Dart Stopwatch. A awaits each local commit, then submits th
 next write without awaiting settlement. B visibility can precede A's settlement.
 Whole-run completion and throughput are also retained. Watches intentionally read
 and decode the full Entry model, so varying N exposes retained-data notification cost.
+With diagnostics enabled, each CreateEntry's host call ID/ordinal correlates its
+successful transaction span to the write. `serverSettlements` retains that source
+start, duration and commit-confirmed timestamp. Older raw files retain the same
+evidence in spans; the report reconstructs it. This server duration is not an
+A-to-server latency. No clock synchronization is claimed between Dart and Node.
 
 Each sample verifies exact identities, counts and every text value in the final
 watch and local queries. Live verifies both clients, accepted settlement outputs,

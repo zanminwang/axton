@@ -15,7 +15,8 @@ permissions:
   contents: read
 concurrency:
   # github.workflow names the caller when release-publish.yml calls this one.
-  group: verify-${{ github.workflow }}-${{ github.ref }}
+  # Manual measurements must not cancel a branch's ordinary correctness gate.
+  group: verify-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.performance && 'performance' || 'host' }}
   cancel-in-progress: true
 jobs:
   host:

@@ -120,7 +120,7 @@ try {
         if(interrupted) break scenarios;
         const sample={scenario,records,writes,repetition,status:'setup-failed',loadAverage:loadavg(),serverDiagnostics:[]};
         const database=`performance_${randomBytes(6).toString('hex')}`;
-        const directory=await mkdtemp(join(tmpdir(),'axton-performance-client-'));
+        const directory=await mkdtemp(join(process.env.AXTON_PERFORMANCE_TEMP??tmpdir(),'axton-performance-client-'));
         let created=false,dropped=0;
         try {
           await admin.query(`CREATE DATABASE "${database}"`);created=true;

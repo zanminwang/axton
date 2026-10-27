@@ -25,6 +25,8 @@ if [[ "${AXTON_PERFORMANCE_SKIP_BUILD:-0}" != 1 ]]; then
   node integration/performance/run.mjs --record-build
 fi
 cluster="$(mktemp -d "${TMPDIR:-/tmp}/axton-performance-pg.XXXXXX")"
+# The shell owns client files too, including its forced-runner-stop fallback.
+export AXTON_PERFORMANCE_TEMP="$cluster"
 runner=""
 cleanup() {
   if [[ -n "$runner" ]]; then
@@ -49,7 +51,8 @@ if ! initdb -D "$cluster/data" -A trust --no-locale -E UTF8 >"$cluster/init.log"
   exit 1
 fi
 pg_ctl -D "$cluster/data" -l "$cluster/postgres.log" -o "-p $port -h 127.0.0.1 -k $cluster" start >/dev/null
-export DATABASE_URL="postgresql://$(id -un)@127.0.0.1:$port/postgres"
+DATABASE_URL="postgresql://$(id -un)@127.0.0.1:$port/postgres"
+export DATABASE_URL
 node integration/performance/run.mjs "$@" &
 runner=$!
 wait "$runner"

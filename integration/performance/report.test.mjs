@@ -12,11 +12,22 @@ const result={completed:true,compatibility:{version:1},machine:{cpu:'test'},samp
 test('failed samples remain visible and never enter latency statistics',()=>{
   const output=summarize({...result,samples:[sample,{...sample,status:'timeout',result:null}]})[0];
   assert.equal(output.passed,1);assert.equal(output.failed,1);assert.equal(output.metrics.storeOpenMs.median,1);
+  const reports=summarize({...result,samples:[sample,{...sample,status:'failed',result:{recordReports:[{}]}}]})[0];
+  assert.equal(reports.recordReports,0);assert.equal(reports.failedRecordReports,1);
 });
 test('comparison rejects changed boundaries, environment, missing scenarios and failures',()=>{
   assert.ok(compare(result,result).every(x=>x.changePercent===0));
   for (const changed of [{...result,completed:false},{...result,compatibility:{}},{...result,machine:{}},{...result,samples:[]},
     {...result,samples:[{...sample,status:'failed'}]}]) assert.throws(()=>compare(result,changed));
+});
+test('explicit scenario comparison admits only whole passing cases from fully attempted matrices',()=>{
+  const failed={scenario:'live-sync',records:100,writes:1,status:'failed',result:null,serverDiagnostics:[]};
+  const mixed={...result,completed:false,matrixCompleted:true,samples:[sample,failed]};
+  assert.throws(()=>compare(mixed,mixed));
+  assert.ok(compare(mixed,mixed,{scenario:'initial-sync'}).every(x=>x.changePercent===0));
+  assert.throws(()=>compare(mixed,mixed,{scenario:'live-sync'}));
+  assert.throws(()=>compare({...mixed,matrixCompleted:false},mixed,{scenario:'initial-sync'}));
+  assert.throws(()=>compare(mixed,mixed,{scenario:'unknown'}));
 });
 test('only the known own-create transient report is admitted after accepted-state verification',()=>{
   const event={id:'live-00000000',accepted:true,startUs:10};

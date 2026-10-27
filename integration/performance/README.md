@@ -96,6 +96,7 @@ from final-state verification, so recovered writes do not hide connection defect
 ```sh
 node integration/performance/report.mjs artifacts/performance/baseline.json
 node integration/performance/report.mjs compare before.json after.json
+node integration/performance/report.mjs compare before.json after.json --scenario initial-sync
 node --test integration/performance/*.test.mjs
 ```
 
@@ -110,6 +111,9 @@ matrix and machine/tool/database metadata, and no failed samples. Commits, artif
 and sample counts may differ. Curated results belong in `baselines/`; routine
 output stays under ignored `artifacts/`.
 The report command also reads `.json.gz` archives without extracting them.
+An explicit `--scenario` can compare a fully passing scenario from two fully
+attempted matrices even if another scenario failed. It never drops failed
+repetitions within the selected scenario or accepts a partially attempted matrix.
 
 Stores, processes and databases are fresh; fixtures were just written. OS and
 PostgreSQL caches are **not flushed**. This is not a cold-hardware-cache claim.

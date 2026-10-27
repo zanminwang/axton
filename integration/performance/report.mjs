@@ -65,6 +65,7 @@ export function summarize(result) {
     }
     return {key,runs:samples.length,passed:passed.length,failed:samples.length-passed.length,
       recordReports:passed.reduce((n,s)=>n+(s.result.recordReports?.length??0),0),
+      failedRecordReports:samples.filter(s=>s.status!=='passed').reduce((n,s)=>n+(s.result?.recordReports?.length??0),0),
       metrics:Object.fromEntries(Object.entries(gathered).map(([name,values])=>[name,statistics(values)])),
       stages:Object.fromEntries(Object.entries(stages).map(([name,runs])=>[name,{
         summedDurationMs:statistics(runs.map(r=>r.totalMs)),maxDurationMs:statistics(runs.map(r=>r.maxMs)),
@@ -86,11 +87,11 @@ export function printSummary(result) {
     console.log(`| ${n} | ${group.passed}/${group.runs} | ${show(x.storeOpenMs)} | ${show(x.firstVisibleMs)} | ${show(x.allVisibleMs)} | ${show(x.bootstrapMs)} |`);
   }
   console.log('\nLive sync:');
-  console.log('| Existing N | Writes M | Passed | Record reports | Local commit | Settlement | B visible | All B visible |');
+  console.log('| Existing N | Writes M | Passed | Reports passed/failed | Local commit | Settlement | B visible | All B visible |');
   console.log('|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
   for (const group of groups.filter(g=>g.key.startsWith('live-sync/'))) {
     const [,n,m]=group.key.split('/'),x=group.metrics;
-    console.log(`| ${n} | ${m} | ${group.passed}/${group.runs} | ${group.recordReports} | ${show(x.localCommitMs)} | ${show(x.settlementMs)} | ${show(x.bVisibleMs)} | ${show(x.allVisibleMs)} |`);
+    console.log(`| ${n} | ${m} | ${group.passed}/${group.runs} | ${group.recordReports}/${group.failedRecordReports} | ${show(x.localCommitMs)} | ${show(x.settlementMs)} | ${show(x.bVisibleMs)} | ${show(x.allVisibleMs)} |`);
   }
   console.log('\nSelected stages: median summed span ms per run; nested/overlapping spans are not additive. Live includes both clients.');
   console.log('| Case | Server plan | Mutation execute | Local apply | Watch query | Bridge drain/decode |');
@@ -101,11 +102,15 @@ export function printSummary(result) {
     console.log(`| ${group.key} | ${values.join(' | ')} |`);
   }
 }
-export function compare(before,after) {
-  assert.ok(before.completed&&after.completed,'cannot compare incomplete runs');
+export function compare(before,after,{scenario}={}) {
+  assert.ok(scenario===undefined||['initial-sync','live-sync'].includes(scenario),'unknown comparison scenario');
+  assert.ok([before,after].every(r=>r.completed||(scenario&&r.matrixCompleted)),
+    'cannot compare incomplete runs; select a fully passing scenario only after the full matrix was attempted');
   assert.deepEqual(before.compatibility,after.compatibility,'incompatible fixture, timing boundaries, tracing, watch shape or runtime conditions');
   assert.deepEqual(before.machine,after.machine,'different machine/tool/database conditions');
-  const a=summarize(before),b=summarize(after);
+  const selected=result=>summarize(result).filter(g=>!scenario||g.key.startsWith(scenario+'/'));
+  const a=selected(before),b=selected(after);
+  assert.ok(a.length&&b.length,'no observations for comparison');
   assert.deepEqual(a.map(x=>x.key).sort(),b.map(x=>x.key).sort(),'different scenario matrices');
   assert.ok([...a,...b].every(x=>x.failed===0),'cannot compare results containing failed samples');
   return a.flatMap(group=>Object.entries(group.metrics).map(([metric,stats])=>{
@@ -118,6 +123,8 @@ export function compare(before,after) {
 if (process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   if (process.argv[2]==='compare') {
     const [before,after]=await Promise.all(process.argv.slice(3,5).map(readResult));
-    console.table(compare(before,after));
+    const extra=process.argv.slice(5);
+    assert.ok(extra.length===0||(extra.length===2&&extra[0]==='--scenario'),'usage: compare before.json after.json [--scenario initial-sync|live-sync]');
+    console.table(compare(before,after,{scenario:extra[1]}));
   } else printSummary(await readResult(process.argv[2]));
 }

@@ -10,13 +10,30 @@ on:
         description: 'Run manual sync performance measurements instead of the host gate'
         type: boolean
         default: false
+      performance_samples:
+        description: 'Repetitions per performance case'
+        type: number
+        default: 5
+      performance_sizes:
+        description: 'Comma-separated retained Entry counts'
+        type: string
+        default: '100,1000,10000'
+      performance_writes:
+        description: 'Continuous writes per performance case'
+        type: number
+        default: 100
+      performance_diagnostics:
+        description: 'Collect source stage traces'
+        type: choice
+        options: ['on', 'off']
+        default: 'on'
   workflow_call:
 permissions:
   contents: read
 concurrency:
   # github.workflow names the caller when release-publish.yml calls this one.
   # Manual measurements must not cancel a branch's ordinary correctness gate.
-  group: verify-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.performance && 'performance' || 'host' }}
+  group: verify-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.performance && format('performance-{0}', inputs.performance_diagnostics) || 'host' }}
   cancel-in-progress: true
 jobs:
   host:
@@ -85,7 +102,12 @@ jobs:
           sudo apt-get install -y postgresql-16
           echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
       - name: Manual release measurements
-        run: bash integration/performance/run.sh
+        env:
+          SAMPLES: ${{ inputs.performance_samples }}
+          SIZES: ${{ inputs.performance_sizes }}
+          WRITES: ${{ inputs.performance_writes }}
+          DIAGNOSTICS: ${{ inputs.performance_diagnostics }}
+        run: bash integration/performance/run.sh --samples "$SAMPLES" --sizes "$SIZES" --writes "$WRITES" --diagnostics "$DIAGNOSTICS"
       - name: Raw samples and summary
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

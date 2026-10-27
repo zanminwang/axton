@@ -39,6 +39,9 @@ The existing Verify workflow also accepts a manual performance invocation:
 
 ```sh
 gh workflow run verify.yml --ref YOUR_BRANCH -f performance=true
+# Small tracing-disabled control; not directly comparable to instrumented data.
+gh workflow run verify.yml --ref YOUR_BRANCH -f performance=true \
+  -f performance_samples=2 -f performance_sizes=100 -f performance_diagnostics=off
 ```
 
 It runs on Ubuntu, uploads `artifacts/performance/*.json`, and skips the host gate

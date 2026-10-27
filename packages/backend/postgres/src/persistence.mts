@@ -174,13 +174,18 @@ async function answer05(
             throw new Error("delivery.identity_untracked");
         }
       }
-      const pageSize = r.pageSize == null ? null : Math.min(positiveCounter(r.pageSize), cap);
+      const pageSize =
+        r.pageSize == null ? null : Math.min(positiveCounter(r.pageSize), cap);
       const select = `SELECT r.model,r.identity_key,s.cursor,s.kind FROM axton_stream_record s JOIN axton_record r ON r.id=s.record_id WHERE s.stream=$1 AND s.cursor>$2 AND ($3::text[] IS NULL OR r.model=ANY($3::text[]) OR EXISTS(SELECT 1 FROM jsonb_array_elements($4::jsonb) k WHERE k->>'model'=r.model AND k->>'identityKey'=r.identity_key))`;
       const rows = await q(
         pageSize === null
           ? `${select} ORDER BY s.cursor,r.model COLLATE "C",r.identity_key COLLATE "C" LIMIT $5`
           : `SELECT * FROM (${select} ORDER BY s.cursor FETCH FIRST $6 ROWS WITH TIES) page LIMIT $5`,
-        r.stream, safe(r.after), models, JSON.stringify(keys ?? []), cap + 1,
+        r.stream,
+        safe(r.after),
+        models,
+        JSON.stringify(keys ?? []),
+        cap + 1,
         ...(pageSize === null ? [] : [pageSize + 1]),
       );
       if (rows.length > cap) return null;

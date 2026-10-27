@@ -562,7 +562,21 @@ for (const kind of [
         );
         pending = app.push("alice", JSON.stringify(request));
         pending.catch(() => {});
-        await arrived;
+        await Promise.race([
+          arrived,
+          pending.then(() => {
+            throw new Error(
+              "Mutation completed before entering its suspended handler",
+            );
+          }),
+          new Promise((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("Mutation did not enter its handler")),
+              5000,
+            );
+          }),
+        ]);
+        clearTimeout(timer);
         reading = invoke();
         reading.catch(() => {});
         const response = JSON.parse(

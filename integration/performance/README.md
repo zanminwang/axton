@@ -93,6 +93,11 @@ silently discarded; summaries/comparisons show report counts alongside timings.
 
 ## Results
 
+The first [Dart measurements and findings](baselines/2026-10-27-dart/README.md)
+include a full 45-sample matrix and a tracing-disabled control. Initial sync and
+single writes passed; continuous writes exposed backend serialization/connection
+failures and are retained as failed diagnostic evidence.
+
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,
 PostgreSQL settings and scenario parameters. It checkpoints after each sample,

@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {gunzipSync} from 'node:zlib';
+
+export async function readResult(path) {
+  const bytes=await readFile(path);
+  return JSON.parse((path.endsWith('.gz')?gunzipSync(bytes):bytes).toString('utf8'));
+}
 
 export function statistics(values) {
   assert.ok(values.length, 'statistics needs observations');
@@ -29,8 +35,10 @@ export const caseKey = sample => `${sample.scenario}/${sample.records}/${sample.
 export function validateRecordReports(sample) {
   for (const report of sample.result.recordReports??[]) {
     const index=sample.result.events.findIndex(event=>event.id===report.identity?.id&&event.accepted===true);
+    const end=Math.max(sample.result.timings.allSettledUs,sample.result.timings.allVisibleUs);
     assert.ok(sample.scenario==='live-sync'&&report.client==='A'&&report.kind==='diverged'
-      &&report.model==='Entry'&&report.duringMeasurement===true&&index>=0&&report.ordinal===index+1,
+      &&report.model==='Entry'&&report.duringMeasurement===true&&index>=0&&report.ordinal===index+1
+      &&Number.isFinite(report.atUs)&&report.atUs>=sample.result.events[index].startUs&&report.atUs<=end,
       'unexpected record report: only transient divergence of a verified accepted own create is admissible');
   }
 }
@@ -65,13 +73,32 @@ export function summarize(result) {
 }
 const show = stats => stats ? `${stats.median.toFixed(3)} [${stats.min.toFixed(3)}, ${stats.max.toFixed(3)}]` : '—';
 export function printSummary(result) {
-  if(!result.completed)console.log('INCOMPLETE RUN: partial samples are retained, not a complete baseline.');
+  if(!result.completed)console.log(result.matrixCompleted
+    ?'FAILED RUN: full matrix attempted; failures are retained. Not a clean baseline.'
+    :'INCOMPLETE RUN: partial samples are retained, not a complete baseline.');
   console.log('Times in ms: median [min, max]. Live per-write observations are correlated within each run.');
-  console.log('| Scenario | Existing N | Writes M | Passed | Record reports | Store open | First visible / local commit | All visible / settlement | Bootstrap / B visible |');
-  console.log('|---|---:|---:|---:|---:|---:|---:|---:|---:|');
-  for (const group of summarize(result)) {
-    const [scenario,n,m]=group.key.split('/'), x=group.metrics;
-    console.log(`| ${scenario} | ${n} | ${m} | ${group.passed}/${group.runs} | ${group.recordReports} | ${show(x.storeOpenMs)} | ${show(x.firstVisibleMs??x.localCommitMs)} | ${show(x.allVisibleMs && scenario==='initial-sync'?x.allVisibleMs:x.settlementMs)} | ${show(x.bootstrapMs??x.bVisibleMs)} |`);
+  const groups=summarize(result);
+  console.log('\nInitial sync:');
+  console.log('| Existing N | Passed | Store open | First visible | All visible | Bootstrap |');
+  console.log('|---:|---:|---:|---:|---:|---:|');
+  for (const group of groups.filter(g=>g.key.startsWith('initial-sync/'))) {
+    const [,n]=group.key.split('/'),x=group.metrics;
+    console.log(`| ${n} | ${group.passed}/${group.runs} | ${show(x.storeOpenMs)} | ${show(x.firstVisibleMs)} | ${show(x.allVisibleMs)} | ${show(x.bootstrapMs)} |`);
+  }
+  console.log('\nLive sync:');
+  console.log('| Existing N | Writes M | Passed | Record reports | Local commit | Settlement | B visible | All B visible |');
+  console.log('|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
+  for (const group of groups.filter(g=>g.key.startsWith('live-sync/'))) {
+    const [,n,m]=group.key.split('/'),x=group.metrics;
+    console.log(`| ${n} | ${m} | ${group.passed}/${group.runs} | ${group.recordReports} | ${show(x.localCommitMs)} | ${show(x.settlementMs)} | ${show(x.bVisibleMs)} | ${show(x.allVisibleMs)} |`);
+  }
+  console.log('\nSelected stages: median summed span ms per run; nested/overlapping spans are not additive. Live includes both clients.');
+  console.log('| Case | Server plan | Mutation execute | Local apply | Watch query | Bridge drain/decode |');
+  console.log('|---|---:|---:|---:|---:|---:|');
+  for (const group of groups) {
+    const values=['rust/delivery.plan','rust/mutation.execute','rust/delivery.apply','rust/watch.query','dart/bridge.drain']
+      .map(name=>group.stages[name]?.summedDurationMs.median.toFixed(3)??'—');
+    console.log(`| ${group.key} | ${values.join(' | ')} |`);
   }
 }
 export function compare(before,after) {
@@ -90,7 +117,7 @@ export function compare(before,after) {
 }
 if (process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   if (process.argv[2]==='compare') {
-    const [before,after]=await Promise.all(process.argv.slice(3,5).map(async p=>JSON.parse(await readFile(p,'utf8'))));
+    const [before,after]=await Promise.all(process.argv.slice(3,5).map(readResult));
     console.table(compare(before,after));
-  } else printSummary(JSON.parse(await readFile(process.argv[2],'utf8')));
+  } else printSummary(await readResult(process.argv[2]));
 }

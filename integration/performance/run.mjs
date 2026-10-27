@@ -34,7 +34,7 @@ if (process.argv.includes('--record-build')) {
   await writeFile('artifacts/performance/build.json',JSON.stringify(await buildIdentity(),null,2)+'\n');
   process.exit(0);
 }
-const defaults={output:'artifacts/performance/results.json',samples:5,sizes:[100,1000,10000],writes:100,timeout:120000,diagnostics:true};
+const defaults={output:'artifacts/performance/results.json',samples:5,sizes:[100,1000,10000],writes:100,timeout:120000,diagnostics:true,failFast:false};
 const options={...defaults};
 for (let i=2;i<process.argv.length;i++) {
   const flag=process.argv[i],value=process.argv[++i];
@@ -45,6 +45,7 @@ for (let i=2;i<process.argv.length;i++) {
   else if(flag==='--writes') options.writes=Number(value);
   else if(flag==='--timeout-ms') options.timeout=Number(value);
   else if(flag==='--diagnostics') {assert.ok(['on','off'].includes(value));options.diagnostics=value==='on';}
+  else if(flag==='--fail-fast') {assert.ok(['on','off'].includes(value));options.failFast=value==='on';}
   else throw Error(`unknown option ${flag}`);
 }
 for (const value of [options.samples,options.writes,options.timeout,...options.sizes]) assert.ok(Number.isSafeInteger(value)&&value>0,'parameters must be positive integers');
@@ -130,7 +131,9 @@ try {
           }}:undefined);
           sample.serverDiagnostics.length=0;
           Object.assign(sample,await execute(scenario,records,writes,directory,sample.serverDiagnostics));
-          if(sample.status==='passed') {
+          // Final-state evidence is useful even when the child recovered from a
+          // connection error. Such a sample still fails; never hide that error.
+          if(sample.result?.status==='passed') {
             validateRecordReports(sample);
             for (const values of Object.values(metrics(sample)))
               assert.ok(values.every(value=>Number.isFinite(value)&&value>=0),'invalid timing observation');
@@ -140,6 +143,8 @@ try {
         } catch(error) {sample.status='failed';sample.error=String(error);}
         finally {
           try {await fixture?.close();} catch(error) {sample.status='failed';sample.cleanupError=String(error);}
+          sample.backendErrors=fixture?.errors.slice()??[];
+          if(sample.backendErrors.length) {sample.status='failed';sample.error??='backend/connection errors (see backendErrors)';}
           fixture=undefined;
           if(created) try {await admin.query(`DROP DATABASE "${database}" WITH (FORCE)`);} catch(error) {sample.status='failed';sample.databaseCleanupError=String(error);}
           await rm(directory,{recursive:true,force:true});
@@ -148,12 +153,13 @@ try {
         }
         console.error(`${scenario} N=${records} M=${writes} repetition=${repetition}: ${sample.status}`);
         if(sample.status!=='passed')console.error(JSON.stringify({error:sample.error,cleanupError:sample.cleanupError,client:sample.result?.error,progress:sample.progress}));
-        if(sample.status!=='passed') break scenarios;
+        if(sample.status!=='passed'&&options.failFast) break scenarios;
       }
 } finally {
   child?.kill('SIGKILL');await fixture?.close();await closeAdmin();
   const expected=options.sizes.length*(1+new Set([1,options.writes]).size)*options.samples;
-  result.completed=!interrupted&&adminErrors.length===0&&result.samples.length===expected&&result.samples.every(s=>s.status==='passed');
+  result.matrixCompleted=!interrupted&&result.samples.length===expected;
+  result.completed=result.matrixCompleted&&adminErrors.length===0&&result.samples.every(s=>s.status==='passed');
   await save();
   process.removeListener('SIGINT',signal);process.removeListener('SIGTERM',signal);
 }

@@ -20,6 +20,7 @@ Future<void> main(List<String> args) => runSample(args, (
   List<Entry> last = [];
   final settlements = <Future<void>>[];
   final recordReports = <Map<String, Object?>>[];
+  var measuring = false;
   try {
     a = await GeneratedClient.open(
       path: '${dir.path}/a.sqlite',
@@ -48,12 +49,17 @@ Future<void> main(List<String> args) => runSample(args, (
               'identity': error.identity,
               'ordinal': error.ordinal,
               'atUs': clock.elapsedMicroseconds,
-              'duringMeasurement': clock.isRunning,
+              'duringMeasurement': measuring,
             };
             recordReports.add(report);
             progress('record.report', report);
           } else {
-            progress('connection.error', {'error': '$error'});
+            progress('connection.error', {
+              'client': identical(client, a) ? 'A' : 'B',
+              'error': '$error',
+              'atUs': clock.elapsedMicroseconds,
+              'duringMeasurement': measuring,
+            });
           }
         },
       );
@@ -87,6 +93,7 @@ Future<void> main(List<String> args) => runSample(args, (
     bRecorder.records.clear();
     await awaitStart();
     clock.start();
+    measuring = true;
     for (var i = 0; i < writes; i++) {
       final id = identity('live', i);
       final event = <String, Object?>{
@@ -123,6 +130,7 @@ Future<void> main(List<String> args) => runSample(args, (
     await Future.wait(settlements);
     final allSettledUs = clock.elapsedMicroseconds;
     await complete.future;
+    measuring = false;
     aRecorder.active = false;
     bRecorder.active = false;
     final allVisibleUs = events.values
@@ -150,6 +158,7 @@ Future<void> main(List<String> args) => runSample(args, (
       'accepted': writes,
     };
   } finally {
+    measuring = false;
     await watch?.cancel();
     await b?.close();
     await a?.close();

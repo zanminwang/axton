@@ -87,7 +87,11 @@ silently discarded; summaries/comparisons show report counts alongside timings.
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,
 PostgreSQL settings and scenario parameters. It checkpoints after each sample,
-stops after the first failed sample, and marks partial runs `completed: false`.
+continues through failures to collect the matrix, and exits nonzero if any sample
+fails. `matrixCompleted` distinguishes an attempted full matrix from a partial run;
+only a fully passing matrix has `completed: true`. `--fail-fast on` stops after the
+first failure. Backend errors retain their message, SQLSTATE and stack separately
+from final-state verification, so recovered writes do not hide connection defects.
 
 ```sh
 node integration/performance/report.mjs artifacts/performance/baseline.json
@@ -105,6 +109,7 @@ Comparison requires matching fixture, timing, tracing/cache conditions, scenario
 matrix and machine/tool/database metadata, and no failed samples. Commits, artifacts
 and sample counts may differ. Curated results belong in `baselines/`; routine
 output stays under ignored `artifacts/`.
+The report command also reads `.json.gz` archives without extracting them.
 
 Stores, processes and databases are fresh; fixtures were just written. OS and
 PostgreSQL caches are **not flushed**. This is not a cold-hardware-cache claim.
@@ -118,6 +123,31 @@ accept optional `diagnostics` receivers with `record(record)`. Unconfigured inst
 install no native collectors or trace bridge traffic. Rust uses standard `tracing`
 spans scoped to instances/requests, following native async polls across threads;
 AXTON never installs a process-global subscriber.
+
+Applications opt in through their existing entry points:
+
+```dart
+class MyDiagnostics implements AxtonDiagnostics {
+  @override
+  void record(AxtonTraceRecord record) {
+    // Buffer or forward to an application-owned exporter; return promptly.
+  }
+}
+final client = await GeneratedClient.open(
+  path: storePath, stream: stream, diagnostics: MyDiagnostics(),
+);
+```
+
+```ts
+const backend = createBackend({
+  ...options,
+  diagnostics: { record(record) { exporter.enqueue(record); } },
+});
+```
+
+The receiver is optional for customers. AXTON supplies stage observations; the
+application chooses retention and export. This does not add a new sync entry point
+or require a telemetry service.
 
 Schema-1 records contain kind, name, source, clockDomain, startUs, optional durationUs,
 span/parent identifiers and attributes. Source execution measures monotonic time;

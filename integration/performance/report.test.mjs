@@ -19,12 +19,12 @@ test('comparison rejects changed boundaries, environment, missing scenarios and 
     {...result,samples:[{...sample,status:'failed'}]}]) assert.throws(()=>compare(result,changed));
 });
 test('only the known own-create transient report is admitted after accepted-state verification',()=>{
-  const event={id:'live-00000000',accepted:true};
-  const report={client:'A',kind:'diverged',model:'Entry',identity:{id:event.id},ordinal:1,duringMeasurement:true};
-  const sample={scenario:'live-sync',result:{events:[event],recordReports:[report]}};
+  const event={id:'live-00000000',accepted:true,startUs:10};
+  const report={client:'A',kind:'diverged',model:'Entry',identity:{id:event.id},ordinal:1,duringMeasurement:true,atUs:20};
+  const sample={scenario:'live-sync',result:{events:[event],recordReports:[report],timings:{allSettledUs:30,allVisibleUs:25}}};
   assert.doesNotThrow(()=>validateRecordReports(sample));
   for(const changed of [{...report,client:'B'},{...report,kind:'skipped'},{...report,ordinal:2},
-    {...report,duringMeasurement:false},{...report,identity:{id:'unrelated'}}])
-    assert.throws(()=>validateRecordReports({...sample,result:{events:[event],recordReports:[changed]}}));
-  assert.throws(()=>validateRecordReports({...sample,result:{events:[{...event,accepted:false}],recordReports:[report]}}));
+    {...report,duringMeasurement:false},{...report,atUs:9},{...report,atUs:31},{...report,identity:{id:'unrelated'}}])
+    assert.throws(()=>validateRecordReports({...sample,result:{...sample.result,recordReports:[changed]}}));
+  assert.throws(()=>validateRecordReports({...sample,result:{...sample.result,events:[{...event,accepted:false}]}}));
 });

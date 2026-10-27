@@ -18,6 +18,7 @@ Future<void> main(List<String> args) => runSample(args, (
   StreamSubscription<List<Entry>>? watch;
   GeneratedClient? client;
   List<Entry> last = [];
+  var measuring = true;
   try {
     clock.start();
     timings['initializationStartUs'] = 0;
@@ -55,7 +56,11 @@ Future<void> main(List<String> args) => runSample(args, (
     timings['connectStartUs'] = clock.elapsedMicroseconds;
     await client.connect(
       StoreConnection(url: options['url'] as String, token: () => 'benchmark'),
-      onError: (error) => progress('connection.error', {'error': '$error'}),
+      onError: (error) => progress('connection.error', {
+        'error': '$error',
+        'atUs': clock.elapsedMicroseconds,
+        'duringMeasurement': measuring,
+      }),
     );
     timings['connectReturnedUs'] = clock.elapsedMicroseconds;
     timings['bootstrapRequestedUs'] = clock.elapsedMicroseconds;
@@ -63,6 +68,7 @@ Future<void> main(List<String> args) => runSample(args, (
     timings['bootstrapCompleteUs'] = clock.elapsedMicroseconds;
     progress('bootstrap.complete', {'timings': timings});
     await visible.future;
+    measuring = false;
     recorder.active = false;
     verifyRows(last, count, 0);
     verifyRows(await client.models.entry.query(), count, 0);
@@ -75,6 +81,7 @@ Future<void> main(List<String> args) => runSample(args, (
       'pending': sync['pending'],
     };
   } finally {
+    measuring = false;
     await watch?.cancel();
     await client?.close();
   }

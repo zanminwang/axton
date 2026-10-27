@@ -1,5 +1,9 @@
 # Dart sync measurements — 2026-10-27
 
+This is the original global-fence baseline. The subsequent
+[fence-removal experiment](../2026-10-27-fence-removal/README.md) retains its own
+raw matrix and findings; these original samples remain unchanged.
+
 The full instrumented matrix attempted **45 samples: 30 passed, 15 failed**.
 It is not a clean baseline for the entire workload. Failed runs remain in the
 raw evidence and never enter the passing latency tables. There are no performance
@@ -166,8 +170,8 @@ observed outcome. No retry count, isolation level or production code was changed
 Ordinary concurrent reads completed and saw the previous committed value while
 each writer held its fence. Failed waiters left no partial business changes.
 
-The current [Mutation path](../../../../crates/server/src/mutation_batch.rs) and
-[delivery binding](../../../../crates/server/src/delivery_plan.rs) claim Store
+The measured [Mutation path](https://github.com/zanminwang/axton/blob/8e972685a67dcd053b999e5a73aef6643b66dfce/crates/server/src/mutation_batch.rs) and
+[delivery binding](https://github.com/zanminwang/axton/blob/8e972685a67dcd053b999e5a73aef6643b66dfce/crates/server/src/delivery_plan.rs) claim Store
 ownership before the publication fence. Those statements acquire the transaction
 snapshot. A waiter can therefore have an older snapshot by the time it obtains
 the fence. The persisted UPDATE correctly rejects it; bounded retries under
@@ -246,8 +250,8 @@ backend TypeScript checks, 70 focused Dart tests, and 12 Node diagnostics/host/r
 tests. Both performance programs analyzed and AOT-compiled. The real PostgreSQL
 measurements ran in the workflows linked above: the local sandbox prevents
 PostgreSQL shared-memory startup. PR checks report the broader host E2E gate.
-Simulation was unchanged. This PR adds measurement infrastructure, not a fix for
-the observed synchronization contention, and does not introduce a latency gate.
+Simulation was unchanged. These archived measurements predate the fence-removal
+experiment and do not introduce a latency gate.
 
 All 45 instrumented samples completed their client-side and PostgreSQL identity,
 count and content checks; all 1,515 Mutations were accepted. There were no retained

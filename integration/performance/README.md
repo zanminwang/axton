@@ -59,7 +59,7 @@ gh workflow run verify.yml --ref YOUR_BRANCH -f performance=true \
   -f performance_contention_probe=true
 ```
 
-This skips SDK/native builds and compares the existing row-fence sequence with
+This skips SDK/native builds and compares the historical row-fence sequence with
 an experimental table admission lock before versus after the Serializable
 snapshot. It observes a blocked database session before releasing its writer,
 checks business values/rollback and concurrent read availability, and saves
@@ -120,6 +120,8 @@ Serializable isolation, record/Stream guards, Store ordering and bounded retries
 Raw results identify the implementation/commit; reruns are separate evidence,
 never replacements for the original samples. The old public helper and bridge
 request remain compatibility no-ops, and fresh namespaces omit the old table.
+The [fence-removal results](baselines/2026-10-27-fence-removal/README.md) retain
+the second full matrix, comparisons and remaining Store/delivery-plan conflicts.
 
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,

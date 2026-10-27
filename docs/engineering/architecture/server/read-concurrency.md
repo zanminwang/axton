@@ -11,7 +11,7 @@ endpoint can also perform explicit tracking, Bootstrap preparation or plan write
 
 | Path | Store access | Other work and guards |
 | --- | --- | --- |
-| Local SQLite Model/SQL query and watch | No server Store operation | Committed query-only WAL reader; ordinary views do not begin a write transaction. Explicit user transactions read their own writer state. |
+| Local SQLite Model/SQL query and watch | No server Store operation | Committed query-only WAL reader; ordinary views do not begin a write transaction. Runtime tasks still queue behind an open application transaction, as described below. Explicit user transactions read their own writer state. |
 | Server Query/Fetch | Snapshot inspection of an existing immutable binding | A missing binding is atomically claimed after application awaits. Explicit tracking/preparation writes use record/Stream guards. Client `store:true` response installation is a real local write. |
 | Reconnect to completed Store | Snapshot binding and Bootstrap-state reads | No Mutation progress lock. |
 | New Store / unfinished Bootstrap | Atomic claim and progress guard | Identity uniqueness and one committed Bootstrap initialization remain protected; failed transactions retry completely. |
@@ -49,6 +49,23 @@ and observer publication likewise retain their atomic write boundaries.
 The persistence adapter also repeats read-only legacy-layout catalog checks.
 Those are a potential query-cost target, not a Store progress lock; no change to
 them is included in this experiment.
+
+The [Node live-session registry](../../../../bindings/node/src/server.rs) has a
+process-wide mutex for controller transitions, released before host/database
+awaits. The [client runtime registry](../../../../bindings/common/src/actor.rs)
+likewise releases its map lock before database work or callbacks. These short
+in-memory critical sections do not reserve a Store's database progress for the
+duration of a read request; their existence alone is not evidence of the measured
+database contention.
+
+The local runtime has a separate scheduling limitation: while an application
+transaction callback owns the writer, ordinary tasks, including committed reads,
+wait for that callback to finish. SQLite's separate reader can read the old
+committed state, but the public task scheduler does not dispatch that read yet.
+A long callback can therefore delay local reads without a database read/write
+lock conflict. This audit does not change that scheduling contract or attribute
+the measured server serialization failures to it. The owning
+[runtime](../client/runtime.md) documents the behavior and existing regression.
 
 ## 10. Quality Requirements
 

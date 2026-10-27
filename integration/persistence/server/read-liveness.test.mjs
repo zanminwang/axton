@@ -422,12 +422,22 @@ for (const kind of [
         );
         const cfg = structuredClone(config);
         cfg.schema.models[0].bootstrap = true;
+        const previousMaterialization = native.serverMaterializationId05(
+          JSON.stringify(cfg),
+          "previous",
+        );
         const app = createBackend({
           config: cfg,
           native,
           database,
           authenticate: () => "alice",
           protocol5: {
+            materializations: {
+              [previousMaterialization]: {
+                schema: cfg.schema,
+                projectionGeneration: "previous",
+              },
+            },
             authorizeStream: (owner, stream) =>
               allow && stream === `User:${owner}`,
           },
@@ -501,7 +511,7 @@ for (const kind of [
                 requestId: "owned",
                 owner: {
                   kind: "schema",
-                  previousMaterialization: app.materializationId,
+                  previousMaterialization,
                 },
                 keys: [{ model: "Task", identity: { id: "initial" } }],
                 models: {},

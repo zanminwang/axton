@@ -1508,7 +1508,6 @@ fn historical_receipt_target_settles_below_prefix_while_public_bootstrap_remains
         },
         keys: pending.missing_keys,
         models: Default::default(),
-        continuation: None,
     };
     let owned = v05::freeze_materialization(
         context.clone(),

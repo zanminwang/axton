@@ -105,7 +105,6 @@ import { EngineError, loadNative } from "../bindings/native.mts";
  * server-side defect: reported to `onError` and answered `500 {code: "server"}`.
  */
 const HTTP_STATUS_BY_CODE: Readonly<Record<string, number>> = {
-  "delivery.expired": 410,
   "delivery.capacity": 413,
   "request.invalid": 400,
   context_mismatch: 409,
@@ -667,23 +666,6 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     typeof request === "string"
       ? request
       : new TextDecoder("utf-8", { fatal: true }).decode(request);
-  // Expiry is a successful read outcome: commit staging cleanup, then surface
-  // the explicit error outside the transaction. Capacity/faults still roll back.
-  const deliveryRead = async (
-    operation: (tx: T, session: Session) => Promise<string>,
-  ): Promise<string> => {
-    const outcome = await run(async (tx, session) => {
-      try {
-        return { response: await operation(tx, session) };
-      } catch (error) {
-        if (error instanceof EngineError && error.code === "delivery.expired")
-          return { expired: error };
-        throw error;
-      }
-    });
-    if ("expired" in outcome) throw outcome.expired;
-    return outcome.response;
-  };
   /** @internal Raw protocol seams used by the framework's own tests; not part of the supported surface. */
   const api = {
     materializationId,
@@ -723,7 +705,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
         native.processRead05!(config, owner, text(request), host(tx, session)),
       ),
     pull: (owner: string, request: Uint8Array | string) =>
-      deliveryRead((tx, session) =>
+      run((tx, session) =>
         native.processDelivery05!(
           config,
           owner,
@@ -732,7 +714,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
         ),
       ),
     pull05Live: (owner: string, request: string) =>
-      deliveryRead((tx, session) =>
+      run((tx, session) =>
         native.processLive05!(config, owner, request, host(tx, session)),
       ),
     handshake: (owner: string, request: Uint8Array | string) =>
@@ -740,7 +722,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
         native.handshake05!(config, owner, text(request), host(tx, session)),
       ),
     materialize: (owner: string, request: Uint8Array | string) =>
-      deliveryRead((tx, session) =>
+      run((tx, session) =>
         native.processMaterialization05!(
           config,
           owner,

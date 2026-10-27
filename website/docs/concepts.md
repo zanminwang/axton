@@ -26,7 +26,7 @@ One physical file has one Client, Store identity and Stream. The server binds th
 
 A Stream cursor orders authoritative content and membership changes within that Stream. The local record guard retains installed positions for each materialization contract. Membership Remove stops live-content protection but preserves the record, its guard and true deletion protection. Canonical Stream absence establishes a tombstone.
 
-`client.bootstrap()` awaits a finite frozen authority plan. Handshake commits initial S and C=S; B remains absent until the final complete Bootstrap unit commits. Sync advances only proven complete coverage. Rematerialization also covers held authority; reconnect retains committed progress.
+`client.bootstrap()` awaits coverage through its fixed initial cursor boundary using current-state pages. Handshake commits initial S and C=S; B remains absent until the final complete Bootstrap unit commits. Sync advances only proven complete coverage. Rematerialization also covers held authority; reconnect retains committed progress.
 
 Delivery units contain identities that must commit together for actual constraints. Independent units may commit separately; a failed group cannot be skipped. Publication evidence and bounded targeted materialization let accepted Calls recover historical authority without automatic tracking or cursor restamping.
 

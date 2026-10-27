@@ -19,7 +19,7 @@ Protocol 5 requires a fresh PostgreSQL framework namespace and fresh format-5 cl
 | [Client sync](../../../../crates/client/src/sync05/mod.rs) | Uplink, finite downlink, bounded queue and complete-unit apply. |
 | [Client settlement](../../../../crates/client/src/settlement05.rs) | Queue-owned outcomes and accepted work's authority obligations. |
 | [Server Batch](../../../../crates/server/src/mutation_batch.rs) | Store admission, per-member transactions, replay and durable results. |
-| [Server delivery](../../../../crates/server/src/delivery_plan.rs) | Serializable finite plans, preparation closure, immutable continuation and owned materialization. |
+| [Server delivery](../../../../crates/server/src/delivery_plan.rs) | Serializable current-state cursor pages, preparation closure and owned materialization. |
 | [PostgreSQL schema](../../../../packages/backend/postgres/migration.sql) | Eight fresh tables: Stream, Record, PublicationFence, Store, MutationResult, StreamRecord, DeliveryPlan and DeliveryUnit. Per-transaction cursor reservation is ephemeral SQL state, not a ninth durable table. |
 
 ## 6. Runtime View
@@ -42,9 +42,29 @@ Query and Fetch return invocation snapshots with explicit `cursor: null`. They g
 
 ### Finite Bootstrap and Sync
 
-Handshake durably records initial Stream head **S**. The initial committed prefix **C** starts at S; Bootstrap completion **B** remains absent until its final unit commits. Bootstrap selects `@@bootstrap` Models at a finite frozen head. Sync repairs a finite requested prefix rather than replaying every historical transition. Reconnect and moving heads do not rewrite committed S/B/C or make Bootstrap perpetual freshness.
+Handshake durably records initial Stream head **S**. The initial committed prefix **C** starts at S; Bootstrap completion **B** remains absent until its final unit commits. Bootstrap selects `@@bootstrap` Models through the fixed initial cursor boundary. Sync repairs a finite requested prefix rather than replaying every historical transition. Reconnect and moving heads do not rewrite committed S/B/C or make Bootstrap perpetual freshness.
 
-Preparation closes over bounded required identities before canonical Loader reads and head capture. The server stages an immutable DeliveryPlan and DeliveryUnits. Context, intent, header and part digests bind continuation; each continuation authorizes again. Expiry after five minutes returns `delivery.expired` and cleans staging, without claiming coverage. Limits are 100,000 identities and 256 MiB per plan; overflow refuses without partial committed staging.
+Preparation closes over bounded required identities before canonical Loader reads
+and head capture. Each request reauthorizes and builds a current-state cursor
+page in one Serializable view. The client sends its committed `after` and finite
+requested `through`; the server returns an advancing covered prefix at or below
+that bound. A page targets 500 changes but never splits a required component.
+Independent records moved beyond the bound are deferred to later Sync; required
+ahead companions can be included without advancing coverage to their positions.
+A repeated request may return newer content and a fresh response identity.
+
+Every HTTP page carries all transport fragments of its selected complete units.
+There is no persisted server payload, old-response continuation or server expiry
+cleanup. Clients commit data and cursor atomically, then request the next page
+from committed progress. Loss/reopen recomputes from B/C; it does not retrieve an
+old JSON response. Owned materialization returns its complete owner proof in one
+response and retries from current owner obligations. Response manifests/digests
+still validate fragments, and the five-minute lifetime bounds incomplete local
+staging only. Limits are 100,000 candidate identities and 256 MiB per response;
+capacity failure advances no cursor.
+
+The removed continuation field requires a coordinated backend/client update.
+There is no compatibility layer for old server-staged plans.
 
 Same-cursor, uniqueness and cascade dependencies remain complete atomic units. Fragments are transport pieces, never partial commit permission. The native delivery queue bounds metadata and payload, spilling large components to temporary disk staging. It validates and assembles a complete unit before one SQLite apply transaction. Earlier units may remain committed after a later failure; C never crosses unresolved coverage. An overlapping complete unit may apply unseen keys under per-key current/history guards, but partial fragments are never trimmed into invented coverage.
 

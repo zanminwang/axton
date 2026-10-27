@@ -67,6 +67,21 @@ fn real_postgres_delivery_capacity() {
         let started = Instant::now();
         let response: v05::DeliveryResponse = serde_json::from_slice(&bytes).unwrap();
         decoded_ms += started.elapsed().as_secs_f64() * 1000.0;
+        let request = v05::DeltaRequest {
+            context: context.clone(),
+            after: client
+                .store_status05()
+                .unwrap()
+                .bootstrap_cursor
+                .unwrap_or(0),
+            through: std::env::var("AXTON_CAPACITY_HEAD")
+                .unwrap()
+                .parse()
+                .unwrap(),
+            bootstrap: true,
+        };
+        response.admit(&request, &context).unwrap();
+        response.require_complete().unwrap();
         for part in &response.parts {
             *outstanding.entry(part.unit).or_default() += serde_json::to_vec(part).unwrap().len();
         }

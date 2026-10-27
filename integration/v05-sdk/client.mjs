@@ -953,8 +953,8 @@ if (process.argv[2] === "enqueue-child") {
         .filter((request) => request.route === "/sync/pull")
         .map((request) => JSON.parse(request.body));
       assert.ok(
-        pulls.filter((request) => request.continuation !== null).length >= 2,
-        "actual transport did not continue fragmented unit",
+        pulls.length >= 1 && pulls.every((request) => !("continuation" in request)),
+        "cursor pages must not request persisted response fragments",
       );
       const state = (
         await client.readSql(

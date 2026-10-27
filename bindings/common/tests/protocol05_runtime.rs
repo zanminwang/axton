@@ -226,8 +226,26 @@ fn real_slow_sql_keeps_fragment_reception_and_close_nonblocking() {
     actor::submit(id,json!({"type":"effectResult","effectId":socket["effectId"],"outcome":{"ok":true,"value":{"event":"message","body":json!({"header":plan.header,"parts":[plan.parts[0].clone()]}).to_string()}}})).unwrap();
     let events = wait(id);
     assert!(
-        events.iter().any(|e| e["operation"]["route"] == "pull"),
-        "control did not request missing part while SQL writer was blocked: {events:?}"
+        events.iter().any(|e| e["operation"]["kind"] == "timer"),
+        "control did not admit the fragment while SQL writer was blocked: {events:?}"
+    );
+    assert!(
+        events.iter().all(|e| e["operation"]["route"] != "pull"),
+        "a fragment must not request an old persisted server response"
+    );
+    actor::submit(id,json!({"type":"effectResult","effectId":socket["effectId"],"outcome":{"ok":true,"value":{"event":"message","body":json!({"header":plan.header,"parts":[plan.parts[1].clone()]}).to_string()}}})).unwrap();
+    let mut invalid = plan.parts[1].clone();
+    invalid.changes[0] = v05::AuthorityChange::Remove {
+        key: invalid.changes[0].key().clone(),
+        cursor: 1,
+    };
+    actor::submit(id,json!({"type":"effectResult","effectId":socket["effectId"],"outcome":{"ok":true,"value":{"event":"message","body":json!({"header":plan.header,"parts":[invalid]}).to_string()}}})).unwrap();
+    let events = wait(id);
+    assert!(
+        events.iter().any(|e| e["diagnostic"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("fragment correlation mismatch"))),
+        "control did not validate the next frame while SQL was blocked: {events:?}"
     );
     assert_eq!(
         blocker

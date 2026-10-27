@@ -174,13 +174,14 @@ async function answer05(
             throw new Error("delivery.identity_untracked");
         }
       }
+      const pageSize = r.pageSize == null ? null : Math.min(positiveCounter(r.pageSize), cap);
+      const select = `SELECT r.model,r.identity_key,s.cursor,s.kind FROM axton_stream_record s JOIN axton_record r ON r.id=s.record_id WHERE s.stream=$1 AND s.cursor>$2 AND ($3::text[] IS NULL OR r.model=ANY($3::text[]) OR EXISTS(SELECT 1 FROM jsonb_array_elements($4::jsonb) k WHERE k->>'model'=r.model AND k->>'identityKey'=r.identity_key))`;
       const rows = await q(
-        `SELECT r.model,r.identity_key,s.cursor,s.kind FROM axton_stream_record s JOIN axton_record r ON r.id=s.record_id WHERE s.stream=$1 AND s.cursor>$2 AND ($3::text[] IS NULL OR r.model=ANY($3::text[]) OR EXISTS(SELECT 1 FROM jsonb_array_elements($4::jsonb) k WHERE k->>'model'=r.model AND k->>'identityKey'=r.identity_key)) ORDER BY s.cursor,r.model COLLATE "C",r.identity_key COLLATE "C" LIMIT $5`,
-        r.stream,
-        safe(r.after),
-        models,
-        JSON.stringify(keys ?? []),
-        cap + 1,
+        pageSize === null
+          ? `${select} ORDER BY s.cursor,r.model COLLATE "C",r.identity_key COLLATE "C" LIMIT $5`
+          : `SELECT * FROM (${select} ORDER BY s.cursor FETCH FIRST $6 ROWS WITH TIES) page LIMIT $5`,
+        r.stream, safe(r.after), models, JSON.stringify(keys ?? []), cap + 1,
+        ...(pageSize === null ? [] : [pageSize + 1]),
       );
       if (rows.length > cap) return null;
       return rows.map((row) => ({
@@ -189,79 +190,6 @@ async function answer05(
         cursor: positiveCounter(row.cursor),
         kind: row.kind,
       }));
-    }
-    case "saveDelivery": {
-      const header = r.header as any,
-        parts = r.parts as any[];
-      const headerJson = JSON.stringify(header),
-        partJson = parts.map((part) => JSON.stringify(part));
-      const bytes =
-        Buffer.byteLength(headerJson) +
-        partJson.reduce((n, p) => n + Buffer.byteLength(p), 0);
-      if (bytes > 256 * 1024 * 1024) return false;
-      // Cleanup is committed independently of a later continuation's expiry response.
-      await q(
-        "DELETE FROM axton_delivery_plan WHERE expires_at<=floor(extract(epoch from clock_timestamp())*1000)",
-      );
-      await q(
-        "INSERT INTO axton_delivery_plan(plan_id,principal,store_id,context,intent,header,digest,expires_at,staged_bytes) VALUES($1,$2,$3,$4::jsonb,$5,$6::jsonb,$7,$8,$9)",
-        header.planId,
-        r.owner,
-        header.storeId,
-        JSON.stringify({
-          protocol: header.protocol,
-          storeId: header.storeId,
-          stream: header.stream,
-          materialization: header.materialization,
-        }),
-        r.intent,
-        headerJson,
-        header.digest,
-        header.expiresAt,
-        bytes,
-      );
-      for (const group of batches(
-        parts.map((part, i) => ({
-          unit: part.unit,
-          part: part.part,
-          payload: part,
-          digest: header.units[part.unit].parts[part.part],
-        })),
-      ))
-        await q(
-          "INSERT INTO axton_delivery_unit(plan_id,unit_index,part_index,payload,digest) SELECT $1,(v->>'unit')::bigint,(v->>'part')::bigint,v->'payload',v->>'digest' FROM jsonb_array_elements($2::jsonb) v",
-          header.planId,
-          JSON.stringify(group),
-        );
-      return true;
-    }
-    case "readDelivery": {
-      const c = r.continuation as any;
-      const [plan] = await q(
-        "SELECT header,expires_at FROM axton_delivery_plan WHERE plan_id=$1 AND principal=$2 AND store_id=$3 AND context=$4::jsonb AND intent=$5 AND digest=$6",
-        c.planId,
-        r.owner,
-        (r.context as any).storeId,
-        JSON.stringify(r.context),
-        r.intent,
-        c.digest,
-      );
-      if (!plan) return null;
-      const [time] = await q(
-        "SELECT floor(extract(epoch from clock_timestamp())*1000)::bigint now",
-      );
-      if (safe(plan.expires_at) <= safe(time!.now)) {
-        await q("DELETE FROM axton_delivery_plan WHERE plan_id=$1", c.planId);
-        return null;
-      }
-      const [part] = await q(
-        "SELECT payload FROM axton_delivery_unit WHERE plan_id=$1 AND unit_index=$2 AND part_index=$3",
-        c.planId,
-        safe(c.unit),
-        safe(c.part),
-      );
-      if (!part) throw new Error("delivery.part_invalid");
-      return { header: json(plan.header), parts: [json(part.payload)] };
     }
     case "handleBootstrap05":
       throw new Error("bootstrap belongs to application host");

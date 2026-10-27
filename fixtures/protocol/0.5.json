@@ -51,21 +51,6 @@
       "startCursor": 40
     }
   },
-  "continuedDelta": {
-    "after": 0,
-    "bootstrap": false,
-    "continuation": {
-      "digest": "68263a54eaba02f2dd89264e6a84987b3c35bac04dac2d47059032791f18cbc9",
-      "part": 1,
-      "planId": "plan",
-      "unit": 0
-    },
-    "materialization": "schema1",
-    "protocol": 5,
-    "storeId": "store",
-    "stream": "User:a",
-    "through": 4
-  },
   "deliveryHeader": {
     "after": 0,
     "bootstrap": false,
@@ -248,7 +233,6 @@
   "deltaRequest": {
     "after": 0,
     "bootstrap": false,
-    "continuation": null,
     "materialization": "schema1",
     "protocol": 5,
     "storeId": "store",
@@ -285,7 +269,6 @@
     "stream": "User:a"
   },
   "materializationRequest": {
-    "continuation": null,
     "keys": [
       {
         "identity": {
@@ -564,7 +547,6 @@
     "kind": "remove"
   },
   "schemaMaterializationRequest": {
-    "continuation": null,
     "keys": [],
     "materialization": "schema1",
     "models": {
@@ -600,5 +582,14 @@
       "model": "Entry"
     },
     "kind": "stream"
+  },
+  "cursorPageRequest": {
+    "after": 2,
+    "bootstrap": false,
+    "materialization": "schema1",
+    "protocol": 5,
+    "storeId": "store",
+    "stream": "User:a",
+    "through": 4
   }
 }

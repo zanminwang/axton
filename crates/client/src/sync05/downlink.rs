@@ -330,27 +330,8 @@ impl Control {
             }
             Flight::Delta(request) => {
                 let response: v05::DeliveryResponse = serde_json::from_str(&body)?;
-                if response.header.context != request.context
-                    || response.header.after != Some(request.after)
-                    || response.header.through != Some(request.through)
-                    || response.header.bootstrap != request.bootstrap
-                    || response.header.owner.is_some()
-                {
-                    return Err(invalid("delta correlation mismatch"));
-                }
-                if let Some(c) = &request.continuation
-                    && (c.plan_id != response.header.plan_id || c.digest != response.header.digest)
-                {
-                    return Err(invalid("continuation mismatch"));
-                }
-                if let Some(c) = &request.continuation
-                    && !response
-                        .parts
-                        .iter()
-                        .any(|p| p.unit == c.unit && p.part == c.part)
-                {
-                    return Err(invalid("continuation omitted requested fragment"));
-                }
+                response.admit(&request, &self.context)?;
+                response.require_complete()?;
                 self.head = self.head.max(response.header.observed_head);
                 self.queue
                     .receive(&response.header, &response.parts, &self.context, now)?;
@@ -358,6 +339,7 @@ impl Control {
             }
             Flight::Owned(request) => {
                 let response: v05::MaterializationResponse = serde_json::from_str(&body)?;
+                response.delivery.require_complete()?;
                 self.queue
                     .receive_owned(&request, &response, &self.context, now)?;
                 self.schedule(now)?;
@@ -536,7 +518,6 @@ impl Control {
                         },
                         keys: schema.authority_keys,
                         models: schema.bootstrap_models,
-                        continuation: None,
                     };
                     self.owned(request)?;
                 }
@@ -557,7 +538,6 @@ impl Control {
                             },
                             keys: pending.missing_keys,
                             models: BTreeMap::new(),
-                            continuation: None,
                         };
                         self.owned(request)?;
                     }
@@ -725,33 +705,6 @@ impl Control {
         if self.flights.values().any(|f| matches!(f, Flight::Delta(_))) {
             return Ok(());
         }
-        if let Some(c) = self.queue.continuations().first() {
-            let p = &self.queue.plans[&c.plan_id];
-            if let Some(original) = &p.owner {
-                let mut request = original.clone();
-                request.continuation = Some(c.clone());
-                if !self
-                    .flights
-                    .values()
-                    .any(|f| matches!(f,Flight::Owned(r) if r.owner==request.owner))
-                {
-                    return self.http(
-                        Flight::Owned(request.clone()),
-                        HttpRoute::Materialize,
-                        &request,
-                    );
-                }
-            } else if p.header.owner.is_none() {
-                let request = v05::DeltaRequest {
-                    context: self.context.clone(),
-                    after: p.header.after.unwrap(),
-                    through: p.header.through.unwrap(),
-                    bootstrap: p.header.bootstrap,
-                    continuation: Some(c.clone()),
-                };
-                return self.http(Flight::Delta(request.clone()), HttpRoute::Pull, &request);
-            }
-        }
         if self.status.start_cursor.is_none() {
             return Ok(());
         }
@@ -769,7 +722,7 @@ impl Control {
         if self.queue.plans.values().any(|p| {
             p.header.bootstrap == bootstrap
                 && p.header.after.is_some_and(|a| a <= after)
-                && p.header.through.is_some_and(|end| end >= through)
+                && p.header.through.is_some_and(|end| end >= after)
         }) {
             return Ok(());
         }
@@ -779,7 +732,6 @@ impl Control {
                 after,
                 through,
                 bootstrap,
-                continuation: None,
             };
             self.http(Flight::Delta(request.clone()), HttpRoute::Pull, &request)?;
         }

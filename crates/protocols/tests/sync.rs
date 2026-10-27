@@ -170,8 +170,7 @@ fn strict_read_and_delta_context() {
     let mut bad = read;
     bad["records"][0]["key"]["unknown"] = json!(true);
     rejects::<ReadResponse>(bad);
-    let value =
-        wire(json!({"context":ctx(),"after":0,"through":40,"bootstrap":true,"continuation":null}));
+    let value = wire(json!({"context":ctx(),"after":0,"through":40,"bootstrap":true}));
     let delta = decode::<DeltaRequest>(&serde_json::to_vec(&value).unwrap()).unwrap();
     assert_eq!(delta.after, 0);
     let mut bad = value;
@@ -358,10 +357,7 @@ fn handshake_and_reads_correlate_store_stream_request_and_modes() {
     value["invocation"]["extra"] = json!(true);
     rejects::<ReadRequest>(value);
     let delta = decode::<DeltaRequest>(
-        &serde_json::to_vec(&wire(
-            json!({"context":ctx(),"after":0,"through":4,"continuation":null}),
-        ))
-        .unwrap(),
+        &serde_json::to_vec(&wire(json!({"context":ctx(),"after":0,"through":4}))).unwrap(),
     )
     .unwrap();
     assert!(!delta.bootstrap);
@@ -377,7 +373,7 @@ fn handshake_and_reads_correlate_store_stream_request_and_modes() {
 }
 #[test]
 fn owned_materialization_has_no_ranges_and_rejects_foreign_keys_or_owner() {
-    let req=decode::<MaterializationRequest>(&serde_json::to_vec(&wire(json!({"context":ctx(),"requestId":"owned1","owner":{"kind":"settlement","batchId":1,"mutationId":2},"keys":[{"model":"Entry","identity":{"id":"e"}}],"models":{},"continuation":null}))).unwrap()).unwrap();
+    let req=decode::<MaterializationRequest>(&serde_json::to_vec(&wire(json!({"context":ctx(),"requestId":"owned1","owner":{"kind":"settlement","batchId":1,"mutationId":2},"keys":[{"model":"Entry","identity":{"id":"e"}}],"models":{}}))).unwrap()).unwrap();
     let unit = DeliveryUnit {
         index: 0,
         through: None,
@@ -427,7 +423,7 @@ fn owned_materialization_has_no_ranges_and_rejects_foreign_keys_or_owner() {
         freeze_materialization(ctx(), "bad".into(), req.owner, 40, 100, vec![covered], 1).is_err()
     );
     let schema = wire(
-        json!({"context":ctx(),"requestId":"schema","owner":{"kind":"schema","previousMaterialization":"old"},"keys":[],"models":{"Entry":2},"continuation":null}),
+        json!({"context":ctx(),"requestId":"schema","owner":{"kind":"schema","previousMaterialization":"old"},"keys":[],"models":{"Entry":2}}),
     );
     assert!(decode::<MaterializationRequest>(&serde_json::to_vec(&schema).unwrap()).is_ok());
     let mut bad = schema;
@@ -462,7 +458,6 @@ fn shared_wire_fixture_roundtrips_every_message_and_hash_domain() {
             identity: json!({"id":"e"}),
         }],
         models: Default::default(),
-        continuation: None,
     };
     let owned = freeze_materialization(
         ctx(),
@@ -531,7 +526,6 @@ fn shared_wire_fixture_roundtrips_every_message_and_hash_domain() {
         },
         keys: vec![],
         models: std::collections::BTreeMap::from([("Entry".into(), 2)]),
-        continuation: None,
     };
     let mut rejected = acknowledgement.clone();
     rejected.results[0].outcome = MutationOutcome::Rejected {
@@ -545,8 +539,8 @@ fn shared_wire_fixture_roundtrips_every_message_and_hash_domain() {
         "queryRequest":query,"fetchRequest":fetch,"readSuccess":success,"readFailure":failure,
         "readRecord":snapshot,"streamTarget":SettlementTarget::Stream{key:snapshot.key.clone(),cursor:20,fallback:snapshot.clone()},
         "privateTarget":SettlementTarget::Private{record:snapshot},
-        "deltaRequest":DeltaRequest{context:ctx(),after:0,through:4,bootstrap:false,continuation:None},
-        "continuedDelta":DeltaRequest{context:ctx(),after:0,through:4,bootstrap:false,continuation:Some(Continuation{plan_id:f.header.plan_id.clone(),digest:f.header.digest.clone(),unit:0,part:1})},
+        "deltaRequest":DeltaRequest{context:ctx(),after:0,through:4,bootstrap:false},
+        "cursorPageRequest":DeltaRequest{context:ctx(),after:2,through:4,bootstrap:false},
         "deliveryHeader":f.header,"deliveryUnit":DeliveryUnit{index:0,through:Some(4),changes:f.parts.iter().flat_map(|p|p.changes.clone()).collect()},
         "deliveryPart":f.parts[0],"deliveryResponse":DeliveryResponse{header:f.header.clone(),parts:f.parts.clone()},
         "materializationRequest":materialize,"schemaMaterializationRequest":schema,
@@ -578,7 +572,7 @@ fn shared_wire_fixture_roundtrips_every_message_and_hash_domain() {
     check!("streamTarget", SettlementTarget);
     check!("privateTarget", SettlementTarget);
     check!("deltaRequest", DeltaRequest);
-    check!("continuedDelta", DeltaRequest);
+    check!("cursorPageRequest", DeltaRequest);
     check!("deliveryHeader", DeliveryHeader);
     check!("deliveryUnit", DeliveryUnit);
     check!("deliveryPart", DeliveryPart);
@@ -637,7 +631,6 @@ fn full_materialization_checks_required_identity_set_before_completion() {
             identity: json!({"id":"required"}),
         }],
         models: Default::default(),
-        continuation: None,
     };
     let empty = DeliveryUnit {
         index: 0,
@@ -701,138 +694,67 @@ fn receipt_stream_target_cannot_exceed_its_fenced_sync_head() {
     assert!(validate_acknowledgement(&r, &a).is_err());
 }
 
-fn owned_continuation_fixture(schema: bool) -> (MaterializationRequest, MaterializationResponse) {
+#[test]
+fn owned_retry_accepts_a_fresh_response_but_rejects_changed_owner_or_request() {
     let fixture: Value =
         serde_json::from_str(include_str!("../../../fixtures/protocol/0.5.json")).unwrap();
-    let mut request: MaterializationRequest =
+    let request: MaterializationRequest =
         serde_json::from_value(fixture["materializationRequest"].clone()).unwrap();
-    let mut response: MaterializationResponse =
+    let original: MaterializationResponse =
         serde_json::from_value(fixture["materializationResponse"].clone()).unwrap();
-    if schema {
-        request.owner = MaterializationOwner::Schema {
-            previous_materialization: "schema0".into(),
-        };
-        let frozen = freeze_materialization(
-            ctx(),
-            response.delivery.header.plan_id.clone(),
-            request.owner.clone(),
-            response.delivery.header.observed_head,
-            response.delivery.header.expires_at,
-            vec![DeliveryUnit {
-                index: 0,
-                through: None,
-                changes: response.delivery.parts[0].changes.clone(),
+    let frozen = freeze_materialization(
+        ctx(),
+        "fresh-response".into(),
+        request.owner.clone(),
+        41,
+        10001,
+        vec![DeliveryUnit {
+            index: 0,
+            through: None,
+            changes: vec![AuthorityChange::Record {
+                key: request.keys[0].clone(),
+                cursor: 41,
+                state: json!({"text":"latest"}),
             }],
-            1,
-        )
-        .unwrap();
-        response.delivery = DeliveryResponse {
+        }],
+        500,
+    )
+    .unwrap();
+    let mut fresh = MaterializationResponse {
+        request_id: request.request_id.clone(),
+        delivery: DeliveryResponse {
             header: frozen.header,
             parts: frozen.parts,
-        };
-    }
-    request.continuation = Some(Continuation {
-        plan_id: response.delivery.header.plan_id.clone(),
-        digest: response.delivery.header.digest.clone(),
-        unit: 0,
-        part: 0,
+        },
+    };
+    assert_ne!(
+        fresh.delivery.header.plan_id,
+        original.delivery.header.plan_id
+    );
+    fresh.admit(&request, &ctx()).unwrap();
+    fresh.delivery.require_complete().unwrap();
+    fresh.request_id = "other-request".into();
+    assert!(fresh.admit(&request, &ctx()).is_err());
+    fresh.request_id = request.request_id.clone();
+    fresh.delivery.header.owner = Some(MaterializationOwner::Settlement {
+        batch_id: 99,
+        mutation_id: 99,
     });
-    response.admit(&request, &ctx()).unwrap();
-    (request, response)
+    fresh.delivery.header.digest = delivery_digest(&fresh.delivery.header).unwrap();
+    assert!(fresh.admit(&request, &ctx()).is_err());
 }
 
 #[test]
-fn owned_continuation_rejects_replacement_plan_id_under_same_owner_context() {
-    for schema in [false, true] {
-        let (request, response) = owned_continuation_fixture(schema);
-        let header = &response.delivery.header;
-        let replacement = freeze_materialization(
-            ctx(),
-            "replacement-owned".into(),
-            request.owner.clone(),
-            header.observed_head,
-            header.expires_at,
-            vec![DeliveryUnit {
-                index: 0,
-                through: None,
-                changes: response.delivery.parts[0].changes.clone(),
-            }],
-            1,
-        )
-        .unwrap();
-        let replacement = MaterializationResponse {
-            request_id: request.request_id.clone(),
-            delivery: DeliveryResponse {
-                header: replacement.header,
-                parts: replacement.parts,
-            },
-        };
-        assert_eq!(
-            replacement.delivery.header.context,
-            response.delivery.header.context
-        );
-        assert_eq!(
-            replacement.delivery.header.owner,
-            response.delivery.header.owner
-        );
-        assert_ne!(
-            replacement.delivery.header.plan_id,
-            request.continuation.as_ref().unwrap().plan_id
-        );
-        assert!(
-            replacement.admit(&request, &ctx()).is_err(),
-            "owned continuation admitted a replacement plan"
-        );
-    }
-}
-
-#[test]
-fn owned_continuation_rejects_changed_digest_under_same_plan_owner_context() {
-    for schema in [false, true] {
-        let (request, response) = owned_continuation_fixture(schema);
-        let header = &response.delivery.header;
-        let replacement = freeze_materialization(
-            ctx(),
-            header.plan_id.clone(),
-            request.owner.clone(),
-            header.observed_head,
-            header.expires_at + 1,
-            vec![DeliveryUnit {
-                index: 0,
-                through: None,
-                changes: response.delivery.parts[0].changes.clone(),
-            }],
-            1,
-        )
-        .unwrap();
-        let replacement = MaterializationResponse {
-            request_id: request.request_id.clone(),
-            delivery: DeliveryResponse {
-                header: replacement.header,
-                parts: replacement.parts,
-            },
-        };
-        assert_eq!(
-            replacement.delivery.header.context,
-            response.delivery.header.context
-        );
-        assert_eq!(
-            replacement.delivery.header.owner,
-            response.delivery.header.owner
-        );
-        assert_eq!(
-            replacement.delivery.header.plan_id,
-            request.continuation.as_ref().unwrap().plan_id
-        );
-        assert_ne!(
-            replacement.delivery.header.digest,
-            request.continuation.as_ref().unwrap().digest
-        );
-        assert!(
-            replacement.admit(&request, &ctx()).is_err(),
-            "owned continuation admitted a changed plan digest"
-        );
-    }
+fn removed_server_continuation_fields_are_rejected() {
+    let mut request = serde_json::to_value(DeltaRequest {
+        context: ctx(),
+        after: 0,
+        through: 4,
+        bootstrap: false,
+    })
+    .unwrap();
+    request["continuation"] = json!({"planId":"old","digest":"0".repeat(64),"unit":0,"part":0});
+    assert!(decode::<DeltaRequest>(&serde_json::to_vec(&request).unwrap()).is_err());
 }
 
 #[test]

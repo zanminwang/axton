@@ -129,18 +129,8 @@ pub enum Protocol05Operation {
         models: Option<Vec<String>>,
         keys: Option<Vec<MemberKey>>,
         capacity: u64,
-    },
-    SaveDelivery {
-        owner: String,
-        intent: String,
-        header: crate::sync::DeliveryHeader,
-        parts: Vec<crate::sync::DeliveryPart>,
-    },
-    ReadDelivery {
-        owner: String,
-        context: crate::sync::RequestContext,
-        intent: String,
-        continuation: crate::sync::Continuation,
+        #[serde(default)]
+        page_size: Option<u64>,
     },
     Admit {
         owner: String,
@@ -568,9 +558,7 @@ impl TryFrom<HandledActionWire> for HandledAction {
     }
 }
 
-/// A native Load answers its identity lists, continuation and optional tracking.
-/// Tracking is legal only beside successful data, never a refusal/failure.
-/// The page engine validates continuation, identities and returned-record bounds.
+/// Handler effects or a typed refusal/failure; declarations accompany success only.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HandledWire {

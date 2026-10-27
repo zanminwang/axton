@@ -107,6 +107,101 @@ fn change(id: &str, cursor: u64) -> v05::AuthorityChange {
     }
 }
 #[test]
+fn cursor_pages_resume_after_reopen_and_later_sync_installs_current_state_and_deletion() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db");
+    let mut c = client(&path);
+    c.initialize_stream05(2).unwrap();
+    let context = c.request_context05().unwrap();
+    let page = |id: &str, bootstrap, after, through, changes| {
+        v05::freeze_delivery(
+            context.clone(),
+            id.into(),
+            if bootstrap {
+                v05::DeliveryPurpose::Bootstrap
+            } else {
+                v05::DeliveryPurpose::Sync
+            },
+            after,
+            through,
+            4,
+            10000,
+            vec![v05::DeliveryUnit {
+                index: 0,
+                through: Some(through),
+                changes,
+            }],
+            500,
+        )
+        .unwrap()
+    };
+    let first = page(
+        "first",
+        true,
+        0,
+        1,
+        vec![change("a", 1), change("deleted", 1)],
+    );
+    let request = v05::DeltaRequest {
+        context: context.clone(),
+        after: 0,
+        through: 2,
+        bootstrap: true,
+    };
+    let response = v05::DeliveryResponse {
+        header: first.header.clone(),
+        parts: first.parts.clone(),
+    };
+    response.admit(&request, &context).unwrap();
+    response.require_complete().unwrap();
+    let mut queue = DeliveryQueue::new(1000000, 4);
+    queue
+        .receive(&first.header, &first.parts, &context, 1)
+        .unwrap();
+    c.apply_next_delivery05(&mut queue, 1).unwrap().unwrap();
+    assert_eq!(c.store_status05().unwrap().bootstrap_cursor, Some(1));
+    drop(c);
+    let mut c = client(&path);
+    assert_eq!(c.store_status05().unwrap().bootstrap_cursor, Some(1));
+    // The unconsumed b@2 has moved to 3. Completing the fixed Bootstrap
+    // prefix does not require retrieving its old payload or a server plan.
+    let second = page("fresh-after-reopen", true, 1, 2, vec![]);
+    queue
+        .receive(&second.header, &second.parts, &context, 1)
+        .unwrap();
+    c.apply_next_delivery05(&mut queue, 1).unwrap().unwrap();
+    assert_eq!(c.store_status05().unwrap().bootstrap_cursor, Some(2));
+    let mut latest = change("b", 3);
+    if let v05::AuthorityChange::Record { state, .. } = &mut latest {
+        *state = serde_json::json!({"text":"latest","note":null});
+    }
+    let deleted = v05::AuthorityChange::Record {
+        key: v05::RecordKey {
+            model: "Entry".into(),
+            identity: serde_json::json!({"id":"deleted"}),
+        },
+        cursor: 4,
+        state: serde_json::Value::Null,
+    };
+    let sync = page("latest", false, 2, 4, vec![latest, deleted]);
+    queue
+        .receive(&sync.header, &sync.parts, &context, 1)
+        .unwrap();
+    c.apply_next_delivery05(&mut queue, 1).unwrap().unwrap();
+    let key = |id| axton_client::RecordKey {
+        model: "Entry".into(),
+        identity: serde_json::json!({"id":id}),
+    };
+    assert_eq!(c.read(&key("b")).unwrap().unwrap()["text"], "latest");
+    assert!(c.read(&key("deleted")).unwrap().is_none());
+    assert_eq!(c.store_status05().unwrap().cursor, Some(4));
+    queue
+        .receive(&first.header, &first.parts, &context, 1)
+        .unwrap();
+    assert!(c.apply_next_delivery05(&mut queue, 1).unwrap().is_none());
+    assert!(c.read(&key("deleted")).unwrap().is_none());
+}
+#[test]
 fn socket_http_overlap_repeated_fragment_and_changed_payload_are_fenced() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
@@ -461,7 +556,6 @@ fn owned_schema_transfer_waits_for_all_parts_and_reproves_newly_held_keys() {
         },
         keys: pending.authority_keys,
         models: pending.bootstrap_models,
-        continuation: None,
     };
     let f = v05::freeze_materialization(
         request.context.clone(),
@@ -1507,7 +1601,7 @@ fn completed_settlement_is_not_resubmitted_after_auth_refresh() {
 }
 
 #[test]
-fn completed_settlement_discards_partial_owned_plan() {
+fn incomplete_owned_http_is_rejected_and_completed_owner_is_not_resurrected() {
     use axton_client::{
         runtime::{EffectOutcome, Event, HttpRoute, Operation},
         sync05::StoreReport,
@@ -1535,7 +1629,8 @@ fn completed_settlement_discards_partial_owned_plan() {
             parts: vec![],
         },
     };
-    control
+    let before = c.store_status05().unwrap();
+    let error = control
         .receive(
             &id,
             EffectOutcome {
@@ -1547,39 +1642,9 @@ fn completed_settlement_discards_partial_owned_plan() {
             },
             1,
         )
-        .unwrap();
-    let continuation = control
-        .events()
-        .into_iter()
-        .find_map(|e| match e {
-            Event::Effect {
-                effect_id,
-                operation:
-                    Operation::Http {
-                        route: HttpRoute::Materialize,
-                        ..
-                    },
-            } => Some(effect_id),
-            _ => None,
-        })
-        .expect("incomplete pending owner must request its missing fragment");
-    control.set_refresh_auth(true);
-    control
-        .receive(
-            &continuation,
-            EffectOutcome {
-                ok: false,
-                value: None,
-                error: Some(axton_client::runtime::EffectError {
-                    message: "expired token".into(),
-                    status: Some(401),
-                    refusal: None,
-                    retry: false,
-                }),
-            },
-            2,
-        )
-        .unwrap();
+        .unwrap_err();
+    assert!(error.to_string().contains("incomplete cursor page"));
+    assert_eq!(c.store_status05().unwrap().cursor, before.cursor);
     control.events();
     complete_settlement_from_stream(&mut c, &mut control);
     assert!(
@@ -1598,7 +1663,7 @@ fn completed_settlement_discards_partial_owned_plan() {
     control
         .report(StoreReport::Snapshot(c.store_status05().unwrap()), 3)
         .unwrap();
-    // No old continuation may be resurrected after cancellation, including by a
+    // No retired owner may be resurrected after a failed response, including by a
     // subsequent scheduling pass with the unchanged materialization context.
     control.report(StoreReport::Frozen(None), 3).unwrap();
     assert!(

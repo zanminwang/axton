@@ -356,21 +356,8 @@ impl DeliveryQueue {
             && let Some(original) = &plan.owner
         {
             request.validate()?;
-            let mut current = request.clone();
-            current.continuation = original.continuation.clone();
-            if *original != current || response.request_id != request.request_id {
+            if original != request || response.request_id != request.request_id {
                 return Err(invalid("changed materialization owner"));
-            }
-            if let Some(c) = &request.continuation
-                && (c.plan_id != response.delivery.header.plan_id
-                    || c.digest != response.delivery.header.digest
-                    || !response
-                        .delivery
-                        .parts
-                        .iter()
-                        .any(|p| p.unit == c.unit && p.part == c.part))
-            {
-                return Err(invalid("materialization continuation mismatch"));
             }
             for change in response.delivery.parts.iter().flat_map(|p| &p.changes) {
                 if !plan.owner_keys.contains(&change.key().encoded()?)
@@ -393,9 +380,7 @@ impl DeliveryQueue {
             .get_mut(&response.delivery.header.plan_id)
             .unwrap();
         if let Some(original) = &plan.owner {
-            let mut current = request.clone();
-            current.continuation = original.continuation.clone();
-            if *original != current {
+            if original != request {
                 return Err(invalid("changed materialization owner"));
             }
         } else {
@@ -423,32 +408,5 @@ impl DeliveryQueue {
     }
     pub fn is_empty(&self) -> bool {
         self.plans.is_empty()
-    }
-    pub fn continuations(&self) -> Vec<v05::Continuation> {
-        self.plans
-            .values()
-            .filter(|p| !p.blocked)
-            .filter_map(|p| {
-                let end = if p.header.owner.is_some() {
-                    p.header.units.len() as u64
-                } else {
-                    p.next + 1
-                };
-                for unit in p.next..end {
-                    let manifest = p.header.units.get(unit as usize)?;
-                    if let Some(part) = (0..manifest.parts.len() as u64)
-                        .find(|part| !p.parts.contains_key(&(unit, *part)))
-                    {
-                        return Some(v05::Continuation {
-                            plan_id: p.header.plan_id.clone(),
-                            digest: p.header.digest.clone(),
-                            unit,
-                            part,
-                        });
-                    }
-                }
-                None
-            })
-            .collect()
     }
 }

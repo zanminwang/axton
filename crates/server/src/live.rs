@@ -83,7 +83,6 @@ impl Subscriptions {
             after: head,
             through: head,
             bootstrap: false,
-            continuation: None,
         })
         .unwrap();
         (
@@ -130,7 +129,6 @@ impl Subscriptions {
                     after,
                     through: after,
                     bootstrap: false,
-                    continuation: None,
                 })
                 .map_err(crate::internal)?;
                 Ok(vec![LiveAction::PullV05 { request }])
@@ -184,33 +182,14 @@ impl Subscriptions {
                 .map_err(crate::internal)?;
                 let mut actions = vec![LiveAction::Send { frame: page }];
                 if progress.next_unit == progress.header.units.len() as u64 {
+                    let more = self.streams[0].cursor < progress.header.observed_head;
                     self.progress05 = None;
                     self.running = None;
-                    if self.streams[0].pending {
+                    if self.streams[0].pending || more {
                         actions.extend(self.handle05(LiveEvent::Committed {
                             stream: context.stream,
                         })?);
                     }
-                } else {
-                    let manifest = &progress.header.units[progress.next_unit as usize];
-                    let part = (0..manifest.parts.len() as u64)
-                        .find(|p| !progress.parts.contains(p))
-                        .ok_or_else(|| Error::code(code::LIVE_INVALID_PAGE))?;
-                    let r = v05::DeltaRequest {
-                        context,
-                        after: progress.header.after.unwrap(),
-                        through: progress.header.through.unwrap(),
-                        bootstrap: false,
-                        continuation: Some(v05::Continuation {
-                            plan_id: progress.header.plan_id.clone(),
-                            digest: progress.header.digest.clone(),
-                            unit: progress.next_unit,
-                            part,
-                        }),
-                    };
-                    actions.push(LiveAction::PullV05 {
-                        request: serde_json::to_string(&r).map_err(crate::internal)?,
-                    });
                 }
                 Ok(actions)
             }

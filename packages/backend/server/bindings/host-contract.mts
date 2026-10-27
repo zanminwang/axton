@@ -18,7 +18,7 @@ export type HandleActionRequest = {
   ordinal: number;
   context?: HandlerContext;
 };
-/** Portable JSON: what a Load continuation state may hold. */
+/** Portable JSON carried through host calls. */
 export type JsonValue =
   null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 /**
@@ -79,25 +79,7 @@ export type Protocol05Operation =
       models: string[] | null;
       keys: MemberKey[] | null;
       capacity: number;
-    }
-  | {
-      op: "saveDelivery";
-      owner: string;
-      intent: string;
-      header: JsonValue;
-      parts: JsonValue[];
-    }
-  | {
-      op: "readDelivery";
-      owner: string;
-      context: Protocol05Context;
-      intent: string;
-      continuation: {
-        planId: string;
-        digest: string;
-        unit: number;
-        part: number;
-      };
+      pageSize?: number | null;
     }
   | { op: "admit"; owner: string; context: Protocol05Context }
   | { op: "inspectStore"; storeId: string }

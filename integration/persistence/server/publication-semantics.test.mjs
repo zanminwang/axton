@@ -288,11 +288,7 @@ test("targeted authoritative Loader failure aborts delivery without fabricating 
     const before = await rows();
     failLoader("alice");
     await assert.rejects(pull("alice"));
-    assert.equal(
-      (await admin.query("SELECT count(*) n FROM axton_delivery_plan")).rows[0]
-        .n,
-      "0",
-    );
+    assert.equal((await admin.query("SELECT to_regclass('axton_delivery_plan') AS plan")).rows[0].plan,null);
     assert.deepEqual(await rows(), before);
     assert.equal((await pull("bob")).parts[0].changes[0].state.text, "kept");
     failLoader(undefined);

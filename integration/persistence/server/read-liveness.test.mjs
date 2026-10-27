@@ -371,14 +371,14 @@ test("ordinary read refuses existing Store owner or Stream mismatch before appli
   }
 });
 
-// Exercise the whole delivery request, including plan INSERT foreign-key checks,
+// Exercise complete cursor reads in READ ONLY transactions,
 // while a real same-Store Mutation holds its progress guard inside a handler.
 for (const kind of [
   "handshake",
   "pull",
   "live",
   "materialization",
-  "continuation",
+  "cursor_resume",
 ]) {
   test(
     `${kind} on an initialized Store completes while its Mutation handler is suspended`,
@@ -387,10 +387,12 @@ for (const kind of [
       const namespace = `delivery_liveness_${kind}`,
         admin = await pool.connect(),
         base = pg(pool);
+      let readOnly = false;
       const database = {
         ...base,
         transaction: (body) =>
           base.transaction(async (tx) => {
+            if (readOnly) await tx.query("SET TRANSACTION READ ONLY");
             await tx.query(`SET LOCAL search_path=${namespace}`);
             return body(tx);
           }),
@@ -472,6 +474,10 @@ for (const kind of [
         await app.transaction(({ streams }) =>
           streams(["User:alice"]).track.task({ id: "initial" }),
         );
+        if(kind==='cursor_resume'){
+          await admin.query("INSERT INTO business VALUES('second','before')");
+          await app.transaction(({streams})=>streams(['User:alice']).track.task({id:'second'}));
+        }
         const hello = {
           protocol: 5,
           storeId: "same-store",
@@ -487,17 +493,10 @@ for (const kind of [
           through: ack.head,
           bootstrap: false,
         };
-        let continuation;
-        if (kind === "continuation") {
-          const first = JSON.parse(
-            await app.pull("alice", JSON.stringify(delta)),
-          );
-          continuation = {
-            planId: first.header.planId,
-            digest: first.header.digest,
-            unit: 0,
-            part: 0,
-          };
+        if(kind==='cursor_resume'){
+          const first=JSON.parse(await app.pull('alice',JSON.stringify({...delta,through:1})));
+          delta.after=first.header.through;
+          assert.equal(delta.after,1);
         }
         const invoke = (owner = "alice", stream = "User:alice") => {
           const ctx = { ...context, stream };
@@ -520,7 +519,6 @@ for (const kind of [
           const request = {
             ...delta,
             ...ctx,
-            ...(continuation ? { continuation } : {}),
           };
           return kind === "live"
             ? app.pull05Live(owner, JSON.stringify(request))
@@ -587,6 +585,7 @@ for (const kind of [
           }),
         ]);
         clearTimeout(timer);
+        readOnly = true;
         reading = invoke();
         reading.catch(() => {});
         const response = JSON.parse(
@@ -597,7 +596,7 @@ for (const kind of [
                 () =>
                   reject(
                     new Error(
-                      `${kind} blocked behind Mutation progress/FK locking`,
+                      `${kind} blocked behind Mutation progress`,
                     ),
                   ),
                 5000,
@@ -606,13 +605,14 @@ for (const kind of [
           ]),
         );
         clearTimeout(timer);
+        readOnly = false;
         if (kind === "handshake") assert.equal(response.head, ack.head);
         else {
           const delivery = response.delivery ?? response;
           assert.equal(delivery.header.storeId, "same-store");
           const row = delivery.parts
             .flatMap((p) => p.changes)
-            .find((c) => c.key?.identity?.id === "initial");
+            .find((c) => c.key?.identity?.id === (kind==='cursor_resume'?'second':'initial'));
           assert.equal(
             row?.state?.title,
             "before",
@@ -681,6 +681,7 @@ for (const kind of [
           "1",
         );
       } finally {
+        readOnly = false;
         clearTimeout(timer);
         release();
         await Promise.allSettled([pending, duplicate, reading]);

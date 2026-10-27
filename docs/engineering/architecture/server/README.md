@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-The Rust server validates protocol-5 context and immutable Batch intent, invokes application Handlers/Loaders through the host contract and persists outcomes with business writes. Publication tracks explicit recipients under a persisted fence. Finite delivery plans capture canonical authority and immutable continuations. Node implements the host and HTTP/WebSocket effects, with no alternate sync policy.
+The Rust server validates protocol-5 context and immutable Batch intent, invokes application Handlers/Loaders through the host contract and persists outcomes with business writes. Publication tracks explicit recipients under record/Stream guards. Current-state cursor pages capture canonical authority without persisted response payloads. Node implements the host and HTTP/WebSocket effects, with no alternate sync policy.
 
 ## 5. Building Block View
 

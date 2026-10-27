@@ -193,7 +193,7 @@ export async function createExample() {
     },
     async reset(): Promise<void> {
       await db.$executeRawUnsafe(
-        "TRUNCATE axton_delivery_unit, axton_delivery_plan, axton_mutation_result, axton_stream_record, axton_store, axton_stream, axton_record",
+        "TRUNCATE axton_mutation_result, axton_stream_record, axton_store, axton_stream, axton_record",
       );
       await db.$executeRawUnsafe('DELETE FROM "Entry"');
       refusing.clear();

@@ -24,7 +24,6 @@ impl Host for TestHost {
                 }
                 (Some("load"), _) if r["mode"] == "prepare" => json!([]),
                 (Some("load"), _) => json!([{"text":"at45"}]),
-                (_, Some("saveDelivery")) => json!(true),
                 _ => return Err(format!("unexpected {r}")),
             })
         })
@@ -34,7 +33,7 @@ fn config() -> Config {
     Config::decode(json!({"schema":{"enums":[],"models":[{"name":"Entry","version":1,"bootstrap":true,"identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}]}],"actions":[]},"mutations":[],"loaders":["Entry"],"protocol5":{"projectionGeneration":"1"}})).unwrap()
 }
 #[test]
-fn bootstrap_freezes_moved_ahead_authority_without_claiming_its_position() {
+fn bootstrap_defers_independent_moved_ahead_authority_to_sync() {
     run(async {
         let c = config();
         let h = TestHost {
@@ -50,7 +49,6 @@ fn bootstrap_freezes_moved_ahead_authority_without_claiming_its_position() {
             after: 0,
             through: 40,
             bootstrap: true,
-            continuation: None,
         };
         let answer = axton_server::process_delivery05(&c, "alice", &v05::encode(&r).unwrap(), &h)
             .await
@@ -58,7 +56,7 @@ fn bootstrap_freezes_moved_ahead_authority_without_claiming_its_position() {
         let d: v05::DeliveryResponse = v05::decode(answer.as_bytes()).unwrap();
         assert_eq!(d.header.observed_head, 45);
         assert_eq!(d.header.units.last().unwrap().through, Some(40));
-        assert_eq!(d.parts[0].changes[0].cursor(), 45);
+        assert!(d.parts.iter().all(|part| part.changes.is_empty()));
         assert_eq!(
             h.calls
                 .lock()
@@ -66,7 +64,7 @@ fn bootstrap_freezes_moved_ahead_authority_without_claiming_its_position() {
                 .iter()
                 .filter(|v| v["op"] == "load" && v["mode"] == "canonical")
                 .count(),
-            1
+            0
         );
     });
 }
@@ -142,7 +140,6 @@ fn preparation_precedes_observed_head_capture() {
             after: 0,
             through: 40,
             bootstrap: true,
-            continuation: None,
         };
         axton_server::process_delivery05(&c, "alice", &v05::encode(&r).unwrap(), &h)
             .await

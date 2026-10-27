@@ -14,7 +14,7 @@ import { drizzle } from "@axtonjs/postgres/drizzle";      // drizzle-orm/node-po
 
 ## Schema
 
-`migration.sql` installs seven canonical tables in a fresh namespace: `axton_stream`, `axton_record`, `axton_store`, `axton_mutation_result`, `axton_stream_record`, `axton_delivery_plan` and `axton_delivery_unit`. Apply the whole file transactionally. Per-transaction cursor reservation is ephemeral SQL state, not another durable table.
+`migration.sql` installs five canonical tables in a fresh namespace: `axton_stream`, `axton_record`, `axton_store`, `axton_mutation_result`, and `axton_stream_record`. Apply the whole file transactionally. Per-transaction cursor reservation is ephemeral SQL state, not another durable table.
 
 Global publication fencing is removed. An already installed `axton_publication_fence`
 table may remain unused; this migration does not drop it. The retired host operation
@@ -22,8 +22,10 @@ and backend `acquirePublicationFence()` are compatibility no-ops. Serializable
 transactions, record/Stream guards and whole-transaction retries remain required.
 
 Initialized read requests inspect Store ownership with a snapshot SELECT. Progress
-writers retain `FOR NO KEY UPDATE`, compatible with delivery-plan foreign-key
-checks on the immutable Store identity. First claims and Bootstrap initialization
-remain protected. Plan expiry cleanup is a separate, unchanged write path.
+writers retain `FOR NO KEY UPDATE` on progress. First claims and Bootstrap
+initialization remain protected. Delivery reads current cursor pages without
+saving response payloads or running shared expiry cleanup. The migration drops
+the retired `axton_delivery_unit` and `axton_delivery_plan` tables; business data,
+Store progress, outcomes and Stream facts remain.
 
 An installed legacy framework layout is refused without changing its data. This candidate supplies no old-namespace migration, local-file upgrade or compatibility bridge. Use fresh framework storage and review [protocol-5 adoption](https://github.com/zanminwang/axton/blob/main/docs/engineering/protocol5-adoption.md) before replacing an existing deployment.

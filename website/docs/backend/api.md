@@ -8,7 +8,7 @@ Set `protocol5` on backend options with `authorizeStream(principal, stream, tx)`
 
 The optional `bootstrap({ctx})` preparation and Query contexts expose explicit tracking. Returning Model identities does not track them. The initiating `ctx.stream` is supplied by authenticated engine context; the caller cannot choose it as a business argument. Track additional recipients explicitly using the generated multi-Stream declaration API.
 
-Bootstrap and Sync freeze finite plans. Each required unit commits whole; transport fragments cannot advance partial coverage. Mutation execution acknowledgment and committed local settlement are separate boundaries. Protocol 5 requires fresh local files; it does not migrate old pending work automatically.
+Bootstrap and Sync return complete current-state cursor pages. Each required unit commits whole; transport fragments cannot advance partial coverage. Mutation execution acknowledgment and committed local settlement are separate boundaries. Protocol 5 requires fresh local files; it does not migrate old pending work automatically.
 
 ## createBackend
 
@@ -145,11 +145,11 @@ An error that is neither `CallRejected` nor translated to a business code reject
 
 ## Bootstrap preparation
 
-`bootstrap?: ({ctx}) => Promise<void>` is optional application preparation. Its typed context contains the current `tx`, `userId`, `callId`, initiating `ctx.stream`, and explicit `ctx.streams([...])`. Both Stream handles only track; neither provides invalidation. AXTON runs preparation and freezes the finite Bootstrap plan in the same Serializable transaction.
+`bootstrap?: ({ctx}) => Promise<void>` is optional application preparation. Its typed context contains the current `tx`, `userId`, `callId`, initiating `ctx.stream`, and explicit `ctx.streams([...])`. Both Stream handles only track; neither provides invalidation. AXTON runs preparation and captures its finite initial cursor boundary in the same Serializable transaction.
 
-The schema's `@@bootstrap` marks historical Model types selected for initial materialization. Queries cover named history outside that baseline. Manifest paging, coverage, replay and tail capture belong to the native runtime; applications do not return a Load continuation or manage a Load job. Receipt-target recovery does not call this preparation callback.
+The schema's `@@bootstrap` marks historical Model types selected for initial materialization. Queries cover named history outside that baseline. Cursor paging, coverage, retries and boundary capture belong to the native runtime; applications do not return a Load continuation or manage a Load job. Receipt-target recovery does not call this preparation callback.
 
-Preparation tracks the complete initial scope, including scopes larger than one Query page's enrollment limit. Applications may scan identities in batches; the framework deduplicates them before publication. Native delivery applies its finite-plan capacity and transport paging separately.
+Preparation tracks the complete initial scope, including scopes larger than one Query page's enrollment limit. Applications may scan identities in batches; the framework deduplicates them before publication. Native delivery applies its response capacity and complete-component paging separately.
 
 ## Loaders
 

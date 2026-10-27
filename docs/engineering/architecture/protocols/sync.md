@@ -42,7 +42,7 @@ Query and Fetch return invocation snapshots with explicit `cursor: null`. They g
 
 ### Finite Bootstrap and Sync
 
-Handshake durably records initial Stream head **S**. The initial committed prefix **C** starts at S; Bootstrap completion **B** remains absent until its final unit commits. Bootstrap selects `@@bootstrap` Models through the fixed initial cursor boundary. Sync repairs a finite requested prefix rather than replaying every historical transition. Reconnect and moving heads do not rewrite committed S/B/C or make Bootstrap perpetual freshness.
+Handshake durably records initial Stream head **S**. The initial committed prefix **C** starts at S; Bootstrap progress **B** starts absent and advances only with complete committed units; initialization completes when B=S. Bootstrap selects `@@bootstrap` Models through the fixed initial cursor boundary. Sync repairs a finite requested prefix rather than replaying every historical transition. Reconnect and moving heads do not rewrite committed S/B/C or make Bootstrap perpetual freshness.
 
 Preparation closes over bounded required identities before canonical Loader reads
 and head capture. Each request reauthorizes and builds a current-state cursor
@@ -57,7 +57,8 @@ Every HTTP page carries all transport fragments of its selected complete units.
 There is no persisted server payload, old-response continuation or server expiry
 cleanup. Clients commit data and cursor atomically, then request the next page
 from committed progress. Loss/reopen recomputes from B/C; it does not retrieve an
-old JSON response. Owned materialization returns its complete owner proof in one
+old JSON response. Socket loss immediately retires incomplete ordinary responses
+so they cannot block fresh cursor repair until expiry. Owned materialization returns its complete owner proof in one
 response and retries from current owner obligations. Response manifests/digests
 still validate fragments, and the five-minute lifetime bounds incomplete local
 staging only. Limits are 100,000 candidate identities and 256 MiB per response;

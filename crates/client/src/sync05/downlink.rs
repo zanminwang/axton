@@ -267,6 +267,14 @@ impl Control {
                 SocketEvent::Closed | SocketEvent::Overflow => {
                     self.flights.remove(id);
                     self.live = false;
+                    // Missing socket fragments cannot be fetched from a server
+                    // cache. Retire incomplete ordinary responses immediately;
+                    // repair reconstructs current state from committed B/C.
+                    self.queue.plans.retain(|_, plan| {
+                        plan.header.owner.is_some()
+                            || (plan.next..plan.header.units.len() as u64)
+                                .all(|index| plan.complete(index))
+                    });
                     self.schedule(now)?;
                     self.retry("socket closed or overflow".into());
                 }

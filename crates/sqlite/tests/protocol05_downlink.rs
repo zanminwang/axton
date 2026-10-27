@@ -96,6 +96,112 @@ fn fragmented(context: v05::RequestContext, bootstrap: bool) -> v05::FrozenDeliv
     )
     .unwrap()
 }
+#[test]
+fn socket_loss_discards_incomplete_response_and_repairs_from_committed_cursor() {
+    use axton_client::{
+        runtime::{EffectOutcome, Event, HttpRoute, Operation},
+        sync05::Control,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let mut c = client(&directory.path().join("db"));
+    c.initialize_stream05(0).unwrap();
+    let context = c.request_context05().unwrap();
+    let empty = plan(context.clone(), "initial", 0, 0, true);
+    let mut queue = DeliveryQueue::new(1000000, 4);
+    queue
+        .receive(&empty.header, &empty.parts, &context, 1)
+        .unwrap();
+    c.apply_next_delivery05(&mut queue, 1).unwrap().unwrap();
+    let mut control = Control::new(c.store_status05().unwrap());
+    control.connect().unwrap();
+    let handshake = control
+        .events()
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Effect {
+                effect_id,
+                operation:
+                    Operation::Http {
+                        route: HttpRoute::Handshake,
+                        ..
+                    },
+            } => Some(effect_id),
+            _ => None,
+        })
+        .unwrap();
+    control
+        .receive(
+            &handshake,
+            EffectOutcome {
+                ok: true,
+                value: Some(serde_json::Value::String(
+                    serde_json::to_string(&v05::HandshakeResponse {
+                        protocol: 5,
+                        store_id: context.store_id.clone(),
+                        stream: context.stream.clone(),
+                        head: 0,
+                    })
+                    .unwrap(),
+                )),
+                error: None,
+            },
+            1,
+        )
+        .unwrap();
+    let socket = control
+        .events()
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Effect {
+                effect_id,
+                operation: Operation::Socket { .. },
+            } => Some(effect_id),
+            _ => None,
+        })
+        .unwrap();
+    let response = fragmented(context, false);
+    control.receive(&socket,EffectOutcome {ok:true,value:Some(serde_json::json!({"event":"message","body":serde_json::to_string(&v05::DeliveryResponse {header:response.header,parts:vec![response.parts[0].clone()]}).unwrap()})),error:None},1).unwrap();
+    assert!(control.events().iter().all(|event| !matches!(
+        event,
+        Event::Effect {
+            operation: Operation::Http {
+                route: HttpRoute::Pull,
+                ..
+            },
+            ..
+        }
+    )));
+    control
+        .receive(
+            &socket,
+            EffectOutcome {
+                ok: true,
+                value: Some(serde_json::json!({"event":"closed"})),
+                error: None,
+            },
+            2,
+        )
+        .unwrap();
+    let request = control
+        .events()
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Effect {
+                operation:
+                    Operation::Http {
+                        route: HttpRoute::Pull,
+                        body,
+                    },
+                ..
+            } => Some(serde_json::from_str::<serde_json::Value>(&body).unwrap()),
+            _ => None,
+        })
+        .expect("socket loss must repair immediately without waiting for old response expiry");
+    assert_eq!(request["after"], 0);
+    assert_eq!(request["through"], 3);
+    assert!(request.get("continuation").is_none());
+    assert_eq!(c.store_status05().unwrap().cursor, Some(0));
+}
 fn change(id: &str, cursor: u64) -> v05::AuthorityChange {
     v05::AuthorityChange::Record {
         key: v05::RecordKey {

@@ -85,7 +85,7 @@ Convergence assumes correct publication, valid contracts and resumed delivery. D
 | D1 | Stores with the same Stream and compatible viewer/materialization context converge after delivery and settlement. Their queues, observers and progress remain independent. |
 | D2 | Higher Stream positions replace older authority; older/equal duplicates cannot undo direct state. Compatible same-position rematerialization updates the base without erasing surviving local layers. |
 | D3 | Explicit track enrolls missing pairs with real positions. Repeated live pairs do not move the cursor. Invalidation updates affected existing pairs without enrolling them. |
-| D4 | Content and position come from one Serializable canonical view. Preparation publications settle before final reads; replay runs no preparation. |
+| D4 | Content and position come from one Serializable canonical view. Preparation publications settle before final reads. Saved Mutation replay runs no preparation; cursor read retries construct a fresh view. |
 | D5 | True Stream absence retains protected identity/position evidence. Older Stream content and cursor-null cache reads cannot revive it. Newer child authority survives an older parent cascade. |
 | D6 | Membership Remove changes holding evidence, releasing current live protection while retaining content, historical authority and genuine deletion evidence. It is not canonical absence. |
 | D7 | Loader/constraint/commit failure cannot advance progress across its unresolved unit. Earlier committed units remain; fresh smaller requests can recover independent prefixes. Persistent required-group failure remains observable. |

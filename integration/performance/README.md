@@ -130,7 +130,10 @@ experiment all burst cases still failed, and backend errors rose from 228 to 270
 also records local callback scheduling limits. Current code removes server
 payload persistence and old-plan continuations, returning complete cursor pages
 from current state. The timing boundaries and fixture parameters remain the same;
-new runs identify this implementation separately.
+the [cursor-page measurements](baselines/2026-10-27-cursor-pages/README.md)
+retain the fourth matrix: 40/45 passing, zero backend errors, and five N=10,000
+burst failures from B's bounded delivery queue. Initial-only comparison passes;
+the full failed matrix remains diagnostic evidence.
 
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,

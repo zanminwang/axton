@@ -29,7 +29,10 @@ async function fixture(body) {
     await admin.query(`SET search_path=${namespace}`);
     await admin.query(
       await readFile(
-        new URL("../../../packages/backend/postgres/migration.sql", import.meta.url),
+        new URL(
+          "../../../packages/backend/postgres/migration.sql",
+          import.meta.url,
+        ),
         "utf8",
       ),
     );
@@ -288,7 +291,11 @@ test("targeted authoritative Loader failure aborts delivery without fabricating 
     const before = await rows();
     failLoader("alice");
     await assert.rejects(pull("alice"));
-    assert.equal((await admin.query("SELECT to_regclass('axton_delivery_plan') AS plan")).rows[0].plan,null);
+    assert.equal(
+      (await admin.query("SELECT to_regclass('axton_delivery_plan') AS plan"))
+        .rows[0].plan,
+      null,
+    );
     assert.deepEqual(await rows(), before);
     assert.equal((await pull("bob")).parts[0].changes[0].state.text, "kept");
     failLoader(undefined);

@@ -29,7 +29,9 @@ async function namespace(body) {
 test("fresh namespace has only canonical identity, Store/result, StreamRecord facts without response staging", () =>
   namespace(async (tx) => {
     await tx.query(ddl);
-    await tx.query("CREATE TABLE axton_delivery_plan(plan_id text PRIMARY KEY); CREATE TABLE axton_delivery_unit(plan_id text REFERENCES axton_delivery_plan); INSERT INTO axton_delivery_plan VALUES('retired'); INSERT INTO axton_delivery_unit VALUES('retired')");
+    await tx.query(
+      "CREATE TABLE axton_delivery_plan(plan_id text PRIMARY KEY); CREATE TABLE axton_delivery_unit(plan_id text REFERENCES axton_delivery_plan); INSERT INTO axton_delivery_plan VALUES('retired'); INSERT INTO axton_delivery_unit VALUES('retired')",
+    );
     await tx.query(ddl);
     const names = (
       await tx.query(

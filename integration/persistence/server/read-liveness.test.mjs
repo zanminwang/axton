@@ -474,9 +474,11 @@ for (const kind of [
         await app.transaction(({ streams }) =>
           streams(["User:alice"]).track.task({ id: "initial" }),
         );
-        if(kind==='cursor_resume'){
+        if (kind === "cursor_resume") {
           await admin.query("INSERT INTO business VALUES('second','before')");
-          await app.transaction(({streams})=>streams(['User:alice']).track.task({id:'second'}));
+          await app.transaction(({ streams }) =>
+            streams(["User:alice"]).track.task({ id: "second" }),
+          );
         }
         const hello = {
           protocol: 5,
@@ -493,10 +495,12 @@ for (const kind of [
           through: ack.head,
           bootstrap: false,
         };
-        if(kind==='cursor_resume'){
-          const first=JSON.parse(await app.pull('alice',JSON.stringify({...delta,through:1})));
-          delta.after=first.header.through;
-          assert.equal(delta.after,1);
+        if (kind === "cursor_resume") {
+          const first = JSON.parse(
+            await app.pull("alice", JSON.stringify({ ...delta, through: 1 })),
+          );
+          delta.after = first.header.through;
+          assert.equal(delta.after, 1);
         }
         const invoke = (owner = "alice", stream = "User:alice") => {
           const ctx = { ...context, stream };
@@ -594,11 +598,7 @@ for (const kind of [
             new Promise((_, reject) => {
               timer = setTimeout(
                 () =>
-                  reject(
-                    new Error(
-                      `${kind} blocked behind Mutation progress`,
-                    ),
-                  ),
+                  reject(new Error(`${kind} blocked behind Mutation progress`)),
                 5000,
               );
             }),
@@ -612,7 +612,11 @@ for (const kind of [
           assert.equal(delivery.header.storeId, "same-store");
           const row = delivery.parts
             .flatMap((p) => p.changes)
-            .find((c) => c.key?.identity?.id === (kind==='cursor_resume'?'second':'initial'));
+            .find(
+              (c) =>
+                c.key?.identity?.id ===
+                (kind === "cursor_resume" ? "second" : "initial"),
+            );
           assert.equal(
             row?.state?.title,
             "before",

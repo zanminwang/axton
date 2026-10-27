@@ -1,0 +1,531 @@
+{
+  "workflow": "https://github.com/zanminwang/axton/actions/runs/40603040161",
+  "commit": "00a3f83aeecc7f469bf34ffd1236646de8419c8f",
+  "dirty": false,
+  "file": "results.json.gz",
+  "rawSha256": "22d2cda56cd028291c29d92324c8d80400ea699f5618fe1ad3e2b846fb3f0cc7",
+  "matrixCompleted": true,
+  "completed": false,
+  "samples": 45,
+  "passed": 40,
+  "clientCompleted": 45,
+  "serverVerified": 45,
+  "accepted": 1515,
+  "backendErrors": 0,
+  "connectionErrors": 42,
+  "recordReports": 1454,
+  "traceLoss": 0,
+  "cleanupErrors": 0,
+  "adminErrors": [],
+  "sourceErrorSpans": {},
+  "serverPayloadCallbacks": 0,
+  "supersededTrial": {
+    "workflow": "https://github.com/zanminwang/axton/actions/runs/40602395139",
+    "commit": "4d670499e4666194c07cde48e75f77ec8c1dc79d",
+    "file": "superseded-4d670499.json.gz",
+    "rawSha256": "4016ca6ed8b387398efc067404f23fa20c8094076e3221213b8c225380139215",
+    "completed": false,
+    "samples": 3,
+    "reason": "Cancelled to include immediate incomplete-socket cursor recovery in the measured version; not combined with the final matrix."
+  },
+  "origin": {
+    "introducedCommit": "19881cf7722b9d103c2e83208fb17d4faceb4c9b",
+    "commitAuthorName": "Steve Wang",
+    "pullRequest": "https://github.com/zanminwang/axton/pull/247",
+    "mergedBy": "zanminwang",
+    "githubReviewSubmissions": [],
+    "specification": "https://github.com/zanminwang/axton/blob/54439785eeb8013b219f8d7071a5670a8bbeb375/docs/superpowers/specs/2026-10-07-internal-refactor-spec.md",
+    "limitation": "Git authorship/merge metadata does not establish who approved the design. The specification labels transient DeliveryPlan storage a new recommendation, not an earlier user decision; no named design approver/agent is identified by these records."
+  },
+  "remainingFailures": [
+    {
+      "records": 10000,
+      "writes": 100,
+      "repetition": 1,
+      "errors": [
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5197116,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5406291,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5624741,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5749162,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5858570,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5858622,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6075755,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6202576,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6322091,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6464375,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6565685,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6701794,
+          "duringMeasurement": true
+        }
+      ]
+    },
+    {
+      "records": 10000,
+      "writes": 100,
+      "repetition": 2,
+      "errors": [
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5381640,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5658735,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5856497,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6126655,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6334498,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6461176,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6708770,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6743634,
+          "duringMeasurement": true
+        }
+      ]
+    },
+    {
+      "records": 10000,
+      "writes": 100,
+      "repetition": 3,
+      "errors": [
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5647375,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5766327,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5878022,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6075062,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6321234,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6363908,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6641727,
+          "duringMeasurement": true
+        }
+      ]
+    },
+    {
+      "records": 10000,
+      "writes": 100,
+      "repetition": 4,
+      "errors": [
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5963694,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6073309,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6261284,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6392872,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6649140,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6773258,
+          "duringMeasurement": true
+        }
+      ]
+    },
+    {
+      "records": 10000,
+      "writes": 100,
+      "repetition": 5,
+      "errors": [
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5792567,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5822646,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 5936132,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6145024,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6346362,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6463204,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6463247,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6640838,
+          "duringMeasurement": true
+        },
+        {
+          "type": "progress",
+          "phase": "connection.error",
+          "client": "B",
+          "error": "Bad state: delivery queue overflow",
+          "atUs": 6776523,
+          "duringMeasurement": true
+        }
+      ]
+    }
+  ],
+  "serverCommitCorrelations": 1515,
+  "comparisons": {
+    "initialSync": "accepted: matching conditions and all 15 selected samples passed in each attempted matrix",
+    "fullMatrix": "rejected: failed samples in both matrices"
+  },
+  "formatOnlyValidation": {
+    "measuredCommit": "00a3f83aeecc7f469bf34ffd1236646de8419c8f",
+    "validationCommit": "9c3daa3aefd048b30ef8d8701de5ea95b9413b84",
+    "onlyChangedPath": "packages/backend/postgres/src/persistence.mts",
+    "formatNormalizedSha256": "166cf4ec71bdb332720d83b478f7fee0d89c3665356ce443ad01d9e78030fd3c"
+  },
+  "summedStageMedianMs": {
+    "initial-sync": {
+      "node/server/host.inspectStore": 55.157,
+      "node/server/host.admit": 0.7930000000000004,
+      "node/server/host.claimStore": 4.054,
+      "node/server/host.bootstrapState": 41.117,
+      "node/server/host.handleBootstrap05": 0.04,
+      "node/server/host.finishBootstrap": 1.928,
+      "node/server/host.deliveryHead": 43.415000000000006,
+      "rust/server/bootstrap.prepare": 44.883,
+      "rust/server/native.request": 944.0219999999999,
+      "node/server/server.handshake05": 13.907,
+      "node/server/server.transaction": 976.0480000000001,
+      "node/server/host.deliveryCandidates": 146.39000000000001,
+      "node/server/host.load": 55.00700000000001,
+      "node/server/host.deliveryNow": 38.852,
+      "rust/server/delivery.prepare": 196.82699999999997,
+      "rust/server/delivery.load": 93.25599999999999,
+      "rust/server/delivery.plan": 923.091,
+      "node/server/server.processLive05": 16.808,
+      "node/server/server.processDelivery05": 923.603,
+      "dart/A/bridge.drain": 524.689,
+      "rust/A/sqlite.commit": 83.85799999999999,
+      "rust/A/store.open": 3.768,
+      "rust/A/watch.publish": 648.645,
+      "dart/A/watch.enqueue": 0.09900000000000005,
+      "dart/A/http.request": 1030.4009999999998,
+      "rust/A/watch.query": 620.8050000000001,
+      "dart/A/socket.frame": 0.11100000000000002,
+      "rust/A/delivery.apply": 693.4799999999999
+    },
+    "live-sync": {
+      "node/server/host.claimStore": 504.44800000000015,
+      "node/server/host.admit": 25.791000000000015,
+      "node/server/host.beginBatch": 9.215,
+      "node/server/host.savepoint": 378.2400000000002,
+      "node/server/host.handleAction": 84.63600000000001,
+      "node/server/host.readTracking": 1379.0,
+      "node/server/host.lockStreams": 414.8810000000001,
+      "node/server/host.guardRecords": 388.6709999999999,
+      "node/server/host.applyStreamMembers": 837.6059999999998,
+      "node/server/host.load": 206.8780000000001,
+      "node/server/host.targetPositions": 488.22100000000023,
+      "node/server/host.head": 254.52600000000007,
+      "node/server/host.release": 233.44500000000002,
+      "node/server/host.saveResult": 298.44599999999997,
+      "rust/server/mutation.execute": 5807.848999999998,
+      "rust/server/native.request": 14179.57299999999,
+      "node/server/server.processBatchMember": 6298.128000000002,
+      "node/server/server.transaction": 14777.301000000009,
+      "node/server/host.inspectStore": 1790.6390000000017,
+      "node/server/host.deliveryHead": 1602.2019999999995,
+      "node/server/host.bootstrapState": 840.9380000000001,
+      "node/server/host.deliveryCandidates": 1883.7040000000002,
+      "node/server/host.deliveryNow": 749.2200000000001,
+      "rust/server/bootstrap.prepare": 889.8339999999998,
+      "rust/server/delivery.prepare": 2120.5080000000003,
+      "rust/server/delivery.load": 183.0990000000001,
+      "rust/server/delivery.plan": 5827.105,
+      "node/server/server.processLive05": 7936.898999999996,
+      "node/server/server.processDelivery05": 95.561,
+      "node/server/host.readResults": 7.346,
+      "rust/server/delivery.materialize": 90.843,
+      "node/server/server.processMaterialization05": 91.719,
+      "node/server/server.handshake05": 20.354,
+      "dart/A/bridge.drain": 46.38399999999995,
+      "rust/A/watch.publish": 6.969999999999971,
+      "rust/A/sqlite.commit": 305.8640000000002,
+      "dart/A/socket.frame": 22.825000000000003,
+      "rust/A/delivery.apply": 352.52599999999984,
+      "dart/A/http.request": 6710.368,
+      "rust/A/batch.acknowledge": 31.924999999999997,
+      "dart/B/socket.frame": 13.638000000000003,
+      "dart/B/bridge.drain": 5579.603,
+      "rust/B/sqlite.commit": 145.66899999999995,
+      "rust/B/delivery.apply": 108.564,
+      "rust/B/watch.query": 7641.290999999999,
+      "rust/B/watch.publish": 7922.162000000006,
+      "dart/B/watch.enqueue": 0.5590000000000004,
+      "dart/B/http.request": 74.299
+    }
+  },
+  "validation": {
+    "runtimeCommit": "9c3daa3aefd048b30ef8d8701de5ea95b9413b84",
+    "linux": {
+      "conclusion": "success",
+      "job": "https://github.com/zanminwang/axton/actions/runs/40603355098/job/122537199310"
+    },
+    "macos": {
+      "conclusion": "success",
+      "job": "https://github.com/zanminwang/axton/actions/runs/40603348720/job/122536926548"
+    },
+    "local": {
+      "workspaceRustPassed": 517,
+      "workspaceRustIgnored": 7,
+      "nodePassed": 22,
+      "performanceTestsRerunPassed": 10,
+      "clippy": "passed",
+      "rustfmt": "passed",
+      "prettier": "passed",
+      "typescript": "passed",
+      "compressedArchiveCorrelations": 1515,
+      "compressedArchiveReportValidations": 45
+    },
+    "localPostgresLimit": "Sandbox shared-memory restrictions; real PostgreSQL evidence is from Actions.",
+    "testFileFormatting": "Final cleanup: only formatting; each of the five files was normalized with Prettier and compared equal to 9c3daa3a."
+  }
+}

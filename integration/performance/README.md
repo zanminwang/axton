@@ -50,6 +50,22 @@ describe their recorded environment, not dedicated hardware or phone performance
 
 ## Timing and assertions
 
+For a bounded real-PostgreSQL investigation of the continuous-write conflicts:
+
+```sh
+AXTON_PERFORMANCE_CONTENTION_PROBE=1 bash integration/performance/run.sh
+# Or in the manual Verify workflow:
+gh workflow run verify.yml --ref YOUR_BRANCH -f performance=true \
+  -f performance_contention_probe=true
+```
+
+This skips SDK/native builds and compares the existing row-fence sequence with
+an experimental table admission lock before versus after the Serializable
+snapshot. It observes a blocked database session before releasing its writer,
+checks business values/rollback and concurrent read availability, and saves
+`artifacts/performance/contention-probe.json`. It changes no production locking
+or isolation policy and is not a latency baseline.
+
 | Scenario | Metric | Boundary |
 | --- | --- | --- |
 | Initial | Store open | Immediately before `GeneratedClient.open` until its Future returns. |

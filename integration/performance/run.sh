@@ -10,7 +10,9 @@ case "$(uname -s)" in
   *) echo 'Supported hosts: macOS and Linux' >&2; exit 1 ;;
 esac
 mkdir -p artifacts/performance
-if [[ "${AXTON_PERFORMANCE_SKIP_BUILD:-0}" != 1 ]]; then
+if [[ "${AXTON_PERFORMANCE_CONTENTION_PROBE:-0}" == 1 ]]; then
+  [[ -d node_modules ]] || npm ci
+elif [[ "${AXTON_PERFORMANCE_SKIP_BUILD:-0}" != 1 ]]; then
   [[ -d node_modules ]] || npm ci
   cargo build --release --locked -p axton-dart -p axton-compiler
   node bindings/node/build.mjs --release
@@ -53,7 +55,11 @@ fi
 pg_ctl -D "$cluster/data" -l "$cluster/postgres.log" -o "-p $port -h 127.0.0.1 -k $cluster" start >/dev/null
 DATABASE_URL="postgresql://$(id -un)@127.0.0.1:$port/postgres"
 export DATABASE_URL
-node integration/performance/run.mjs "$@" &
+if [[ "${AXTON_PERFORMANCE_CONTENTION_PROBE:-0}" == 1 ]]; then
+  node integration/performance/contention-probe.mjs &
+else
+  node integration/performance/run.mjs "$@" &
+fi
 runner=$!
 wait "$runner"
 runner=""

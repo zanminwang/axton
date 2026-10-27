@@ -27,13 +27,17 @@ on:
         type: choice
         options: ['on', 'off']
         default: 'on'
+      performance_contention_probe:
+        description: 'Run the bounded PostgreSQL snapshot/lock experiment instead of latency measurements'
+        type: boolean
+        default: false
   workflow_call:
 permissions:
   contents: read
 concurrency:
   # github.workflow names the caller when release-publish.yml calls this one.
   # Manual measurements must not cancel a branch's ordinary correctness gate.
-  group: verify-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.performance && format('performance-{0}', inputs.performance_diagnostics) || 'host' }}
+  group: verify-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.performance && format('performance-{0}-{1}', inputs.performance_diagnostics, inputs.performance_contention_probe) || 'host' }}
   cancel-in-progress: true
 jobs:
   host:
@@ -107,6 +111,7 @@ jobs:
           SIZES: ${{ inputs.performance_sizes }}
           WRITES: ${{ inputs.performance_writes }}
           DIAGNOSTICS: ${{ inputs.performance_diagnostics }}
+          AXTON_PERFORMANCE_CONTENTION_PROBE: ${{ inputs.performance_contention_probe && '1' || '0' }}
         run: bash integration/performance/run.sh --samples "$SAMPLES" --sizes "$SIZES" --writes "$WRITES" --diagnostics "$DIAGNOSTICS"
       - name: Raw samples and summary
         if: always()

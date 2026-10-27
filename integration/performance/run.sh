@@ -14,6 +14,7 @@ if [[ "${AXTON_PERFORMANCE_SKIP_BUILD:-0}" != 1 ]]; then
   [[ -d node_modules ]] || npm ci
   cargo build --release --locked -p axton-dart -p axton-compiler
   node bindings/node/build.mjs --release
+  node_modules/.bin/tsc -b scripts/release/tsconfig.json
   target/release/axton compile integration/performance/fixture/schema integration/performance/fixture/generated \
     --backend-runtime ../../../../packages/backend/server/index.mts \
     --client-runtime ../../../../packages/frontend/client-js/index.mts

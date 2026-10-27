@@ -61,6 +61,7 @@ const result={schemaVersion:1,createdAt:new Date().toISOString(),commit:command(
   dirty:command('git',['status','--porcelain']).length>0,build:built,
   machine:{platform:platform(),release:release(),arch:arch(),cpu:cpus()[0]?.model,cpus:cpus().length,memoryBytes:totalmem(),
     node:process.version,dart:command(process.env.AXTON_DART??'dart',['--version']),rustc:command('rustc',['--version']),
+    cargo:command('cargo',['--version']),typescript:command(process.execPath,['node_modules/typescript/bin/tsc','--version']),
     postgres:(await admin.query('SELECT version() AS version')).rows[0].version,settings},
   compatibility:{schemaVersion:1,boundaries:'sync-performance-v1',fixtureSchemaSha256:hash(await readFile('integration/performance/fixture/generated/schema.json')),
     textBytes,fixtureBatchSize,sdk:'dart',nativeProfile:'release',dartMode:'aot',diagnostics:options.diagnostics,

@@ -63,4 +63,9 @@ Performance diagnostics are also separate from correctness tests:
 
 ```sh
 cargo run -p axton-sim --example capacity --release
+bash integration/performance/run.sh
 ```
+
+The [sync performance runner](../../../integration/performance/README.md) measures
+release Dart initial/live synchronization, retains raw samples and stage traces,
+and compares compatible results. It has no latency threshold or per-PR benchmark job.

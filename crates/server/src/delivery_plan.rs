@@ -63,6 +63,7 @@ async fn fence(host: &impl Host) -> Result<()> {
     let _: Acknowledged = host.call_typed(HostRequest::PublicationFence {}).await?;
     Ok(())
 }
+#[tracing::instrument(target = "axton::server", name = "bootstrap.prepare", skip_all)]
 async fn prepare(
     config: &Config,
     owner: &str,
@@ -166,6 +167,7 @@ fn selection(
             .collect()
     }))
 }
+#[tracing::instrument(target = "axton::server", name = "delivery.prepare", skip_all)]
 async fn prepared_candidates(
     config: &Config,
     owner: &str,
@@ -223,6 +225,7 @@ async fn prepared_candidates(
         }
     }
 }
+#[tracing::instrument(target = "axton::server", name = "delivery.load", skip_all)]
 async fn materialize(
     config: &Config,
     owner: &str,
@@ -411,6 +414,7 @@ fn intent<T: serde::Serialize>(r: &T) -> Result<String> {
     v.as_object_mut().unwrap().remove("continuation");
     canonical_json(&v).map_err(internal)
 }
+#[tracing::instrument(target = "axton::server", name = "delivery.persist", skip_all)]
 async fn persist(
     owner: &str,
     intent: &str,
@@ -426,6 +430,7 @@ async fn persist(
         parts: vec![frozen.parts[0].clone()],
     })
 }
+#[tracing::instrument(target = "axton::server", name = "delivery.plan", skip_all)]
 pub async fn process_delivery05(
     config: &Config,
     owner: &str,
@@ -497,6 +502,7 @@ pub async fn process_delivery05(
     .map_err(internal)?;
     encode(&persist(owner, &saved_intent, frozen, &host).await?)
 }
+#[tracing::instrument(target = "axton::server", name = "delivery.materialize", skip_all)]
 pub async fn process_materialization05(
     config: &Config,
     owner: &str,

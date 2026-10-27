@@ -25,6 +25,7 @@
 //! from its teardown hook, so a lost carrier never leaves the actor and its
 //! SQLite transaction alive. [`wait_closed`] waits for an actor to release its
 //! store.
+use crate::diagnostics::Diagnostics;
 use axton_client::Schema;
 use axton_client::runtime::{BridgeError, ClientRuntime, Diagnostic, Event, Input};
 use axton_sqlite::SqliteStore;
@@ -56,6 +57,8 @@ enum Mail {
 struct Pending {
     queue: Vec<Event>,
     wake_pending: bool,
+    trace_records: usize,
+    trace_dropped: u64,
 }
 struct Outbox {
     id: u64,
@@ -71,7 +74,28 @@ impl Outbox {
         }
         let notify = {
             let mut pending = lock(&self.events);
-            pending.queue.extend(batch);
+            for event in batch {
+                if let Event::Trace {
+                    mut records,
+                    dropped,
+                } = event
+                {
+                    let retained = records
+                        .len()
+                        .min(crate::diagnostics::CAPACITY - pending.trace_records);
+                    pending.trace_dropped += dropped + (records.len() - retained) as u64;
+                    records.truncate(retained);
+                    pending.trace_records += retained;
+                    if !records.is_empty() {
+                        pending.queue.push(Event::Trace {
+                            records,
+                            dropped: 0,
+                        });
+                    }
+                } else {
+                    pending.queue.push(event);
+                }
+            }
             !std::mem::replace(&mut pending.wake_pending, true)
         };
         if notify {
@@ -86,7 +110,19 @@ impl Outbox {
     fn drain(&self) -> Vec<Event> {
         let mut pending = lock(&self.events);
         pending.wake_pending = false;
-        std::mem::take(&mut pending.queue)
+        pending.trace_records = 0;
+        let mut events = std::mem::take(&mut pending.queue);
+        let dropped = std::mem::take(&mut pending.trace_dropped);
+        if dropped > 0 {
+            events.insert(
+                0,
+                Event::Trace {
+                    records: vec![],
+                    dropped,
+                },
+            );
+        }
+        events
     }
 }
 
@@ -239,6 +275,8 @@ pub fn open(request: Value, wake: WakeSink) -> std::result::Result<u64, String> 
             events: Mutex::new(Pending {
                 queue: vec![],
                 wake_pending: false,
+                trace_records: 0,
+                trace_dropped: 0,
             }),
             sink: Mutex::new(Some(wake)),
             closed: AtomicBool::new(false),
@@ -354,6 +392,7 @@ fn facts() -> (u64, u64) {
 }
 
 fn open_runtime(request: &Value) -> axton_client::Result<ClientRuntime<SqliteStore>> {
+    let _span = tracing::info_span!(target: "axton::client", "store.open").entered();
     let path = request["path"]
         .as_str()
         .ok_or_else(|| axton_client::invalid("path must be string"))?;
@@ -557,10 +596,24 @@ fn run05(
     outbox: Arc<Outbox>,
 ) {
     let (work_sender, work_receiver) = mpsc::channel();
+    let diagnostics =
+        (request["diagnostics"] == true).then(|| Diagnostics::new(format!("client:{}", outbox.id)));
+    let dispatch = diagnostics.as_ref().map(Diagnostics::dispatch);
+    let _guard = dispatch.as_ref().map(tracing::dispatcher::set_default);
+    let worker_diagnostics = diagnostics.clone();
+    let worker_dispatch = dispatch.clone();
     let report_sender = sender.clone();
     let worker = std::thread::Builder::new()
         .name(format!("axton-store-{}", outbox.id))
-        .spawn(move || worker05(request, work_receiver, report_sender));
+        .spawn(move || {
+            worker05(
+                request,
+                work_receiver,
+                report_sender,
+                worker_diagnostics,
+                worker_dispatch,
+            )
+        });
     let Ok(worker) = worker else {
         outbox.closed.store(true, Ordering::SeqCst);
         outbox.publish(vec![
@@ -759,10 +812,25 @@ impl Drop for WorkerExit05 {
         let _ = self.0.send(Mail::Worker(Box::new(WorkerMessage::Closed)));
     }
 }
-fn worker05(request: Value, mailbox: Receiver<Work05>, reports: Sender<Mail>) {
+fn worker05(
+    request: Value,
+    mailbox: Receiver<Work05>,
+    reports: Sender<Mail>,
+    diagnostics: Option<Diagnostics>,
+    dispatch: Option<tracing::Dispatch>,
+) {
+    let _guard = dispatch.as_ref().map(tracing::dispatcher::set_default);
     // Declared before the runtime so every exit drops the Store lease first.
     let _exit = WorkerExit05(reports.clone());
     let send = |message| {
+        if let Some(diagnostics) = &diagnostics {
+            let (records, dropped) = diagnostics.take();
+            if !records.is_empty() || dropped != 0 {
+                let _ = reports.send(Mail::Worker(Box::new(WorkerMessage::Events(vec![
+                    Event::Trace { records, dropped },
+                ]))));
+            }
+        }
         let _ = reports.send(Mail::Worker(Box::new(message)));
     };
     let opened = catch_unwind(|| open_runtime(&request))
@@ -921,5 +989,50 @@ impl RefreshBroker {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::*;
+    #[test]
+    fn slow_carrier_bounds_traces_without_losing_terminal_events() {
+        let outbox = Outbox {
+            id: 0,
+            events: Mutex::new(Pending {
+                queue: vec![],
+                wake_pending: false,
+                trace_records: 0,
+                trace_dropped: 0,
+            }),
+            sink: Mutex::new(None),
+            closed: AtomicBool::new(false),
+        };
+        outbox.publish(vec![Event::Trace {
+            records: vec![Value::Null; 6000],
+            dropped: 3,
+        }]);
+        outbox.publish(vec![
+            Event::TaskCompleted {
+                request_id: "kept".into(),
+                ok: true,
+                value: json!(42),
+                error: None,
+                details: None,
+            },
+            Event::RuntimeClosed,
+        ]);
+        let events = outbox.drain();
+        assert!(
+            matches!(&events[0], Event::Trace { records, dropped: 1907 } if records.is_empty())
+        );
+        assert!(
+            matches!(&events[1], Event::Trace { records, dropped: 0 } if records.len() == 4096)
+        );
+        assert!(
+            matches!(&events[2], Event::TaskCompleted { request_id, ok: true, .. } if request_id == "kept")
+        );
+        assert!(matches!(events[3], Event::RuntimeClosed));
+        assert!(outbox.drain().is_empty());
     }
 }

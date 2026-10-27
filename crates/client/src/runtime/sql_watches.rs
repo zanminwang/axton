@@ -101,6 +101,9 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 continue;
             }
             let (sql, parameters) = (watch.sql.clone(), watch.parameters.clone());
+            let _span =
+                tracing::info_span!(target: "axton::client", "watch.query", observerId = id)
+                    .entered();
             match self.client.read_sql(&sql, &parameters) {
                 Ok(rows) => {
                     let rows = Value::Array(rows);

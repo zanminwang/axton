@@ -1,4 +1,6 @@
 import type { BackendDescriptor } from "./schema.mts";
+import { Diagnostics, type AxtonDiagnostics } from "./diagnostics.mts";
+export type { AxtonDiagnostics, AxtonTraceRecord } from "./diagnostics.mts";
 import { Session } from "../bindings/session.mts";
 import { createHost, type HostDependencies } from "../bindings/host.mts";
 import type { RuntimeStream, RuntimeLoadStream } from "./stream.mts";
@@ -240,6 +242,8 @@ function versioned<F>(
   return table;
 }
 export interface BackendOptions<T> {
+  /** Opt-in performance records. Default: no collection or native tracing. */
+  diagnostics?: AxtonDiagnostics;
   protocol5?: {
     projectionGeneration?: string;
     materializations?: Record<
@@ -332,6 +336,26 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
   options: BackendOptions<T>,
 ) {
   const native = loadNative(options.native);
+  const diagnostics = new Diagnostics(options.diagnostics);
+  if (options.diagnostics) {
+    // This backend's wrappers only; never mutate the caller's native object.
+    for (const name of [
+      "handshake05",
+      "processDelivery05",
+      "processMaterialization05",
+      "processLive05",
+      "processRead05",
+      "processBatchMember",
+    ] as const) {
+      const operation = native[name];
+      if (operation)
+        (native as any)[name] = (...args: any[]) =>
+          diagnostics.span(`server.${name}`, {}, () =>
+            (operation as any)(...args, true),
+          );
+    }
+  }
+
   // Nothing is dropped silently: without a handler, failures go to the console.
   const onError: (error: unknown) => void =
     options.onError ?? ((error) => console.error(error));
@@ -513,6 +537,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     return { error: error instanceof Error ? error.message : String(error) };
   };
   const hostDependencies: HostDependencies<T> = {
+    diagnostics,
     options,
     native,
     config,
@@ -564,13 +589,15 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     operation: (tx: T, session: Session) => Promise<R>,
   ) => {
     let committed: string[] = [];
-    const result = await options.database.transaction(async (tx) => {
-      const { result, published } = await bound(tx, (session) =>
-        operation(tx, session),
-      );
-      committed = published;
-      return result;
-    });
+    const result = await diagnostics.span("server.transaction", {}, () =>
+      options.database.transaction(async (tx) => {
+        const { result, published } = await bound(tx, (session) =>
+          operation(tx, session),
+        );
+        committed = published;
+        return result;
+      }),
+    );
     wakes.notify(committed);
     return result;
   };

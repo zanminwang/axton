@@ -267,6 +267,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             StoreCommand::Snapshot => StoreReport::Snapshot(self.client.store_status05()?),
             StoreCommand::Freeze => StoreReport::Frozen(self.client.freeze_batch05()?),
             StoreCommand::Acknowledge(receipt) => {
+                let _span =
+                    tracing::info_span!(target: "axton::client", "batch.acknowledge").entered();
                 let report = self.client.acknowledge_batch05(&receipt)?;
                 self.settled(&report);
                 StoreReport::Committed {

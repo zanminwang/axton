@@ -392,6 +392,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     /// Publish what the unit changed: re-run the watches after a commit, then
     /// every status and watch result that differs from the last published.
     pub(super) fn publish(&mut self) {
+        let _span = tracing::info_span!(target: "axton::client", "watch.publish", watches = self.observers.watches.len() as u64).entered();
         // Every publication path shares the commit mark. Unsent observers
         // must consume it before Model watches clear it.
         self.publish_unsent();

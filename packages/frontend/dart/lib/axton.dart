@@ -1,4 +1,5 @@
 library;
+export 'src/api/diagnostics.dart' show AxtonDiagnostics, AxtonTraceRecord;
 
 export 'src/api/client.dart'
     show

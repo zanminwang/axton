@@ -1,4 +1,5 @@
 import 'actions.dart';
+import 'diagnostics.dart';
 import '../bindings/bridge.dart';
 import '../bindings/connection.dart';
 import '../bindings/live.dart';
@@ -129,6 +130,7 @@ class Client implements WritePort, SubmitMutationPort {
     String? libraryPath,
     Carrier? carrier,
     Map<String, PrerequisiteHandler>? prerequisites,
+    AxtonDiagnostics? diagnostics,
   }) async {
     final required = Map<String, PrerequisiteHandler>.of(
       prerequisites ?? const {},
@@ -141,6 +143,7 @@ class Client implements WritePort, SubmitMutationPort {
       libraryPath: libraryPath,
       carrier: carrier,
       prerequisiteHandlers: required.keys.toList(),
+      diagnostics: diagnostics,
       effects: {
         'timer': timerHandler(),
         if (required.isNotEmpty) 'prerequisite': prerequisiteHandler(required),
@@ -429,6 +432,7 @@ class Client implements WritePort, SubmitMutationPort {
     final connecting = RuntimeConnection.connect(
       host: _bridge,
       network: live,
+      tracing: _bridge.tracing,
       onError: onError,
       refreshAuth: refreshAuth,
       directTimeout: directTimeout,

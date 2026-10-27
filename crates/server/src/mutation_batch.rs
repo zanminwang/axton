@@ -28,6 +28,7 @@ struct Store {
     last_digest: Option<String>,
     last_count: Option<u64>,
 }
+#[tracing::instrument(target = "axton::server", name = "mutation.execute", skip_all)]
 pub(crate) async fn execute(
     config: &Config,
     owner: &str,

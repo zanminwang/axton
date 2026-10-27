@@ -1,13 +1,15 @@
+use axton_binding::diagnostics::Diagnostics;
 use axton_server::live::Subscriptions;
 use napi::{bindgen_prelude::*, threadsafe_function::ThreadsafeFunction};
 use napi_derive::napi;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     future::Future,
     pin::Pin,
     sync::{Mutex, MutexGuard, OnceLock},
 };
+use tracing::{instrument::WithSubscriber, Instrument};
 struct CallbackHost(ThreadsafeFunction<String, Promise<String>, String, Status, false>);
 impl axton_server::Host for CallbackHost {
     fn call(
@@ -82,8 +84,15 @@ pub async fn negotiate_live(
     request_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
-    let cfg=config(&config_json)?;
-    let (subscriptions,actions)=axton_server::live::negotiate05(&cfg,&owner,request_json.as_bytes(),&CallbackHost(callback)).await.map_err(reason)?;
+    let cfg = config(&config_json)?;
+    let (subscriptions, actions) = axton_server::live::negotiate05(
+        &cfg,
+        &owner,
+        request_json.as_bytes(),
+        &CallbackHost(callback),
+    )
+    .await
+    .map_err(reason)?;
     let handle = {
         let mut sessions = live_sessions()?;
         sessions.next += 1;
@@ -120,50 +129,227 @@ pub fn live_close(handle: i64) -> Result<()> {
     Ok(())
 }
 #[napi]
-pub fn validate_mutation_batch(config_json:String,request_json:String)->Result<String> {
- axton_server::validate_mutation_batch(&config(&config_json)?,request_json.as_bytes()).map_err(reason)
+pub fn validate_mutation_batch(config_json: String, request_json: String) -> Result<String> {
+    axton_server::validate_mutation_batch(&config(&config_json)?, request_json.as_bytes())
+        .map_err(reason)
 }
 #[napi]
-pub async fn process_batch_member(config_json:String,owner:String,request_json:String,ordinal:u32,callback:ThreadsafeFunction<String,Promise<String>,String,Status,false>)->Result<String> {
- axton_server::process_batch_member(&config(&config_json)?,&owner,request_json.as_bytes(),ordinal as u64,&CallbackHost(callback)).await.map_err(reason)
-}
-#[napi]
-pub fn encode_batch_acknowledgement(request_json:String,results:Vec<String>)->Result<String> {
- axton_server::encode_batch_acknowledgement(request_json.as_bytes(),&results).map_err(reason)
-}
-#[napi]
-pub async fn settle_external05(config_json:String,settlement_json:String,callback:ThreadsafeFunction<String,Promise<String>,String,Status,false>)->Result<String> {
- let value=serde_json::from_str(&settlement_json).map_err(internal)?;
- let result=axton_server::settle_external05(&config(&config_json)?,&value,&CallbackHost(callback)).await.map_err(reason)?;
- Ok(result.to_string())
-}
-
-#[napi]
-pub fn server_materialization_id05(config_json:String,projection_generation:String)->Result<String> {
- axton_server::materialization_id05(&config(&config_json)?,&projection_generation).map_err(reason)
-}
-
-#[napi]
-pub async fn process_delivery05(config_json:String,owner:String,request_json:String,callback:ThreadsafeFunction<String,Promise<String>,String,Status,false>)->Result<String> {
- axton_server::process_delivery05(&config(&config_json)?,&owner,request_json.as_bytes(),&CallbackHost(callback)).await.map_err(reason)
-}
-
-#[napi]
-pub async fn process_materialization05(config_json:String,owner:String,request_json:String,callback:ThreadsafeFunction<String,Promise<String>,String,Status,false>)->Result<String> {
- axton_server::process_materialization05(&config(&config_json)?,&owner,request_json.as_bytes(),&CallbackHost(callback)).await.map_err(reason)
-}
-
-#[napi]
-pub async fn process_read05(config_json:String,owner:String,request_json:String,callback:ThreadsafeFunction<String,Promise<String>,String,Status,false>)->Result<String> {
- axton_server::process_read05(&config(&config_json)?,&owner,request_json.as_bytes(),&CallbackHost(callback)).await.map_err(reason)
+pub async fn process_batch_member(
+    config_json: String,
+    owner: String,
+    request_json: String,
+    ordinal: u32,
+    callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
+    diagnostics: Option<bool>,
+) -> Result<String> {
+    let host = CallbackHost(callback);
+    observe(
+        "native.mutation",
+        diagnostics.unwrap_or(false),
+        &host,
+        async {
+            axton_server::process_batch_member(
+                &config(&config_json)?,
+                &owner,
+                request_json.as_bytes(),
+                ordinal as u64,
+                &host,
+            )
+            .await
+            .map_err(reason)
+        },
+    )
+    .await
 }
 
 #[napi]
-pub async fn handshake05(config_json:String,owner:String,request_json:String,callback:ThreadsafeFunction<String,Promise<String>,String,Status,false>)->Result<String> {
- axton_server::handshake05(&config(&config_json)?,&owner,request_json.as_bytes(),&CallbackHost(callback)).await.map_err(reason)
+pub fn encode_batch_acknowledgement(request_json: String, results: Vec<String>) -> Result<String> {
+    axton_server::encode_batch_acknowledgement(request_json.as_bytes(), &results).map_err(reason)
+}
+#[napi]
+pub async fn settle_external05(
+    config_json: String,
+    settlement_json: String,
+    callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
+) -> Result<String> {
+    let value = serde_json::from_str(&settlement_json).map_err(internal)?;
+    let result =
+        axton_server::settle_external05(&config(&config_json)?, &value, &CallbackHost(callback))
+            .await
+            .map_err(reason)?;
+    Ok(result.to_string())
 }
 
 #[napi]
-pub async fn process_live05(config_json:String,owner:String,request_json:String,callback:ThreadsafeFunction<String,Promise<String>,String,Status,false>)->Result<String>{
- axton_server::process_live05(&config(&config_json)?,&owner,request_json.as_bytes(),&CallbackHost(callback)).await.map_err(reason)
+pub fn server_materialization_id05(
+    config_json: String,
+    projection_generation: String,
+) -> Result<String> {
+    axton_server::materialization_id05(&config(&config_json)?, &projection_generation)
+        .map_err(reason)
+}
+
+#[napi]
+pub async fn process_delivery05(
+    config_json: String,
+    owner: String,
+    request_json: String,
+    callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
+    diagnostics: Option<bool>,
+) -> Result<String> {
+    let host = CallbackHost(callback);
+    observe(
+        "native.process_delivery05",
+        diagnostics.unwrap_or(false),
+        &host,
+        async {
+            axton_server::process_delivery05(
+                &config(&config_json)?,
+                &owner,
+                request_json.as_bytes(),
+                &host,
+            )
+            .await
+            .map_err(reason)
+        },
+    )
+    .await
+}
+
+#[napi]
+pub async fn process_materialization05(
+    config_json: String,
+    owner: String,
+    request_json: String,
+    callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
+    diagnostics: Option<bool>,
+) -> Result<String> {
+    let host = CallbackHost(callback);
+    observe(
+        "native.process_materialization05",
+        diagnostics.unwrap_or(false),
+        &host,
+        async {
+            axton_server::process_materialization05(
+                &config(&config_json)?,
+                &owner,
+                request_json.as_bytes(),
+                &host,
+            )
+            .await
+            .map_err(reason)
+        },
+    )
+    .await
+}
+
+#[napi]
+pub async fn process_read05(
+    config_json: String,
+    owner: String,
+    request_json: String,
+    callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
+    diagnostics: Option<bool>,
+) -> Result<String> {
+    let host = CallbackHost(callback);
+    observe(
+        "native.process_read05",
+        diagnostics.unwrap_or(false),
+        &host,
+        async {
+            axton_server::process_read05(
+                &config(&config_json)?,
+                &owner,
+                request_json.as_bytes(),
+                &host,
+            )
+            .await
+            .map_err(reason)
+        },
+    )
+    .await
+}
+
+#[napi]
+pub async fn handshake05(
+    config_json: String,
+    owner: String,
+    request_json: String,
+    callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
+    diagnostics: Option<bool>,
+) -> Result<String> {
+    let host = CallbackHost(callback);
+    observe(
+        "native.handshake05",
+        diagnostics.unwrap_or(false),
+        &host,
+        async {
+            axton_server::handshake05(
+                &config(&config_json)?,
+                &owner,
+                request_json.as_bytes(),
+                &host,
+            )
+            .await
+            .map_err(reason)
+        },
+    )
+    .await
+}
+
+#[napi]
+pub async fn process_live05(
+    config_json: String,
+    owner: String,
+    request_json: String,
+    callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
+    diagnostics: Option<bool>,
+) -> Result<String> {
+    let host = CallbackHost(callback);
+    observe(
+        "native.process_live05",
+        diagnostics.unwrap_or(false),
+        &host,
+        async {
+            axton_server::process_live05(
+                &config(&config_json)?,
+                &owner,
+                request_json.as_bytes(),
+                &host,
+            )
+            .await
+            .map_err(reason)
+        },
+    )
+    .await
+}
+
+// The subscriber follows every Future poll across Tokio threads. Export once,
+// through the existing host carrier, without installing a global subscriber.
+async fn observe<F: Future<Output = Result<String>>>(
+    name: &str,
+    enabled: bool,
+    host: &CallbackHost,
+    body: F,
+) -> Result<String> {
+    if !enabled {
+        return body.await;
+    }
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let diagnostics = Diagnostics::new(format!("server-native:{id}"));
+    let dispatch = diagnostics.dispatch();
+    let result = async {
+        body.instrument(tracing::info_span!(target:"axton::server","native.request",operation=name))
+            .await
+    }
+    .with_subscriber(dispatch)
+    .await;
+    let (records, dropped) = diagnostics.take();
+    let _ = axton_server::Host::call(
+        host,
+        json!({"op":"trace","records":records,"dropped":dropped}),
+    )
+    .await;
+    result
 }

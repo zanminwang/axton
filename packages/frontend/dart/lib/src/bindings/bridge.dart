@@ -23,6 +23,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
+import '../api/diagnostics.dart';
 
 import 'package:ffi/ffi.dart';
 
@@ -413,7 +414,6 @@ class TaskFailure extends StateError {
 
 /// Cancellation of one store callback, separate from public task callbacks.
 
-
 /// What observer handles need from a runtime: a task whose completion claims
 /// the observer it names, and the snapshots of claimed observers. The
 /// [Bridge] is one; tests drive handles through a fake.
@@ -437,12 +437,10 @@ abstract interface class ObserverHost {
 
 /// The SDK side of one Rust-owned client runtime.
 class Bridge implements RuntimeHost, ObserverHost, Finalizable {
+  TraceEmitter? tracing;
   static void configureApplicationData(String path, {String? libraryPath}) =>
       _Abi.load(libraryPath).configureApplicationData(path);
-  Bridge._(
-    this._carrier,
-    this.runtimeId,
-  ) {
+  Bridge._(this._carrier, this.runtimeId) {
     final carrier = _carrier;
     if (carrier is _Abi) carrier.attach(this);
   }
@@ -541,6 +539,7 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
     Carrier? carrier,
     List<String> prerequisiteHandlers = const [],
     Map<String, EffectHandler> effects = const {},
+    AxtonDiagnostics? diagnostics,
   }) async {
     final opener = carrier ?? _Abi.load(libraryPath);
     final request = jsonEncode({
@@ -551,6 +550,7 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
       'stream': stream,
       'protocol': 5,
       'projectionGeneration': projectionGeneration,
+      if (diagnostics != null) 'diagnostics': true,
       if (prerequisiteHandlers.isNotEmpty)
         'prerequisiteHandlers': prerequisiteHandlers,
     });
@@ -560,6 +560,8 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
     // this isolate, which runs it after this synchronous section. So are the
     // [effects] executors the runtime may ask for from its first step.
     final bridge = Bridge._(opener, runtime);
+    if (diagnostics != null)
+      bridge.tracing = TraceEmitter(diagnostics, 'dart:$runtime');
     effects.forEach(bridge.handleEffects);
     final route = _Route();
     bridge._routes['1'] = route;
@@ -742,12 +744,16 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
       }
     } finally {
       _draining = false;
-
     }
   }
 
   void _dispatch(Map<String, dynamic> event) {
     switch (event['type']) {
+      case 'trace':
+        tracing?.native(
+          event['records'] as List<dynamic>,
+          event['dropped'] as int,
+        );
       case 'taskCompleted':
         _complete(event);
       case 'effect':
@@ -799,10 +805,7 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
       final details = event['details'];
       route.completer.completeError(
         details is Map<String, dynamic>
-            ? TaskFailure(
-                message,
-                details,
-              )
+            ? TaskFailure(message, details)
             : StateError(message),
       );
     }
@@ -817,7 +820,12 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
         : _observers[observerId];
     if (observer == null) return;
     final (zone, listener) = observer;
-    zone.runUnaryGuarded(listener, snapshot);
+    final span = tracing?.start('watch.dispatch', {'observerId': observerId});
+    try {
+      zone.runUnaryGuarded(listener, snapshot);
+    } finally {
+      span?.end();
+    }
   }
 
   void _effect(String effectId, Map<String, dynamic> operation) {

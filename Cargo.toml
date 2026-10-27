@@ -16,5 +16,7 @@ serde_jcs = "0.1"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4", "serde"] }
 sha2 = "0.10"
+tracing = { version = "0.1.44", default-features = false, features = ["std", "attributes"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry"] }
 rusqlite = { version = "0.38", features = ["bundled"] }
 tempfile = "3"

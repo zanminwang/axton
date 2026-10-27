@@ -81,6 +81,7 @@ impl<S: ClientStore> Client<S> {
             self.cleanup_delivery05(now)?;
             return Ok(None);
         };
+        let _span = tracing::info_span!(target: "axton::client", "delivery.apply", planId = %id, unitIndex = unit.index).entered();
         // Owned transfers prove the entire identity set before installation.
         let owned = if let Some(request) = &owner {
             let plan = &q.plans[&id];

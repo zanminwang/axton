@@ -14,6 +14,11 @@ import { drizzle } from "@axtonjs/postgres/drizzle";      // drizzle-orm/node-po
 
 ## Schema
 
-`migration.sql` installs eight canonical tables in a fresh namespace: `axton_stream`, `axton_record`, `axton_publication_fence`, `axton_store`, `axton_mutation_result`, `axton_stream_record`, `axton_delivery_plan` and `axton_delivery_unit`. Apply the whole file transactionally. Per-transaction cursor reservation is ephemeral SQL state, not another durable table.
+`migration.sql` installs seven canonical tables in a fresh namespace: `axton_stream`, `axton_record`, `axton_store`, `axton_mutation_result`, `axton_stream_record`, `axton_delivery_plan` and `axton_delivery_unit`. Apply the whole file transactionally. Per-transaction cursor reservation is ephemeral SQL state, not another durable table.
+
+Global publication fencing is removed. An already installed `axton_publication_fence`
+table may remain unused; this migration does not drop it. The retired host operation
+and backend `acquirePublicationFence()` are compatibility no-ops. Serializable
+transactions, record/Stream guards and whole-transaction retries remain required.
 
 An installed legacy framework layout is refused without changing its data. This candidate supplies no old-namespace migration, local-file upgrade or compatibility bridge. Use fresh framework storage and review [protocol-5 adoption](https://github.com/zanminwang/axton/blob/main/docs/engineering/protocol5-adoption.md) before replacing an existing deployment.

@@ -69,7 +69,7 @@ A successful Handler returns the explicit outputs declared by its Mutation or Qu
 
 ## Loaders and Stream delivery
 
-Loaders return one record or null per supplied identity in order. Missing or unreadable content is null. Stream authority and bounded manifest commit units are materialized through these versioned viewer Loaders under the publication fence. A failed read is not absence and cannot justify delivery or manifest progress. The runtime retains unit dependency evidence and fails oversized groups explicitly.
+Loaders return one record or null per supplied identity in order. Missing or unreadable content is null. Stream authority and bounded manifest commit units are materialized through these versioned viewer Loaders inside the same Serializable transaction. A failed read is not absence and cannot justify delivery or manifest progress. The runtime retains unit dependency evidence and fails oversized groups explicitly.
 
 Optional Bootstrap preparation tracks initial records. The schema selects historical Model types with `@@bootstrap`; no Load declarations, continuation handler or public Load manager are required. Named Query and Fetch return invocation snapshots with request-level boolean `store`.
 

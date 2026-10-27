@@ -19,7 +19,7 @@ Protocol 5 requires a fresh PostgreSQL framework namespace and fresh format-5 cl
 | [Client sync](../../../../crates/client/src/sync05/mod.rs) | Uplink, finite downlink, bounded queue and complete-unit apply. |
 | [Client settlement](../../../../crates/client/src/settlement05.rs) | Queue-owned outcomes and accepted work's authority obligations. |
 | [Server Batch](../../../../crates/server/src/mutation_batch.rs) | Store admission, per-member transactions, replay and durable results. |
-| [Server delivery](../../../../crates/server/src/delivery_plan.rs) | Fenced finite plans, preparation closure, immutable continuation and owned materialization. |
+| [Server delivery](../../../../crates/server/src/delivery_plan.rs) | Serializable finite plans, preparation closure, immutable continuation and owned materialization. |
 | [PostgreSQL schema](../../../../packages/backend/postgres/migration.sql) | Eight fresh tables: Stream, Record, PublicationFence, Store, MutationResult, StreamRecord, DeliveryPlan and DeliveryUnit. Per-transaction cursor reservation is ephemeral SQL state, not a ninth durable table. |
 
 ## 6. Runtime View
@@ -36,7 +36,7 @@ The Mutation queue is the lifecycle owner. It retains original argument paths an
 
 ### Publication and ordinary reads
 
-Backend tracking is explicit: returning a Model, storing a Query snapshot or naming a Mutation target does not enroll it. The publication fence and canonical Stream locks keep Loader content and position in one transaction. A new tracking pair obtains a real position; repeated live tracking retains it. Invalidation updates existing holders without enrolling new ones. One transaction reserves at most one cursor per affected Stream.
+Backend tracking is explicit: returning a Model, storing a Query snapshot or naming a Mutation target does not enroll it. Serializable snapshots and record/canonical Stream guards keep Loader content and position in one transaction; unrelated publications share no namespace-wide lock. A new tracking pair obtains a real position; repeated live tracking retains it. Invalidation updates existing holders without enrolling new ones. One transaction reserves at most one cursor per affected Stream.
 
 Query and Fetch return invocation snapshots with explicit `cursor: null`. They grant no Stream coverage or canonical absence. Commit-time protection prevents a delayed read from replacing newer Stream content or a genuine Stream tombstone. `store: false` returns the snapshot without installing Models. Membership Remove releases holding protection while retaining content and historical evidence; it is distinct from a Loader's authoritative null.
 
@@ -56,7 +56,7 @@ Owned materialization proves saved settlement or compatible schema obligations. 
 
 ## 11. Risks and Technical Debt
 
-Finite bounds do not imply short writer or publication-fence occupancy. Large uniqueness components intentionally apply as one unit; measured capacity, retained payload and whole-unit apply duration must be reviewed before adoption. Host-native acceptance does not prove iOS/Android artifact or device behavior. [Adoption](../../protocol5-adoption.md) owns these release limits.
+Finite bounds do not imply short writer or transaction occupancy. Large uniqueness components intentionally apply as one unit; measured capacity, retained payload and whole-unit apply duration must be reviewed before adoption. Host-native acceptance does not prove iOS/Android artifact or device behavior. [Adoption](../../protocol5-adoption.md) owns these release limits.
 
 ## Protocol definitions
 

@@ -507,8 +507,8 @@ export async function answer<Tx>(
     }
     case "publicationFence": {
       fieldsOf(r, ["op"], "publicationFence");
-      const rows = await q(SQL.PUBLICATION_FENCE);
-      if (rows.length !== 1) throw new Error("publication fence missing");
+      // Retired bridge operation: retained for older native callers only.
+      // Serializable transactions and record/Stream guards own concurrency.
       return null;
     }
     case "lockStreams":

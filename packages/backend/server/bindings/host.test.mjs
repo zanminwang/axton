@@ -128,7 +128,6 @@ for (const enabled of [false, true])
     );
     assert.deepEqual(observations, [
       "savepoint",
-      "publicationFence",
       "prepare",
       "applyStreamMembers",
       "load",

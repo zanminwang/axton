@@ -27,10 +27,6 @@ SELECT * FROM selected`;
 export const savepointName = (ordinal: number): string =>
   `axton_mutation_${ordinal}`;
 
-/** UPDATE creates the Serializable snapshot conflict fence; advisory locks do not. */
-export const PUBLICATION_FENCE =
-  "UPDATE axton_publication_fence SET id=id WHERE id=1 RETURNING id";
-
 /** Protocol-5 Store, immutable outcome and coalesced publication persistence. */
 export const V05_STORE_INSERT =
   "INSERT INTO axton_store(id,principal,stream) VALUES($1,$2,$3) ON CONFLICT(id) DO NOTHING";

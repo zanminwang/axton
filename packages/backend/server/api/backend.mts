@@ -612,9 +612,6 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     session: Session,
     body: (call: External) => R | Promise<R>,
   ): Promise<R> => {
-    await session.track(() =>
-      options.database.persistence(tx).call({ op: "publicationFence" }),
-    );
     const effects = createEffects();
     let result: R;
     try {
@@ -767,12 +764,8 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     closeLive: () => wakes.clear(),
     transaction,
     publish,
-    /** Must be awaited BEFORE relevant business writes in a caller-owned tx. */
-    acquirePublicationFence: (tx: T): Promise<void> =>
-      options.database
-        .persistence(tx)
-        .call({ op: "publicationFence" })
-        .then(() => {}),
+    /** @deprecated Global publication fencing is retired; compatibility no-op. */
+    acquirePublicationFence: (_tx: T): Promise<void> => Promise.resolve(),
   };
   const authenticate = async (request: IncomingMessage) => {
     const id = await options.authenticate(request);

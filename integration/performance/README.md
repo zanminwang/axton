@@ -114,6 +114,13 @@ include a full 45-sample matrix and a tracing-disabled control. Initial sync and
 single writes passed; continuous writes exposed backend serialization/connection
 failures and are retained as failed diagnostic evidence.
 
+Those original measurements used the former global publication fence. Current
+code removes its database writes and native call sites while retaining
+Serializable isolation, record/Stream guards, Store ordering and bounded retries.
+Raw results identify the implementation/commit; reruns are separate evidence,
+never replacements for the original samples. The old public helper and bridge
+request remain compatibility no-ops, and fresh namespaces omit the old table.
+
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,
 PostgreSQL settings and scenario parameters. It checkpoints after each sample,

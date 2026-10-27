@@ -55,10 +55,10 @@ For Query/Fetch, default and explicit true are equivalent; false installs no Mod
 
 | ID | Required behavior |
 | --- | --- |
-| T1 | Framework-owned transactions use Serializable isolation. Publication and versioned materialization acquire the persisted namespace fence before relevant work, maintaining position/content correspondence. |
+| T1 | Framework-owned transactions use Serializable isolation. Business data, publication metadata and versioned materialization share that transaction snapshot; record/Stream guards preserve position/content correspondence without a namespace-wide publication lock. |
 | T2 | Serialization conflict retries the entire transaction/handler within bounded driver retries, discarding previous output. Exhaustion is infrastructure failure, not business rejection. |
 
-Read-only Queries remain concurrent. Explicit tracking upgrades the read to the fence and may force a whole-handler retry. Application-owned transactions must acquire that fence before relevant business work; later publication cannot repair an unfenced snapshot.
+Read-only Queries remain concurrent. Explicit tracking writes membership in the same transaction and may force a whole-handler retry. Application-owned transactions must use Serializable isolation and retry the whole transaction on serialization failure.
 
 Handlers and preparation tolerate retries. Record external effects transactionally and perform them after commit. Publish every Loader projection/visibility dependency; materialize volatile external/time inputs or explicitly change projection generation.
 
@@ -85,7 +85,7 @@ Convergence assumes correct publication, valid contracts and resumed delivery. D
 | D1 | Stores with the same Stream and compatible viewer/materialization context converge after delivery and settlement. Their queues, observers and progress remain independent. |
 | D2 | Higher Stream positions replace older authority; older/equal duplicates cannot undo direct state. Compatible same-position rematerialization updates the base without erasing surviving local layers. |
 | D3 | Explicit track enrolls missing pairs with real positions. Repeated live pairs do not move the cursor. Invalidation updates affected existing pairs without enrolling them. |
-| D4 | Content and position come from one fenced canonical view. Preparation publications settle before final reads; replay runs no preparation. |
+| D4 | Content and position come from one Serializable canonical view. Preparation publications settle before final reads; replay runs no preparation. |
 | D5 | True Stream absence retains protected identity/position evidence. Older Stream content and cursor-null cache reads cannot revive it. Newer child authority survives an older parent cascade. |
 | D6 | Membership Remove changes holding evidence, releasing current live protection while retaining content, historical authority and genuine deletion evidence. It is not canonical absence. |
 | D7 | Loader/constraint/commit failure cannot advance progress across its unresolved unit. Earlier committed units remain; fresh smaller requests can recover independent prefixes. Persistent required-group failure remains observable. |

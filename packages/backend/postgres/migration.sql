@@ -23,10 +23,6 @@ CREATE TABLE IF NOT EXISTS axton_record (
  CONSTRAINT axton_record_model_identity_key_key UNIQUE(model,identity_key),
  CONSTRAINT axton_record_identity_object CHECK(jsonb_typeof(identity) = 'object')
 );
--- One namespace-wide publication serialization fence, retained across restarts.
-CREATE TABLE IF NOT EXISTS axton_publication_fence (id integer PRIMARY KEY CHECK(id=1));
-INSERT INTO axton_publication_fence(id) VALUES(1) ON CONFLICT(id) DO NOTHING;
-
 CREATE TABLE IF NOT EXISTS axton_store (
  id text PRIMARY KEY,
  principal text NOT NULL,

@@ -48,9 +48,6 @@ pub(crate) async fn execute(
         return Err(Error::code("store.binding"));
     }
     models(config, &request.context)?;
-    let _: Acknowledged = raw_host
-        .call_typed(HostRequest::PublicationFence {})
-        .await?;
     let allowed: bool = protocol_v05::call(
         raw_host,
         json!({"op":"admit","owner":owner,"context":request.context}),
@@ -116,7 +113,6 @@ pub(crate) async fn execute(
         }
     };
     let host = Publication05::new(raw_host);
-    let _: Acknowledged = host.call_typed(HostRequest::PublicationFence {}).await?;
     let _: Acknowledged = host
         .call_typed(HostRequest::Savepoint {
             ordinal: ordinal + 1,

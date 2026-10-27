@@ -246,6 +246,7 @@ export const HOST_OPERATIONS: readonly HostOperation[] = Object.keys(
   OPERATIONS,
 ) as HostOperation[];
 
+/** @deprecated Retained bridge compatibility operation; performs no publication locking. */
 export type PublicationFenceRequest = { op: "publicationFence" };
 
 /** Authenticated internal handler context; never supplied by a public caller. */

@@ -6,7 +6,7 @@ The Batch path commits each named Mutation independently and resumes a fixed req
 
 ## 3. Context and Scope
 
-`BackendOptions.protocol5` supplies known current/retained read schemas, projection generation and `authorizeStream(principal, stream, tx)`. The server derives the read context through core's protocol-5 materialization helper. Authentication identifies the principal. Mutation admission/replay and finite authority planning authorize under their fenced Serializable transaction. Ordinary Query/Fetch validate the immutable Store binding and authorize without holding Store progress or the global publication fence across arbitrary Handler/Loader awaits. Explicit Query tracking acquires the fence in its Serializable read transaction.
+`BackendOptions.protocol5` supplies known current/retained read schemas, projection generation and `authorizeStream(principal, stream, tx)`. The server derives the read context through core's protocol-5 materialization helper. Authentication identifies the principal. Mutation admission/replay and finite authority planning authorize under their Serializable transaction. Ordinary Query/Fetch validate the immutable Store binding and authorize without holding Store progress across arbitrary Handler/Loader awaits. Explicit Query tracking writes membership in its Serializable read transaction and may force a complete retry.
 
 The SDK carries one validated immutable request through sequential `processBatchMember` native calls. Each call opens its own Serializable transaction. Rust validates the complete request, selects the trusted Mutation by name/version and normalizes its input. The caller's descriptor fingerprint is immutable intent bound by the Batch digest; it is not an equality gate against today's artifact. Compatible input widening or field reordering therefore does not refuse frozen work.
 
@@ -16,21 +16,21 @@ The SDK carries one validated immutable request through sequential `processBatch
 - [mutation_batch.rs](../../../../crates/server/src/mutation_batch.rs) owns Store admission, replay, per-member execution and outcome persistence.
 - [delivery_plan.rs](../../../../crates/server/src/delivery_plan.rs) freezes Bootstrap, repair and owned materialization and carries Query/Fetch snapshots.
 - [Server bridge](../../../../crates/protocols/src/server_bridge/mod.rs) defines strict `Protocol05Operation` requests, mirrored in [host-contract.mts](../../../../packages/backend/server/bindings/host-contract.mts).
-- [persistence.mts](../../../../packages/backend/postgres/src/persistence.mts) dispatches those operations through the shared pg/Prisma/Drizzle driver; [migration.sql](../../../../packages/backend/postgres/migration.sql) installs eight tables in a fresh framework namespace and refuses an existing legacy namespace unchanged.
+- [persistence.mts](../../../../packages/backend/postgres/src/persistence.mts) dispatches those operations through the shared pg/Prisma/Drizzle driver; [migration.sql](../../../../packages/backend/postgres/migration.sql) installs seven tables in a fresh framework namespace and refuses an existing legacy namespace unchanged.
 
 ## 6. Runtime View
 
 A member locks its Store before checking immutable principal/Stream binding, Batch sequence, digest, count and progress. Only the current Batch or the last completed Batch can replay. A valid next Batch prunes the older result set in the same transaction. Saved members run neither handler nor preparation.
 
-Fresh work acquires the persisted namespace publication fence before authorization and business work. The business savepoint isolates an explicit typed refusal. A handler or Loader business refusal rolls back its effects, then saves rejection/progress outside that savepoint. Infrastructure, malformed Loader output or database failure aborts the outer transaction and leaves progress unchanged. The final saved member promotes current metadata to the last completed Batch.
+Fresh work authorizes and performs business work in the same Serializable transaction. No namespace-wide publication lock is acquired. The business savepoint isolates an explicit typed refusal. A handler or Loader business refusal rolls back its effects, then saves rejection/progress outside that savepoint. Infrastructure, malformed Loader output or database failure aborts the outer transaction and leaves progress unchanged. The final saved member promotes current metadata to the last completed Batch.
 
 Explicit tracking and invalidation use the retained discovery/recheck and canonical Stream locks. New/live pairs always have a non-null discoverable position. Each actual transaction reserves at most one cursor per affected Stream, reused by every preparation publication. Reservation state is checked against `pg_current_xact_id()` so a reused caller-owned connection cannot carry it across COMMIT. Existing live tracking retains its cursor; invalidation reaches existing holders without enrolling others.
 
-Input targets are read under the same fence after preparation. A tracked initiating-Stream target records its position and a call-owned null-cursor fallback. Other targets stay private. Returning an identity or snapshot never tracks it. Business rows, final positions, target evidence, result and progress commit together; subscriber wakes follow commit.
+Input targets are read in the same transaction snapshot after preparation. A tracked initiating-Stream target records its position and a call-owned null-cursor fallback. Other targets stay private. Returning an identity or snapshot never tracks it. Business rows, final positions, target evidence, result and progress commit together; subscriber wakes follow commit.
 
 ## 7. Finite authority delivery
 
-Handshake authenticates the Store and Stream, runs Bootstrap preparation once, settles its tracking and saves the initial head in one fenced Serializable transaction. Retries recover committed preparation; reconnect returns the current head.
+Handshake authenticates the Store and Stream, runs Bootstrap preparation once, settles its tracking and saves the initial head in one Serializable transaction. Retries recover committed preparation; reconnect returns the current head.
 
 Bootstrap preparation enrolls the complete initial scope. It shares track-only validation, deduplication and sticky declaration failures with Queries, but does not inherit a single read page's 1,000-pair/1-MiB enrollment bounds. Native materialization owns finite-plan capacity and transport paging.
 

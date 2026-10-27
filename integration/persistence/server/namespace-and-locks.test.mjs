@@ -39,7 +39,6 @@ test("fresh namespace has only canonical identity, Store/result, StreamRecord an
       "axton_delivery_plan",
       "axton_delivery_unit",
       "axton_mutation_result",
-      "axton_publication_fence",
       "axton_record",
       "axton_store",
       "axton_stream",
@@ -168,8 +167,17 @@ async function staleWaiter(sql, params, { insert = false } = {}) {
     }
   });
 }
-test("publication UPDATE id=id rejects a pre-existing-snapshot waiter", () =>
-  staleWaiter(SQL.PUBLICATION_FENCE, []));
+test("retired publication fence accepts legacy callers without writing shared state", () =>
+  namespace(async (tx) => {
+    await tx.query(ddl);
+    await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE READ ONLY");
+    try {
+      assert.equal(await answer(driver, tx, { op: "publicationFence" }), null);
+      await tx.query("COMMIT");
+    } finally {
+      await tx.query("ROLLBACK");
+    }
+  }));
 test("identity no-op write lock rejects a pre-existing-snapshot waiter", () =>
   staleWaiter(SQL.LOCK_IDENTITY, ["Entry", '{"id":"x"}']));
 test("identity ensure rejects a pre-existing-snapshot waiter on a new identity", () =>

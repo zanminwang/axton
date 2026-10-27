@@ -269,7 +269,6 @@ export function createHost<T>(
         try {
           const hook = options.loaderHooks?.[lowerFirst(req.model)];
           if (req.mode !== "canonical" && hook) {
-            await storage.call({ op: "publicationFence" });
             const effects = createEffects();
             try {
               await hook.prepareForViewer({

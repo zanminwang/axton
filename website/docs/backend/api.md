@@ -2,7 +2,7 @@
 
 ## Protocol 5 configuration
 
-Set `protocol5` on backend options with `authorizeStream(principal, stream, tx)`. Mutation admission/replay and finite authority planning authorize inside their fenced Serializable transaction. Ordinary Query/Fetch validate the immutable Store binding and authorize without holding Store progress or the global publication fence across arbitrary Handler/Loader awaits. Explicit Query tracking acquires the fence in its Serializable read transaction. `projectionGeneration` defaults to `"1"`; configure the same generation on client and backend. A materialization identifies normalized Model read contracts, independently of credentials.
+Set `protocol5` on backend options with `authorizeStream(principal, stream, tx)`. Mutation admission/replay and finite authority planning authorize inside their Serializable transaction. Ordinary Query/Fetch validate the immutable Store binding and authorize without holding Store progress across arbitrary Handler/Loader awaits. Explicit Query tracking writes membership in its Serializable read transaction and may force a complete retry. `projectionGeneration` defaults to `"1"`; configure the same generation on client and backend. A materialization identifies normalized Model read contracts, independently of credentials.
 
 `materializations` maps supported prior materialization IDs to `{schema, projectionGeneration}` using the retained descriptor and Bootstrap selection. Preserve retained operation schemas while serving frozen Mutation retries.
 
@@ -145,7 +145,7 @@ An error that is neither `CallRejected` nor translated to a business code reject
 
 ## Bootstrap preparation
 
-`bootstrap?: ({ctx}) => Promise<void>` is optional application preparation. Its typed context contains the current `tx`, `userId`, `callId`, initiating `ctx.stream`, and explicit `ctx.streams([...])`. Both Stream handles only track; neither provides invalidation. AXTON acquires its publication fence before preparation and freezes the finite Bootstrap plan in the same transaction.
+`bootstrap?: ({ctx}) => Promise<void>` is optional application preparation. Its typed context contains the current `tx`, `userId`, `callId`, initiating `ctx.stream`, and explicit `ctx.streams([...])`. Both Stream handles only track; neither provides invalidation. AXTON runs preparation and freezes the finite Bootstrap plan in the same Serializable transaction.
 
 The schema's `@@bootstrap` marks historical Model types selected for initial materialization. Queries cover named history outside that baseline. Manifest paging, coverage, replay and tail capture belong to the native runtime; applications do not return a Load continuation or manage a Load job. Receipt-target recovery does not call this preparation callback.
 
@@ -355,7 +355,6 @@ When your code has already opened the transaction, for example another framework
 
 ```ts
 const wake = await db.$transaction(async (tx) => {
-  await backend.acquirePublicationFence(tx);
   await tx.entry.update({ where: { id: 'entry-1' }, data: { text: 'From my host' } });
   return backend.publish(tx, ({ streams, invalidate }) => {
     invalidate.entry({ id: 'entry-1' });
@@ -370,7 +369,7 @@ wake();
 | Settlement | Runs before `publish` resolves: tracking and Stream positions are written through `tx`, so they commit or roll back with it, a savepoint included. Repeated publication calls reuse one cursor per affected Stream in that SQL transaction; records have no independent publication stamp |
 | Wake | `publish` resolves to a function. Call it after `tx` commits; after a rollback, drop it. Until it is called, no live subscriber is told; they catch up on their next wake or reconnect |
 | Errors | A refused declaration or a database error rejects `publish` with the original error, so your retry loop can recognize a serialization failure and run the whole transaction again. Wakes from failed attempts are simply never called |
-| Isolation | AXTON does not choose the level of your transaction. Use Serializable isolation and acquire the persisted publication fence before relevant application work. Retry the entire transaction on a serialization conflict; a later publication call cannot repair an earlier stale snapshot |
+| Isolation | AXTON does not choose the level of your transaction. Use Serializable isolation. Retry the entire transaction on a serialization conflict, discarding any previous attempt's result |
 | Refusal | A transaction AXTON is already serving, a handler's or `backend.transaction`'s, is refused: declare through its own `invalidate` and `stream` |
 
 ## Extension points

@@ -1,4 +1,4 @@
-//! Finite fenced authority, frozen once; continuation never invokes a Loader.
+//! Finite Serializable authority, frozen once; continuation never invokes a Loader.
 use crate::{
     Config, Error, Host, Result,
     backend_interface::HostExt,
@@ -59,10 +59,6 @@ async fn inspect_read_binding(
     }
     Ok(binding.is_some())
 }
-async fn fence(host: &impl Host) -> Result<()> {
-    let _: Acknowledged = host.call_typed(HostRequest::PublicationFence {}).await?;
-    Ok(())
-}
 #[tracing::instrument(target = "axton::server", name = "bootstrap.prepare", skip_all)]
 async fn prepare(
     config: &Config,
@@ -115,7 +111,6 @@ pub async fn handshake05(
     };
     bind(owner, &context, raw).await?;
     let host = Publication05::new(raw);
-    fence(&host).await?;
     prepare(config, owner, &context, &host).await?;
     let head: u64 = call(&host, json!({"op":"deliveryHead","stream":r.stream})).await?;
     encode(&v05::HandshakeResponse {
@@ -455,7 +450,6 @@ pub async fn process_delivery05(
         return encode_persisted(&d);
     }
     let host = Publication05::new(raw);
-    fence(&host).await?;
     prepare(config, owner, &r.context, &host).await?;
     let positions = prepared_candidates(
         config,
@@ -573,7 +567,6 @@ pub async fn process_materialization05(
         }
     }
     let host = Publication05::new(raw);
-    fence(&host).await?;
     let positions = prepared_candidates(
         config,
         owner,
@@ -720,12 +713,9 @@ pub async fn process_read05(
                             .iter()
                             .any(|d| matches!(d, StreamIntent::Invalidate { .. })) =>
                     {
-                        if !declarations.is_empty() {
-                            if !bound {
-                                bind(owner, &r.context, raw).await?;
-                                bound = true;
-                            }
-                            fence(&host).await?;
+                        if !declarations.is_empty() && !bound {
+                            bind(owner, &r.context, raw).await?;
+                            bound = true;
                         }
                         crate::settlement::settle_changes(
                             config,
@@ -835,7 +825,6 @@ pub async fn process_live05(
     let mut r: v05::DeltaRequest = v05::decode(bytes).map_err(request_invalid)?;
     if r.continuation.is_none() {
         bind(owner, &r.context, host).await?;
-        fence(host).await?;
         r.through = call(host, json!({"op":"deliveryHead","stream":r.context.stream})).await?;
     }
     process_delivery05(config, owner, &v05::encode(&r).map_err(internal)?, host).await

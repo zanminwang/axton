@@ -20,6 +20,9 @@ const output={schemaVersion:1,kind:'snapshot-contention-probe',
   postgres:(await admin.query('SELECT version() AS version')).rows[0].version,
   cases:[],errors};
 const lock='LOCK TABLE axton_publication_fence IN SHARE ROW EXCLUSIVE MODE';
+// Historical SQL is explicit so this diagnostic remains reproducible after
+// the production namespace no longer installs or updates the global fence.
+const legacyFence='UPDATE axton_publication_fence SET id=id WHERE id=1 RETURNING id';
 async function blocked(pid) {
   for(let i=0;i<400;i++) {
     const row=(await admin.query('SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1',[pid])).rows[0];
@@ -42,6 +45,7 @@ async function experiment(mode) {
     await admin.query(`CREATE SCHEMA ${schema}`);
     for(const client of [admin,writer,waiter])await client.query(`SET search_path TO ${schema}`);
     await admin.query(await readFile(new URL('../../packages/backend/postgres/migration.sql',import.meta.url),'utf8'));
+    await admin.query('CREATE TABLE axton_publication_fence(id integer PRIMARY KEY); INSERT INTO axton_publication_fence VALUES(1)');
     await admin.query("INSERT INTO axton_store(id,principal,stream) VALUES('a','benchmark','Benchmark:entries'),('b','benchmark','Benchmark:entries')");
     await admin.query('CREATE TABLE business_counter(value integer NOT NULL); INSERT INTO business_counter VALUES(0)');
     for(const client of [writer,waiter]) {
@@ -50,7 +54,7 @@ async function experiment(mode) {
     }
     if(mode==='lock-before-snapshot')await writer.query(lock);
     await claim(writer,'a');
-    await writer.query(SQL.PUBLICATION_FENCE);
+    await writer.query(legacyFence);
     await writer.query('UPDATE business_counter SET value=value+1');
     sample.writer='holding-fence';
     let phase='start';
@@ -62,7 +66,7 @@ async function experiment(mode) {
         }
         if(mode!=='current-row-fence') {phase='table-lock';await waiter.query(lock);}
         phase='claim-store';await claim(waiter,'b');
-        phase='publication-fence';await waiter.query(SQL.PUBLICATION_FENCE);
+        phase='publication-fence';await waiter.query(legacyFence);
         phase='read-business';
         sample.waiterRead=(await waiter.query('SELECT value FROM business_counter')).rows[0].value;
         await waiter.query('UPDATE business_counter SET value=value+1');

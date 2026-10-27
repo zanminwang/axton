@@ -39,7 +39,7 @@ Queries and Fetch choose request-level `{store?: boolean}`, default true. Storag
 
 `@version(n)` fixes each operation's kind, inputs and outputs. `history/actions.json` retains every published version and the selected Model output contracts. Incompatible shape or kind changes require a new version. Keep retained handlers/Loaders while serving those versions. This history preserves format-5 queued intent; it supplies no old-framework file conversion.
 
-A Query's business contract is read-only. The engine rejects forbidden framework effects but cannot inspect arbitrary application SQL or a captured external client. Ordinary Handler/Loader awaits hold neither Store progress nor the global publication fence. Explicit tracking is published through a fenced Serializable read transaction and may retry the whole invocation; save external business effects for Mutation transactions.
+A Query's business contract is read-only. The engine rejects forbidden framework effects but cannot inspect arbitrary application SQL or a captured external client. Ordinary Handler/Loader awaits hold no Store progress lock. Explicit tracking is published through a Serializable read transaction and may retry the whole invocation; save external business effects for Mutation transactions.
 
 Member deprecation is a generated notice only. Required fields and binding rules remain enforced. Creation defaults are evaluated once for fresh Model creates; they do not regenerate during replay ([Models](models.md)).
 

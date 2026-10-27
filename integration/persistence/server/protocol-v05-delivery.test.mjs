@@ -18,29 +18,6 @@ const native = createRequire(import.meta.url)(
 );
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const database = pg(pool, { retries: 10 });
-const fenceStarts = new WeakMap();
-let lastFenceHeldMs = 0;
-const originalQuery = database.driver.query.bind(database.driver);
-database.driver.query = async (tx, sql, params) => {
-  if (sql.startsWith("UPDATE axton_publication_fence") && !fenceStarts.has(tx))
-    fenceStarts.set(tx, performance.now());
-  return originalQuery(tx, sql, params);
-};
-const originalTransaction = database.transaction.bind(database);
-database.transaction = async (body) => {
-  let tx;
-  try {
-    return await originalTransaction(async (t) => {
-      tx = t;
-      fenceStarts.delete(t);
-      return body(t);
-    });
-  } finally {
-    lastFenceHeldMs =
-      tx && fenceStarts.has(tx) ? performance.now() - fenceStarts.get(tx) : 0;
-  }
-};
-
 const q = async (sql, args = []) => (await pool.query(sql, args)).rows;
 const model = {
   name: "Entry",
@@ -147,7 +124,10 @@ async function pull(r) {
 before(async () => {
   await q(
     await readFile(
-      new URL("../../../packages/backend/postgres/migration.sql", import.meta.url),
+      new URL(
+        "../../../packages/backend/postgres/migration.sql",
+        import.meta.url,
+      ),
       "utf8",
     ),
   );
@@ -349,7 +329,6 @@ test("real selected and unique-model capacity measurements", async () => {
       const firstText = await chosen.pull("alice", JSON.stringify(r));
       const first = JSON.parse(firstText);
       const frozenMs = performance.now() - start;
-      const fenceHeldMs = lastFenceHeldMs;
       const [row] = await q(
         "SELECT staged_bytes FROM axton_delivery_plan WHERE plan_id=$1",
         [first.header.planId],
@@ -425,8 +404,7 @@ test("real selected and unique-model capacity measurements", async () => {
           measurement: kind,
           n,
           stagedBytes: Number(row.staged_bytes),
-          fencedRequestMs: frozenMs,
-          fenceHeldMs,
+          frozenRequestMs: frozenMs,
           continuationMs: validationMs,
           cleanupMs,
           headerBytes,

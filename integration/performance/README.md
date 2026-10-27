@@ -74,6 +74,14 @@ watch and local queries. Live verifies both clients, accepted settlement outputs
 A's empty queue, handler executions and PostgreSQL content. Backend/connection
 errors and trace loss fail the sample. A fast but incorrect sample never passes.
 
+The v2 measurement contract distinguishes a nonterminal `AxtonReport` from a
+transport failure. An owned create may emit `diverged` when its canonical
+materialization arrives before full Stream coverage, then settle successfully.
+Live samples retain and count these reports only when they come from A during
+measurement, name that exact Entry/ordinal, and the Entry's content and accepted
+settlement are independently verified. Other reports fail. No reported sample is
+silently discarded; summaries/comparisons show report counts alongside timings.
+
 ## Results
 
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus

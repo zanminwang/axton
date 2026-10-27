@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:axton/axton.dart' show AxtonReport;
 import '../fixture/generated/generated.dart';
 import '../support/recorder.dart';
 
@@ -18,6 +19,7 @@ Future<void> main(List<String> args) => runSample(args, (
   final ready = Completer<void>(), complete = Completer<void>();
   List<Entry> last = [];
   final settlements = <Future<void>>[];
+  final recordReports = <Map<String, Object?>>[];
   try {
     a = await GeneratedClient.open(
       path: '${dir.path}/a.sqlite',
@@ -37,7 +39,23 @@ Future<void> main(List<String> args) => runSample(args, (
           url: options['url'] as String,
           token: () => 'benchmark',
         ),
-        onError: (error) => progress('connection.error', {'error': '$error'}),
+        onError: (error) {
+          if (error is AxtonReport) {
+            final report = <String, Object?>{
+              'client': identical(client, a) ? 'A' : 'B',
+              'kind': error.kind,
+              'model': error.model,
+              'identity': error.identity,
+              'ordinal': error.ordinal,
+              'atUs': clock.elapsedMicroseconds,
+              'duringMeasurement': clock.isRunning,
+            };
+            recordReports.add(report);
+            progress('record.report', report);
+          } else {
+            progress('connection.error', {'error': '$error'});
+          }
+        },
       );
       await client.bootstrap();
       verifyRows(await client.models.entry.query(), seeds, 0);
@@ -122,6 +140,7 @@ Future<void> main(List<String> args) => runSample(args, (
     );
     return {
       'events': events.values.toList(),
+      'recordReports': recordReports,
       'timings': {
         'localWritesCompleteUs': localWritesCompleteUs,
         'allSettledUs': allSettledUs,

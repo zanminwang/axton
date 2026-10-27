@@ -8,7 +8,7 @@ import {fileURLToPath} from 'node:url';
 import {createInterface} from 'node:readline';
 import {Pool} from 'pg';
 import {startFixture,textBytes,fixtureBatchSize} from './fixture/server.mjs';
-import {printSummary,summarize,metrics} from './report.mjs';
+import {printSummary,summarize,metrics,validateRecordReports} from './report.mjs';
 import {poolLifecycle} from './support/postgres.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
@@ -66,7 +66,7 @@ const result={schemaVersion:1,completed:false,createdAt:new Date().toISOString()
     node:process.version,dart:command(process.env.AXTON_DART??'dart',['--version']),rustc:command('rustc',['--version']),
     cargo:command('cargo',['--version']),typescript:command(process.execPath,['node_modules/typescript/bin/tsc','--version']),
     postgres:(await admin.query('SELECT version() AS version')).rows[0].version,settings},
-  compatibility:{schemaVersion:1,boundaries:'sync-performance-v1',fixtureSchemaSha256:hash(await readFile('integration/performance/fixture/generated/schema.json')),
+  compatibility:{schemaVersion:1,boundaries:'sync-performance-v2',fixtureSchemaSha256:hash(await readFile('integration/performance/fixture/generated/schema.json')),
     textBytes,fixtureBatchSize,sdk:'dart',nativeProfile:'release',dartMode:'aot',diagnostics:options.diagnostics,
     watch:'full Entry model snapshots; first expected nonempty snapshot',
     initialCondition:'fresh process and SQLite files per sample; timed interval starts before open, process startup excluded',
@@ -131,6 +131,7 @@ try {
           sample.serverDiagnostics.length=0;
           Object.assign(sample,await execute(scenario,records,writes,directory,sample.serverDiagnostics));
           if(sample.status==='passed') {
+            validateRecordReports(sample);
             for (const values of Object.values(metrics(sample)))
               assert.ok(values.every(value=>Number.isFinite(value)&&value>=0),'invalid timing observation');
             sample.serverVerification=await fixture.verify(writes);assert.equal(dropped,0,'server diagnostics incomplete');
@@ -146,6 +147,7 @@ try {
           result.samples.push(sample);await save();
         }
         console.error(`${scenario} N=${records} M=${writes} repetition=${repetition}: ${sample.status}`);
+        if(sample.status!=='passed')console.error(JSON.stringify({error:sample.error,cleanupError:sample.cleanupError,client:sample.result?.error,progress:sample.progress}));
         if(sample.status!=='passed') break scenarios;
       }
 } finally {

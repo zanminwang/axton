@@ -26,6 +26,14 @@ export function metrics(sample) {
     entriesPerSecond:[sample.writes/(sample.result.timings.allVisibleUs/1e6)]};
 }
 export const caseKey = sample => `${sample.scenario}/${sample.records}/${sample.writes}`;
+export function validateRecordReports(sample) {
+  for (const report of sample.result.recordReports??[]) {
+    const index=sample.result.events.findIndex(event=>event.id===report.identity?.id&&event.accepted===true);
+    assert.ok(sample.scenario==='live-sync'&&report.client==='A'&&report.kind==='diverged'
+      &&report.model==='Entry'&&report.duringMeasurement===true&&index>=0&&report.ordinal===index+1,
+      'unexpected record report: only transient divergence of a verified accepted own create is admissible');
+  }
+}
 export function summarize(result) {
   const groups=new Map();
   for (const sample of result.samples) {
@@ -48,6 +56,7 @@ export function summarize(result) {
       for (const [name,value] of Object.entries(perRun)) (stages[name]??=[]).push(value);
     }
     return {key,runs:samples.length,passed:passed.length,failed:samples.length-passed.length,
+      recordReports:passed.reduce((n,s)=>n+(s.result.recordReports?.length??0),0),
       metrics:Object.fromEntries(Object.entries(gathered).map(([name,values])=>[name,statistics(values)])),
       stages:Object.fromEntries(Object.entries(stages).map(([name,runs])=>[name,{
         summedDurationMs:statistics(runs.map(r=>r.totalMs)),maxDurationMs:statistics(runs.map(r=>r.maxMs)),
@@ -56,12 +65,13 @@ export function summarize(result) {
 }
 const show = stats => stats ? `${stats.median.toFixed(3)} [${stats.min.toFixed(3)}, ${stats.max.toFixed(3)}]` : '—';
 export function printSummary(result) {
+  if(!result.completed)console.log('INCOMPLETE RUN: partial samples are retained, not a complete baseline.');
   console.log('Times in ms: median [min, max]. Live per-write observations are correlated within each run.');
-  console.log('| Scenario | Existing N | Writes M | Passed | Store open | First visible / local commit | All visible / settlement | Bootstrap / B visible |');
-  console.log('|---|---:|---:|---:|---:|---:|---:|---:|');
+  console.log('| Scenario | Existing N | Writes M | Passed | Record reports | Store open | First visible / local commit | All visible / settlement | Bootstrap / B visible |');
+  console.log('|---|---:|---:|---:|---:|---:|---:|---:|---:|');
   for (const group of summarize(result)) {
     const [scenario,n,m]=group.key.split('/'), x=group.metrics;
-    console.log(`| ${scenario} | ${n} | ${m} | ${group.passed}/${group.runs} | ${show(x.storeOpenMs)} | ${show(x.firstVisibleMs??x.localCommitMs)} | ${show(x.allVisibleMs && scenario==='initial-sync'?x.allVisibleMs:x.settlementMs)} | ${show(x.bootstrapMs??x.bVisibleMs)} |`);
+    console.log(`| ${scenario} | ${n} | ${m} | ${group.passed}/${group.runs} | ${group.recordReports} | ${show(x.storeOpenMs)} | ${show(x.firstVisibleMs??x.localCommitMs)} | ${show(x.allVisibleMs && scenario==='initial-sync'?x.allVisibleMs:x.settlementMs)} | ${show(x.bootstrapMs??x.bVisibleMs)} |`);
   }
 }
 export function compare(before,after) {
@@ -74,6 +84,7 @@ export function compare(before,after) {
   return a.flatMap(group=>Object.entries(group.metrics).map(([metric,stats])=>{
     const next=b.find(x=>x.key===group.key).metrics[metric];
     return {case:group.key,metric,before:stats.median,after:next.median,
+      beforeRecordReports:group.recordReports,afterRecordReports:b.find(x=>x.key===group.key).recordReports,
       changePercent:stats.median===0?null:100*(next.median/stats.median-1)};
   }));
 }

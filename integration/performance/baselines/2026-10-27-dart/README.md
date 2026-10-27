@@ -149,6 +149,42 @@ collection is not required for this failure mode.
    the full workload needs a subsequent clean baseline after this issue is fixed.
    JS parity and mobile/network variants remain follow-up work.
 
+## Controlled snapshot/lock investigation
+
+The [real PostgreSQL experiment](https://github.com/zanminwang/axton/actions/runs/40585223586)
+uses two Serializable transactions and the actual Store-claim/fence SQL, plus one
+business counter. It waits until PostgreSQL reports the second session blocked,
+then commits the first writer. [Raw results](contention-probe.json) retain each
+observed outcome. No retry count, isolation level or production code was changed.
+
+| Ordering | First writer | Second writer | Final counter |
+| --- | --- | --- | --- |
+| Current: claim Store, then UPDATE fence | Committed | `40001` at fence | 1 |
+| Experimental admission lock before first read, then existing fence | Committed | Committed; read the first writer's value | 2 |
+| Read first, then admission lock and existing fence | Committed | `40001` at fence | 1 |
+
+Ordinary concurrent reads completed and saw the previous committed value while
+each writer held its fence. Failed waiters left no partial business changes.
+
+The current [Mutation path](../../../../crates/server/src/mutation_batch.rs) and
+[delivery binding](../../../../crates/server/src/delivery_plan.rs) claim Store
+ownership before the publication fence. Those statements acquire the transaction
+snapshot. A waiter can therefore have an older snapshot by the time it obtains
+the fence. The persisted UPDATE correctly rejects it; bounded retries under
+sustained overlap can exhaust and escape as the observed HTTP/live errors.
+[PostgreSQL's LOCK documentation](https://www.postgresql.org/docs/16/sql-lock.html)
+explains why admission must precede the first SELECT or data modification to
+obtain a fresh Serializable snapshot.
+
+The experiment establishes this conflict mechanism, not the total contribution
+to burst latency. A production candidate should admit known publishing/versioned
+materialization transactions before their first database read, retain the
+persisted fence and Serializable retries, and leave ordinary unfenced reads
+concurrent. Merely taking an admission lock after Store reads cannot provide the
+same effect. The tested table-lock prototype is confined to the experiment;
+adapter/API integration, mixed callers and real E2E behavior still require
+validation before any speedup or clean-baseline claim.
+
 ## Conditions and evidence
 
 | Condition | Value |
@@ -182,7 +218,8 @@ what ran; later report/cleanup changes do not relabel that measured commit.
 | artifacts/performance/live-sync | 62726d7bd398b9e3ad9fe1d8b466d54166a8328f9996b8c12c9d2287f823ea83 |
 
 [Evidence index](evidence.json) retains workflow links, commits and SHA-256 of the
-uncompressed originals. Archives are lossless. The earlier trial archives preserve
+uncompressed originals. The probe JSON is uncompressed; archives are lossless.
+The earlier trial archives preserve
 the PostgreSQL physical-socket cleanup failure, v1 nonterminal-report failure,
 and first continuous-write failure. They are not pooled with the full matrix.
 

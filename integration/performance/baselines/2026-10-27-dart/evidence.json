@@ -38,5 +38,13 @@
     "rawSha256": "6fecbe8cc441ee414b9d02aed056de1919392c740e4ff4bf938c469c5ba1f471",
     "samples": 45,
     "reason": "Full instrumented matrix. Sample failures are preserved and excluded from passing-baseline statistics."
+  },
+  {
+    "file": "contention-probe.json",
+    "run": "https://github.com/zanminwang/axton/actions/runs/40585223586",
+    "commit": "0defa5421783baeb5e865168e7a2332baa36e19a",
+    "rawSha256": "e562ac1180866af8fc4181bb6ca29b778dac6c6db2bb7afc90b3216bab7bf855",
+    "cases": 3,
+    "reason": "Controlled real-PostgreSQL experiment: existing ordering and late admission abort with 40001; admission before the first snapshot commits both writers. Not a production fix or latency baseline."
   }
 ]

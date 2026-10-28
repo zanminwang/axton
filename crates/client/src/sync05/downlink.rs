@@ -267,6 +267,14 @@ impl Control {
                 SocketEvent::Closed | SocketEvent::Overflow => {
                     self.flights.remove(id);
                     self.live = false;
+                    // Missing socket fragments cannot be fetched from a server
+                    // cache. Retire incomplete ordinary responses immediately;
+                    // repair reconstructs current state from committed B/C.
+                    self.queue.plans.retain(|_, plan| {
+                        plan.header.owner.is_some()
+                            || (plan.next..plan.header.units.len() as u64)
+                                .all(|index| plan.complete(index))
+                    });
                     self.schedule(now)?;
                     self.retry("socket closed or overflow".into());
                 }
@@ -296,9 +304,38 @@ impl Control {
                         self.schedule(now)?;
                         return Ok(());
                     }
-                    self.head = self.head.max(response.header.observed_head);
+                    // An idle receiver can apply a live offer immediately. While
+                    // ordinary delivery is queued, coalesce new
+                    // offers into the latest head instead of buffering a response
+                    // per commit. Fresh HTTP repair starts at committed B/C.
+                    // An HTTP wait alone must not block an eligible live offer.
+                    // Fragments of an already admitted response still complete it.
+                    let cursor = self.status.cursor.unwrap_or(0);
+                    let advances_prefix =
+                        response.header.after.is_some_and(|after| after <= cursor)
+                            && response
+                                .header
+                                .through
+                                .is_some_and(|through| through > cursor);
+                    if !self.queue.plans.contains_key(&response.header.plan_id)
+                        && (self.queue.plans.values().any(|p| p.header.owner.is_none())
+                            || (!advances_prefix
+                                && self.flights.values().any(|f| matches!(f, Flight::Delta(_)))))
+                    {
+                        DeliveryQueue::validate_offer(
+                            &response.header,
+                            &response.parts,
+                            &self.context,
+                            now,
+                        )?;
+                        let _span = tracing::info_span!(target: "axton::client", "delivery.coalesce", observedHead = response.header.observed_head, committedCursor = self.status.cursor.unwrap_or(0)).entered();
+                        self.head = self.head.max(response.header.observed_head);
+                        self.schedule(now)?;
+                        return Ok(());
+                    }
                     self.queue
                         .receive(&response.header, &response.parts, &self.context, now)?;
+                    self.head = self.head.max(response.header.observed_head);
                     self.schedule(now)?;
                 }
             }
@@ -330,27 +367,8 @@ impl Control {
             }
             Flight::Delta(request) => {
                 let response: v05::DeliveryResponse = serde_json::from_str(&body)?;
-                if response.header.context != request.context
-                    || response.header.after != Some(request.after)
-                    || response.header.through != Some(request.through)
-                    || response.header.bootstrap != request.bootstrap
-                    || response.header.owner.is_some()
-                {
-                    return Err(invalid("delta correlation mismatch"));
-                }
-                if let Some(c) = &request.continuation
-                    && (c.plan_id != response.header.plan_id || c.digest != response.header.digest)
-                {
-                    return Err(invalid("continuation mismatch"));
-                }
-                if let Some(c) = &request.continuation
-                    && !response
-                        .parts
-                        .iter()
-                        .any(|p| p.unit == c.unit && p.part == c.part)
-                {
-                    return Err(invalid("continuation omitted requested fragment"));
-                }
+                response.admit(&request, &self.context)?;
+                response.require_complete()?;
                 self.head = self.head.max(response.header.observed_head);
                 self.queue
                     .receive(&response.header, &response.parts, &self.context, now)?;
@@ -358,6 +376,7 @@ impl Control {
             }
             Flight::Owned(request) => {
                 let response: v05::MaterializationResponse = serde_json::from_str(&body)?;
+                response.delivery.require_complete()?;
                 self.queue
                     .receive_owned(&request, &response, &self.context, now)?;
                 self.schedule(now)?;
@@ -536,7 +555,6 @@ impl Control {
                         },
                         keys: schema.authority_keys,
                         models: schema.bootstrap_models,
-                        continuation: None,
                     };
                     self.owned(request)?;
                 }
@@ -557,7 +575,6 @@ impl Control {
                             },
                             keys: pending.missing_keys,
                             models: BTreeMap::new(),
-                            continuation: None,
                         };
                         self.owned(request)?;
                     }
@@ -725,33 +742,6 @@ impl Control {
         if self.flights.values().any(|f| matches!(f, Flight::Delta(_))) {
             return Ok(());
         }
-        if let Some(c) = self.queue.continuations().first() {
-            let p = &self.queue.plans[&c.plan_id];
-            if let Some(original) = &p.owner {
-                let mut request = original.clone();
-                request.continuation = Some(c.clone());
-                if !self
-                    .flights
-                    .values()
-                    .any(|f| matches!(f,Flight::Owned(r) if r.owner==request.owner))
-                {
-                    return self.http(
-                        Flight::Owned(request.clone()),
-                        HttpRoute::Materialize,
-                        &request,
-                    );
-                }
-            } else if p.header.owner.is_none() {
-                let request = v05::DeltaRequest {
-                    context: self.context.clone(),
-                    after: p.header.after.unwrap(),
-                    through: p.header.through.unwrap(),
-                    bootstrap: p.header.bootstrap,
-                    continuation: Some(c.clone()),
-                };
-                return self.http(Flight::Delta(request.clone()), HttpRoute::Pull, &request);
-            }
-        }
         if self.status.start_cursor.is_none() {
             return Ok(());
         }
@@ -769,7 +759,7 @@ impl Control {
         if self.queue.plans.values().any(|p| {
             p.header.bootstrap == bootstrap
                 && p.header.after.is_some_and(|a| a <= after)
-                && p.header.through.is_some_and(|end| end >= through)
+                && p.header.through.is_some_and(|end| end >= after)
         }) {
             return Ok(());
         }
@@ -779,7 +769,6 @@ impl Control {
                 after,
                 through,
                 bootstrap,
-                continuation: None,
             };
             self.http(Flight::Delta(request.clone()), HttpRoute::Pull, &request)?;
         }

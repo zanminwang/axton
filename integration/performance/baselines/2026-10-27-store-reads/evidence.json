@@ -1,0 +1,178 @@
+{
+  "workflow": "https://github.com/zanminwang/axton/actions/runs/40595291369",
+  "commit": "cc02af94dc0792d69a325cdf12009cb82fa52a07",
+  "dirty": false,
+  "file": "results.json.gz",
+  "rawSha256": "3f1790a5f2ce98ef0ed98698d595dbf7e2153d519facad812585ba53941fc78e",
+  "matrixCompleted": true,
+  "completed": false,
+  "samples": 45,
+  "passed": 30,
+  "clientCompleted": 45,
+  "serverVerified": 45,
+  "accepted": 1515,
+  "backendErrors": 270,
+  "connectionErrors": 223,
+  "recordReports": 1455,
+  "traceLoss": 0,
+  "cleanupErrors": 0,
+  "adminErrors": [],
+  "backendErrorSites": {
+    "at async answer05 (file:///home/runner/work/axton/axton/packages/backend/postgres/src/persistence.mts:206:7)": 119,
+    "at async answer05 (file:///home/runner/work/axton/axton/packages/backend/postgres/src/persistence.mts:274:21)": 92,
+    "other": 6,
+    "at async answer05 (file:///home/runner/work/axton/axton/packages/backend/postgres/src/persistence.mts:203:7)": 43,
+    "at async answer05 (file:///home/runner/work/axton/axton/packages/backend/postgres/src/persistence.mts:273:7)": 7,
+    "at async answer05 (file:///home/runner/work/axton/axton/packages/backend/postgres/src/persistence.mts:231:9)": 3
+  },
+  "sourceErrorSpans": {
+    "host.saveDelivery": 1455,
+    "server.processDelivery05": 357,
+    "server.processLive05": 860,
+    "server.processMaterialization05": 241,
+    "server.transaction": 273,
+    "host.claimStore": 444,
+    "server.processBatchMember": 444
+  },
+  "serverCommitConfirmations": 1515,
+  "failedStoreClaimAttemptsOnMutationPath": 444,
+  "backendErrorGroups": {
+    "storeProgress": 99,
+    "deliveryPlanAndUnits": 165,
+    "commit": 6
+  },
+  "uploadOverlap": [
+    {
+      "records": 100,
+      "repetition": 1,
+      "maxConcurrentServerMembers": 2,
+      "overlappingServerMemberStarts": 167,
+      "clientPushRequests": 10,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 100,
+      "repetition": 2,
+      "maxConcurrentServerMembers": 3,
+      "overlappingServerMemberStarts": 44,
+      "clientPushRequests": 9,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 100,
+      "repetition": 3,
+      "maxConcurrentServerMembers": 2,
+      "overlappingServerMemberStarts": 104,
+      "clientPushRequests": 9,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 100,
+      "repetition": 4,
+      "maxConcurrentServerMembers": 3,
+      "overlappingServerMemberStarts": 75,
+      "clientPushRequests": 13,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 100,
+      "repetition": 5,
+      "maxConcurrentServerMembers": 2,
+      "overlappingServerMemberStarts": 39,
+      "clientPushRequests": 8,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 1000,
+      "repetition": 1,
+      "maxConcurrentServerMembers": 2,
+      "overlappingServerMemberStarts": 41,
+      "clientPushRequests": 7,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 1000,
+      "repetition": 2,
+      "maxConcurrentServerMembers": 3,
+      "overlappingServerMemberStarts": 71,
+      "clientPushRequests": 13,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 1000,
+      "repetition": 3,
+      "maxConcurrentServerMembers": 3,
+      "overlappingServerMemberStarts": 154,
+      "clientPushRequests": 13,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 1000,
+      "repetition": 4,
+      "maxConcurrentServerMembers": 3,
+      "overlappingServerMemberStarts": 92,
+      "clientPushRequests": 14,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 1000,
+      "repetition": 5,
+      "maxConcurrentServerMembers": 3,
+      "overlappingServerMemberStarts": 91,
+      "clientPushRequests": 11,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 10000,
+      "repetition": 1,
+      "maxConcurrentServerMembers": 3,
+      "overlappingServerMemberStarts": 129,
+      "clientPushRequests": 15,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 10000,
+      "repetition": 2,
+      "maxConcurrentServerMembers": 3,
+      "overlappingServerMemberStarts": 81,
+      "clientPushRequests": 14,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 10000,
+      "repetition": 3,
+      "maxConcurrentServerMembers": 3,
+      "overlappingServerMemberStarts": 59,
+      "clientPushRequests": 11,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 10000,
+      "repetition": 4,
+      "maxConcurrentServerMembers": 3,
+      "overlappingServerMemberStarts": 53,
+      "clientPushRequests": 12,
+      "overlappingClientPushPairs": 0
+    },
+    {
+      "records": 10000,
+      "repetition": 5,
+      "maxConcurrentServerMembers": 2,
+      "overlappingServerMemberStarts": 65,
+      "clientPushRequests": 12,
+      "overlappingClientPushPairs": 0
+    }
+  ],
+  "codeValidation": {
+    "commit": "bb871fb5dc799137b525fee28cc921269a79f86a",
+    "productionAndBenchmarkSourcesUnchangedFromMeasuredCommit": true,
+    "linux": {
+      "url": "https://github.com/zanminwang/axton/actions/runs/40596029448/job/122512039185",
+      "conclusion": "success"
+    },
+    "macos": {
+      "url": "https://github.com/zanminwang/axton/actions/runs/40596035590/job/122512241816",
+      "conclusion": "success"
+    }
+  }
+}

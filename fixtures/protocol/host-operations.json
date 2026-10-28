@@ -20,18 +20,6 @@
       ]
     },
     {
-      "op": "publicationFence",
-      "request": {
-        "op": "publicationFence"
-      },
-      "responses": [
-        {
-          "variant": "acknowledged",
-          "value": null
-        }
-      ]
-    },
-    {
       "op": "head",
       "request": {
         "op": "head",

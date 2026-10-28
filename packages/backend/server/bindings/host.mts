@@ -1,3 +1,4 @@
+import { Diagnostics, type AxtonTraceRecord } from "../api/diagnostics.mts";
 import type {
   BackendOptions,
   Loader,
@@ -17,6 +18,7 @@ import type { Native } from "./native.mts";
 import { Session } from "./session.mts";
 import { isRetryableTransactionError } from "./retryable.mts";
 export interface HostDependencies<T> {
+  diagnostics: Diagnostics;
   options: BackendOptions<T>;
   native: Native;
   config: string;
@@ -95,6 +97,7 @@ export function createHost<T>(
 ): (request: string) => Promise<string> {
   const {
     options,
+    diagnostics,
     native,
     config,
     descriptor,
@@ -109,9 +112,8 @@ export function createHost<T>(
     onError,
   } = dependencies;
   const storage = options.database.persistence(tx);
-  return (raw) =>
+  const execute = (req: HostRequest) =>
     session.track(async () => {
-      const req = JSON.parse(raw) as HostRequest;
       let result: unknown;
       // `savepoint`, `rollback` and `release` are answered by the persistence
       // and also bookkept here, so each one does both.
@@ -267,7 +269,6 @@ export function createHost<T>(
         try {
           const hook = options.loaderHooks?.[lowerFirst(req.model)];
           if (req.mode !== "canonical" && hook) {
-            await storage.call({ op: "publicationFence" });
             const effects = createEffects();
             try {
               await hook.prepareForViewer({
@@ -318,7 +319,6 @@ export function createHost<T>(
         // compile error, not a silent forward.
         switch (req.op) {
           case "protocol05":
-          case "publicationFence":
           case "head":
           case "savepoint":
           case "rollback":
@@ -351,4 +351,22 @@ export function createHost<T>(
       }
       return callbackJson(result);
     });
+  return diagnostics.bind((raw: string) => {
+    const req = JSON.parse(raw) as
+      | HostRequest
+      | { op: "trace"; records: AxtonTraceRecord[]; dropped: number };
+    if (req.op === "trace") {
+      diagnostics.native(req.records, req.dropped);
+      return Promise.resolve("{}");
+    }
+    const name =
+      req.op === "protocol05" ? `host.${req.request.op}` : `host.${req.op}`;
+    const attributes =
+      req.op === "load"
+        ? { model: req.model, rows: req.identities.length, mode: req.mode }
+        : req.op === "handleAction"
+          ? { callId: req.callId, mutation: req.name }
+          : {};
+    return diagnostics.span(name, attributes, () => execute(req));
+  });
 }

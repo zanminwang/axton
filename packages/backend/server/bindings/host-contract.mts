@@ -18,7 +18,7 @@ export type HandleActionRequest = {
   ordinal: number;
   context?: HandlerContext;
 };
-/** Portable JSON: what a Load continuation state may hold. */
+/** Portable JSON carried through host calls. */
 export type JsonValue =
   null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 /**
@@ -79,25 +79,7 @@ export type Protocol05Operation =
       models: string[] | null;
       keys: MemberKey[] | null;
       capacity: number;
-    }
-  | {
-      op: "saveDelivery";
-      owner: string;
-      intent: string;
-      header: JsonValue;
-      parts: JsonValue[];
-    }
-  | {
-      op: "readDelivery";
-      owner: string;
-      context: Protocol05Context;
-      intent: string;
-      continuation: {
-        planId: string;
-        digest: string;
-        unit: number;
-        part: number;
-      };
+      pageSize?: number | null;
     }
   | { op: "admit"; owner: string; context: Protocol05Context }
   | { op: "inspectStore"; storeId: string }
@@ -129,7 +111,6 @@ export type Protocol05Request = {
 };
 export type HostRequest =
   | Protocol05Request
-  | PublicationFenceRequest
   | HeadRequest
   | SavepointRequest
   | RollbackRequest
@@ -210,7 +191,6 @@ export type Loaded =
 /** The answer each operation owes, keyed by `op`. */
 export type HostResponse = {
   protocol05: unknown;
-  publicationFence: Acknowledged;
   head: Head;
   savepoint: Acknowledged;
   rollback: Acknowledged;
@@ -229,7 +209,6 @@ export type HostResponse = {
  */
 const OPERATIONS: Record<HostOperation, true> = {
   protocol05: true,
-  publicationFence: true,
   head: true,
   savepoint: true,
   rollback: true,
@@ -245,8 +224,6 @@ const OPERATIONS: Record<HostOperation, true> = {
 export const HOST_OPERATIONS: readonly HostOperation[] = Object.keys(
   OPERATIONS,
 ) as HostOperation[];
-
-export type PublicationFenceRequest = { op: "publicationFence" };
 
 /** Authenticated internal handler context; never supplied by a public caller. */
 export type HandlerContext = {

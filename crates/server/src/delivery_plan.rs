@@ -1,4 +1,4 @@
-//! Finite fenced authority, frozen once; continuation never invokes a Loader.
+//! Cursor pages from a current Serializable view; no server payload persistence.
 use crate::{
     Config, Error, Host, Result,
     backend_interface::HostExt,
@@ -23,12 +23,16 @@ struct Binding {
     principal: String,
     stream: String,
 }
-async fn bind(owner: &str, context: &v05::RequestContext, host: &impl Host) -> Result<()> {
+async fn claim_binding(owner: &str, context: &v05::RequestContext, host: &impl Host) -> Result<()> {
     crate::principal(owner)?;
     let s:Binding=call(host,json!({"op":"claimStore","storeId":context.store_id,"principal":owner,"stream":context.stream})).await?;
     if s.principal != owner || s.stream != context.stream {
         return Err(Error::code("store.binding"));
     }
+    Ok(())
+}
+async fn bind(owner: &str, context: &v05::RequestContext, host: &impl Host) -> Result<()> {
+    claim_binding(owner, context, host).await?;
     let allowed: bool = call(host, json!({"op":"admit","owner":owner,"context":context})).await?;
     if !allowed {
         return Err(Error::code("stream.forbidden"));
@@ -59,10 +63,15 @@ async fn inspect_read_binding(
     }
     Ok(binding.is_some())
 }
-async fn fence(host: &impl Host) -> Result<()> {
-    let _: Acknowledged = host.call_typed(HostRequest::PublicationFence {}).await?;
+/// Delivery validates immutable ownership, not Mutation progress. Only a missing
+/// Store requires the atomic claim path; existing reads take no progress lock.
+async fn bind_delivery(owner: &str, context: &v05::RequestContext, host: &impl Host) -> Result<()> {
+    if !inspect_read_binding(owner, context, host).await? {
+        claim_binding(owner, context, host).await?;
+    }
     Ok(())
 }
+#[tracing::instrument(target = "axton::server", name = "bootstrap.prepare", skip_all)]
 async fn prepare(
     config: &Config,
     owner: &str,
@@ -75,6 +84,9 @@ async fn prepare(
     )
     .await?;
     if !done {
+        // Bootstrap initialization writes Store state. Keep its claim/ordering
+        // guard, while a completed Store's reconnect remains a snapshot read.
+        claim_binding(owner, context, host).await?;
         let effects:BootstrapEffects=call(host,json!({"op":"handleBootstrap05","owner":owner,"storeId":context.store_id,"stream":context.stream})).await?;
         let declarations = effects
             .declarations
@@ -112,9 +124,8 @@ pub async fn handshake05(
         )
         .map_err(internal)?,
     };
-    bind(owner, &context, raw).await?;
+    bind_delivery(owner, &context, raw).await?;
     let host = Publication05::new(raw);
-    fence(&host).await?;
     prepare(config, owner, &context, &host).await?;
     let head: u64 = call(&host, json!({"op":"deliveryHead","stream":r.stream})).await?;
     encode(&v05::HandshakeResponse {
@@ -166,6 +177,7 @@ fn selection(
             .collect()
     }))
 }
+#[tracing::instrument(target = "axton::server", name = "delivery.prepare", skip_all)]
 async fn prepared_candidates(
     config: &Config,
     owner: &str,
@@ -176,9 +188,13 @@ async fn prepared_candidates(
     host: &impl Host,
 ) -> Result<Vec<Position>> {
     let versions = crate::mutation_batch::models(config, context)?;
+    let page_size = keys
+        .is_none()
+        .then(|| cursor_page_size(context_schema(config, context)))
+        .flatten();
     let mut prepared = std::collections::BTreeSet::new();
     loop {
-        let positions:Option<Vec<Position>>=call(host,json!({"op":"deliveryCandidates","stream":context.stream,"after":after,"models":models,"keys":keys,"capacity":100000})).await?;
+        let positions:Option<Vec<Position>>=call(host,json!({"op":"deliveryCandidates","stream":context.stream,"after":after,"models":models,"keys":keys,"capacity":100000,"pageSize":page_size})).await?;
         let positions = positions.ok_or_else(|| Error::code("delivery.capacity"))?;
         let fresh = positions
             .iter()
@@ -223,6 +239,19 @@ async fn prepared_candidates(
         }
     }
 }
+/// Constraint-free reads can seek directly in the cursor index. Constrained
+/// Models retain complete metadata discovery to close cross-cursor components.
+fn cursor_page_size(schema: &axton_core::Schema) -> Option<usize> {
+    (!schema.models.iter().any(|model| {
+        !model.unique.is_empty()
+            || model
+                .relations
+                .iter()
+                .any(|relation| relation.on_delete == "delete")
+    }))
+    .then_some(500)
+}
+#[tracing::instrument(target = "axton::server", name = "delivery.load", skip_all)]
 async fn materialize(
     config: &Config,
     owner: &str,
@@ -321,7 +350,7 @@ fn coalesce(units: Vec<v05::DeliveryUnit>, target: usize) -> Vec<v05::DeliveryUn
     }
     packed
 }
-fn units(
+fn components(
     schema: &axton_core::Schema,
     changes: &[v05::AuthorityChange],
     after: u64,
@@ -360,12 +389,76 @@ fn units(
             }
         }
     }
-    v05::plan_units(changes, &unique, &dependencies, after, through, head)
-        .map(|units| coalesce(units, 500))
-        .map_err(internal)
+    v05::plan_units(changes, &unique, &dependencies, after, through, head).map_err(internal)
 }
-/// An immutable plan was constructed and fully validated before persistence.
-/// Continuation verifies only the indexed fragment, never rescans the manifest.
+fn units(
+    schema: &axton_core::Schema,
+    changes: &[v05::AuthorityChange],
+    after: u64,
+    through: u64,
+    head: u64,
+) -> Result<Vec<v05::DeliveryUnit>> {
+    components(schema, changes, after, through, head).map(|units| coalesce(units, 500))
+}
+/// Select complete dependency components before canonical loading. The page
+/// covers only the prefix before its first omitted component. Components may
+/// include ahead-of-boundary companions, but independent future work is deferred.
+fn page_positions(
+    schema: &axton_core::Schema,
+    positions: Vec<Position>,
+    after: u64,
+    through: u64,
+    head: u64,
+) -> Result<(Vec<Position>, u64)> {
+    let metadata = positions
+        .iter()
+        .map(|p| {
+            let key = v05::RecordKey {
+                model: p.model.clone(),
+                identity: serde_json::from_str(&p.identity_key).map_err(storage_invalid)?,
+            };
+            Ok(if p.kind == "remove" {
+                v05::AuthorityChange::Remove {
+                    key,
+                    cursor: p.cursor,
+                }
+            } else {
+                v05::AuthorityChange::Record {
+                    key,
+                    cursor: p.cursor,
+                    state: Value::Null,
+                }
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let groups = components(schema, &metadata, after, through, head)?;
+    let mut selected = std::collections::BTreeSet::new();
+    let mut count = 0;
+    let mut covered = through;
+    for group in groups {
+        let minimum = group.changes.iter().map(v05::AuthorityChange::cursor).min();
+        if minimum.is_none_or(|minimum| minimum > through) {
+            break;
+        }
+        if count > 0 && count + group.changes.len() > 500 {
+            covered = through.min(minimum.unwrap() - 1);
+            break;
+        }
+        count += group.changes.len();
+        for change in group.changes {
+            selected.insert((
+                change.key().model.clone(),
+                canonical_json(&change.key().identity).map_err(internal)?,
+            ));
+        }
+    }
+    let positions = positions
+        .into_iter()
+        .filter(|p| selected.contains(&(p.model.clone(), p.identity_key.clone())))
+        .collect();
+    Ok((positions, covered))
+}
+/// Validate an indexed transport fragment against its response manifest.
 pub(crate) fn verify_indexed_part(
     header: &v05::DeliveryHeader,
     part: &v05::DeliveryPart,
@@ -387,45 +480,19 @@ pub(crate) fn verify_indexed_part(
     }
     Ok(())
 }
-fn verify_continuation(
-    d: &v05::DeliveryResponse,
-    c: &v05::Continuation,
-    context: &v05::RequestContext,
-) -> Result<()> {
-    if d.header.context != *context
-        || d.header.plan_id != c.plan_id
-        || d.header.digest != c.digest
-        || d.parts.len() != 1
-        || d.parts[0].unit != c.unit
-        || d.parts[0].part != c.part
-    {
-        return Err(storage_invalid("continuation correlation mismatch"));
-    }
-    verify_indexed_part(&d.header, &d.parts[0])
-}
-fn encode_persisted<T: serde::Serialize>(v: &T) -> Result<String> {
-    serde_json::to_string(v).map_err(internal)
-}
-fn intent<T: serde::Serialize>(r: &T) -> Result<String> {
-    let mut v = serde_json::to_value(r).map_err(internal)?;
-    v.as_object_mut().unwrap().remove("continuation");
-    canonical_json(&v).map_err(internal)
-}
-async fn persist(
-    owner: &str,
-    intent: &str,
-    frozen: v05::FrozenDelivery,
-    host: &impl Host,
-) -> Result<v05::DeliveryResponse> {
-    let saved:bool=call(host,json!({"op":"saveDelivery","owner":owner,"intent":intent,"header":frozen.header,"parts":frozen.parts})).await?;
-    if !saved {
+/// All fragments of the selected page travel in this response. Large atomic
+/// components may exceed the normal page target but are never split across reads.
+fn response(frozen: v05::FrozenDelivery) -> Result<v05::DeliveryResponse> {
+    let response = v05::DeliveryResponse {
+        header: frozen.header,
+        parts: frozen.parts,
+    };
+    if serde_json::to_vec(&response).map_err(internal)?.len() > 256 * 1024 * 1024 {
         return Err(Error::code("delivery.capacity"));
     }
-    Ok(v05::DeliveryResponse {
-        header: frozen.header,
-        parts: vec![frozen.parts[0].clone()],
-    })
+    Ok(response)
 }
+#[tracing::instrument(target = "axton::server", name = "delivery.plan", skip_all)]
 pub async fn process_delivery05(
     config: &Config,
     owner: &str,
@@ -434,23 +501,8 @@ pub async fn process_delivery05(
 ) -> Result<String> {
     let r: v05::DeltaRequest = v05::decode(bytes).map_err(request_invalid)?;
     crate::mutation_batch::models(config, &r.context)?;
-    bind(owner, &r.context, raw).await?;
-    let saved_intent = intent(&r)?;
-    if let Some(c) = &r.continuation {
-        let d:Option<v05::DeliveryResponse>=call(raw,json!({"op":"readDelivery","owner":owner,"context":r.context,"intent":saved_intent,"continuation":c})).await?;
-        let d = d.ok_or_else(|| Error::code("delivery.expired"))?;
-        verify_continuation(&d, c, &r.context)?;
-        if d.header.after != Some(r.after)
-            || d.header.through != Some(r.through)
-            || d.header.bootstrap != r.bootstrap
-            || d.header.owner.is_some()
-        {
-            return Err(storage_invalid("delta range mismatch"));
-        }
-        return encode_persisted(&d);
-    }
+    bind_delivery(owner, &r.context, raw).await?;
     let host = Publication05::new(raw);
-    fence(&host).await?;
     prepare(config, owner, &r.context, &host).await?;
     let positions = prepared_candidates(
         config,
@@ -470,12 +522,34 @@ pub async fn process_delivery05(
     if r.through > head {
         return Err(request_invalid("through ahead of head"));
     }
+    // A bounded candidate query returns one lookahead row plus its complete
+    // cursor tie. It proves no coverage beyond its maximum returned position.
+    let through = if cursor_page_size(context_schema(config, &r.context))
+        .is_some_and(|size| positions.len() > size)
+    {
+        r.through.min(
+            positions
+                .iter()
+                .map(|position| position.cursor)
+                .max()
+                .unwrap(),
+        )
+    } else {
+        r.through
+    };
+    let (positions, through) = page_positions(
+        context_schema(config, &r.context),
+        positions,
+        r.after,
+        through,
+        head,
+    )?;
     let changes = materialize(config, owner, &r.context, positions, &host).await?;
     let units = units(
         context_schema(config, &r.context),
         &changes,
         r.after,
-        r.through,
+        through,
         head,
     )?;
     let now: u64 = call(&host, json!({"op":"deliveryNow"})).await?;
@@ -488,15 +562,16 @@ pub async fn process_delivery05(
             v05::DeliveryPurpose::Sync
         },
         r.after,
-        r.through,
+        through,
         head,
         now + 300000,
         units,
         500,
     )
     .map_err(internal)?;
-    encode(&persist(owner, &saved_intent, frozen, &host).await?)
+    encode(&response(frozen)?)
 }
+#[tracing::instrument(target = "axton::server", name = "delivery.materialize", skip_all)]
 pub async fn process_materialization05(
     config: &Config,
     owner: &str,
@@ -505,7 +580,7 @@ pub async fn process_materialization05(
 ) -> Result<String> {
     let r: v05::MaterializationRequest = v05::decode(bytes).map_err(request_invalid)?;
     let versions = crate::mutation_batch::models(config, &r.context)?;
-    bind(owner, &r.context, raw).await?;
+    bind_delivery(owner, &r.context, raw).await?;
     if let v05::MaterializationOwner::Schema {
         previous_materialization,
     } = &r.owner
@@ -515,23 +590,6 @@ pub async fn process_materialization05(
             ..r.context.clone()
         };
         crate::mutation_batch::models(config, &previous)?;
-    }
-    let saved_intent = intent(&r)?;
-    if let Some(c) = &r.continuation {
-        let delivery:Option<v05::DeliveryResponse>=call(raw,json!({"op":"readDelivery","owner":owner,"context":r.context,"intent":saved_intent,"continuation":c})).await?;
-        let delivery = delivery.ok_or_else(|| Error::code("delivery.expired"))?;
-        let response = v05::MaterializationResponse {
-            request_id: r.request_id.clone(),
-            delivery,
-        };
-        verify_continuation(&response.delivery, c, &r.context)?;
-        if response.delivery.header.owner.as_ref() != Some(&r.owner)
-            || response.delivery.header.after.is_some()
-            || response.delivery.header.through.is_some()
-        {
-            return Err(storage_invalid("materialization owner mismatch"));
-        }
-        return encode_persisted(&response);
     }
     if let v05::MaterializationOwner::Settlement {
         batch_id,
@@ -567,7 +625,6 @@ pub async fn process_materialization05(
         }
     }
     let host = Publication05::new(raw);
-    fence(&host).await?;
     let positions = prepared_candidates(
         config,
         owner,
@@ -611,7 +668,7 @@ pub async fn process_materialization05(
     .map_err(internal)?;
     encode(&v05::MaterializationResponse {
         request_id: r.request_id,
-        delivery: persist(owner, &saved_intent, frozen, &host).await?,
+        delivery: response(frozen)?,
     })
 }
 /// Query/Fetch reuse retained normalization and snapshot assembly; snapshots
@@ -714,12 +771,9 @@ pub async fn process_read05(
                             .iter()
                             .any(|d| matches!(d, StreamIntent::Invalidate { .. })) =>
                     {
-                        if !declarations.is_empty() {
-                            if !bound {
-                                bind(owner, &r.context, raw).await?;
-                                bound = true;
-                            }
-                            fence(&host).await?;
+                        if !declarations.is_empty() && !bound {
+                            bind(owner, &r.context, raw).await?;
+                            bound = true;
                         }
                         crate::settlement::settle_changes(
                             config,
@@ -827,18 +881,94 @@ pub async fn process_live05(
     host: &impl Host,
 ) -> Result<String> {
     let mut r: v05::DeltaRequest = v05::decode(bytes).map_err(request_invalid)?;
-    if r.continuation.is_none() {
-        bind(owner, &r.context, host).await?;
-        fence(host).await?;
-        r.through = call(host, json!({"op":"deliveryHead","stream":r.context.stream})).await?;
-    }
+    bind_delivery(owner, &r.context, host).await?;
+    r.through = call(host, json!({"op":"deliveryHead","stream":r.context.stream})).await?;
     process_delivery05(config, owner, &v05::encode(&r).map_err(internal)?, host).await
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn entry_schema() -> axton_core::Schema {
+        serde_json::from_value(json!({"enums":[],"actions":[],"models":[{
+            "name":"Entry","version":1,"identity":["id"],"fields":[
+                {"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},
+                {"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}
+            ]
+        }]}))
+        .unwrap()
+    }
+    fn position(id: u64, cursor: u64) -> Position {
+        Position {
+            model: "Entry".into(),
+            identity_key: format!("{{\"id\":\"{id}\"}}"),
+            cursor,
+            kind: "upsert".into(),
+        }
+    }
     #[test]
-    fn indexed_continuation_rejects_changed_payload_without_scanning_other_units() {
+    fn cursor_pages_cover_a_prefix_and_skip_independent_future_versions() {
+        let schema = entry_schema();
+        let (page, through) = page_positions(
+            &schema,
+            (1..=1000).map(|id| position(id, id)).collect(),
+            0,
+            1000,
+            1002,
+        )
+        .unwrap();
+        assert_eq!(page.len(), 500);
+        assert_eq!(through, 500);
+        let mut current = (501..=1000).map(|id| position(id, id)).collect::<Vec<_>>();
+        current[0].cursor = 1001;
+        current[1].cursor = 1002;
+        current[1].kind = "remove".into();
+        let (page, through) = page_positions(&schema, current, 500, 1000, 1002).unwrap();
+        assert_eq!(page.len(), 498);
+        assert_eq!(through, 1000);
+        assert!(page.iter().all(|p| p.cursor <= 1000));
+        let (latest, through) = page_positions(
+            &schema,
+            vec![
+                position(501, 1001),
+                Position {
+                    kind: "remove".into(),
+                    ..position(502, 1002)
+                },
+            ],
+            1000,
+            1002,
+            1002,
+        )
+        .unwrap();
+        assert_eq!(latest.len(), 2);
+        assert_eq!(latest[1].kind, "remove");
+        assert_eq!(through, 1002);
+    }
+    #[test]
+    fn cursor_pages_keep_large_same_cursor_and_unique_components_whole() {
+        let mut schema = entry_schema();
+        let (page, through) = page_positions(
+            &schema,
+            (1..=1001).map(|id| position(id, 1)).collect(),
+            0,
+            1,
+            1,
+        )
+        .unwrap();
+        assert_eq!(page.len(), 1001);
+        assert_eq!(through, 1);
+        schema.models[0].unique = vec![vec!["text".into()]];
+        let (page, through) =
+            page_positions(&schema, vec![position(1, 1), position(2, 2)], 0, 1, 2).unwrap();
+        assert_eq!(
+            page.len(),
+            2,
+            "ahead unique companion remains in the atomic component"
+        );
+        assert_eq!(through, 1);
+    }
+    #[test]
+    fn indexed_fragment_rejects_changed_payload_without_scanning_other_units() {
         let context = v05::RequestContext {
             protocol: 5,
             store_id: "s".into(),

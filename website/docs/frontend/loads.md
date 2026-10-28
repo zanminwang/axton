@@ -23,7 +23,7 @@ await client.bootstrap();
 
 The backend's typed `bootstrap({ctx})` callback may track visible identities through `ctx.stream.track` or explicit `ctx.streams([...]).track`. It cannot invalidate or perform business writes. Loaders remain the viewer authorization authority for materialized content and canonical absence.
 
-Handshake commits initial head S and committed prefix C=S. Bootstrap completion B remains absent until the final complete unit commits. Bootstrap selects marked Models and freezes a finite authority plan; an empty plan still completes. Reopen retains committed progress and resumes the remaining work.
+Handshake commits initial head S and committed prefix C=S. Bootstrap progress B starts absent and advances with complete committed units; initialization completes at B=S. Bootstrap selects marked Models through that fixed cursor boundary; an empty range still completes. Each page reads current state. Independent records moved beyond the boundary arrive through subsequent Sync. Reopen retains committed progress and resumes the remaining work.
 
 Initial selection preserves `@@bootstrap`; rematerialization also covers held authoritative identities and absence. Internal Mutation recovery materializes exact saved settlement targets without rerunning application Bootstrap preparation or implicitly tracking records.
 

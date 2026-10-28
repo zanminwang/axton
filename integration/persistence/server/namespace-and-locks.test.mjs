@@ -3,7 +3,10 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
-import { answer } from "../../../packages/backend/postgres/index.mts";
+import {
+  answer,
+  persistence,
+} from "../../../packages/backend/postgres/index.mts";
 import { pgDriver } from "../../../packages/backend/postgres/src/pg.mts";
 import * as SQL from "../../../packages/backend/postgres/src/sql.mts";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -26,9 +29,12 @@ async function namespace(body) {
     admin.release();
   }
 }
-test("fresh namespace has only canonical identity, Store/result, StreamRecord and plan facts", () =>
+test("fresh namespace has only canonical identity, Store/result, StreamRecord facts without response staging", () =>
   namespace(async (tx) => {
     await tx.query(ddl);
+    await tx.query(
+      "CREATE TABLE axton_delivery_plan(plan_id text PRIMARY KEY); CREATE TABLE axton_delivery_unit(plan_id text REFERENCES axton_delivery_plan); INSERT INTO axton_delivery_plan VALUES('retired'); INSERT INTO axton_delivery_unit VALUES('retired')",
+    );
     await tx.query(ddl);
     const names = (
       await tx.query(
@@ -36,10 +42,7 @@ test("fresh namespace has only canonical identity, Store/result, StreamRecord an
       )
     ).rows.map((r) => r.tablename);
     assert.deepEqual(names, [
-      "axton_delivery_plan",
-      "axton_delivery_unit",
       "axton_mutation_result",
-      "axton_publication_fence",
       "axton_record",
       "axton_store",
       "axton_stream",
@@ -76,7 +79,68 @@ test("fresh namespace has only canonical identity, Store/result, StreamRecord an
       "2",
     );
   }));
-test("legacy namespace installation and Store admission refuse before any writes", () =>
+test("retiring publication coordination preserves business and canonical facts across repeated installation", () =>
+  namespace(async (tx) => {
+    await tx.query(ddl);
+    await tx.query(`
+      CREATE TABLE business_entry(id text PRIMARY KEY, content text NOT NULL);
+      INSERT INTO business_entry VALUES('kept','unchanged');
+      INSERT INTO axton_stream VALUES('User:kept',3);
+      INSERT INTO axton_record(model,identity_key) VALUES('Entry','{"id":"kept"}');
+      INSERT INTO axton_stream_record SELECT 'User:kept',id,3,'upsert' FROM axton_record;
+      INSERT INTO axton_store(id,principal,stream,last_processed_batch_id,last_digest,last_count)
+        VALUES('kept','alice','User:kept',1,'retained',1);
+      INSERT INTO axton_mutation_result VALUES('kept',1,1,0,'{}');
+      CREATE TABLE axton_publication_fence(id integer PRIMARY KEY);
+      INSERT INTO axton_publication_fence VALUES(1);
+    `);
+    const snapshot = async () => {
+      const state = {};
+      for (const table of [
+        "business_entry",
+        "axton_stream",
+        "axton_record",
+        "axton_stream_record",
+        "axton_store",
+        "axton_mutation_result",
+      ])
+        state[table] = (await tx.query(`SELECT * FROM ${table}`)).rows;
+      return state;
+    };
+    const before = await snapshot();
+    for (let i = 0; i < 2; i++) {
+      await tx.query(ddl);
+      assert.equal(
+        (
+          await tx.query(
+            "SELECT to_regclass('axton_publication_fence') AS retired",
+          )
+        ).rows[0].retired,
+        null,
+      );
+      assert.deepEqual(await snapshot(), before);
+    }
+  }));
+test("legacy held-fence layout is refused before dropping its data", () =>
+  namespace(async (tx) => {
+    await tx.query(
+      "CREATE TABLE axton_publication_fence(id integer PRIMARY KEY,held boolean NOT NULL); INSERT INTO axton_publication_fence VALUES(1,true)",
+    );
+    await assert.rejects(tx.query(ddl), /fresh namespace/);
+    assert.deepEqual(
+      (await tx.query("SELECT * FROM axton_publication_fence")).rows,
+      [{ id: 1, held: true }],
+    );
+    assert.deepEqual(
+      (
+        await tx.query(
+          "SELECT tablename FROM pg_tables WHERE schemaname=current_schema()",
+        )
+      ).rows,
+      [{ tablename: "axton_publication_fence" }],
+    );
+  }));
+test("legacy namespace installation, readiness and standalone admission refuse before any writes", () =>
   namespace(async (tx) => {
     await tx.query(
       "CREATE TABLE axton_record(model text,identity_key text,stamp bigint NOT NULL); INSERT INTO axton_record VALUES('Entry','{\"id\":\"keep\"}',7)",
@@ -97,6 +161,7 @@ test("legacy namespace installation and Store admission refuse before any writes
     const before = await snapshot();
     await assert.rejects(tx.query(ddl), /fresh namespace/);
     assert.deepEqual(await snapshot(), before);
+    await assert.rejects(persistence(driver).initialize(tx), /fresh namespace/);
     await assert.rejects(
       answer(driver, tx, {
         op: "protocol05",
@@ -110,6 +175,29 @@ test("legacy namespace installation and Store admission refuse before any writes
       /fresh namespace/,
     );
     assert.deepEqual(await snapshot(), before);
+  }));
+test("initialized PostgreSQL adapter serves repeated host reads without catalog queries", () =>
+  namespace(async (tx) => {
+    await tx.query(ddl);
+    await tx.query("INSERT INTO axton_stream VALUES('User:ready',7)");
+    const statements = [];
+    const database = persistence({
+      ...driver,
+      query: (retained, sql, params) => {
+        assert.strictEqual(retained, tx);
+        statements.push(sql);
+        return driver.query(retained, sql, params);
+      },
+    });
+    await database.initialize(tx);
+    const host = database.persistence(tx);
+    for (let i = 0; i < 100; i++)
+      assert.equal(await host.call({ op: "head", stream: "User:ready" }), 7);
+    assert.equal(
+      statements.filter((sql) => sql === SQL.CHECK_LAYOUT).length,
+      1,
+    );
+    assert.equal(statements.filter((sql) => sql === SQL.HEAD).length, 100);
   }));
 async function staleWaiter(sql, params, { insert = false } = {}) {
   await namespace(async (admin, schema) => {
@@ -168,8 +256,6 @@ async function staleWaiter(sql, params, { insert = false } = {}) {
     }
   });
 }
-test("publication UPDATE id=id rejects a pre-existing-snapshot waiter", () =>
-  staleWaiter(SQL.PUBLICATION_FENCE, []));
 test("identity no-op write lock rejects a pre-existing-snapshot waiter", () =>
   staleWaiter(SQL.LOCK_IDENTITY, ["Entry", '{"id":"x"}']));
 test("identity ensure rejects a pre-existing-snapshot waiter on a new identity", () =>

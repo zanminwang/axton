@@ -55,10 +55,10 @@ For Query/Fetch, default and explicit true are equivalent; false installs no Mod
 
 | ID | Required behavior |
 | --- | --- |
-| T1 | Framework-owned transactions use Serializable isolation. Publication and versioned materialization acquire the persisted namespace fence before relevant work, maintaining position/content correspondence. |
+| T1 | Framework-owned transactions use Serializable isolation. Business data, publication metadata and versioned materialization share that transaction snapshot; record/Stream guards preserve position/content correspondence without a namespace-wide publication lock. |
 | T2 | Serialization conflict retries the entire transaction/handler within bounded driver retries, discarding previous output. Exhaustion is infrastructure failure, not business rejection. |
 
-Read-only Queries remain concurrent. Explicit tracking upgrades the read to the fence and may force a whole-handler retry. Application-owned transactions must acquire that fence before relevant business work; later publication cannot repair an unfenced snapshot.
+Read-only Queries remain concurrent. Explicit tracking writes membership in the same transaction and may force a whole-handler retry. Application-owned transactions must use Serializable isolation and retry the whole transaction on serialization failure.
 
 Handlers and preparation tolerate retries. Record external effects transactionally and perform them after commit. Publish every Loader projection/visibility dependency; materialize volatile external/time inputs or explicitly change projection generation.
 
@@ -85,13 +85,13 @@ Convergence assumes correct publication, valid contracts and resumed delivery. D
 | D1 | Stores with the same Stream and compatible viewer/materialization context converge after delivery and settlement. Their queues, observers and progress remain independent. |
 | D2 | Higher Stream positions replace older authority; older/equal duplicates cannot undo direct state. Compatible same-position rematerialization updates the base without erasing surviving local layers. |
 | D3 | Explicit track enrolls missing pairs with real positions. Repeated live pairs do not move the cursor. Invalidation updates affected existing pairs without enrolling them. |
-| D4 | Content and position come from one fenced canonical view. Preparation publications settle before final reads; replay runs no preparation. |
+| D4 | Content and position come from one Serializable canonical view. Preparation publications settle before final reads. Saved Mutation replay runs no preparation; cursor read retries construct a fresh view. |
 | D5 | True Stream absence retains protected identity/position evidence. Older Stream content and cursor-null cache reads cannot revive it. Newer child authority survives an older parent cascade. |
 | D6 | Membership Remove changes holding evidence, releasing current live protection while retaining content, historical authority and genuine deletion evidence. It is not canonical absence. |
 | D7 | Loader/constraint/commit failure cannot advance progress across its unresolved unit. Earlier committed units remain; fresh smaller requests can recover independent prefixes. Persistent required-group failure remains observable. |
 | D8 | Invalid envelopes, context mismatch, unsupported schema, divergence and capacity/constraint failures report diagnostics without inventing absence, completion or progress. |
 | D9 | Store identity and Stream persist offline and across reopen/reconnect. The initial boundary commits once; ACK alone proves neither delivery nor Bootstrap coverage. Reconnection never replaces committed progress. |
-| D10 | Handshake commits initial head S and C=S. B remains absent until the last complete Bootstrap unit commits. Bootstrap and Sync capture finite authority heads; completion is neither perpetual freshness nor every historical transition. |
+| D10 | Handshake commits initial head S and C=S. B starts absent and advances only with committed complete Bootstrap units; initialization completes at B=S. Bootstrap and Sync cover finite cursor boundaries using current views. Independent records moved beyond a boundary arrive through subsequent Sync; completion is neither an old whole-dataset snapshot nor perpetual freshness. |
 
 Bootstrap selects initial Models through concrete `@@bootstrap` declarations after explicit application enrollment. Companions share an atomic unit but earn no ordinal coverage. Later Stream delivery includes unmarked Models normally. Compatible rematerialization also includes Store-held authoritative identities and preserves local work. Rows, evidence and unit coverage commit together.
 
@@ -112,4 +112,4 @@ Public Load jobs/schema declarations and N1–N8 are retired. The [0.3 contract]
 
 Explicit reset retains binding/file ownership, changes incarnation and atomically retires replica state. It refuses pending work unless explicitly discarded, reports abandoned Calls and fences old effects. Supported schema reconciliation retains complete old descriptors; incompatible storage changes fail explicitly.
 
-Batch replay retains current/last-completed outcomes and prunes the older set on valid next-Batch admission. Immutable delivery staging expires after five minutes; expiry proves no coverage. Capacity limits fail explicitly. [Protocol 5](architecture/protocols/sync.md), [client](architecture/client/storage/protocol5.md) and [server](architecture/server/protocol5.md) own mechanisms and bounds; [adoption](protocol5-adoption.md) owns release gates and limits.
+Batch replay retains current/last-completed outcomes and prunes the older set on valid next-Batch admission. Delivery payloads are not persisted on the server. Each response carries complete selected units; retries read current state from committed B/C. The five-minute response lifetime bounds incomplete local staging and proves no coverage on expiry. Capacity limits fail explicitly. [Protocol 5](architecture/protocols/sync.md), [client](architecture/client/storage/protocol5.md) and [server](architecture/server/protocol5.md) own mechanisms and bounds; [adoption](protocol5-adoption.md) owns release gates and limits.

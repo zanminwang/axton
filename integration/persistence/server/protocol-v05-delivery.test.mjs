@@ -18,29 +18,6 @@ const native = createRequire(import.meta.url)(
 );
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const database = pg(pool, { retries: 10 });
-const fenceStarts = new WeakMap();
-let lastFenceHeldMs = 0;
-const originalQuery = database.driver.query.bind(database.driver);
-database.driver.query = async (tx, sql, params) => {
-  if (sql.startsWith("UPDATE axton_publication_fence") && !fenceStarts.has(tx))
-    fenceStarts.set(tx, performance.now());
-  return originalQuery(tx, sql, params);
-};
-const originalTransaction = database.transaction.bind(database);
-database.transaction = async (body) => {
-  let tx;
-  try {
-    return await originalTransaction(async (t) => {
-      tx = t;
-      fenceStarts.delete(t);
-      return body(t);
-    });
-  } finally {
-    lastFenceHeldMs =
-      tx && fenceStarts.has(tx) ? performance.now() - fenceStarts.get(tx) : 0;
-  }
-};
-
 const q = async (sql, args = []) => (await pool.query(sql, args)).rows;
 const model = {
   name: "Entry",
@@ -114,15 +91,25 @@ const context = (storeId) => ({
   stream: "User:alice",
   materialization,
 });
-const delta = (s, after = 0, through = 40, bootstrap = true) => ({
+const delta = (s, after = 0, through = 45, bootstrap = true) => ({
   ...context(s),
   after,
   through,
   bootstrap,
 });
+async function assertNoPayloadTables() {
+  assert.deepEqual(
+    (
+      await q(
+        "SELECT to_regclass('axton_delivery_plan') AS plan,to_regclass('axton_delivery_unit') AS units",
+      )
+    )[0],
+    { plan: null, units: null },
+  );
+}
 async function fixture(n, unique = true) {
   await q(
-    "TRUNCATE axton_delivery_plan,axton_mutation_result,axton_store,axton_stream_record,axton_stream,axton_record,delivery_business RESTART IDENTITY CASCADE",
+    "TRUNCATE axton_mutation_result,axton_store,axton_stream_record,axton_stream,axton_record,delivery_business RESTART IDENTITY CASCADE",
   );
   await q(
     "INSERT INTO delivery_business SELECT 'e'||i,'value'||i FROM generate_series(1,$1) i",
@@ -147,7 +134,10 @@ async function pull(r) {
 before(async () => {
   await q(
     await readFile(
-      new URL("../../../packages/backend/postgres/migration.sql", import.meta.url),
+      new URL(
+        "../../../packages/backend/postgres/migration.sql",
+        import.meta.url,
+      ),
       "utf8",
     ),
   );
@@ -158,91 +148,95 @@ before(async () => {
 after(async () => {
   await pool.end();
 });
-test("Bootstrap freezes e@45, retries preparation, authenticates pages and expires without fabricated coverage", async () => {
+test("cursor pages skip moved versions, resume latest updates/removals and authorize every read", async () => {
   await fixture(1500);
-  await q("UPDATE axton_stream_record SET cursor=20");
-  await q("UPDATE axton_stream SET head=40");
+  await q("UPDATE axton_stream_record SET cursor=record_id");
+  await q("UPDATE axton_stream SET head=1500");
   preparations = 0;
-  loaderCalls = 0;
-  const h = JSON.parse(
-    await app.handshake(
-      "alice",
-      JSON.stringify({ protocol: 5, storeId: "s", stream: "User:alice" }),
-    ),
-  );
-  assert.equal(h.head, 40);
-  await app.handshake(
-    "alice",
-    JSON.stringify({ protocol: 5, storeId: "s", stream: "User:alice" }),
-  );
-  assert.equal(preparations, 1);
-  await q("UPDATE axton_stream_record SET cursor=45");
-  await q("UPDATE axton_stream SET head=45");
-  const r = delta("s"),
-    first = await pull(r);
-  assert.equal(first.header.units.length, 1);
-  assert.equal(first.header.units[0].through, 40);
-  assert.equal(first.header.units[0].parts.length, 3);
-  await q("UPDATE delivery_business SET text='changed46' WHERE id='e1000'");
-  await q(
-    'UPDATE axton_stream_record SET cursor=46 WHERE record_id=(SELECT id FROM axton_record WHERE identity_key=\'{"id":"e1000"}\')',
-  );
-  await q("UPDATE axton_stream SET head=46");
-  const calls = loaderCalls;
-  let parts = [...first.parts];
-  for (let part = 1; part < 3; part++) {
-    const page = await pull({
-      ...r,
-      continuation: {
-        planId: first.header.planId,
-        digest: first.header.digest,
-        unit: 0,
-        part,
-      },
-    });
-    parts.push(...page.parts);
-  }
-  assert.equal(loaderCalls, calls);
+  const cfg = {
+    ...config,
+    schema: { ...config.schema, models: [{ ...model, unique: [] }] },
+  };
+  const chosen = appFor(cfg);
+  const hello = { protocol: 5, storeId: "cursor-pages", stream: "User:alice" };
   assert.equal(
-    parts.flatMap((p) => p.changes).find((c) => c.key.identity.id === "e1000")
-      .state.text,
-    "value1000",
+    JSON.parse(await chosen.handshake("alice", JSON.stringify(hello))).head,
+    1500,
+  );
+  await chosen.handshake("alice", JSON.stringify(hello));
+  assert.equal(preparations, 1);
+  const request = {
+    ...hello,
+    materialization: chosen.materializationId,
+    after: 0,
+    through: 1500,
+    bootstrap: true,
+  };
+  const page = async (r) =>
+    JSON.parse(await chosen.pull("alice", JSON.stringify(r)));
+  const first = await page(request);
+  assert.equal(first.header.through, 500);
+  assert.equal(first.parts.flatMap((p) => p.changes).length, 500);
+  const committed = new Map(
+    first.parts.flatMap((p) => p.changes).map((c) => [c.key.identity.id, c]),
+  );
+  // Retire a failed HTTP response, update one unconsumed record and remove another.
+  // No old payload is retrieved: a fresh request starts from committed cursor 500.
+  await q("UPDATE delivery_business SET text='latest' WHERE id='e501'");
+  await q("DELETE FROM delivery_business WHERE id='e502'");
+  await q(
+    "UPDATE axton_stream_record SET cursor=CASE WHEN record_id=501 THEN 1501 ELSE 1502 END,kind=CASE WHEN record_id=502 THEN 'remove' ELSE 'upsert' END WHERE record_id IN (501,502)",
+  );
+  await q("DELETE FROM delivery_business WHERE id='e1'");
+  await q("UPDATE axton_stream_record SET cursor=1503 WHERE record_id=1");
+  await q("UPDATE axton_stream SET head=1503");
+  let after = first.header.through;
+  while (after < 1500) {
+    const next = await page({ ...request, after });
+    assert.equal(next.header.after, after);
+    assert.ok(next.header.through > after && next.header.through <= 1500);
+    for (const c of next.parts.flatMap((p) => p.changes))
+      committed.set(c.key.identity.id, c);
+    after = next.header.through;
+  }
+  assert.equal(committed.has("e501"), false);
+  assert.equal(committed.has("e502"), false);
+  const latest = await page({
+    ...request,
+    after: 1500,
+    through: 1503,
+    bootstrap: false,
+  });
+  const changes = new Map(
+    latest.parts.flatMap((p) => p.changes).map((c) => [c.key.identity.id, c]),
+  );
+  assert.equal(changes.get("e501").cursor, 1501);
+  assert.equal(changes.get("e501").state.text, "latest");
+  assert.equal(changes.get("e502").cursor, 1502);
+  assert.equal(changes.get("e502").kind, "remove");
+  assert.equal(changes.get("e1").cursor, 1503);
+  assert.equal(changes.get("e1").state, null);
+  assert.equal(latest.header.through, 1503);
+  await assert.rejects(
+    chosen.pull("other", JSON.stringify({ ...request, after: 500 })),
+    (e) => e.code === "store.binding",
   );
   await assert.rejects(
-    app.pull(
-      "other",
+    chosen.pull(
+      "alice",
       JSON.stringify({
-        ...r,
+        ...request,
         continuation: {
           planId: first.header.planId,
           digest: first.header.digest,
           unit: 0,
-          part: 1,
+          part: 0,
         },
       }),
     ),
+    (e) => e.code === "request.invalid",
   );
-  await q("UPDATE axton_delivery_plan SET expires_at=0");
-  await assert.rejects(
-    pull({
-      ...r,
-      continuation: {
-        planId: first.header.planId,
-        digest: first.header.digest,
-        unit: 0,
-        part: 1,
-      },
-    }),
-    (e) => e.code === "delivery.expired",
-  );
-  assert.equal(
-    (await q("SELECT count(*) n FROM axton_delivery_unit"))[0].n,
-    "0",
-  );
-  const renewed = await pull(r);
-  assert.equal(renewed.header.observedHead, 46);
-  const sync = await pull(delta("s", 40, 46, false));
-  assert.equal(sync.header.through, 46);
+  await assertNoPayloadTables();
 });
 test("S=0 empty Bootstrap and null-cursor Fetch are explicit; loader fault stages nothing", async () => {
   await fixture(0);
@@ -271,10 +265,7 @@ test("S=0 empty Bootstrap and null-cursor Fetch are explicit; loader fault stage
   fault = true;
   await assert.rejects(pull(delta("fault")));
   ((fault = false), (bootstrapTrack = false));
-  assert.equal(
-    (await q("SELECT count(*) n FROM axton_delivery_plan"))[0].n,
-    "0",
-  );
+  await assertNoPayloadTables();
 });
 test("real selected and unique-model capacity measurements", async () => {
   for (const kind of ["selected", "unique"])
@@ -346,66 +337,45 @@ test("real selected and unique-model capacity measurements", async () => {
         r = { ...r, ...actualContext };
       }
       const start = performance.now();
-      const firstText = await chosen.pull("alice", JSON.stringify(r));
-      const first = JSON.parse(firstText);
-      const frozenMs = performance.now() - start;
-      const fenceHeldMs = lastFenceHeldMs;
-      const [row] = await q(
-        "SELECT staged_bytes FROM axton_delivery_plan WHERE plan_id=$1",
-        [first.header.planId],
+      const responses = [];
+      let cursor = r.after,
+        totalTransportBytes = 0,
+        headerBytes = 0,
+        partCount = 0,
+        rowCount = 0;
+      do {
+        const request = { ...r, after: cursor };
+        const text = await chosen.pull("alice", JSON.stringify(request));
+        const response = JSON.parse(text);
+        assert.equal(response.header.after, cursor);
+        assert.ok(
+          response.header.through > cursor &&
+            response.header.through <= r.through,
+        );
+        totalTransportBytes += Buffer.byteLength(text);
+        headerBytes += Buffer.byteLength(JSON.stringify(response.header));
+        partCount += response.parts.length;
+        rowCount += response.parts.reduce((n, p) => n + p.changes.length, 0);
+        assert.equal(
+          response.parts.length,
+          response.header.units.reduce((n, u) => n + u.parts.length, 0),
+        );
+        responses.push(text);
+        cursor = response.header.through;
+      } while (cursor < r.through);
+      const cursorReadMs = performance.now() - start;
+      assert.equal(rowCount, n);
+      assert.equal(
+        responses.length,
+        kind === "selected" ? Math.ceil(n / 500) : 1,
       );
-      const lastUnit = first.header.units.length - 1,
-        lastPart = first.header.units[lastUnit].parts.length - 1;
-      const c = {
-        planId: first.header.planId,
-        digest: first.header.digest,
-        unit: lastUnit,
-        part: lastPart,
-      };
-      const reads = performance.now();
-      for (let i = 0; i < 5; i++)
-        await chosen.pull("alice", JSON.stringify({ ...r, continuation: c }));
-      const validationMs = (performance.now() - reads) / 5;
-      const allParts = (
-        await q("SELECT payload FROM axton_delivery_unit WHERE plan_id=$1", [
-          first.header.planId,
-        ])
-      ).map((p) => p.payload);
-      const headerBytes = Buffer.byteLength(JSON.stringify(first.header));
-      const transportedBytes = allParts.reduce(
-        (n, p) =>
-          n +
-          Buffer.byteLength(
-            JSON.stringify({ header: first.header, parts: [p] }),
-          ),
-        0,
-      );
+      await assertNoPayloadTables();
       let nativeClient;
       if (evidence) {
-        const responses = [firstText];
-        const ordered = allParts.sort(
-          (a, b) => a.unit - b.unit || a.part - b.part,
-        );
-        for (const part of ordered.slice(1)) {
-          responses.push(
-            await chosen.pull(
-              "alice",
-              JSON.stringify({
-                ...r,
-                continuation: {
-                  planId: first.header.planId,
-                  digest: first.header.digest,
-                  unit: part.unit,
-                  part: part.part,
-                },
-              }),
-            ),
-          );
-        }
-        for (let index = 0; index < responses.length; index++)
+        for (let i = 0; i < responses.length; i++)
           await writeFile(
-            join(evidence, `response-${String(index).padStart(5, "0")}.json`),
-            responses[index],
+            join(evidence, `response-${String(i).padStart(5, "0")}.json`),
+            responses[i],
           );
         await writeFile(join(evidence, "request.json"), JSON.stringify(r));
         replay("replay");
@@ -413,25 +383,16 @@ test("real selected and unique-model capacity measurements", async () => {
           await readFile(join(evidence, "client-measurement.json"), "utf8"),
         );
       }
-      const cleanupStart = performance.now();
-      await q("DELETE FROM axton_delivery_plan");
-      const cleanupMs = performance.now() - cleanupStart;
-      assert.equal(
-        (await q("SELECT count(*) n FROM axton_delivery_unit"))[0].n,
-        "0",
-      );
       console.log(
         JSON.stringify({
           measurement: kind,
           n,
-          stagedBytes: Number(row.staged_bytes),
-          fencedRequestMs: frozenMs,
-          fenceHeldMs,
-          continuationMs: validationMs,
-          cleanupMs,
+          serverPayloadStorage: false,
+          cursorReadMs,
           headerBytes,
-          responseCount: allParts.length,
-          totalTransportBytes: transportedBytes,
+          responseCount: responses.length,
+          partCount,
+          totalTransportBytes,
           evidence,
           nativeClient,
           profile: process.env.AXTON_CAPACITY_PROFILE ?? "debug",
@@ -472,7 +433,7 @@ test("target materialization returns current Remove, never enrolls unknown keys"
     "2",
   );
 });
-test("compacted unique ownership transfer remains one final-state unit across three responses", async () => {
+test("compacted unique ownership transfer returns all fragments in one cursor response", async () => {
   await fixture(1500);
   await q("UPDATE delivery_business SET text='free' WHERE id='e1'");
   await q("UPDATE delivery_business SET text='x' WHERE id='e2'");
@@ -480,38 +441,25 @@ test("compacted unique ownership transfer remains one final-state unit across th
     "UPDATE axton_stream_record SET cursor=CASE WHEN record_id=1 THEN 5 ELSE 3 END",
   );
   await q("UPDATE axton_stream SET head=5");
-  const r = delta("transfer", 0, 5, false),
-    first = await pull(r);
+  const first = await pull(delta("transfer", 0, 5, false));
   assert.equal(first.header.units.length, 1);
   assert.equal(first.header.units[0].minimumCursor, 3);
   assert.equal(first.header.units[0].parts.length, 3);
-  const parts = [...first.parts];
-  for (let part = 1; part < 3; part++)
-    parts.push(
-      ...(
-        await pull({
-          ...r,
-          continuation: {
-            planId: first.header.planId,
-            digest: first.header.digest,
-            unit: 0,
-            part,
-          },
-        })
-      ).parts,
-    );
+  assert.equal(first.parts.length, 3);
   const states = new Map(
-    parts
+    first.parts
       .flatMap((p) => p.changes)
       .map((c) => [c.key.identity.id, c.state.text]),
   );
   assert.equal(states.get("e1"), "free");
   assert.equal(states.get("e2"), "x");
-  assert.equal(first.header.units[0].through, 5);
+  assert.equal(first.header.through, 5);
+  await assertNoPayloadTables();
 });
-test("capacity refusal preserves existing plan and stages no partial payload", async () => {
+test("capacity refusal writes no response state and a later read is rebuilt from current facts", async () => {
   await fixture(1);
   const first = await pull(delta("capacity-refusal"));
+  assert.equal(first.parts.flatMap((p) => p.changes).length, 1);
   await q(
     "INSERT INTO delivery_business SELECT 'more'||i,'morevalue'||i FROM generate_series(1,100000) i",
   );
@@ -525,24 +473,12 @@ test("capacity refusal preserves existing plan and stages no partial payload", a
     pull(delta("capacity-refusal")),
     (e) => e.code === "delivery.capacity",
   );
-  assert.equal(
-    (await q("SELECT count(*) n FROM axton_delivery_plan"))[0].n,
-    "1",
-  );
-  assert.equal(
-    (await q("SELECT count(*) n FROM axton_delivery_unit"))[0].n,
-    "1",
-  );
-  const replay = await pull({
-    ...delta("capacity-refusal"),
-    continuation: {
-      planId: first.header.planId,
-      digest: first.header.digest,
-      unit: 0,
-      part: 0,
-    },
-  });
-  assert.equal(replay.parts[0].changes.length, 1);
+  await assertNoPayloadTables();
+  await q("DELETE FROM axton_stream_record WHERE record_id>1");
+  await q("UPDATE delivery_business SET text='fresh' WHERE id='e1'");
+  const fresh = await pull(delta("capacity-refusal"));
+  assert.notEqual(fresh.header.planId, first.header.planId);
+  assert.equal(fresh.parts[0].changes[0].state.text, "fresh");
 });
 test("preparation publishes before the initial head, retries only replay committed preparation", async () => {
   await fixture(1);
@@ -620,28 +556,11 @@ for (const [name, prefix] of [
 
     const r = delta(storeId, 0, ack.head);
     const first = JSON.parse(await chosen.pull("alice", JSON.stringify(r)));
-    const changes = [...first.parts.flatMap((p) => p.changes)];
-    for (let unit = 0; unit < first.header.units.length; unit++) {
-      for (let part = 0; part < first.header.units[unit].parts.length; part++) {
-        if (first.parts.some((p) => p.unit === unit && p.part === part))
-          continue;
-        const page = JSON.parse(
-          await chosen.pull(
-            "alice",
-            JSON.stringify({
-              ...r,
-              continuation: {
-                planId: first.header.planId,
-                digest: first.header.digest,
-                unit,
-                part,
-              },
-            }),
-          ),
-        );
-        changes.push(...page.parts.flatMap((p) => p.changes));
-      }
-    }
+    const changes = first.parts.flatMap((p) => p.changes);
+    assert.equal(
+      first.parts.length,
+      first.header.units.reduce((n, u) => n + u.parts.length, 0),
+    );
     assert.equal(changes.length, count);
     assert.equal(new Set(changes.map((c) => c.key.identity.id)).size, count);
     assert.ok(
@@ -649,7 +568,7 @@ for (const [name, prefix] of [
     );
   });
 }
-test("WebSocket offers frozen complete units; reconnect head leaves HTTP gap repair available", async () => {
+test("WebSocket offers current complete cursor pages; reconnect head leaves HTTP gap repair available", async () => {
   await fixture(1);
   const errors = [];
   const listening = await app.listen({ port: 0 });

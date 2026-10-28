@@ -67,6 +67,6 @@ Coordinate a breaking backend/adapter/generated-SDK release. Protocol 5 uses dis
 
 Install the PostgreSQL DDL into a fresh framework namespace before traffic; the installer refuses an existing legacy namespace intact. No production migration is supplied. Keep the old release and server available while unresolved protocol-4 work is drained or exported using the old release under a separately owned recovery process. Protocol 5 requires a fresh local format-5 file and refuses an old file without changing its database, WAL or SHM. It offers no automatic wipe or in-place conversion.
 
-Review installed host and matching iOS/Android artifacts from the same tagged commit before rollout. Host-only native tests do not establish mobile installation or device startup. Large complete constraint components can hold the SQLite writer and backend publication fence for seconds; validate staging space and actual capacity on target devices.
+Review installed host and matching iOS/Android artifacts from the same tagged commit before rollout. Host-only native tests do not establish mobile installation or device startup. Large complete constraint components can hold the SQLite writer and backend transactions for seconds; validate staging space and actual capacity on target devices.
 
 Publication, backend deployment, legacy-table cleanup and old-server retirement require separate authorization. The historical 0.3 Stream/authority cutover recipe is not a protocol-5 local migration procedure.

@@ -5,15 +5,39 @@ on:
     branches: ['**']
   pull_request:
   workflow_dispatch:
+    inputs:
+      performance:
+        description: 'Run manual sync performance measurements instead of the host gate'
+        type: boolean
+        default: false
+      performance_samples:
+        description: 'Repetitions per performance case'
+        type: number
+        default: 5
+      performance_sizes:
+        description: 'Comma-separated retained Entry counts'
+        type: string
+        default: '100,1000,10000'
+      performance_writes:
+        description: 'Continuous writes per performance case'
+        type: number
+        default: 100
+      performance_diagnostics:
+        description: 'Collect source stage traces'
+        type: choice
+        options: ['on', 'off']
+        default: 'on'
   workflow_call:
 permissions:
   contents: read
 concurrency:
   # github.workflow names the caller when release-publish.yml calls this one.
-  group: verify-${{ github.workflow }}-${{ github.ref }}
+  # Manual measurements must not cancel a branch's ordinary correctness gate.
+  group: verify-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.performance && format('performance-{0}', inputs.performance_diagnostics) || 'host' }}
   cancel-in-progress: true
 jobs:
   host:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.performance }}
     strategy:
       fail-fast: false
       matrix:
@@ -54,3 +78,40 @@ jobs:
           node bindings/node/build.mjs --release
           node_modules/.bin/napi build --release --platform --cwd packages/native --manifest-path ../../bindings/node/Cargo.toml --output-dir . --js index.js --dts index.d.ts -- --locked
           node --test integration/bindings/client-js/*.test.mjs packages/frontend/client-js/*.test.mjs
+  performance:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.performance }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26.4.0'
+          package-manager-cache: false
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.12.1'
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: '1.98.1'
+      - name: PostgreSQL tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-16
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+      - name: Manual release measurements
+        env:
+          SAMPLES: ${{ inputs.performance_samples }}
+          SIZES: ${{ inputs.performance_sizes }}
+          WRITES: ${{ inputs.performance_writes }}
+          DIAGNOSTICS: ${{ inputs.performance_diagnostics }}
+        run: bash integration/performance/run.sh --samples "$SAMPLES" --sizes "$SIZES" --writes "$WRITES" --diagnostics "$DIAGNOSTICS"
+      - name: Raw samples and summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sync-performance
+          path: artifacts/performance/*.json
+          if-no-files-found: warn

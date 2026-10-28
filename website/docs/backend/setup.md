@@ -25,6 +25,15 @@ console.log(server.url);
 
 The generated `createBackend` needs no `config` option: the schema is already bound. The runtime's own `createBackend` (`packages/backend/server/index.mts`) still takes `config` explicitly, for callers that build the schema themselves.
 
+`createBackend` constructs synchronously. `listen` first awaits database readiness
+and rejects before binding a port if the PostgreSQL namespace has an incompatible
+historical layout. Apply the migration before starting the backend. For a custom
+HTTP server or a headless startup check, call `await backend.ready()` before
+accepting work. Concurrent calls share initialization; a successful check is
+retained for that adapter rather than repeated on each write. Direct backend
+operations also initialize on first use. See [database readiness](database.md#database-readiness)
+for namespace binding and caller-owned transactions.
+
 `mutations`, `queries` and `loaders` are application modules typed against the generated interfaces; a schema without Queries omits `queries`, one without Mutations omits `mutations`. The application enforces write and read permissions. Stream authorization, business permissions, unique constraints and child deletion are the application's responsibility ([What your backend owns](api.md#what-your-backend-owns)).
 
 ## Call objects
@@ -69,7 +78,7 @@ A successful Handler returns the explicit outputs declared by its Mutation or Qu
 
 ## Loaders and Stream delivery
 
-Loaders return one record or null per supplied identity in order. Missing or unreadable content is null. Stream authority and bounded manifest commit units are materialized through these versioned viewer Loaders under the publication fence. A failed read is not absence and cannot justify delivery or manifest progress. The runtime retains unit dependency evidence and fails oversized groups explicitly.
+Loaders return one record or null per supplied identity in order. Missing or unreadable content is null. Stream authority and bounded manifest commit units are materialized through these versioned viewer Loaders inside the same Serializable transaction. A failed read is not absence and cannot justify delivery or manifest progress. The runtime retains unit dependency evidence and fails oversized groups explicitly.
 
 Optional Bootstrap preparation tracks initial records. The schema selects historical Model types with `@@bootstrap`; no Load declarations, continuation handler or public Load manager are required. Named Query and Fetch return invocation snapshots with request-level boolean `store`.
 

@@ -14,4 +14,10 @@ Define the JSON messages between a Frontend SDK and its Rust ClientRuntime: task
 
 ## 10. Quality Requirements
 
+An opt-in open request may enable `diagnostics`. Its `trace {records, dropped}`
+events carry source-measured performance records through the existing outbox,
+independent of task outcomes, error reports or data observers. Default opens emit
+none. The [performance guide](../../../../integration/performance/README.md#diagnostics-and-ownership)
+defines record/clock boundaries and consumer behavior.
+
 Malformed routable commands must fail their request without leaving an SDK waiter hanging; malformed envelopes report diagnostics. Existing protocol tests move with the definitions. Runtime/SDK tests retain transaction lifetime, nested scope, cancellation, Call completion and observer coverage.

@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-The engine admits Store/Stream/context and exact immutable intent before application work. It saves each Mutation result with business effects, publishes under a fence and freezes finite delivery after preparation closure. Ordinary reads return null-cursor snapshots; settlement-owned materialization changes no enrollment or range prefix. Replay does not rerun saved preparation.
+The engine admits Store/Stream/context and exact immutable intent before application work. It saves each Mutation result with business effects, publishes in the same Serializable transaction and builds finite cursor pages after preparation closure. Ordinary reads return null-cursor snapshots; settlement-owned materialization changes no enrollment or range prefix. Saved Mutation replay does not rerun preparation; cursor reads build fresh responses.
 
 ## 5. Building Block View
 

@@ -15,6 +15,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'bridge.dart';
 import 'live.dart';
+import '../api/diagnostics.dart';
 
 /// A direct call the runtime could not complete: `action.unavailable`,
 /// `action.execution_unknown` or `action.observation_failed`. Its execution is
@@ -165,6 +166,7 @@ void abandonConnection(RuntimeConnection connection) => connection._abandon();
 /// its effect handlers run the platform I/O. Application callbacks - the
 /// token, `refreshAuth`, `onError` - run in the zone that connected.
 class RuntimeConnection {
+  TraceEmitter? _tracing;
   final RuntimeHost _host;
   final ServerSession _network;
   final Future<void> Function()? _refreshAuth;
@@ -199,6 +201,7 @@ class RuntimeConnection {
     Duration directTimeout = const Duration(seconds: 30),
     void Function(RuntimeConnection connection)? onConnected,
     void Function(RuntimeConnection connection)? onClosed,
+    TraceEmitter? tracing,
   }) async {
     // Typed encoding: a Duration the wire's positive milliseconds cannot say.
     if (directTimeout.inMicroseconds <= 0) {
@@ -211,6 +214,7 @@ class RuntimeConnection {
       onError,
       onClosed,
     );
+    connection._tracing = tracing;
     await host.task(
       {
         'kind': 'connect',
@@ -299,6 +303,10 @@ class RuntimeConnection {
   /// response text; a failure carries the HTTP status when there was one.
   void _http(Effect effect) => _run(() {
     final body = effect.operation['body'] as String;
+    final span = _tracing?.start('http.request', {
+      'route': effect.operation['route'],
+      'requestBytes': utf8.encode(body).length,
+    });
     final Future<String> sent = switch (effect.operation['route']) {
       'handshake' => _network.handshake(body, effect.cancelled),
       'materialize' => _network.materialize(body, effect.cancelled),
@@ -309,12 +317,24 @@ class RuntimeConnection {
       final route => Future.error(StateError('unknown route $route')),
     };
     sent.then(
-      effect.succeed,
-      onError: (Object error) => effect.fail(
-        _message(error),
-        status: statusOf(error),
-        refusal: refusalOf(error),
-      ),
+      (response) {
+        span?.end({
+          'responseBytes': utf8.encode(response).length,
+          'outcome': 'success',
+        });
+        effect.succeed(response);
+      },
+      onError: (Object error) {
+        span?.end({
+          'outcome': 'error',
+          if (statusOf(error) != null) 'status': statusOf(error),
+        });
+        effect.fail(
+          _message(error),
+          status: statusOf(error),
+          refusal: refusalOf(error),
+        );
+      },
     );
   });
 
@@ -326,8 +346,13 @@ class RuntimeConnection {
       effect.operation['subscribe'] as String,
       effect.cancelled,
       SocketEvents(
-        message: (text) async =>
-            effect.emit({'event': 'message', 'body': text}),
+        message: (text) async {
+          final span = _tracing?.start('socket.frame', {
+            'responseBytes': utf8.encode(text).length,
+          });
+          effect.emit({'event': 'message', 'body': text});
+          span?.end();
+        },
         overflow: () async => effect.emit({'event': 'overflow'}),
         closed: (error, _) => effect.fail(
           _message(error),

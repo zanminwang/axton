@@ -1,0 +1,426 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "7e495814de0cfce65da3ae04e387f40944608790",
+  "evidenceKind": "Completed runner transcript plus recovered, hashed and audited raw JSON",
+  "performance": {
+    "runId": 40611658011,
+    "jobId": 122564383501,
+    "url": "https://github.com/zanminwang/axton/actions/runs/40611658011",
+    "conclusion": "success",
+    "samplesPassed": 45,
+    "samplesAttempted": 45,
+    "passedSampleTranscript": [
+      {
+        "scenario": "initial-sync",
+        "existing": 100,
+        "writes": 0,
+        "repetition": 1,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 100,
+        "writes": 0,
+        "repetition": 2,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 100,
+        "writes": 0,
+        "repetition": 3,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 100,
+        "writes": 0,
+        "repetition": 4,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 100,
+        "writes": 0,
+        "repetition": 5,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 1000,
+        "writes": 0,
+        "repetition": 1,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 1000,
+        "writes": 0,
+        "repetition": 2,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 1000,
+        "writes": 0,
+        "repetition": 3,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 1000,
+        "writes": 0,
+        "repetition": 4,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 1000,
+        "writes": 0,
+        "repetition": 5,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 10000,
+        "writes": 0,
+        "repetition": 1,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 10000,
+        "writes": 0,
+        "repetition": 2,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 10000,
+        "writes": 0,
+        "repetition": 3,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 10000,
+        "writes": 0,
+        "repetition": 4,
+        "status": "passed"
+      },
+      {
+        "scenario": "initial-sync",
+        "existing": 10000,
+        "writes": 0,
+        "repetition": 5,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 100,
+        "writes": 1,
+        "repetition": 1,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 100,
+        "writes": 1,
+        "repetition": 2,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 100,
+        "writes": 1,
+        "repetition": 3,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 100,
+        "writes": 1,
+        "repetition": 4,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 100,
+        "writes": 1,
+        "repetition": 5,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 100,
+        "writes": 100,
+        "repetition": 1,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 100,
+        "writes": 100,
+        "repetition": 2,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 100,
+        "writes": 100,
+        "repetition": 3,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 100,
+        "writes": 100,
+        "repetition": 4,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 100,
+        "writes": 100,
+        "repetition": 5,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 1000,
+        "writes": 1,
+        "repetition": 1,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 1000,
+        "writes": 1,
+        "repetition": 2,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 1000,
+        "writes": 1,
+        "repetition": 3,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 1000,
+        "writes": 1,
+        "repetition": 4,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 1000,
+        "writes": 1,
+        "repetition": 5,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 1000,
+        "writes": 100,
+        "repetition": 1,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 1000,
+        "writes": 100,
+        "repetition": 2,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 1000,
+        "writes": 100,
+        "repetition": 3,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 1000,
+        "writes": 100,
+        "repetition": 4,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 1000,
+        "writes": 100,
+        "repetition": 5,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 10000,
+        "writes": 1,
+        "repetition": 1,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 10000,
+        "writes": 1,
+        "repetition": 2,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 10000,
+        "writes": 1,
+        "repetition": 3,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 10000,
+        "writes": 1,
+        "repetition": 4,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 10000,
+        "writes": 1,
+        "repetition": 5,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 10000,
+        "writes": 100,
+        "repetition": 1,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 10000,
+        "writes": 100,
+        "repetition": 2,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 10000,
+        "writes": 100,
+        "repetition": 3,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 10000,
+        "writes": 100,
+        "repetition": 4,
+        "status": "passed"
+      },
+      {
+        "scenario": "live-sync",
+        "existing": 10000,
+        "writes": 100,
+        "repetition": 5,
+        "status": "passed"
+      }
+    ]
+  },
+  "artifact": {
+    "id": 12783856093,
+    "name": "sync-performance",
+    "size_in_bytes": 4020570,
+    "url": "https://api.github.com/repos/zanminwang/axton/actions/artifacts/12783856093",
+    "archive_download_url": "https://api.github.com/repos/zanminwang/axton/actions/artifacts/12783856093/zip",
+    "expired": false,
+    "created_at": "2026-10-28T01:07:24Z",
+    "expires_at": "2027-01-26T00:53:39Z",
+    "updated_at": "2026-10-28T01:07:24Z",
+    "digest": "sha256:5fd7c63232e37e1e695cc4fc99ddd5b2239cd3455f5d3a0640fea1f96bf2546c",
+    "workflow_run": {
+      "id": 40611658011,
+      "repository_id": 1364998302,
+      "head_repository_id": 1364998302,
+      "head_branch": "codex/sync-performance-tracing",
+      "head_sha": "7e495814de0cfce65da3ae04e387f40944608790"
+    },
+    "browserUrl": "https://github.com/zanminwang/axton/actions/runs/40611658011/artifacts/12783856093",
+    "digestProvenance": "Reported by GitHub for the archive; not an independently calculated results.json digest"
+  },
+  "validation": {
+    "localRust": {
+      "passed": 520,
+      "ignored": 7
+    },
+    "strictWorkspaceClippy": "passed",
+    "fullVerify": {
+      "runId": 40611634843,
+      "sourceCommit": "7e495814de0cfce65da3ae04e387f40944608790",
+      "macOS": {
+        "jobId": 122564481082,
+        "conclusion": "success"
+      },
+      "linux": {
+        "jobId": 122564481486,
+        "conclusion": "success"
+      }
+    },
+    "acceptedWritesRequiredByPassingRunner": 1515,
+    "knownVerifiedNonterminalReports": 1454,
+    "failedReports": 0,
+    "assertions": "Passing runner enforces exact final identities/count/content, accepted settlements, source commit correlations, no backend/connection errors, no trace loss, and cleanup."
+  },
+  "parameters": {
+    "sizes": [
+      100,
+      1000,
+      10000
+    ],
+    "liveWrites": [
+      1,
+      100
+    ],
+    "repetitionsPerCase": 5,
+    "textBytes": 512,
+    "serial": true,
+    "artifacts": "release native and Dart AOT",
+    "transport": "loopback HTTP/WebSocket",
+    "caches": "Fresh Stores/processes/databases; freshly written fixtures; OS/PostgreSQL caches not flushed"
+  },
+  "comparison": {
+    "status": "not executed to completion; inspected machine metadata is incompatible",
+    "reason": "Earlier runs: AMD EPYC 7763; final run: AMD EPYC 9V74. Strict machine-equality comparison would reject this mismatch. Environment disconnected during further profiling. No causal percentage improvement is claimed.",
+    "cpuMetadataInspection": {
+      "before": "AMD EPYC 7763 64-Core Processor",
+      "final": "AMD EPYC 9V74 80-Core Processor",
+      "status": "different",
+      "finalMetadataRead": "Final results.json was successfully downloaded and metadata printed; further profiling command was interrupted by environment transport loss.",
+      "strictComparisonCommand": "did not complete; existing machine-equality check would reject the CPU mismatch"
+    }
+  },
+  "summaryTranscript": "Times in ms: median [min, max]. Live per-write observations are correlated within each run.\n\nInitial sync:\n| Existing N | Passed | Store open | First visible | All visible | Bootstrap |\n|---:|---:|---:|---:|---:|---:|\n| 100 | 5/5 | 4.662 [4.198, 4.688] | 57.514 [56.886, 95.624] | 57.514 [56.886, 95.624] | 57.451 [56.803, 95.549] |\n| 1000 | 5/5 | 4.336 [4.301, 10.927] | 128.456 [124.700, 153.529] | 250.940 [219.833, 334.017] | 250.821 [219.722, 333.878] |\n| 10000 | 5/5 | 4.579 [4.290, 29.505] | 124.675 [123.228, 153.587] | 2571.257 [2443.544, 2702.615] | 2569.902 [2442.787, 2701.290] |\n\nLive sync:\n| Existing N | Writes M | Passed | Reports passed/failed | Local commit | Server transaction | A settlement | B visible | All B visible |\n|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n| 100 | 1 | 5/5 | 0/0 | 1.209 [1.078, 1.296] | 23.632 [21.854, 24.531] | 52.674 [50.664, 57.103] | 55.271 [51.926, 60.252] | 55.271 [51.926, 60.253] |\n| 100 | 100 | 5/5 | 485/0 | 3.454 [1.040, 189.458] | 31.044 [23.479, 521.517] | 3277.415 [84.768, 6391.536] | 2067.458 [51.472, 5824.417] | 3906.503 [3641.511, 6700.055] |\n| 1000 | 1 | 5/5 | 0/0 | 1.186 [1.089, 1.989] | 27.193 [25.725, 28.033] | 59.483 [57.214, 185.962] | 67.015 [54.860, 69.390] | 67.015 [54.862, 69.390] |\n| 1000 | 100 | 5/5 | 484/0 | 3.141 [1.200, 273.829] | 37.068 [25.639, 326.842] | 3802.059 [113.802, 6954.911] | 2142.497 [61.660, 5944.689] | 4310.710 [4216.793, 7161.399] |\n| 10000 | 1 | 5/5 | 0/0 | 1.343 [1.245, 1.379] | 28.570 [28.419, 29.128] | 59.031 [55.088, 63.457] | 135.758 [131.437, 141.452] | 135.759 [131.438, 141.454] |\n| 10000 | 100 | 5/5 | 485/0 | 3.772 [1.197, 273.395] | 47.425 [28.746, 362.235] | 4490.221 [95.164, 5726.853] | 2851.002 [135.752, 4999.967] | 5607.765 [5132.948, 6382.992] |\n\nSelected stages: median summed span ms per run; nested/overlapping spans are not additive. Live includes both clients.\n| Case | Server plan | Mutation execute | Local apply | Watch query | Bridge drain/decode |\n|---|---:|---:|---:|---:|---:|\n| initial-sync/100/0 | 32.602 | \u2014 | 4.871 | 0.200 | 0.797 |\n| initial-sync/1000/0 | 90.774 | \u2014 | 53.555 | 5.684 | 7.264 |\n| initial-sync/10000/0 | 731.346 | \u2014 | 658.283 | 545.366 | 431.255 |\n| live-sync/100/1 | 61.087 | 22.296 | 2.687 | 0.268 | 0.965 |\n| live-sync/100/100 | 3390.173 | 2912.536 | 547.516 | 163.102 | 122.683 |\n| live-sync/1000/1 | 59.781 | 25.626 | 2.778 | 4.510 | 5.268 |\n| live-sync/1000/100 | 3286.810 | 3424.105 | 797.981 | 1064.313 | 558.587 |\n| live-sync/10000/1 | 59.969 | 27.137 | 2.668 | 54.790 | 46.394 |\n| live-sync/10000/100 | 5187.216 | 4253.114 | 532.395 | 3967.091 | 2504.097 |\nJSON: /home/runner/work/axton/axton/artifacts/performance/results.json",
+  "archive": {
+    "file": "results.json.gz",
+    "rawSha256": "e85f54cc7641619480223fb790de64eee73e94e6ac792c0ef9e4945a7952631d",
+    "compressedSha256": "3ccff98c63a2480cd274776d833365f11c58a4920d5cfd8ac7d2268ad8d09e0e",
+    "rawBytes": 75858873,
+    "compressedBytes": 4100842
+  },
+  "archiveAudit": {
+    "totals": {
+      "samples": 45,
+      "passed": 45,
+      "serverVerified": 45,
+      "accepted": 1515,
+      "correlations": 1515,
+      "backendErrors": 0,
+      "connectionErrors": 0,
+      "traceLoss": 0,
+      "cleanupErrors": 0,
+      "recordReports": 1454,
+      "adminErrors": []
+    },
+    "strictComparisonWithFirstCoalescing": "executed; refused different machine/tool/database conditions"
+  }
+}

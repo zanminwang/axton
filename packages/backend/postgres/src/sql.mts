@@ -27,17 +27,15 @@ SELECT * FROM selected`;
 export const savepointName = (ordinal: number): string =>
   `axton_mutation_${ordinal}`;
 
-/** UPDATE creates the Serializable snapshot conflict fence; advisory locks do not. */
-export const PUBLICATION_FENCE =
-  "UPDATE axton_publication_fence SET id=id WHERE id=1 RETURNING id";
-
 /** Protocol-5 Store, immutable outcome and coalesced publication persistence. */
 export const V05_STORE_INSERT =
   "INSERT INTO axton_store(id,principal,stream) VALUES($1,$2,$3) ON CONFLICT(id) DO NOTHING";
 export const V05_STORE_INSPECT =
   "SELECT principal,stream FROM axton_store WHERE id=$1";
 export const V05_STORE_LOCK =
-  "SELECT principal,stream,last_processed_batch_id,progress,current_digest,current_count,last_digest,last_count FROM axton_store WHERE id=$1 FOR UPDATE";
+  // Progress writers remain exclusive with each other, while delivery-plan
+  // foreign-key checks may hold KEY SHARE on the immutable Store identity.
+  "SELECT principal,stream,last_processed_batch_id,progress,current_digest,current_count,last_digest,last_count FROM axton_store WHERE id=$1 FOR NO KEY UPDATE";
 export const V05_BATCH_BEGIN =
   "UPDATE axton_store SET current_digest=$3,current_count=$4 WHERE id=$1 AND last_processed_batch_id=$2-1 AND current_digest IS NULL AND progress=0 RETURNING id";
 export const V05_BATCH_PRUNE =

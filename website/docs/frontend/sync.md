@@ -10,7 +10,7 @@ Open each Store with one Stream and a fresh format-5 SQLite file. Opening binds 
 
 The first await of a named Mutation returns its durable `Call` after the local transaction commits. Its declared Model changes appear optimistically. A callback returns the typed input and may use `tx.models` for device-only companion writes before optimism is applied. A callback failure rolls back both contributions.
 
-`await call.wait()` observes terminal settlement. Server acceptance can precede installation of the required Stream authority, so acceptance alone does not complete the Call. The runtime can recover saved settlement targets through a finite owned plan without rerunning the public Bootstrap handler or enrolling new records. The result is the invocation's saved snapshot; later local edits may make the current Model view different.
+`await call.wait()` observes terminal settlement. Server acceptance can precede installation of the required Stream authority, so acceptance alone does not complete the Call. The runtime can recover saved settlement targets through a complete current-state owned response without rerunning the public Bootstrap handler or enrolling new records. The result is the invocation's saved snapshot; later local edits may make the current Model view different.
 
 A refusal removes that call's owned optimism and companions while retaining later independent work. Several named Mutations in one local transaction commit together and settle independently. Direct `tx.models` writes never enter the remote queue.
 

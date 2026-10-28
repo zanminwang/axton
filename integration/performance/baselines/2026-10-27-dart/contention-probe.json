@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "kind": "snapshot-contention-probe",
+  "commit": "0defa5421783baeb5e865168e7a2332baa36e19a",
+  "dirty": false,
+  "postgres": "PostgreSQL 16.15 (Ubuntu 16.15-1.pgdg24.04+2) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit",
+  "cases": [
+    {
+      "mode": "current-row-fence",
+      "writer": "committed",
+      "waiter": "aborted",
+      "blocked": true,
+      "concurrentRead": 0,
+      "error": {
+        "phase": "publication-fence",
+        "code": "40001",
+        "message": "could not serialize access due to concurrent update"
+      },
+      "finalValue": 1,
+      "verified": true
+    },
+    {
+      "mode": "lock-before-snapshot",
+      "writer": "committed",
+      "waiter": "committed",
+      "blocked": true,
+      "concurrentRead": 0,
+      "waiterRead": 1,
+      "finalValue": 2,
+      "verified": true
+    },
+    {
+      "mode": "snapshot-before-lock",
+      "writer": "committed",
+      "waiter": "aborted",
+      "blocked": true,
+      "staleRead": 0,
+      "concurrentRead": 0,
+      "error": {
+        "phase": "publication-fence",
+        "code": "40001",
+        "message": "could not serialize access due to concurrent update"
+      },
+      "finalValue": 1,
+      "verified": true
+    }
+  ],
+  "errors": [],
+  "status": "passed"
+}

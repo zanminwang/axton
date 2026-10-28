@@ -1,4 +1,6 @@
 import type { BackendDescriptor } from "./schema.mts";
+import { Diagnostics, type AxtonDiagnostics } from "./diagnostics.mts";
+export type { AxtonDiagnostics, AxtonTraceRecord } from "./diagnostics.mts";
 import { Session } from "../bindings/session.mts";
 import { createHost, type HostDependencies } from "../bindings/host.mts";
 import type { RuntimeStream, RuntimeLoadStream } from "./stream.mts";
@@ -54,6 +56,9 @@ export interface Persistence {
   call(request: Record<string, any>): Promise<unknown>;
 }
 export interface Database<T> {
+  /** Validate the configured namespace before serving work. An optional retained
+   * transaction avoids acquiring a second connection for caller-owned publish. */
+  initialize?: (tx?: T) => Promise<void>;
   /**
    * Must provide serializable isolation (PostgreSQL SERIALIZABLE: one
    * snapshot for the whole transaction, and a serialization failure instead
@@ -103,7 +108,6 @@ import { EngineError, loadNative } from "../bindings/native.mts";
  * server-side defect: reported to `onError` and answered `500 {code: "server"}`.
  */
 const HTTP_STATUS_BY_CODE: Readonly<Record<string, number>> = {
-  "delivery.expired": 410,
   "delivery.capacity": 413,
   "request.invalid": 400,
   context_mismatch: 409,
@@ -240,6 +244,8 @@ function versioned<F>(
   return table;
 }
 export interface BackendOptions<T> {
+  /** Opt-in performance records. Default: no collection or native tracing. */
+  diagnostics?: AxtonDiagnostics;
   protocol5?: {
     projectionGeneration?: string;
     materializations?: Record<
@@ -332,6 +338,26 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
   options: BackendOptions<T>,
 ) {
   const native = loadNative(options.native);
+  const diagnostics = new Diagnostics(options.diagnostics);
+  if (options.diagnostics) {
+    // This backend's wrappers only; never mutate the caller's native object.
+    for (const name of [
+      "handshake05",
+      "processDelivery05",
+      "processMaterialization05",
+      "processLive05",
+      "processRead05",
+      "processBatchMember",
+    ] as const) {
+      const operation = native[name];
+      if (operation)
+        (native as any)[name] = (...args: any[]) =>
+          diagnostics.span(`server.${name}`, {}, () =>
+            (operation as any)(...args, true),
+          );
+    }
+  }
+
   // Nothing is dropped silently: without a handler, failures go to the console.
   const onError: (error: unknown) => void =
     options.onError ?? ((error) => console.error(error));
@@ -513,6 +539,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     return { error: error instanceof Error ? error.message : String(error) };
   };
   const hostDependencies: HostDependencies<T> = {
+    diagnostics,
     options,
     native,
     config,
@@ -560,17 +587,31 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
       sessions.delete(tx);
     }
   };
+  let initializing: Promise<void> | undefined;
+  const initialize = (tx?: T): Promise<void> => {
+    return (initializing ??= Promise.resolve()
+      .then(() => options.database.initialize?.(tx))
+      .catch((error: unknown) => {
+        initializing = undefined;
+        throw error;
+      }));
+  };
+  /** Validate database compatibility before opening an application-owned server. */
+  const ready = (): Promise<void> => initialize();
   const run = async <R,>(
     operation: (tx: T, session: Session) => Promise<R>,
   ) => {
+    await ready();
     let committed: string[] = [];
-    const result = await options.database.transaction(async (tx) => {
-      const { result, published } = await bound(tx, (session) =>
-        operation(tx, session),
-      );
-      committed = published;
-      return result;
-    });
+    const result = await diagnostics.span("server.transaction", {}, () =>
+      options.database.transaction(async (tx) => {
+        const { result, published } = await bound(tx, (session) =>
+          operation(tx, session),
+        );
+        committed = published;
+        return result;
+      }),
+    );
     wakes.notify(committed);
     return result;
   };
@@ -585,9 +626,6 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     session: Session,
     body: (call: External) => R | Promise<R>,
   ): Promise<R> => {
-    await session.track(() =>
-      options.database.persistence(tx).call({ op: "publicationFence" }),
-    );
     const effects = createEffects();
     let result: R;
     try {
@@ -634,6 +672,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     tx: T,
     body: (call: External) => void | Promise<void>,
   ): Promise<() => void> => {
+    await initialize(tx);
     const { published } = await bound(tx, (session) =>
       settle(tx, session, body),
     );
@@ -643,25 +682,9 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     typeof request === "string"
       ? request
       : new TextDecoder("utf-8", { fatal: true }).decode(request);
-  // Expiry is a successful read outcome: commit staging cleanup, then surface
-  // the explicit error outside the transaction. Capacity/faults still roll back.
-  const deliveryRead = async (
-    operation: (tx: T, session: Session) => Promise<string>,
-  ): Promise<string> => {
-    const outcome = await run(async (tx, session) => {
-      try {
-        return { response: await operation(tx, session) };
-      } catch (error) {
-        if (error instanceof EngineError && error.code === "delivery.expired")
-          return { expired: error };
-        throw error;
-      }
-    });
-    if ("expired" in outcome) throw outcome.expired;
-    return outcome.response;
-  };
   /** @internal Raw protocol seams used by the framework's own tests; not part of the supported surface. */
   const api = {
+    ready,
     materializationId,
     push: async (owner: string, request: Uint8Array | string) => {
       const wire = text(request);
@@ -699,7 +722,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
         native.processRead05!(config, owner, text(request), host(tx, session)),
       ),
     pull: (owner: string, request: Uint8Array | string) =>
-      deliveryRead((tx, session) =>
+      run((tx, session) =>
         native.processDelivery05!(
           config,
           owner,
@@ -708,7 +731,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
         ),
       ),
     pull05Live: (owner: string, request: string) =>
-      deliveryRead((tx, session) =>
+      run((tx, session) =>
         native.processLive05!(config, owner, request, host(tx, session)),
       ),
     handshake: (owner: string, request: Uint8Array | string) =>
@@ -716,7 +739,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
         native.handshake05!(config, owner, text(request), host(tx, session)),
       ),
     materialize: (owner: string, request: Uint8Array | string) =>
-      deliveryRead((tx, session) =>
+      run((tx, session) =>
         native.processMaterialization05!(
           config,
           owner,
@@ -740,12 +763,6 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     closeLive: () => wakes.clear(),
     transaction,
     publish,
-    /** Must be awaited BEFORE relevant business writes in a caller-owned tx. */
-    acquirePublicationFence: (tx: T): Promise<void> =>
-      options.database
-        .persistence(tx)
-        .call({ op: "publicationFence" })
-        .then(() => {}),
   };
   const authenticate = async (request: IncomingMessage) => {
     const id = await options.authenticate(request);
@@ -770,6 +787,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     port: number;
     host?: string;
   }) => {
+    await ready();
     let stopping = false;
     const requests = new Set<Promise<void>>();
     const handler = createHttpHandler({ backend: api, admit, onError });

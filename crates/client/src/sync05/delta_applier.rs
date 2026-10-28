@@ -81,6 +81,7 @@ impl<S: ClientStore> Client<S> {
             self.cleanup_delivery05(now)?;
             return Ok(None);
         };
+        let _span = tracing::info_span!(target: "axton::client", "delivery.apply", planId = %id, unitIndex = unit.index).entered();
         // Owned transfers prove the entire identity set before installation.
         let owned = if let Some(request) = &owner {
             let plan = &q.plans[&id];
@@ -119,7 +120,7 @@ impl<S: ClientStore> Client<S> {
             let final_unit=owned.is_some() || unit.index+1==header.units.len() as u64;
             if header.bootstrap {
                 let start=e.scalar("SELECT start_cursor FROM axton_store",&[])?.ok_or_else(||invalid("handshake required"))?;
-                if header.through!=start.as_u64(){return Err(invalid("bootstrap start mismatch"))}
+                if header.through.is_none_or(|through| start.as_u64().is_none_or(|start| through>start)){return Err(invalid("bootstrap start mismatch"))}
                 if let Some(through)=unit.through {
                     let current=e.scalar("SELECT bootstrap_cursor FROM axton_store",&[])?.and_then(|v|v.as_u64()).unwrap_or(0);
                     if header.after.unwrap()>current {return Err(invalid("bootstrap prefix gap"))}

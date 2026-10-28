@@ -1,0 +1,50 @@
+[
+  {
+    "file": "trial-d0371c8.json.gz",
+    "run": "https://github.com/zanminwang/axton/actions/runs/40574568435",
+    "commit": "d0371c8a4b87b9f9e5f54ead61eeb21c0b613f0f",
+    "rawSha256": "3322c0e75f66000a276d3253f55e8e6b3d59676c80a7c9938c1e4494341dce71",
+    "samples": 17,
+    "reason": "Incomplete: physical PostgreSQL socket teardown race; not a baseline."
+  },
+  {
+    "file": "trial-161a529.json.gz",
+    "run": "https://github.com/zanminwang/axton/actions/runs/40576474875",
+    "commit": "161a529ce9f61c87cda540f6c0934d3eb74f81b8",
+    "rawSha256": "26a630343d1db0548861035f4aee5c8915fcf7ef4df673df161c46a9a6075f68",
+    "samples": 20,
+    "reason": "Incomplete: v1 treated a nonterminal owned-create divergence report as failure; final data and settlement verified. Not a v2 baseline."
+  },
+  {
+    "file": "trial-a3ac3b14.json.gz",
+    "run": "https://github.com/zanminwang/axton/actions/runs/40578488629",
+    "commit": "a3ac3b14f40586fb01639ef962484776c1d7d8f8",
+    "rawSha256": "f4a22380816587b524e90339962fee21a4177b69f87db659c5dd74bd1187ca91",
+    "samples": 21,
+    "reason": "Incomplete fail-fast run: continuous writes produced backend serialization errors and a live disconnect. All 100 writes eventually accepted; failures remain failures."
+  },
+  {
+    "file": "control-off-6c59dcc.json.gz",
+    "run": "https://github.com/zanminwang/axton/actions/runs/40581124113",
+    "commit": "6c59dccee83e7a9c16de4f8c75f8e4ba1dc9bf8d",
+    "rawSha256": "a289a6343b438d6b7b486703df4423ed443ab6f2e80f6014540332255b4bbbe4",
+    "samples": 6,
+    "reason": "Tracing-disabled control: full small matrix attempted; both continuous-write samples failed with 40001, HTTP 500 and live disconnects despite eventual accepted writes and exact final state."
+  },
+  {
+    "file": "full-matrix-8e97268.json.gz",
+    "run": "https://github.com/zanminwang/axton/actions/runs/40580232937",
+    "commit": "8e972685a67dcd053b999e5a73aef6643b66dfce",
+    "rawSha256": "6fecbe8cc441ee414b9d02aed056de1919392c740e4ff4bf938c469c5ba1f471",
+    "samples": 45,
+    "reason": "Full instrumented matrix. Sample failures are preserved and excluded from passing-baseline statistics."
+  },
+  {
+    "file": "contention-probe.json",
+    "run": "https://github.com/zanminwang/axton/actions/runs/40585223586",
+    "commit": "0defa5421783baeb5e865168e7a2332baa36e19a",
+    "rawSha256": "e562ac1180866af8fc4181bb6ca29b778dac6c6db2bb7afc90b3216bab7bf855",
+    "cases": 3,
+    "reason": "Controlled real-PostgreSQL experiment: existing ordering and late admission abort with 40001; admission before the first snapshot commits both writers. Not a production fix or latency baseline."
+  }
+]

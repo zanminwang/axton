@@ -417,23 +417,6 @@ impl Validate for DeliveryPurpose {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Continuation {
-    pub plan_id: String,
-    pub digest: String,
-    pub unit: u64,
-    pub part: u64,
-}
-impl Validate for Continuation {
-    fn validate(&self) -> Result<()> {
-        text(&self.plan_id)?;
-        digest(&self.digest)?;
-        counter(self.unit)?;
-        counter(self.part)?;
-        Ok(())
-    }
-}
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeltaRequest {
     #[serde(flatten)]
     pub context: RequestContext,
@@ -441,7 +424,6 @@ pub struct DeltaRequest {
     pub through: u64,
     #[serde(default)]
     pub bootstrap: bool,
-    pub continuation: Option<Continuation>,
 }
 impl Validate for DeltaRequest {
     fn validate(&self) -> Result<()> {
@@ -450,9 +432,6 @@ impl Validate for DeltaRequest {
         counter(self.through)?;
         if self.after > self.through {
             return Err(invalid("inverted range"));
-        }
-        if let Some(c) = &self.continuation {
-            c.validate()?;
         }
         Ok(())
     }
@@ -575,7 +554,6 @@ pub struct MaterializationRequest {
     pub owner: MaterializationOwner,
     pub keys: Vec<RecordKey>,
     pub models: BTreeMap<String, u64>,
-    pub continuation: Option<Continuation>,
 }
 impl Validate for MaterializationRequest {
     fn validate(&self) -> Result<()> {
@@ -607,9 +585,6 @@ impl Validate for MaterializationRequest {
                 }
             }
         }
-        if let Some(c) = &self.continuation {
-            c.validate()?;
-        }
         Ok(())
     }
 }
@@ -640,11 +615,6 @@ impl MaterializationResponse {
             || header.owner.as_ref() != Some(&request.owner)
         {
             return Err(invalid("materialization correlation mismatch"));
-        }
-        if let Some(continuation) = &request.continuation
-            && (continuation.plan_id != header.plan_id || continuation.digest != header.digest)
-        {
-            return Err(invalid("materialization continuation plan mismatch"));
         }
         let requested: BTreeSet<_> = request
             .keys
@@ -692,6 +662,15 @@ impl Validate for DeliveryResponse {
     }
 }
 impl DeliveryResponse {
+    /// An HTTP cursor page carries every fragment of every selected atomic unit.
+    /// A lost response is reconstructed from committed cursor/owner evidence.
+    pub fn require_complete(&self) -> Result<()> {
+        let expected: usize = self.header.units.iter().map(|unit| unit.parts.len()).sum();
+        if self.parts.len() != expected {
+            return Err(invalid("incomplete cursor page"));
+        }
+        Ok(())
+    }
     pub fn admit(&self, request: &DeltaRequest, active: &RequestContext) -> Result<()> {
         self.validate()?;
         request.validate()?;
@@ -699,15 +678,13 @@ impl DeliveryResponse {
         if self.header.context != request.context
             || self.header.owner.is_some()
             || self.header.after != Some(request.after)
-            || self.header.through != Some(request.through)
+            || self.header.through.is_none_or(|through| {
+                through > request.through
+                    || (request.after < request.through && through <= request.after)
+            })
             || self.header.bootstrap != request.bootstrap
         {
             return Err(invalid("delta correlation mismatch"));
-        }
-        if let Some(c) = &request.continuation
-            && (c.plan_id != self.header.plan_id || c.digest != self.header.digest)
-        {
-            return Err(invalid("continuation plan mismatch"));
         }
         Ok(())
     }

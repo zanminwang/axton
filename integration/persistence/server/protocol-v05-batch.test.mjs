@@ -222,7 +222,10 @@ function app(cfg = config, materializations = {}) {
 before(async () => {
   await q(
     await readFile(
-      new URL("../../../packages/backend/postgres/migration.sql", import.meta.url),
+      new URL(
+        "../../../packages/backend/postgres/migration.sql",
+        import.meta.url,
+      ),
       "utf8",
     ),
   );
@@ -494,7 +497,71 @@ test("private and other-Stream-only targets retain owned null-cursor fallback wi
     );
   }
 });
-test("real publication fence serializes tracking against global invalidation and preserves holders", async () => {
+test("unrelated publications commit while another transaction's handler is suspended", async () => {
+  const a = app();
+  await q(
+    "INSERT INTO v05_business VALUES('independent-a','before'),('independent-b','before')",
+  );
+  let entered, release, timer;
+  const arrived = new Promise((resolve) => (entered = resolve));
+  const gate = new Promise((resolve) => (release = resolve));
+  const first = a.transaction(async ({ tx, stream }) => {
+    await tx.query("SELECT title FROM v05_business WHERE id='independent-a'");
+    entered();
+    await gate;
+    await tx.query(
+      "UPDATE v05_business SET title='after' WHERE id='independent-a'",
+    );
+    stream("User:independent-a").track.todo({ id: "independent-a" });
+  });
+  let second;
+  try {
+    await arrived;
+    second = a.transaction(async ({ tx, stream }) => {
+      await tx.query(
+        "UPDATE v05_business SET title='after' WHERE id='independent-b'",
+      );
+      stream("User:independent-b").track.todo({ id: "independent-b" });
+    });
+    await Promise.race([
+      second,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                "unrelated publication blocked behind suspended handler",
+              ),
+            ),
+          10000,
+        );
+      }),
+    ]);
+    assert.equal(
+      (await q("SELECT title FROM v05_business WHERE id='independent-b'"))[0]
+        .title,
+      "after",
+    );
+    assert.equal(
+      (await q("SELECT title FROM v05_business WHERE id='independent-a'"))[0]
+        .title,
+      "before",
+    );
+  } finally {
+    clearTimeout(timer);
+    release();
+    await Promise.all([first, second]);
+  }
+  assert.deepEqual(
+    (
+      await q(
+        "SELECT title FROM v05_business WHERE id IN ('independent-a','independent-b')",
+      )
+    ).map((r) => r.title),
+    ["after", "after"],
+  );
+});
+test("Serializable tracking against concurrent global invalidation preserves holders", async () => {
   const a = app();
   await q("INSERT INTO v05_business VALUES('fence-record','before')");
   await a.transaction(async ({ stream }) =>
@@ -656,13 +723,11 @@ test("reused caller-owned PoolClient starts a fresh publication reservation afte
   await q("INSERT INTO v05_business VALUES($1,$2)", [id, "before"]);
   try {
     await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
-    await a.acquirePublicationFence(tx);
     await a.publish(tx, async ({ stream }) =>
       stream("User:reused").track.todo({ id }),
     );
     await tx.query("COMMIT");
     await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
-    await a.acquirePublicationFence(tx);
     await tx.query("UPDATE v05_business SET title=$2 WHERE id=$1", [
       id,
       "after",
@@ -842,7 +907,6 @@ for (const existing of [false, true])
       await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
       await tx.query("SAVEPOINT caller_act");
       await tx.query("INSERT INTO v05_business VALUES($1,'undone')", [undone]);
-      await backend.acquirePublicationFence(tx);
       const discardedWake = await backend.publish(
         tx,
         ({ stream: select, invalidate }) => {
@@ -853,7 +917,6 @@ for (const existing of [false, true])
       assert.equal(typeof discardedWake, "function");
       await tx.query("ROLLBACK TO SAVEPOINT caller_act");
       await tx.query("INSERT INTO v05_business VALUES($1,'kept')", [kept]);
-      await backend.acquirePublicationFence(tx);
       const wake = await backend.publish(
         tx,
         ({ stream: select, invalidate }) => {
@@ -910,7 +973,6 @@ test("reused caller-owned PoolClient restores reservations after full ROLLBACK",
       ["kept", true],
     ]) {
       await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
-      await backend.acquirePublicationFence(tx);
       await tx.query("INSERT INTO v05_business VALUES($1,$2)", [
         "reuse-" + id,
         id,

@@ -1,0 +1,2 @@
+model Entry { id String text String @@id(id) @@bootstrap }
+mutation CreateEntry(entry Entry.create) { entry Entry }

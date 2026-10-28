@@ -339,6 +339,7 @@ impl ClientStore for SqliteStore {
         self.writer.execute_batch("BEGIN IMMEDIATE").map_err(db)
     }
     fn commit(&mut self) -> Result<()> {
+        let _span = tracing::info_span!(target: "axton::sqlite", "sqlite.commit").entered();
         self.writer.execute_batch("COMMIT").map_err(db)
     }
     fn rollback(&mut self) -> Result<()> {

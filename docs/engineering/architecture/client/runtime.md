@@ -8,6 +8,17 @@ The Store's complete pending-owner snapshot bounds owned materialization work. C
 
 Every publication path refreshes retained pending, failure and refusal observers before consuming the commit mark for Model watches. Application tasks and protocol-5 Store worker commits use this same boundary; listeners receive changed committed snapshots without polling.
 
+An open application transaction has exclusive scheduling of its continuation
+commands until its callback returns and commits or rolls back. Ordinary tasks,
+including reads through the committed SQLite reader, wait outside that
+transaction. A slow callback can therefore delay local reads even though WAL
+would permit reading the previous committed state. This is runtime scheduling,
+not a server Store progress lock. The
+[transaction regression](../../../../crates/sqlite/tests/protocol05_runtime_transactions.rs)
+`a_callback_transaction_owns_the_writer_until_its_result_commits` records the
+current behavior; allowing independent committed reads during the callback would
+require a separate scheduling change and coverage for observer and close ordering.
+
 ## 5. Building Block View
 
 [Implementation](../../../../crates/client/src/runtime/mod.rs) owns this component. [Protocol 5](../protocols/sync.md) owns shared context, delivery and settlement rules.

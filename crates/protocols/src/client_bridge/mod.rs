@@ -706,6 +706,11 @@ pub enum Event {
     Report {
         diagnostic: Diagnostic,
     },
+    // Opt-in performance records; independent of task outcomes and diagnostics.
+    Trace {
+        records: Vec<Value>,
+        dropped: u64,
+    },
     // The runtime is gone; nothing follows. The SDK drains it, releases its
     // platform resources and detaches the carrier.
     RuntimeClosed,

@@ -183,12 +183,7 @@ impl DeliveryQueue {
         active: &v05::RequestContext,
         now: u64,
     ) -> Result<()> {
-        if header.context.store_id != active.store_id || header.context.stream != active.stream {
-            return Err(invalid("foreign Store delivery"));
-        }
-        if now >= header.expires_at {
-            return Err(invalid("delivery.expired"));
-        }
+        Self::validate_offer(header, parts, active, now)?;
         let existing = self.plans.get(&header.plan_id);
         let metadata_bytes = match existing {
             Some(plan) => plan.metadata_bytes,
@@ -199,7 +194,6 @@ impl DeliveryQueue {
                 return Err(invalid("changed immutable plan"));
             }
         } else {
-            header.admit(active)?;
             let earliest = self
                 .plans
                 .values()
@@ -211,28 +205,12 @@ impl DeliveryQueue {
                 return Err(invalid("delivery queue overflow"));
             }
         }
-        let mut extra = 0;
-        for part in parts {
-            part.validate()?;
-            if part.plan_id != header.plan_id
-                || part.plan_digest != header.digest
-                || header
-                    .units
-                    .get(part.unit as usize)
-                    .and_then(|u| u.parts.get(part.part as usize))
-                    != Some(&v05::part_digest(part)?)
-            {
-                return Err(invalid("fragment correlation mismatch"));
-            }
-            if part.changes.iter().any(|c| {
-                c.cursor() > header.observed_head || header.after.is_some_and(|a| c.cursor() <= a)
-            }) {
-                return Err(invalid("fragment outside plan"));
-            }
-            if existing.is_none_or(|p| !p.parts.contains_key(&(part.unit, part.part))) {
-                extra += serde_json::to_vec(part)?.len();
-            }
-        }
+        let extra = parts
+            .iter()
+            .filter(|part| existing.is_none_or(|p| !p.parts.contains_key(&(part.unit, part.part))))
+            .try_fold(0, |bytes, part| -> Result<usize> {
+                Ok(bytes + serde_json::to_vec(part)?.len())
+            })?;
         let metadata_new = if existing.is_none() {
             metadata_bytes
         } else {
@@ -345,6 +323,41 @@ impl DeliveryQueue {
         }
         Ok(())
     }
+    /// Validate a live offer even when only its head will be retained. A hint
+    /// grants no coverage and must not hide malformed or foreign payloads.
+    pub(crate) fn validate_offer(
+        header: &v05::DeliveryHeader,
+        parts: &[v05::DeliveryPart],
+        active: &v05::RequestContext,
+        now: u64,
+    ) -> Result<()> {
+        if header.context.store_id != active.store_id || header.context.stream != active.stream {
+            return Err(invalid("foreign Store delivery"));
+        }
+        header.admit(active)?;
+        if now >= header.expires_at {
+            return Err(invalid("delivery.expired"));
+        }
+        for part in parts {
+            part.validate()?;
+            if part.plan_id != header.plan_id
+                || part.plan_digest != header.digest
+                || header
+                    .units
+                    .get(part.unit as usize)
+                    .and_then(|u| u.parts.get(part.part as usize))
+                    != Some(&v05::part_digest(part)?)
+            {
+                return Err(invalid("fragment correlation mismatch"));
+            }
+            if part.changes.iter().any(|c| {
+                c.cursor() > header.observed_head || header.after.is_some_and(|a| c.cursor() <= a)
+            }) {
+                return Err(invalid("fragment outside plan"));
+            }
+        }
+        Ok(())
+    }
     pub fn receive_owned(
         &mut self,
         request: &v05::MaterializationRequest,
@@ -356,21 +369,8 @@ impl DeliveryQueue {
             && let Some(original) = &plan.owner
         {
             request.validate()?;
-            let mut current = request.clone();
-            current.continuation = original.continuation.clone();
-            if *original != current || response.request_id != request.request_id {
+            if original != request || response.request_id != request.request_id {
                 return Err(invalid("changed materialization owner"));
-            }
-            if let Some(c) = &request.continuation
-                && (c.plan_id != response.delivery.header.plan_id
-                    || c.digest != response.delivery.header.digest
-                    || !response
-                        .delivery
-                        .parts
-                        .iter()
-                        .any(|p| p.unit == c.unit && p.part == c.part))
-            {
-                return Err(invalid("materialization continuation mismatch"));
             }
             for change in response.delivery.parts.iter().flat_map(|p| &p.changes) {
                 if !plan.owner_keys.contains(&change.key().encoded()?)
@@ -393,9 +393,7 @@ impl DeliveryQueue {
             .get_mut(&response.delivery.header.plan_id)
             .unwrap();
         if let Some(original) = &plan.owner {
-            let mut current = request.clone();
-            current.continuation = original.continuation.clone();
-            if *original != current {
+            if original != request {
                 return Err(invalid("changed materialization owner"));
             }
         } else {
@@ -423,32 +421,5 @@ impl DeliveryQueue {
     }
     pub fn is_empty(&self) -> bool {
         self.plans.is_empty()
-    }
-    pub fn continuations(&self) -> Vec<v05::Continuation> {
-        self.plans
-            .values()
-            .filter(|p| !p.blocked)
-            .filter_map(|p| {
-                let end = if p.header.owner.is_some() {
-                    p.header.units.len() as u64
-                } else {
-                    p.next + 1
-                };
-                for unit in p.next..end {
-                    let manifest = p.header.units.get(unit as usize)?;
-                    if let Some(part) = (0..manifest.parts.len() as u64)
-                        .find(|part| !p.parts.contains_key(&(unit, *part)))
-                    {
-                        return Some(v05::Continuation {
-                            plan_id: p.header.plan_id.clone(),
-                            digest: p.header.digest.clone(),
-                            unit,
-                            part,
-                        });
-                    }
-                }
-                None
-            })
-            .collect()
     }
 }

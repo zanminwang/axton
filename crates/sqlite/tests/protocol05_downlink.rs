@@ -96,6 +96,112 @@ fn fragmented(context: v05::RequestContext, bootstrap: bool) -> v05::FrozenDeliv
     )
     .unwrap()
 }
+#[test]
+fn socket_loss_discards_incomplete_response_and_repairs_from_committed_cursor() {
+    use axton_client::{
+        runtime::{EffectOutcome, Event, HttpRoute, Operation},
+        sync05::Control,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let mut c = client(&directory.path().join("db"));
+    c.initialize_stream05(0).unwrap();
+    let context = c.request_context05().unwrap();
+    let empty = plan(context.clone(), "initial", 0, 0, true);
+    let mut queue = DeliveryQueue::new(1000000, 4);
+    queue
+        .receive(&empty.header, &empty.parts, &context, 1)
+        .unwrap();
+    c.apply_next_delivery05(&mut queue, 1).unwrap().unwrap();
+    let mut control = Control::new(c.store_status05().unwrap());
+    control.connect().unwrap();
+    let handshake = control
+        .events()
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Effect {
+                effect_id,
+                operation:
+                    Operation::Http {
+                        route: HttpRoute::Handshake,
+                        ..
+                    },
+            } => Some(effect_id),
+            _ => None,
+        })
+        .unwrap();
+    control
+        .receive(
+            &handshake,
+            EffectOutcome {
+                ok: true,
+                value: Some(serde_json::Value::String(
+                    serde_json::to_string(&v05::HandshakeResponse {
+                        protocol: 5,
+                        store_id: context.store_id.clone(),
+                        stream: context.stream.clone(),
+                        head: 0,
+                    })
+                    .unwrap(),
+                )),
+                error: None,
+            },
+            1,
+        )
+        .unwrap();
+    let socket = control
+        .events()
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Effect {
+                effect_id,
+                operation: Operation::Socket { .. },
+            } => Some(effect_id),
+            _ => None,
+        })
+        .unwrap();
+    let response = fragmented(context, false);
+    control.receive(&socket,EffectOutcome {ok:true,value:Some(serde_json::json!({"event":"message","body":serde_json::to_string(&v05::DeliveryResponse {header:response.header,parts:vec![response.parts[0].clone()]}).unwrap()})),error:None},1).unwrap();
+    assert!(control.events().iter().all(|event| !matches!(
+        event,
+        Event::Effect {
+            operation: Operation::Http {
+                route: HttpRoute::Pull,
+                ..
+            },
+            ..
+        }
+    )));
+    control
+        .receive(
+            &socket,
+            EffectOutcome {
+                ok: true,
+                value: Some(serde_json::json!({"event":"closed"})),
+                error: None,
+            },
+            2,
+        )
+        .unwrap();
+    let request = control
+        .events()
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Effect {
+                operation:
+                    Operation::Http {
+                        route: HttpRoute::Pull,
+                        body,
+                    },
+                ..
+            } => Some(serde_json::from_str::<serde_json::Value>(&body).unwrap()),
+            _ => None,
+        })
+        .expect("socket loss must repair immediately without waiting for old response expiry");
+    assert_eq!(request["after"], 0);
+    assert_eq!(request["through"], 3);
+    assert!(request.get("continuation").is_none());
+    assert_eq!(c.store_status05().unwrap().cursor, Some(0));
+}
 fn change(id: &str, cursor: u64) -> v05::AuthorityChange {
     v05::AuthorityChange::Record {
         key: v05::RecordKey {
@@ -105,6 +211,474 @@ fn change(id: &str, cursor: u64) -> v05::AuthorityChange {
         cursor,
         state: serde_json::json!({"text":id,"note":null}),
     }
+}
+fn connected_control(c: &mut Client<SqliteStore>) -> (axton_client::sync05::Control, String) {
+    use axton_client::{
+        runtime::{EffectOutcome, Event, Operation},
+        sync05::Control,
+    };
+    c.initialize_stream05(0).unwrap();
+    let context = c.request_context05().unwrap();
+    let empty = plan(context.clone(), "initial", 0, 0, true);
+    let mut queue = DeliveryQueue::new(1000000, 4);
+    queue
+        .receive(&empty.header, &empty.parts, &context, 1)
+        .unwrap();
+    c.apply_next_delivery05(&mut queue, 1).unwrap().unwrap();
+    let mut control = Control::new(c.store_status05().unwrap());
+    control.connect().unwrap();
+    let handshake = control
+        .events()
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Effect {
+                effect_id,
+                operation: Operation::Http { .. },
+            } => Some(effect_id),
+            _ => None,
+        })
+        .unwrap();
+    control
+        .receive(
+            &handshake,
+            EffectOutcome {
+                ok: true,
+                value: Some(serde_json::Value::String(
+                    serde_json::to_string(&v05::HandshakeResponse {
+                        protocol: 5,
+                        store_id: context.store_id,
+                        stream: context.stream,
+                        head: 0,
+                    })
+                    .unwrap(),
+                )),
+                error: None,
+            },
+            1,
+        )
+        .unwrap();
+    let socket = control
+        .events()
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Effect {
+                effect_id,
+                operation: Operation::Socket { .. },
+            } => Some(effect_id),
+            _ => None,
+        })
+        .unwrap();
+    control.jobs();
+    (control, socket)
+}
+fn socket_offer(
+    control: &mut axton_client::sync05::Control,
+    socket: &str,
+    offer: &v05::FrozenDelivery,
+) -> axton_client::Result<()> {
+    control.receive(socket, axton_client::runtime::EffectOutcome {ok:true,value:Some(serde_json::json!({"event":"message","body":serde_json::to_string(&v05::DeliveryResponse {header:offer.header.clone(),parts:offer.parts.clone()}).unwrap()})),error:None},1)
+}
+fn commit_control_delivery(
+    c: &mut Client<SqliteStore>,
+    control: &mut axton_client::sync05::Control,
+) {
+    use axton_client::sync05::{StoreCommand, StoreReport};
+    let (id, mut queue, now) = control
+        .jobs()
+        .into_iter()
+        .find_map(|job| match job {
+            StoreCommand::Guarded { fence, command } => {
+                assert!(fence.current());
+                match *command {
+                    StoreCommand::Apply {
+                        plan_id,
+                        queue,
+                        now,
+                    } => Some((plan_id, queue, now)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .expect("a complete response must be dispatched");
+    assert_eq!(queue.len(), 1);
+    let report = c
+        .apply_next_delivery05(&mut queue, now)
+        .unwrap()
+        .unwrap_or_default();
+    assert_eq!(queue.len(), 0, "test response has one complete atomic unit");
+    control
+        .report(
+            StoreReport::Committed {
+                status: c.store_status05().unwrap(),
+                report,
+                plan: Some((id, u64::MAX)),
+                active_plans: Some(c.active_delivery_plans05().unwrap()),
+            },
+            now,
+        )
+        .unwrap();
+}
+fn cursor_pull(control: &mut axton_client::sync05::Control) -> (String, v05::DeltaRequest) {
+    use axton_client::runtime::{Event, HttpRoute, Operation};
+    let events = control.events();
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::Report { .. })),
+        "coalescing is ordinary flow control, not a connection error"
+    );
+    let mut pulls = events.into_iter().filter_map(|event| match event {
+        Event::Effect {
+            effect_id,
+            operation:
+                Operation::Http {
+                    route: HttpRoute::Pull,
+                    body,
+                },
+        } => Some((effect_id, serde_json::from_str(&body).unwrap())),
+        _ => None,
+    });
+    let pull = pulls
+        .next()
+        .expect("committed progress must drive fresh cursor repair");
+    assert!(
+        pulls.next().is_none(),
+        "only one ordinary cursor request may be in flight"
+    );
+    pull
+}
+#[test]
+fn stalled_receiver_coalesces_bursts_and_repairs_latest_data_from_committed_cursor() {
+    use axton_client::runtime::{EffectOutcome, Event};
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = client(&dir.path().join("db"));
+    let (mut control, socket) = connected_control(&mut c);
+    let context = c.request_context05().unwrap();
+    let offer = |index| {
+        v05::freeze_delivery(
+            context.clone(),
+            format!("offer{index}"),
+            v05::DeliveryPurpose::Sync,
+            index - 1,
+            index,
+            index,
+            10000,
+            vec![v05::DeliveryUnit {
+                index: 0,
+                through: Some(index),
+                changes: vec![change(&format!("e{index}"), index)],
+            }],
+            500,
+        )
+        .unwrap()
+    };
+    // A malformed idle offer must not become a head hint either.
+    let mut malformed_idle = offer(102);
+    malformed_idle.parts[0].changes[0] = change("tampered", 102);
+    assert!(socket_offer(&mut control, &socket, &malformed_idle).is_err());
+    // Hold the Store worker while more than the old 32-response limit arrives.
+    for index in 1..=100 {
+        socket_offer(&mut control, &socket, &offer(index)).unwrap();
+    }
+    assert_eq!(c.store_status05().unwrap().cursor, Some(0));
+    assert!(c.query("Entry", &serde_json::json!({})).unwrap().is_empty());
+    assert!(
+        !control
+            .events()
+            .iter()
+            .any(|event| matches!(event, Event::Report { .. }))
+    );
+    let mut malformed = offer(101);
+    malformed.parts[0].changes[0] = change("tampered", 101);
+    assert!(
+        socket_offer(&mut control, &socket, &malformed)
+            .unwrap_err()
+            .to_string()
+            .contains("fragment correlation mismatch")
+    );
+    commit_control_delivery(&mut c, &mut control);
+    let (pull, request) = cursor_pull(&mut control);
+    assert_eq!(
+        (request.after, request.through),
+        (1, 100),
+        "hints cannot advance the committed cursor"
+    );
+    // A future offer cannot fill the held HTTP repair's gap, so retain its head
+    // rather than queueing another payload that is not yet applicable.
+    socket_offer(&mut control, &socket, &offer(101)).unwrap();
+    let mut changes = (2..=100)
+        .map(|index| change(&format!("e{index}"), index))
+        .collect::<Vec<_>>();
+    let mut latest = change("e1", 100);
+    if let v05::AuthorityChange::Record { state, .. } = &mut latest {
+        state["text"] = serde_json::json!("latest");
+    }
+    changes.push(latest);
+    let repaired = v05::freeze_delivery(
+        context.clone(),
+        "repair".into(),
+        v05::DeliveryPurpose::Sync,
+        1,
+        100,
+        101,
+        10000,
+        vec![v05::DeliveryUnit {
+            index: 0,
+            through: Some(100),
+            changes,
+        }],
+        500,
+    )
+    .unwrap();
+    control
+        .receive(
+            &pull,
+            EffectOutcome {
+                ok: true,
+                value: Some(serde_json::Value::String(
+                    serde_json::to_string(&v05::DeliveryResponse {
+                        header: repaired.header,
+                        parts: repaired.parts,
+                    })
+                    .unwrap(),
+                )),
+                error: None,
+            },
+            1,
+        )
+        .unwrap();
+    commit_control_delivery(&mut c, &mut control);
+    let (pull, request) = cursor_pull(&mut control);
+    assert_eq!((request.after, request.through), (100, 101));
+    let last = offer(101);
+    control
+        .receive(
+            &pull,
+            EffectOutcome {
+                ok: true,
+                value: Some(serde_json::Value::String(
+                    serde_json::to_string(&v05::DeliveryResponse {
+                        header: last.header,
+                        parts: last.parts,
+                    })
+                    .unwrap(),
+                )),
+                error: None,
+            },
+            1,
+        )
+        .unwrap();
+    commit_control_delivery(&mut c, &mut control);
+    assert_eq!(c.store_status05().unwrap().cursor, Some(101));
+    let rows = c.query("Entry", &serde_json::json!({})).unwrap();
+    assert_eq!(rows.len(), 101);
+    for row in rows {
+        let id = row["id"].as_str().unwrap();
+        assert_eq!(row["text"], if id == "e1" { "latest" } else { id });
+    }
+    assert!(
+        !control
+            .events()
+            .iter()
+            .any(|event| matches!(event, Event::Report { .. }))
+    );
+}
+#[test]
+fn admitted_socket_fragments_finish_atomically_while_new_offers_are_coalesced() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = client(&dir.path().join("db"));
+    let (mut control, socket) = connected_control(&mut c);
+    let context = c.request_context05().unwrap();
+    let mut first = fragmented(context.clone(), false);
+    let remaining = first.parts.split_off(1);
+    socket_offer(&mut control, &socket, &first).unwrap();
+    socket_offer(&mut control, &socket, &plan(context, "later", 2, 3, false)).unwrap();
+    assert_eq!(c.store_status05().unwrap().cursor, Some(0));
+    first.parts = remaining;
+    socket_offer(&mut control, &socket, &first).unwrap();
+    commit_control_delivery(&mut c, &mut control);
+    assert_eq!(c.query("Entry", &serde_json::json!({})).unwrap().len(), 2);
+    let (_, request) = cursor_pull(&mut control);
+    assert_eq!((request.after, request.through), (2, 3));
+}
+#[test]
+fn held_http_repair_does_not_block_live_prefix_and_late_reply_cannot_undo_it() {
+    use axton_client::runtime::EffectOutcome;
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = client(&dir.path().join("db"));
+    let (mut control, socket) = connected_control(&mut c);
+    let context = c.request_context05().unwrap();
+    let ack = v05::HandshakeResponse {
+        protocol: 5,
+        store_id: context.store_id.clone(),
+        stream: context.stream.clone(),
+        head: 1,
+    };
+    control.receive(&socket,EffectOutcome {ok:true,value:Some(serde_json::json!({"event":"message","body":serde_json::to_string(&ack).unwrap()})),error:None},1).unwrap();
+    let (pull, request) = cursor_pull(&mut control);
+    assert_eq!((request.after, request.through), (0, 1));
+    let live = v05::freeze_delivery(
+        context.clone(),
+        "live-before-http".into(),
+        v05::DeliveryPurpose::Sync,
+        0,
+        1,
+        1,
+        10000,
+        vec![v05::DeliveryUnit {
+            index: 0,
+            through: Some(1),
+            changes: vec![change("a", 1)],
+        }],
+        500,
+    )
+    .unwrap();
+    socket_offer(&mut control, &socket, &live).unwrap();
+    commit_control_delivery(&mut c, &mut control);
+    assert_eq!(
+        c.store_status05().unwrap().cursor,
+        Some(1),
+        "live authority commits while HTTP has not answered"
+    );
+    let mut stale = change("a", 1);
+    if let v05::AuthorityChange::Record { state, .. } = &mut stale {
+        state["text"] = serde_json::json!("stale HTTP");
+    }
+    let late = v05::freeze_delivery(
+        context,
+        "late-http".into(),
+        v05::DeliveryPurpose::Sync,
+        0,
+        1,
+        1,
+        10000,
+        vec![v05::DeliveryUnit {
+            index: 0,
+            through: Some(1),
+            changes: vec![stale],
+        }],
+        500,
+    )
+    .unwrap();
+    control
+        .receive(
+            &pull,
+            EffectOutcome {
+                ok: true,
+                value: Some(serde_json::Value::String(
+                    serde_json::to_string(&v05::DeliveryResponse {
+                        header: late.header,
+                        parts: late.parts,
+                    })
+                    .unwrap(),
+                )),
+                error: None,
+            },
+            1,
+        )
+        .unwrap();
+    commit_control_delivery(&mut c, &mut control);
+    assert_eq!(
+        c.query("Entry", &serde_json::json!({})).unwrap()[0]["text"],
+        "a"
+    );
+    assert_eq!(c.store_status05().unwrap().cursor, Some(1));
+}
+#[test]
+fn cursor_pages_resume_after_reopen_and_later_sync_installs_current_state_and_deletion() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db");
+    let mut c = client(&path);
+    c.initialize_stream05(2).unwrap();
+    let context = c.request_context05().unwrap();
+    let page = |id: &str, bootstrap, after, through, changes| {
+        v05::freeze_delivery(
+            context.clone(),
+            id.into(),
+            if bootstrap {
+                v05::DeliveryPurpose::Bootstrap
+            } else {
+                v05::DeliveryPurpose::Sync
+            },
+            after,
+            through,
+            4,
+            10000,
+            vec![v05::DeliveryUnit {
+                index: 0,
+                through: Some(through),
+                changes,
+            }],
+            500,
+        )
+        .unwrap()
+    };
+    let first = page(
+        "first",
+        true,
+        0,
+        1,
+        vec![change("a", 1), change("deleted", 1)],
+    );
+    let request = v05::DeltaRequest {
+        context: context.clone(),
+        after: 0,
+        through: 2,
+        bootstrap: true,
+    };
+    let response = v05::DeliveryResponse {
+        header: first.header.clone(),
+        parts: first.parts.clone(),
+    };
+    response.admit(&request, &context).unwrap();
+    response.require_complete().unwrap();
+    let mut queue = DeliveryQueue::new(1000000, 4);
+    queue
+        .receive(&first.header, &first.parts, &context, 1)
+        .unwrap();
+    c.apply_next_delivery05(&mut queue, 1).unwrap().unwrap();
+    assert_eq!(c.store_status05().unwrap().bootstrap_cursor, Some(1));
+    drop(c);
+    let mut c = client(&path);
+    assert_eq!(c.store_status05().unwrap().bootstrap_cursor, Some(1));
+    // The unconsumed b@2 has moved to 3. Completing the fixed Bootstrap
+    // prefix does not require retrieving its old payload or a server plan.
+    let second = page("fresh-after-reopen", true, 1, 2, vec![]);
+    queue
+        .receive(&second.header, &second.parts, &context, 1)
+        .unwrap();
+    c.apply_next_delivery05(&mut queue, 1).unwrap().unwrap();
+    assert_eq!(c.store_status05().unwrap().bootstrap_cursor, Some(2));
+    let mut latest = change("b", 3);
+    if let v05::AuthorityChange::Record { state, .. } = &mut latest {
+        *state = serde_json::json!({"text":"latest","note":null});
+    }
+    let deleted = v05::AuthorityChange::Record {
+        key: v05::RecordKey {
+            model: "Entry".into(),
+            identity: serde_json::json!({"id":"deleted"}),
+        },
+        cursor: 4,
+        state: serde_json::Value::Null,
+    };
+    let sync = page("latest", false, 2, 4, vec![latest, deleted]);
+    queue
+        .receive(&sync.header, &sync.parts, &context, 1)
+        .unwrap();
+    c.apply_next_delivery05(&mut queue, 1).unwrap().unwrap();
+    let key = |id| axton_client::RecordKey {
+        model: "Entry".into(),
+        identity: serde_json::json!({"id":id}),
+    };
+    assert_eq!(c.read(&key("b")).unwrap().unwrap()["text"], "latest");
+    assert!(c.read(&key("deleted")).unwrap().is_none());
+    assert_eq!(c.store_status05().unwrap().cursor, Some(4));
+    queue
+        .receive(&first.header, &first.parts, &context, 1)
+        .unwrap();
+    assert!(c.apply_next_delivery05(&mut queue, 1).unwrap().is_none());
+    assert!(c.read(&key("deleted")).unwrap().is_none());
 }
 #[test]
 fn socket_http_overlap_repeated_fragment_and_changed_payload_are_fenced() {
@@ -461,7 +1035,6 @@ fn owned_schema_transfer_waits_for_all_parts_and_reproves_newly_held_keys() {
         },
         keys: pending.authority_keys,
         models: pending.bootstrap_models,
-        continuation: None,
     };
     let f = v05::freeze_materialization(
         request.context.clone(),
@@ -1507,7 +2080,7 @@ fn completed_settlement_is_not_resubmitted_after_auth_refresh() {
 }
 
 #[test]
-fn completed_settlement_discards_partial_owned_plan() {
+fn incomplete_owned_http_is_rejected_and_completed_owner_is_not_resurrected() {
     use axton_client::{
         runtime::{EffectOutcome, Event, HttpRoute, Operation},
         sync05::StoreReport,
@@ -1535,7 +2108,8 @@ fn completed_settlement_discards_partial_owned_plan() {
             parts: vec![],
         },
     };
-    control
+    let before = c.store_status05().unwrap();
+    let error = control
         .receive(
             &id,
             EffectOutcome {
@@ -1547,39 +2121,9 @@ fn completed_settlement_discards_partial_owned_plan() {
             },
             1,
         )
-        .unwrap();
-    let continuation = control
-        .events()
-        .into_iter()
-        .find_map(|e| match e {
-            Event::Effect {
-                effect_id,
-                operation:
-                    Operation::Http {
-                        route: HttpRoute::Materialize,
-                        ..
-                    },
-            } => Some(effect_id),
-            _ => None,
-        })
-        .expect("incomplete pending owner must request its missing fragment");
-    control.set_refresh_auth(true);
-    control
-        .receive(
-            &continuation,
-            EffectOutcome {
-                ok: false,
-                value: None,
-                error: Some(axton_client::runtime::EffectError {
-                    message: "expired token".into(),
-                    status: Some(401),
-                    refusal: None,
-                    retry: false,
-                }),
-            },
-            2,
-        )
-        .unwrap();
+        .unwrap_err();
+    assert!(error.to_string().contains("incomplete cursor page"));
+    assert_eq!(c.store_status05().unwrap().cursor, before.cursor);
     control.events();
     complete_settlement_from_stream(&mut c, &mut control);
     assert!(
@@ -1598,7 +2142,7 @@ fn completed_settlement_discards_partial_owned_plan() {
     control
         .report(StoreReport::Snapshot(c.store_status05().unwrap()), 3)
         .unwrap();
-    // No old continuation may be resurrected after cancellation, including by a
+    // No retired owner may be resurrected after a failed response, including by a
     // subsequent scheduling pass with the unchanged materialization context.
     control.report(StoreReport::Frozen(None), 3).unwrap();
     assert!(

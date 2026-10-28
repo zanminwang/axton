@@ -7,4 +7,5 @@
 //! its C ABI, which the Dart and mobile carriers export under their own symbol
 //! names, and the Node addon calls [`actor`] directly.
 pub mod actor;
+pub mod diagnostics;
 pub mod ffi;

@@ -1,4 +1,4 @@
--- Fresh protocol-5 namespaces only. Installed historical tables stay unchanged.
+-- Fresh/current protocol-5 namespaces only. Refuse historical layouts before writes.
 DO $$ BEGIN
  IF EXISTS (SELECT 1 FROM pg_class WHERE relnamespace=current_schema()::regnamespace AND relname=ANY(ARRAY['axton_client','axton_call','axton_stream_member','axton_stream_log','axton_publication_group','axton_bootstrap_manifest','axton_channel','axton_scope','axton_bootstrap_identity','axton_bootstrap_range','axton_channel_member','axton_channel_log','axton_channel_tag','axton_scope_member','axton_scope_log','axton_scope_tag','axton_membership','axton_invalidation']) AND relkind='r') OR EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND ((table_name='axton_record' AND column_name='stamp') OR (table_name='axton_publication_fence' AND column_name='held'))) THEN
   RAISE EXCEPTION 'installed legacy framework layout: protocol 5 requires a fresh namespace; existing data is unchanged';
@@ -6,7 +6,8 @@ DO $$ BEGIN
 END $$;
 -- AXTON's framework tables for a new database. Apply the whole file at once
 -- (psql, or one simple-protocol query): the trigger functions are
--- dollar-quoted. Re-applying it changes nothing. A database installed from
+-- dollar-quoted. Re-applying it also retires obsolete protocol-5 coordination
+-- and payload tables; subsequent applications are idempotent. A database installed from
 -- an earlier layout must use a separately adopted fresh namespace.
 CREATE TABLE IF NOT EXISTS axton_stream (
  stream text PRIMARY KEY,
@@ -23,10 +24,6 @@ CREATE TABLE IF NOT EXISTS axton_record (
  CONSTRAINT axton_record_model_identity_key_key UNIQUE(model,identity_key),
  CONSTRAINT axton_record_identity_object CHECK(jsonb_typeof(identity) = 'object')
 );
--- One namespace-wide publication serialization fence, retained across restarts.
-CREATE TABLE IF NOT EXISTS axton_publication_fence (id integer PRIMARY KEY CHECK(id=1));
-INSERT INTO axton_publication_fence(id) VALUES(1) ON CONFLICT(id) DO NOTHING;
-
 CREATE TABLE IF NOT EXISTS axton_store (
  id text PRIMARY KEY,
  principal text NOT NULL,
@@ -75,24 +72,9 @@ DO $$ BEGIN
  END IF;
 END $$;
 
--- Immutable finite protocol-5 authority plans; no publication history.
-CREATE TABLE IF NOT EXISTS axton_delivery_plan (
- plan_id text PRIMARY KEY,
- principal text NOT NULL,
- store_id text NOT NULL REFERENCES axton_store(id),
- context jsonb NOT NULL,
- intent text NOT NULL,
- header jsonb NOT NULL,
- digest text NOT NULL,
- expires_at bigint NOT NULL CHECK(expires_at BETWEEN 0 AND 9007199254740991),
- staged_bytes bigint NOT NULL CHECK(staged_bytes BETWEEN 0 AND 268435456)
-);
-CREATE INDEX IF NOT EXISTS axton_delivery_plan_expiry ON axton_delivery_plan(expires_at);
-CREATE TABLE IF NOT EXISTS axton_delivery_unit (
- plan_id text NOT NULL REFERENCES axton_delivery_plan(plan_id) ON DELETE CASCADE,
- unit_index bigint NOT NULL CHECK(unit_index>=0),
- part_index bigint NOT NULL CHECK(part_index>=0),
- payload jsonb NOT NULL,
- digest text NOT NULL,
- PRIMARY KEY(plan_id,unit_index,part_index)
-);
+-- Retire transient payload staging. Cursor pages are recomputed from current
+-- state; no persisted response survives a request. Business/Stream facts remain.
+DROP TABLE IF EXISTS axton_delivery_unit;
+DROP TABLE IF EXISTS axton_delivery_plan;
+-- The namespace-wide publication fence is retired. No runtime caller remains.
+DROP TABLE IF EXISTS axton_publication_fence;

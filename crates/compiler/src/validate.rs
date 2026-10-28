@@ -716,6 +716,8 @@ const GENERATED_NAMES: &[&str] = &[
     "ActOperation",
     "AdmissionRefused",
     "AxtonDateTime",
+    "AxtonDiagnostics",
+    "AxtonTraceRecord",
     "BootstrapError",
     "BootstrapFailedException",
     "BootstrapPhase",

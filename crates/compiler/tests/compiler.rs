@@ -1356,6 +1356,22 @@ fn model_only_dart_keeps_local_crud_without_action_symbols() {
 }
 
 #[test]
+fn dart_diagnostics_are_optional_and_helper_names_cannot_collide() {
+    let dart = axton_compiler::dart(&compile("model Note { id String @@id(id) }").unwrap());
+    assert!(dart.contains("AxtonDiagnostics? diagnostics"));
+    assert!(dart.contains("diagnostics:diagnostics"));
+    for name in ["AxtonDiagnostics", "AxtonTraceRecord"] {
+        for source in [
+            format!("model {name} {{ id String @@id(id) }}"),
+            format!("enum {name} {{ a b }}"),
+        ] {
+            let error = compile(&source).unwrap_err();
+            assert!(error.contains("the generated client uses"), "{error}");
+        }
+    }
+}
+
+#[test]
 fn action_dart_binds_shared_runtime_and_retained_codecs() {
     let dart=axton_compiler::dart(&compile("enum Mood { calm loud } model Note { id String at DateTime mood Mood @@id(id) } mutation Save(note Note.create, changed Note.update<at>?, stamps DateTime[], when DateTime?) { saved Note? at DateTime moods Mood[] }").unwrap());
     for expected in [

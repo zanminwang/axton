@@ -3,7 +3,10 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
-import { answer } from "../../../packages/backend/postgres/index.mts";
+import {
+  answer,
+  persistence,
+} from "../../../packages/backend/postgres/index.mts";
 import { pgDriver } from "../../../packages/backend/postgres/src/pg.mts";
 import * as SQL from "../../../packages/backend/postgres/src/sql.mts";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -137,7 +140,7 @@ test("legacy held-fence layout is refused before dropping its data", () =>
       [{ tablename: "axton_publication_fence" }],
     );
   }));
-test("legacy namespace installation and Store admission refuse before any writes", () =>
+test("legacy namespace installation, readiness and standalone admission refuse before any writes", () =>
   namespace(async (tx) => {
     await tx.query(
       "CREATE TABLE axton_record(model text,identity_key text,stamp bigint NOT NULL); INSERT INTO axton_record VALUES('Entry','{\"id\":\"keep\"}',7)",
@@ -158,6 +161,7 @@ test("legacy namespace installation and Store admission refuse before any writes
     const before = await snapshot();
     await assert.rejects(tx.query(ddl), /fresh namespace/);
     assert.deepEqual(await snapshot(), before);
+    await assert.rejects(persistence(driver).initialize(tx), /fresh namespace/);
     await assert.rejects(
       answer(driver, tx, {
         op: "protocol05",
@@ -171,6 +175,29 @@ test("legacy namespace installation and Store admission refuse before any writes
       /fresh namespace/,
     );
     assert.deepEqual(await snapshot(), before);
+  }));
+test("initialized PostgreSQL adapter serves repeated host reads without catalog queries", () =>
+  namespace(async (tx) => {
+    await tx.query(ddl);
+    await tx.query("INSERT INTO axton_stream VALUES('User:ready',7)");
+    const statements = [];
+    const database = persistence({
+      ...driver,
+      query: (retained, sql, params) => {
+        assert.strictEqual(retained, tx);
+        statements.push(sql);
+        return driver.query(retained, sql, params);
+      },
+    });
+    await database.initialize(tx);
+    const host = database.persistence(tx);
+    for (let i = 0; i < 100; i++)
+      assert.equal(await host.call({ op: "head", stream: "User:ready" }), 7);
+    assert.equal(
+      statements.filter((sql) => sql === SQL.CHECK_LAYOUT).length,
+      1,
+    );
+    assert.equal(statements.filter((sql) => sql === SQL.HEAD).length, 100);
   }));
 async function staleWaiter(sql, params, { insert = false } = {}) {
   await namespace(async (admin, schema) => {

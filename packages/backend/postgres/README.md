@@ -30,3 +30,19 @@ the retired `axton_delivery_unit` and `axton_delivery_plan` tables; business dat
 Store progress, outcomes and Stream facts remain.
 
 An installed legacy framework layout is refused without changing its data. This candidate supplies no old-namespace migration, local-file upgrade or compatibility bridge. Use fresh framework storage and review [protocol-5 adoption](https://github.com/zanminwang/axton/blob/main/docs/engineering/protocol5-adoption.md) before replacing an existing deployment.
+
+`backend.listen()` awaits the adapter's namespace check before opening its port.
+For an application-owned server, await `backend.ready()` before accepting traffic.
+Successful readiness is shared by concurrent callers and retained for that
+adapter instance; ordinary host operations do not repeat catalog scans. Failed
+initialization rejects startup and can be retried after correcting the database.
+Headless calls initialize before their first transaction. Caller-owned
+`backend.publish(tx, ...)` can check using `tx`, without borrowing a second pool
+connection. Prefer completing readiness before opening application transactions.
+
+Each adapter must stay bound to one database, role and schema/search path. Do not
+retarget a checked adapter or change its framework layout while it serves work;
+create a new adapter/backend and run readiness after such changes. Direct
+`database.persistence(tx)` use retains a first-use check. The standalone `answer`
+helper has no adapter lifecycle, so it still checks its one operation; normal
+backends use the initialized adapter path.

@@ -422,15 +422,26 @@ async function answer05(
  * Answer the persistence half of the host contract through a driver, inside
  * the current application transaction. `handleAction` and `load` never reach
  * here; an operation added to the contract without an arm is a compile error.
+ * Standalone callers have no initialized adapter, so this low-level entry
+ * point validates their namespace before executing its one operation.
  */
 export async function answer<Tx>(
   driver: PostgresDriver<Tx>,
   tx: Tx,
   r: HostRequest,
 ): Promise<unknown> {
+  await requireFreshLayout((sql, ...params) => driver.query(tx, sql, params));
+  return answerInitialized(driver, tx, r);
+}
+
+/** Dispatch after this adapter's startup check; never re-scan the catalog. */
+async function answerInitialized<Tx>(
+  driver: PostgresDriver<Tx>,
+  tx: Tx,
+  r: HostRequest,
+): Promise<unknown> {
   const q = (sql: string, ...params: unknown[]) =>
     driver.query(tx, sql, params);
-  await requireFreshLayout(q);
   switch (r.op) {
     case "protocol05":
       return answer05(q, r.request);
@@ -477,14 +488,32 @@ export async function answer<Tx>(
  * The `database` option of `createBackend`, built on any driver: the driver's
  * transaction runner plus a persistence bound to each transaction.
  */
-export function persistence<Tx>(
-  driver: PostgresDriver<Tx>,
-): Database<Tx> & { driver: PostgresDriver<Tx> } {
+export function persistence<Tx>(driver: PostgresDriver<Tx>): Database<Tx> & {
+  driver: PostgresDriver<Tx>;
+  initialize: (tx?: Tx) => Promise<void>;
+} {
+  let initializing: Promise<void> | undefined;
+  const initialize = (tx?: Tx): Promise<void> => {
+    const check = (retained: Tx) =>
+      requireFreshLayout((sql, ...params) =>
+        driver.query(retained, sql, params),
+      );
+    return (initializing ??= Promise.resolve()
+      .then(() => (tx === undefined ? driver.transaction(check) : check(tx)))
+      .catch((error: unknown) => {
+        initializing = undefined;
+        throw error;
+      }));
+  };
   return {
     driver,
+    initialize,
     transaction: (body) => driver.transaction(body),
     persistence: (tx: Tx): Persistence => ({
-      call: (request) => answer(driver, tx, request as HostRequest),
+      call: async (request) => {
+        await initialize(tx);
+        return answerInitialized(driver, tx, request as HostRequest);
+      },
     }),
   };
 }

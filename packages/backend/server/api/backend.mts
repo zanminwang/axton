@@ -56,6 +56,9 @@ export interface Persistence {
   call(request: Record<string, any>): Promise<unknown>;
 }
 export interface Database<T> {
+  /** Validate the configured namespace before serving work. An optional retained
+   * transaction avoids acquiring a second connection for caller-owned publish. */
+  initialize?: (tx?: T) => Promise<void>;
   /**
    * Must provide serializable isolation (PostgreSQL SERIALIZABLE: one
    * snapshot for the whole transaction, and a serialization failure instead
@@ -584,9 +587,21 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
       sessions.delete(tx);
     }
   };
+  let initializing: Promise<void> | undefined;
+  const initialize = (tx?: T): Promise<void> => {
+    return (initializing ??= Promise.resolve()
+      .then(() => options.database.initialize?.(tx))
+      .catch((error: unknown) => {
+        initializing = undefined;
+        throw error;
+      }));
+  };
+  /** Validate database compatibility before opening an application-owned server. */
+  const ready = (): Promise<void> => initialize();
   const run = async <R,>(
     operation: (tx: T, session: Session) => Promise<R>,
   ) => {
+    await ready();
     let committed: string[] = [];
     const result = await diagnostics.span("server.transaction", {}, () =>
       options.database.transaction(async (tx) => {
@@ -657,6 +672,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     tx: T,
     body: (call: External) => void | Promise<void>,
   ): Promise<() => void> => {
+    await initialize(tx);
     const { published } = await bound(tx, (session) =>
       settle(tx, session, body),
     );
@@ -668,6 +684,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
       : new TextDecoder("utf-8", { fatal: true }).decode(request);
   /** @internal Raw protocol seams used by the framework's own tests; not part of the supported surface. */
   const api = {
+    ready,
     materializationId,
     push: async (owner: string, request: Uint8Array | string) => {
       const wire = text(request);
@@ -770,6 +787,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     port: number;
     host?: string;
   }) => {
+    await ready();
     let stopping = false;
     const requests = new Set<Promise<void>>();
     const handler = createHttpHandler({ backend: api, admit, onError });

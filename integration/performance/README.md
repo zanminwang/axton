@@ -139,6 +139,13 @@ pending raw archival/audit. Subsequent metadata inspection confirmed different
 CPU models across runs; the [bottleneck audit](baselines/2026-10-27-live-coalescing-v2/bottlenecks.md)
 records that mismatch and the repeated layout checks/Model-watch work.
 
+Current backends validate known legacy database layouts during readiness, before
+opening the listener, and reuse successful adapter validation during ordinary
+host dispatch. Direct/headless calls retain first-use checks. The archived
+measurements above predate this startup change; no new latency improvement is
+claimed from the catalog-query reduction alone. Model-watch invalidation remains
+the next independent investigation.
+
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,
 PostgreSQL settings and scenario parameters. It checkpoints after each sample,

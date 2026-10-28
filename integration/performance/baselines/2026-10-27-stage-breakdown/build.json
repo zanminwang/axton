@@ -1,0 +1,9 @@
+{
+  "sourceSha256": "73988797303a6df1cfac0c3443e0813b780afacdf1d80258836ae9f6adfb5e5f",
+  "artifacts": {
+    "bindings/node/axton-node.node": "e1f89b3a695b66bcc55006101fe167d4c45cb038808ea58d8329712b3e42fa40",
+    "target/release/libaxton_dart.so": "f836511bdbf22fa247352a640fae8485211eb6f598c009e1116323a29ee663ae",
+    "artifacts/performance/initial-sync": "dac686330f92d13dc8d69455aa406c0db1a8d79026473a8e9b31a8cdfa7209dd",
+    "artifacts/performance/live-sync": "a99c013565f2ba29eda648e49f05dbf50671e59c95da033b97b6f2b07cb5cf72"
+  }
+}

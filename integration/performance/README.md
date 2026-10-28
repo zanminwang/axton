@@ -141,6 +141,11 @@ both the live-prefix refinement and startup layout validation. Model-watch
 invalidation remains unchanged; its internal costs are the next investigation.
 
 
+The [detailed server/watch phase measurements](baselines/2026-10-27-stage-breakdown/README.md)
+archive 45 passing samples with split handler/SQL/transaction and B-only watch
+read/conversion/equality/bridge evidence. Instrumentation version 2 establishes
+a separate baseline; those timings are not directly comparable with earlier traces.
+
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,
 PostgreSQL settings and scenario parameters. It checkpoints after each sample,

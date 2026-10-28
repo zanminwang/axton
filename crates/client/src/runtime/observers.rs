@@ -95,6 +95,12 @@ struct Watch {
     generation: u64,
     // A failed read must not discard the invalidation it could not consume.
     retry_full: bool,
+    /// Only callers that negotiated this protocol receive patches.
+    delta_delivery: bool,
+    version: u64,
+    /// None means the next publication must carry the complete cache.
+    /// Otherwise these edits apply sequentially to the last published result.
+    splices: Option<Vec<Value>>,
 }
 
 impl Watch {
@@ -108,6 +114,7 @@ impl Watch {
         if changed {
             self.rows = rows;
             self.published = false;
+            self.splices = None;
         }
     }
 
@@ -138,16 +145,28 @@ impl Watch {
         }
         let _update = tracing::info_span!(target: "axton::client", "watch.update").entered();
         for (identity, row) in edits {
-            match (
+            let (index, delete_count, inserted) = match (
                 rows.binary_search_by(|old| crate::query::compare_identity(model, old, &identity)),
                 row,
             ) {
-                (Ok(index), Some(row)) => rows[index] = row,
+                (Ok(index), Some(row)) => {
+                    rows[index] = row.clone();
+                    (index, 1, vec![row])
+                }
                 (Ok(index), None) => {
                     rows.remove(index);
+                    (index, 1, vec![])
                 }
-                (Err(index), Some(row)) => rows.insert(index, row),
-                (Err(_), None) => {}
+                (Err(index), Some(row)) => {
+                    rows.insert(index, row.clone());
+                    (index, 0, vec![row])
+                }
+                (Err(_), None) => continue,
+            };
+            if self.delta_delivery
+                && let Some(splices) = &mut self.splices
+            {
+                splices.push(json!({"index":index,"deleteCount":delete_count,"rows":inserted}));
             }
         }
         self.published = false;
@@ -575,7 +594,18 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 watch.published = true;
                 let snapshot = {
                     let _snapshot = tracing::info_span!(target: "axton::client", "watch.snapshot", observerId = id).entered();
-                    json!({"kind": "watch", "rows": watch.rows})
+                    if watch.delta_delivery {
+                        let base_version = watch.version;
+                        watch.version += 1;
+                        match watch.splices.replace(vec![]) {
+                            Some(splices) => json!({"kind":"watch","protocol":"splice-v1",
+                                "baseVersion":base_version,"version":watch.version,"splices":splices}),
+                            None => json!({"kind":"watch","protocol":"splice-v1",
+                                "version":watch.version,"rows":watch.rows}),
+                        }
+                    } else {
+                        json!({"kind": "watch", "rows": watch.rows})
+                    }
                 };
                 snapshots.push(Event::ObserverChanged {
                     observer_id: id.to_string(),
@@ -596,6 +626,11 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         model: &str,
         spec: Option<&WatchSpec>,
     ) -> std::result::Result<Value, String> {
+        let delta_delivery = match spec.and_then(|spec| spec.delivery.as_deref()) {
+            None => false,
+            Some("splice-v1") => true,
+            Some(_) => return Err("unsupported watch delivery".into()),
+        };
         let filter = spec
             .and_then(|spec| spec.filter.clone())
             .filter(|filter| !filter.is_null())
@@ -615,9 +650,27 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 published: false,
                 generation: self.client.generation(),
                 retry_full: false,
+                delta_delivery,
+                version: 0,
+                splices: None,
             },
         );
         Ok(json!({"observerId": id.to_string()}))
+    }
+    /// A receiver that cannot apply a patch asks for a newer full cache result.
+    /// Normal publication consumes pending committed changes before sending it.
+    pub(super) fn watch_snapshot(
+        &mut self,
+        observer_id: &str,
+    ) -> std::result::Result<Value, String> {
+        let watch = observer_id
+            .parse::<u64>()
+            .ok()
+            .and_then(|id| self.observers.watches.get_mut(&id))
+            .ok_or_else(|| "unknown Model watch".to_string())?;
+        watch.splices = None;
+        watch.published = false;
+        Ok(Value::Null)
     }
     /// `unwatch {observerId}`: nothing more is published for it.
     pub(super) fn unwatch(&mut self, observer_id: &str) -> std::result::Result<Value, String> {
@@ -653,7 +706,11 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         for (id, watch) in std::mem::take(&mut self.observers.watches) {
             self.events.push(Event::ObserverChanged {
                 observer_id: id.to_string(),
-                snapshot: json!({"kind": "watch", "rows": watch.rows, "closed": true}),
+                snapshot: if watch.delta_delivery {
+                    json!({"kind":"watch","closed":true})
+                } else {
+                    json!({"kind": "watch", "rows": watch.rows, "closed": true})
+                },
             });
         }
         self.close_sql_watches();

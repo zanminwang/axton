@@ -302,8 +302,12 @@ Ordinary Model-watch reruns contain `watch.read` (SQL plus native row assembly),
 `watch.convert` (JSON Value conversion), `watch.compare` (equality) and
 `watch.snapshot` (snapshot construction/copy). `bridge.nativeDrain` includes the
 FFI drain, native serialization, copying and freeing; `bridge.decode` isolates
-Dart JSON parsing. Existing `watch.enqueue` measures listener dispatch/enqueue,
-not later asynchronous UI work or generated Model-object conversion.
+Dart JSON parsing. `watch.enqueue` measures synchronous observer dispatch and
+enqueue. With incremental Model delivery this includes SDK patch application,
+changed-row decoding and snapshot copying; older generated Model mapping ran
+later in the Dart stream. It excludes later asynchronous application/UI work.
+Its before/after durations therefore describe the work actually inside that
+span, not an invariant isolated Model-conversion phase.
 
 `watch.invalidate` records the runtime cause, generations and last commit's
 written tables. A generation jump greater than one can contain several commits:

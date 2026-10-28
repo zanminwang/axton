@@ -42,6 +42,7 @@ export type ClientSyncState = {
   rejections: RefusedAct[];
 };
 import type { QuerySpec, RecordValue } from "./values.mts";
+import { copyWatchJson, ModelWatchReceiver } from "./model-watch.mts";
 import {
   Bridge,
   reportCallbackError,
@@ -732,10 +733,35 @@ export function createClient<
       listener: (rows: RecordValue[]) => void,
       onError: (error: unknown) => void = () => {},
     ) {
-      return this.#observeRows(
-        { kind: "watch", model, spec: { filter: where } },
+      return this.watchDecoded(
+        model,
+        where,
+        copyWatchJson,
+        copyWatchJson,
         listener,
         onError,
+      );
+    }
+    /** Decode only changed rows; copy every public value from the private cache. */
+    watchDecoded<T>(
+      model: string,
+      where: RecordValue,
+      decode: (row: RecordValue) => T,
+      copy: (value: T) => T,
+      listener: (rows: T[]) => void,
+      onError: (error: unknown) => void = () => {},
+    ): () => void {
+      const receiver = new ModelWatchReceiver(decode, copy);
+      return this.#observe(
+        {
+          kind: "watch",
+          model,
+          spec: { filter: where, delivery: "splice-v1" },
+        },
+        (snapshot) => receiver.receive(snapshot),
+        listener,
+        onError,
+        () => receiver.recover(),
       );
     }
     /**
@@ -780,9 +806,10 @@ export function createClient<
      */
     #observe<T>(
       command: RecordValue,
-      pick: (snapshot: ObserverSnapshot) => T,
+      pick: (snapshot: ObserverSnapshot) => T | undefined,
       listener: (value: T) => void,
       onError: (error: unknown) => void,
+      recover?: () => boolean,
     ) {
       const fail = (error: unknown) => {
         try {
@@ -799,9 +826,28 @@ export function createClient<
         settled: ({ observerId }: { observerId: string }) => {
           const detach = this.#bridge.observe(observerId, (snapshot) => {
             // A closed watch's last rows are the ones already delivered.
-            if (stopped || snapshot.closed) return;
+            if (stopped) return;
+            if (snapshot.closed) {
+              stopped = true;
+              return;
+            }
+            let value: T | undefined;
             try {
-              listener(pick(snapshot));
+              value = pick(snapshot);
+            } catch (error) {
+              const resnapshot = recover?.();
+              fail(error);
+              if (resnapshot && !stopped)
+                void this.#bridge
+                  .task({ kind: "watchSnapshot", observerId })
+                  .catch((error) => {
+                    if (!stopped) fail(error);
+                  });
+              return;
+            }
+            if (value === undefined) return;
+            try {
+              listener(value);
             } catch (error) {
               fail(error);
             }

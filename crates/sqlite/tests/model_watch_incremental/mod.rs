@@ -550,3 +550,194 @@ fn a_failed_incremental_read_keeps_the_watch_and_recovers_from_a_full_result() {
         "lost invalidation recovers through full refresh"
     );
 }
+
+fn snapshots(events: &[Value], observer: &Value) -> Vec<Value> {
+    events
+        .iter()
+        .filter(|e| e["type"] == "observerChanged" && &e["observerId"] == observer)
+        .map(|e| e["snapshot"].clone())
+        .collect()
+}
+fn delta_watch(h: &mut Harness<MeasuredStore>, filter: Value) -> (Value, Value) {
+    let (done, events) = h.call(
+        "delta-watch",
+        json!({"kind":"watch","model":"Entry",
+        "spec":{"filter":filter,"delivery":"splice-v1"}}),
+    );
+    assert_eq!(done["ok"], true, "{events:?}");
+    let id = done["value"]["observerId"].clone();
+    let first = snapshots(&events, &id).remove(0);
+    assert_eq!(first["protocol"], "splice-v1");
+    assert_eq!(first["version"], 1);
+    (id, first)
+}
+fn apply_splices(result: &mut Vec<Value>, snapshot: &Value, version: &mut u64) {
+    assert_eq!(snapshot["protocol"], "splice-v1");
+    assert_eq!(snapshot["version"], *version + 1);
+    if let Some(rows) = snapshot["rows"].as_array() {
+        *result = rows.clone();
+    } else {
+        assert_eq!(snapshot["baseVersion"], *version);
+        for splice in snapshot["splices"].as_array().unwrap() {
+            let index = splice["index"].as_u64().unwrap() as usize;
+            let count = splice["deleteCount"].as_u64().unwrap() as usize;
+            result.splice(
+                index..index + count,
+                splice["rows"].as_array().unwrap().clone(),
+            );
+        }
+    }
+    *version += 1;
+}
+#[test]
+fn delta_delivery_moves_only_changed_rows_and_preserves_order_and_legacy_callers() {
+    let (mut h, probe) = measured(schema());
+    h.runtime
+        .client()
+        .transaction(|tx| {
+            for i in 0..1000 {
+                tx.direct(common05::create(
+                    "Entry",
+                    &format!("e{i:04}"),
+                    json!({"text":"x".repeat(512),"note":null}),
+                ))?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let (id, first) = delta_watch(&mut h, json!({}));
+    let (legacy, _) = watch(&mut h, "Entry", json!({}));
+    let mut result = first["rows"].as_array().unwrap().clone();
+    let retained = result.clone();
+    let mut version = 1;
+    clear(&probe);
+    h.runtime
+        .client()
+        .transaction(|tx| {
+            tx.direct(op("e0523", json!({"text":"changed"})))?;
+            tx.direct(Operation {
+                model: "Entry".into(),
+                identity: json!({"id":"e0000"}),
+                op: OperationKind::Delete,
+                values: None,
+            })?;
+            tx.direct(common05::create(
+                "Entry",
+                "a",
+                json!({"text":"new","note":null}),
+            ))
+        })
+        .unwrap();
+    let events = publish(&mut h);
+    let patch = snapshots(&events, &id).remove(0);
+    assert!(
+        patch.get("rows").is_none(),
+        "no complete result after key update"
+    );
+    assert!(
+        serde_json::to_vec(&patch).unwrap().len() < 1000,
+        "bounded output, not 512KB"
+    );
+    assert_eq!(patch["splices"].as_array().unwrap().len(), 3);
+    apply_splices(&mut result, &patch, &mut version);
+    let authoritative = h.runtime.client().query("Entry", &json!({})).unwrap();
+    assert_eq!(result, authoritative);
+    assert_eq!(retained[523]["text"], "x".repeat(512));
+    let full = snapshots(&events, &legacy).remove(0);
+    assert!(full.get("protocol").is_none());
+    assert_eq!(full["rows"], json!(authoritative));
+    assert_eq!(read_sizes(&probe), [2, 2, 1000]); // each watch reads only changed keys; explicit comparison reads all
+    h.runtime
+        .client()
+        .transaction(|tx| tx.direct(op("e0523", json!({"text":"changed"}))))
+        .unwrap();
+    assert!(
+        snapshots(&publish(&mut h), &id).is_empty(),
+        "same committed result suppressed"
+    );
+}
+#[test]
+fn delta_full_recovery_reset_and_close_do_not_require_a_second_query() {
+    let (mut h, probe) = measured(schema());
+    h.commit("seed", create("e", "before"));
+    let (id, first) = delta_watch(&mut h, json!({}));
+    let mut result = first["rows"].as_array().unwrap().clone();
+    let mut version = 1;
+    clear(&probe);
+    let (done, events) = h.call("recover", json!({"kind":"watchSnapshot","observerId":id}));
+    assert_eq!(done["ok"], true, "{events:?}");
+    let reset = snapshots(&events, &id).remove(0);
+    assert!(reset["rows"].is_array());
+    apply_splices(&mut result, &reset, &mut version);
+    assert!(
+        read_sizes(&probe).is_empty(),
+        "recovery uses authoritative cache"
+    );
+    probe.fail_read.store(true, Ordering::SeqCst);
+    h.runtime
+        .client()
+        .transaction(|tx| tx.direct(op("e", json!({"text":"after"}))))
+        .unwrap();
+    let failed = publish(&mut h);
+    assert!(snapshots(&failed, &id).is_empty());
+    h.runtime
+        .client()
+        .transaction(|tx| tx.direct(op("e", json!({"text":"recovered"}))))
+        .unwrap();
+    let events = publish(&mut h);
+    let recovered = snapshots(&events, &id).remove(0);
+    assert!(
+        recovered["rows"].is_array(),
+        "failed query recovers with full result"
+    );
+    apply_splices(&mut result, &recovered, &mut version);
+    assert_eq!(result, [row("recovered")]);
+    let reset = h.commit("reset", json!({"kind":"resetStore","discardPending":true}));
+    let reset = snapshots(&reset, &id).remove(0);
+    assert!(reset["rows"].is_array());
+    apply_splices(&mut result, &reset, &mut version);
+    assert!(result.is_empty());
+    h.submit(json!({"type":"close"})).unwrap();
+    let events = h.run();
+    let terminal = snapshots(&events, &id).remove(0);
+    assert_eq!(terminal, json!({"kind":"watch","closed":true}));
+}
+#[test]
+fn delta_splice_sequences_match_committed_filter_results() {
+    let (mut h, _) = measured(schema());
+    let filter = json!({"note":null});
+    let (id, first) = delta_watch(&mut h, filter.clone());
+    let mut result = first["rows"].as_array().unwrap().clone();
+    let mut version = 1;
+    let mut present = std::collections::BTreeSet::new();
+    let mut rng = 17_u64;
+    for step in 0..150 {
+        h.runtime.client().transaction(|tx| {
+            for _ in 0..4 {
+                rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+                let key = format!("{:02}", (rng >> 32) % 30);
+                let pick = (rng >> 40) % 4;
+                let values = json!({"text":format!("step {step}"),"note":if pick == 0 {json!("out")} else {Value::Null}});
+                if !present.contains(&key) {
+                    tx.direct(common05::create("Entry", &key, values))?;
+                    present.insert(key);
+                } else if pick == 1 {
+                    tx.direct(Operation {model:"Entry".into(),identity:json!({"id":key}),op:OperationKind::Delete,values:None})?;
+                    present.remove(&key);
+                } else { tx.direct(op(&key, values))?; }
+            }
+            Ok(())
+        }).unwrap();
+        for snapshot in snapshots(&publish(&mut h), &id) {
+            apply_splices(&mut result, &snapshot, &mut version);
+        }
+        assert_eq!(
+            result,
+            h.runtime.client().query("Entry", &filter).unwrap(),
+            "step {step}"
+        );
+    }
+    let _ = h.call("unwatch", json!({"kind":"unwatch","observerId":id}));
+    h.commit("late", create("late", "ignored"));
+    assert!(snapshots(&h.events(), &id).is_empty());
+}

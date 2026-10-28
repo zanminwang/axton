@@ -40,6 +40,24 @@ Query/Fetch use request-level boolean `store`, default true. Results always desc
 
 The protocol-5 facades submit a fresh task for every Query invocation. Public `once`, `refresh` and Query invalidation controls are removed; authentication refresh remains. Open takes a path, schema and Stream with an optional connection, allowing offline operation. Joined native lifecycle evidence belongs to `integration/v05-sdk/run-host.sh`; installed mobile evidence remains separate.
 
+Model watch receivers apply Rust's versioned ordered splices to a private decoded
+cache. Generated watches decode only incoming rows and copy values for each
+application snapshot: TypeScript copies objects, Lists and Dates; Dart reuses
+immutable scalar-only Models and copies List-bearing Models. Each Dart listen
+owns its cache. Public watch signatures still return complete result lists, so
+building a delivered list remains proportional to its length. Legacy generated
+watches use the generic row API and remain supported. SQL watches keep their
+full result and dependency-table refresh behavior.
+
+A malformed patch or failed decode/copy reports an observer error and requests
+one full cache snapshot. Further patches are ignored until a valid full result
+recovers it; a failed recovery does not trigger a resnapshot loop. Listener
+exceptions do not request recovery. Native read errors retain the runtime's
+existing retry path. Receiver and native coverage lives in the
+[JavaScript tests](../../../../packages/frontend/client-js/model-watch.test.mjs),
+[Dart tests](../../../../packages/frontend/dart/test/model_watch_test.dart) and
+[SQLite tests](../../../../crates/sqlite/tests/model_watch_incremental/mod.rs).
+
 Language scopes refuse captured/expired capabilities and unawaited operations before commit. Node uses async-context ownership. RN's guard conservatively refuses remote/write operations while its callback runs; ordinary reads can queue behind the active transaction. Cross-Store overlapping RN callbacks require async-context support and are refused. Bootstrap and named Mutation entry checks prevent waiting behind their own callback. Priority close settles outstanding tasks and cancels runtime effects without waiting for unresolved user code.
 
 ## 10. Quality Requirements

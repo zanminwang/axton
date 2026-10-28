@@ -8,6 +8,14 @@ The Store's complete pending-owner snapshot bounds owned materialization work. C
 
 Every publication path refreshes retained pending, failure and refusal observers before consuming the commit mark for Model watches. Application tasks and protocol-5 Store worker commits use this same boundary; listeners receive changed committed snapshots without polling.
 
+Ordinary Model watches retain an identity-ordered result cache. Exact committed
+Model keys refresh only their own rows; metadata and unrelated Models do no
+business-data reads. Bulk/unknown changes and failed reads retain a full-refresh
+fallback. Negotiated observers record ordered splices while updating that cache,
+so later publication copies only changed rows across the
+[client bridge](../protocols/client-bridge.md). Legacy callers still receive full
+results. `watchSql` continues to requery by its SQLite dependency tables.
+
 An open application transaction has exclusive scheduling of its continuation
 commands until its callback returns and commits or rolls back. Ordinary tasks,
 including reads through the committed SQLite reader, wait outside that

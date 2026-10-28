@@ -296,6 +296,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             Command::StreamSubscribe { stream } => Some(self.subscribe_stream(stream)),
             Command::StreamBootstrap { .. } => self.bootstrap_stream(&request_id, &command),
             Command::Watch { model, spec } => Some(self.watch(model, spec.as_ref())),
+            Command::WatchSnapshot { observer_id } => Some(self.watch_snapshot(observer_id)),
             Command::WatchSql { sql, parameters } => Some(self.watch_sql(sql, parameters)),
             Command::Unwatch { observer_id } => {
                 self.unwatch_unsent(observer_id);

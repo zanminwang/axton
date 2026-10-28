@@ -2,7 +2,7 @@
 import type { Call, QueryOptions } from './client.ts';
 export interface ReadPort { read(model:string,identity:object):Promise<Record<string,unknown>|null>; querySpec(model:string,query:object):Promise<Record<string,unknown>[]>; related(model:string,identity:object,relation:string):Promise<Record<string,unknown>|null>; referencing(model:string,identity:object,source:string,relation:string):Promise<Record<string,unknown>[]>; }
 export interface WritePort extends ReadPort { direct(operation:object):Promise<void>; }
-export interface LivePort extends WritePort { watch(model:string,where:Record<string,unknown>,listener:(rows:Record<string,unknown>[])=>void,onError?:(error:unknown)=>void):()=>void; syncState(model:string,identity:object):Promise<unknown>; }
+export interface LivePort extends WritePort { watch(model:string,where:Record<string,unknown>,listener:(rows:Record<string,unknown>[])=>void,onError?:(error:unknown)=>void):()=>void; watchDecoded<T>(model:string,where:Record<string,unknown>,decode:(row:Record<string,unknown>)=>T,copy:(value:T)=>T,listener:(rows:T[])=>void,onError?:(error:unknown)=>void):()=>void; syncState(model:string,identity:object):Promise<unknown>; }
 export interface CallPort { invokeQuery<T>(name:string,version:number,args:object,decode:(value:unknown)=>T,options?:QueryOptions):Promise<T>; }
 export const schema = {"actions":[{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Find","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Peek","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Snapshot"},"kind":"model","model":"Snapshot","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"call","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"Publish","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","relations":[],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","version":1}]} as const;
 export type MutationName = 'Publish';
@@ -135,6 +135,10 @@ export function encodeSnapshotCreate(value:SnapshotCreate):Record<string,unknown
 export function encodeSnapshotCreateIdentity(value:SnapshotCreate):Record<string,unknown> { return {
  id: value.id,
 }; }
+function _copyDraftWatch(value:Draft):Draft { return {
+ id: value.id,
+ text: value.text,
+}; }
 export class DraftModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:DraftIdentity):Promise<Draft|null> { const row=await this.port.read('Draft',encodeDraftIdentity(identity)); return row===null ? null : decodeDraft(row); }
  async query(options:{where?:Partial<Draft>;orderBy?:{field:'id' | 'text';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Draft[]> { return (await this.port.querySpec('Draft',{filter:encodeDraftWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeDraft); }
@@ -145,10 +149,14 @@ export class DraftTxModel<P extends WritePort=WritePort> extends DraftModel<P> {
  delete(identity:DraftIdentity):Promise<void> { return this.port.direct({model:'Draft',op:'delete',identity:encodeDraftIdentity(identity)}); }
 }
 export class DraftLiveModel extends DraftTxModel<LivePort> {
- watch(options:{where?:Partial<Draft>}, listener:(rows:Draft[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Draft',encodeDraftWhere(options.where??{}),(rows)=>listener(rows.map(decodeDraft)),onError); }
+ watch(options:{where?:Partial<Draft>}, listener:(rows:Draft[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watchDecoded('Draft',encodeDraftWhere(options.where??{}),decodeDraft,_copyDraftWatch,listener,onError); }
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:DraftIdentity):Promise<SyncState> { return (await this.port.syncState('Draft',encodeDraftIdentity(identity))) as SyncState; }
 }
+function _copyEntryWatch(value:Entry):Entry { return {
+ id: value.id,
+ text: value.text,
+}; }
 export class EntryModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:EntryIdentity):Promise<Entry|null> { const row=await this.port.read('Entry',encodeEntryIdentity(identity)); return row===null ? null : decodeEntry(row); }
  async query(options:{where?:Partial<Entry>;orderBy?:{field:'id' | 'text';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Entry[]> { return (await this.port.querySpec('Entry',{filter:encodeEntryWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeEntry); }
@@ -159,10 +167,14 @@ export class EntryTxModel<P extends WritePort=WritePort> extends EntryModel<P> {
  delete(identity:EntryIdentity):Promise<void> { return this.port.direct({model:'Entry',op:'delete',identity:encodeEntryIdentity(identity)}); }
 }
 export class EntryLiveModel extends EntryTxModel<LivePort> {
- watch(options:{where?:Partial<Entry>}, listener:(rows:Entry[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Entry',encodeEntryWhere(options.where??{}),(rows)=>listener(rows.map(decodeEntry)),onError); }
+ watch(options:{where?:Partial<Entry>}, listener:(rows:Entry[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watchDecoded('Entry',encodeEntryWhere(options.where??{}),decodeEntry,_copyEntryWatch,listener,onError); }
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:EntryIdentity):Promise<SyncState> { return (await this.port.syncState('Entry',encodeEntryIdentity(identity))) as SyncState; }
 }
+function _copySnapshotWatch(value:Snapshot):Snapshot { return {
+ id: value.id,
+ text: value.text,
+}; }
 export class SnapshotModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:SnapshotIdentity):Promise<Snapshot|null> { const row=await this.port.read('Snapshot',encodeSnapshotIdentity(identity)); return row===null ? null : decodeSnapshot(row); }
  async query(options:{where?:Partial<Snapshot>;orderBy?:{field:'id' | 'text';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Snapshot[]> { return (await this.port.querySpec('Snapshot',{filter:encodeSnapshotWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeSnapshot); }
@@ -173,7 +185,7 @@ export class SnapshotTxModel<P extends WritePort=WritePort> extends SnapshotMode
  delete(identity:SnapshotIdentity):Promise<void> { return this.port.direct({model:'Snapshot',op:'delete',identity:encodeSnapshotIdentity(identity)}); }
 }
 export class SnapshotLiveModel extends SnapshotTxModel<LivePort> {
- watch(options:{where?:Partial<Snapshot>}, listener:(rows:Snapshot[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Snapshot',encodeSnapshotWhere(options.where??{}),(rows)=>listener(rows.map(decodeSnapshot)),onError); }
+ watch(options:{where?:Partial<Snapshot>}, listener:(rows:Snapshot[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watchDecoded('Snapshot',encodeSnapshotWhere(options.where??{}),decodeSnapshot,_copySnapshotWatch,listener,onError); }
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:SnapshotIdentity):Promise<SyncState> { return (await this.port.syncState('Snapshot',encodeSnapshotIdentity(identity))) as SyncState; }
 }

@@ -32,6 +32,13 @@ The [CLI](../../../../crates/compiler/src/main.rs) concatenates input `.model` f
 
 Generated local Model APIs forward to runtime ports. Named Mutations accept typed input or a callback returning that input; the callback exposes local companion writes. TypeScript supports both invocation forms directly, while Dart uses the typed invoker's `withTransaction`. The same Mutation forms are available inside an outer transaction. Invocation returns a `Call`; `wait()` observes backend outcome and local settlement.
 
+Generated Model watches pass a row decoder and a schema-derived snapshot copier
+to the SDK's `watchDecoded` adapter. Only incoming changed rows are decoded.
+Copiers preserve caller-owned mutable Lists and JavaScript Dates/objects without
+reparsing unchanged records. Dart scalar-only Models contain final immutable
+values and can be shared; Models with Lists get copied Lists per emission.
+This changes internal delivery, not the generated application's watch signature.
+
 Queries and Model Fetch use boolean `store`, default true, and await their invocation result and permitted cache commit. Query results use the SDK's shared options; Fetch is generated from each concrete Model's identity and read version. These facades neither enqueue reads nor implicitly track returned Models. The [typed client](../frontend-sdk/api.md) owns those behaviors and runtime completion rules.
 
 Schema inheritance is expanded by validation before emission. Each concrete Model has its own identity, version and inherited fields. `@@bootstrap` is emitted as Model selection metadata; it does not fix membership in a Stream or prevent later delivery of unmarked Models. Tracking and Loader preparation remain backend responsibilities.

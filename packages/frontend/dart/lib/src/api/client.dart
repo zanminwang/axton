@@ -4,12 +4,18 @@ import '../bindings/bridge.dart';
 import '../bindings/connection.dart';
 import '../bindings/live.dart';
 import 'port.dart';
+import 'model_watch.dart';
 import 'subscriptions.dart';
 import 'dart:async';
 
 part 'unsent.dart';
 
 final Object _callbackOwnerKey = Object();
+
+typedef _Observation<T> = ({
+  T? Function(Map<String, dynamic>) pick,
+  bool Function()? recover,
+});
 
 /// Typed generated model APIs delegate to this generic native client.
 class Client implements WritePort, SubmitMutationPort {
@@ -488,11 +494,30 @@ class Client implements WritePort, SubmitMutationPort {
   Stream<List<Map<String, dynamic>>> watch(
     String model, {
     Map<String, dynamic> where = const {},
-  }) => _observeRows({
-    'kind': 'watch',
-    'model': model,
-    'spec': {'filter': where},
-  });
+  }) => watchDecoded(
+    model,
+    where: where,
+    decode: copyWatchRecord,
+    copy: copyWatchRecord,
+  );
+
+  /// Decode only changed rows and copy every delivery from a private cache.
+  Stream<List<T>> watchDecoded<T>(
+    String model, {
+    Map<String, dynamic> where = const {},
+    required T Function(Map<String, dynamic>) decode,
+    required T Function(T) copy,
+  }) => _observeWith<List<T>>(
+    {
+      'kind': 'watch',
+      'model': model,
+      'spec': {'filter': where, 'delivery': 'splice-v1'},
+    },
+    () {
+      final receiver = ModelWatchReceiver<T>(decode, copy);
+      return (pick: receiver.receive, recover: receiver.recover);
+    },
+  );
 
   /// The rows of read-only [sql] over several Models, with bound
   /// [parameters] ([#184](https://github.com/zanminwang/axton/issues/184)):
@@ -523,6 +548,12 @@ class Client implements WritePort, SubmitMutationPort {
   Stream<T> _observe<T>(
     Map<String, dynamic> command,
     T Function(Map<String, dynamic> snapshot) pick,
+  ) => _observeWith(command, () => (pick: pick, recover: null));
+
+  /// Each listen owns its decoder/cache; SQL and unsent observers keep theirs.
+  Stream<T> _observeWith<T>(
+    Map<String, dynamic> command,
+    _Observation<T> Function() create,
   ) => Stream<T>.multi((sink) {
     // The watch task is submitted when the stream is listened to.
     if (_inTransaction) {
@@ -533,14 +564,38 @@ class Client implements WritePort, SubmitMutationPort {
     }
     String? observer;
     var cancelled = false;
+    final observation = create();
     void deliver(Map<String, dynamic> snapshot) {
+      if (cancelled) return;
       // The terminal snapshot carries the result already delivered.
       if (snapshot['closed'] == true) {
         observer = null;
+        cancelled = true;
         sink.close();
         return;
       }
-      sink.add(pick(snapshot));
+      T? value;
+      try {
+        value = observation.pick(snapshot);
+      } catch (error, stack) {
+        final resnapshot = observation.recover?.call() ?? false;
+        sink.addError(error, stack);
+        final id = observer;
+        if (resnapshot && !cancelled && id != null) {
+          unawaited(
+            _bridge
+                .task({'kind': 'watchSnapshot', 'observerId': id})
+                .then<void>(
+                  (_) {},
+                  onError: (Object error, StackTrace stack) {
+                    if (!cancelled) sink.addError(error, stack);
+                  },
+                ),
+          );
+        }
+        return;
+      }
+      if (value != null) sink.add(value);
     }
 
     _bridge

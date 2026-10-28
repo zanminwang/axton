@@ -131,6 +131,11 @@ passed 45/45 cases and removed the previous queue errors. It also exposed an
 HTTP-wait liveness boundary; current code admits a live response that can advance
 the committed prefix even while HTTP waits. That archive predates this refinement
 and is not a speed claim for it.
+The [final live-prefix measurements](baselines/2026-10-27-live-coalescing-v2/README.md)
+passed 45/45, with full Linux/macOS Verify at the measured runtime. At N=10,000,
+B saw all 100 new Entries in a 5.61 s median [5.13–6.38 s]. The report separates
+observed timing changes from causal claims and records the final artifact's
+pending unpack/compatibility audit after the execution environment disconnected.
 
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,

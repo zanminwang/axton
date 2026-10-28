@@ -1,5 +1,7 @@
 use axton_client::{Client, Schema, sync05::DeliveryQueue, v05};
 use axton_sqlite::SqliteStore;
+#[path = "protocol05_downlink/prefetch.rs"]
+mod prefetch;
 #[path = "protocol05_downlink/receipts.rs"]
 mod receipts;
 

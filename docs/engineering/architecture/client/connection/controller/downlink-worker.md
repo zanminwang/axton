@@ -24,6 +24,20 @@ materialization remains separately correlated and is not coalesced away.
 `delivery.coalesce` diagnostics count these normal hint-only offers. Queue,
 memory and disk limits remain unchanged; malformed hints still fail validation.
 
+The opt-in native experiment `AXTON_EXPERIMENTAL_BOOTSTRAP_PREFETCH=1` requests
+one successor of a complete Bootstrap page before that page commits. At most
+the current page and one successor are retained; only the Store advances B/C.
+Future pages cannot apply across a gap or failed predecessor. Reconnect and
+apply failure retire speculative work, including requests waiting for refreshed
+credentials. Those waiters still occupy the single cursor HTTP request slot.
+Capacity decline preserves existing
+queue/repair budgets and disables lookahead for that client, reverting to serial
+requests from committed B. Default construction keeps serial scheduling.
+
+The [prefetch regressions](../../../../../../crates/sqlite/tests/protocol05_downlink/prefetch.rs)
+cover both HTTP/apply arrival orders, multi-unit pages, auth refresh, failure,
+reconnect and close against the real SQLite Store worker.
+
 The [receipt regressions](../../../../../../crates/sqlite/tests/protocol05_downlink/receipts.rs)
 exercise both arrival orders, partial progress below the settlement fence and
 reconnect repair through the real SQLite Store worker.

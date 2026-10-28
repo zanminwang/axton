@@ -104,6 +104,12 @@ export function printSummary(result) {
     ?'FAILED RUN: full matrix attempted; failures are retained. Not a clean baseline.'
     :'INCOMPLETE RUN: partial samples are retained, not a complete baseline.');
   console.log('Times in ms: median [min, max]. Live per-write observations are correlated within each run.');
+  const traces=result.samples.filter(s=>s.timeline),aligned=traces.filter(s=>s.timeline.status==='aligned');
+  if(traces.length) {
+    const uncertainty=aligned.length?Math.max(...aligned.map(s=>s.timeline.clockAlignment.maxPlacementUncertaintyUs)):null;
+    console.log(`Common-axis traces: ${aligned.length}/${traces.length} aligned${uncertainty===null?'':`; maximum placement uncertainty ±${uncertainty.toFixed(1)} µs`}. Paths and calibration bounds are retained per sample.`);
+    for(const s of traces.filter(s=>s.timeline.status!=='aligned'))console.log(`Trace unavailable ${caseKey(s)} r${s.repetition}: ${s.timeline.reason}`);
+  }
   const groups=summarize(result);
   console.log('\nInitial sync:');
   console.log('| Existing N | Passed | Store open | First visible | All visible | Bootstrap |');

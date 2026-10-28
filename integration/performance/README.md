@@ -61,8 +61,13 @@ describe their recorded environment, not dedicated hardware or phone performance
 | Live | Server transaction | Server transaction entry until the adapter returns after COMMIT, including retries. Its end is a server commit confirmation in the Node clock domain. |
 | Live | B visible | That write's start until B's watch contains its identity. |
 
-Initial timing starts before application-data configuration/native-library loading,
+Initial timing starts before application-data configuration,
 then opens an empty Store, registers a watch, connects and requests Bootstrap.
+The native library handle is prepared before timing so clock calibration can run
+outside the measured interval; its first load is excluded. Instrumentation version
+3 records this condition and is incompatible with the earlier library-load boundary.
+Library preparation has its own measured span before zero, labeled excluded setup
+in the common-axis trace; it is not silently included in Store-open statistics.
 Process launch and code loading before Dart main are excluded. Raw milestones also
 retain application configuration, connect start/return and Bootstrap request times.
 Connect return alone does not establish handshake completion.
@@ -76,7 +81,48 @@ With diagnostics enabled, each CreateEntry's host call ID/ordinal correlates its
 successful transaction span to the write. `serverSettlements` retains that source
 start, duration and commit-confirmed timestamp. Older raw files retain the same
 evidence in spans; the report reconstructs it. This server duration is not an
-A-to-server latency. No clock synchronization is claimed between Dart and Node.
+A-to-server latency. Older archives have no cross-process clock calibration and
+cannot establish when that server timestamp occurred on the clients' timeline.
+
+### One shared timeline
+
+Each new sample writes a `*.trace.json` file under `<output>.traces/` in Chrome Trace Event format,
+readable by Perfetto. All lanes use mapped source start/end times on one axis,
+with zero at the scenario's measured start. They are not stacked stage totals.
+Separate result paths keep their traces separate, including before/after runs in
+the same directory.
+Client A/B milestones, Dart bridge spans, Rust client spans, Node backend/SQL and
+Rust backend spans can overlap. Their raw clocks, span IDs, parent IDs and clock
+placement uncertainty remain in each event's arguments and in the raw result.
+
+```sh
+# Regenerate one sample's trace from its retained calibration and observations.
+node integration/performance/timeline.mjs artifacts/performance/baseline.json 0 \
+  artifacts/performance/selected.trace.json
+```
+
+The benchmark uses an always-running Dart reference Stopwatch shared by A and B,
+plus an explicit anchor for the Stopwatch that starts at the measurement barrier.
+SDK emitters share another isolate-local Stopwatch. Rust collectors link to one
+monotonic origin per loaded native library; Node collectors link to process hrtime.
+Synchronous FFI/N-API brackets and stdin/stdout round trips correlate these clocks
+before and after the scenario. All probes and offset intervals are retained.
+Round-trip bounds include asymmetric scheduling/transport delay; midpoint placement
+is an estimate within those bounds, not an exact one-way network measurement.
+Endpoint offset intervals must intersect under the constant-offset model; otherwise
+the sample fails trace validation and retains its raw timings, probes and reason.
+Calibration and
+library preparation run outside the scenario timing, including in tracing-disabled
+controls. Clock metadata emitted while opening a client does not perform probes.
+
+The exporter preserves real parent relationships. Concurrent siblings occupy
+separate tracks so an overlapping asynchronous operation is not rendered as a
+child merely because its timestamps fit. Native drain/decode spans name their
+drain parent, including empty drains. Intervals with no recorded source span are
+marked **unattributed**: they do not establish network, queue, idle or CPU time.
+Elapsed spans that wait for callbacks include that waiting. Nested and overlapping
+durations must never be summed into an end-to-end latency. Old raw archives are
+rejected by this exporter rather than assigned fabricated common-axis positions.
 
 Each sample verifies exact identities, counts and every text value in the final
 watch and local queries. Live verifies both clients, accepted settlement outputs,
@@ -230,8 +276,9 @@ test recorders also cap retention and reject incomplete evidence.
 Client traces use the existing runtime outbox. Enabled backend native operations
 deliver records once through their existing host callback, outside business
 declaration handling. Sync state and wire authority never depend on telemetry.
-Client milestones share a clock; server/native clocks remain separate. Identifiers
-support correlation, never subtraction across clock domains. HTTP duration includes
+Raw source clock domains remain separate; new benchmark runs retain bounded clock
+correlation for common-axis export. Identifiers alone never justify subtraction
+across clock domains. HTTP duration includes
 server and transport work; no residual is labeled measured network-only or CPU time.
 
 Scenario files own sequencing/assertions; `support/recorder.dart` collects records;

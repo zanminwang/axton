@@ -272,15 +272,19 @@ class _Abi implements Carrier {
   @override
   List<dynamic> drain(int runtime) => drainTraced(runtime, null);
 
-  List<dynamic> drainTraced(int runtime, TraceEmitter? tracing) {
-    final native = tracing?.start('bridge.nativeDrain');
+  List<dynamic> drainTraced(
+    int runtime,
+    TraceEmitter? tracing, [
+    TraceSpan? parent,
+  ]) {
+    final native = tracing?.start('bridge.nativeDrain', const {}, parent);
     late final String text;
     try {
       text = _take(_drain(runtime));
     } finally {
       native?.end();
     }
-    final decode = tracing?.start('bridge.decode');
+    final decode = tracing?.start('bridge.decode', const {}, parent);
     try {
       return jsonDecode(text) as List<dynamic>;
     } finally {
@@ -575,8 +579,9 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
     // this isolate, which runs it after this synchronous section. So are the
     // [effects] executors the runtime may ask for from its first step.
     final bridge = Bridge._(opener, runtime);
-    if (diagnostics != null)
+    if (diagnostics != null) {
       bridge.tracing = TraceEmitter(diagnostics, 'dart:$runtime');
+    }
     effects.forEach(bridge.handleEffects);
     final route = _Route();
     bridge._routes['1'] = route;
@@ -749,9 +754,9 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
         final span = tracing?.start('bridge.drain');
         final carrier = _carrier;
         final batch = carrier is _Abi
-            ? carrier.drainTraced(runtimeId, tracing)
+            ? carrier.drainTraced(runtimeId, tracing, span)
             : carrier.drain(runtimeId);
-        if (batch.isNotEmpty) span?.end({'events': batch.length});
+        span?.end({'events': batch.length});
         if (batch.isEmpty) return;
         for (final event in batch) {
           if (_detached) return;

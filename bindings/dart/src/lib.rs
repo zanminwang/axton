@@ -2,6 +2,17 @@
 //! ([#134](https://github.com/zanminwang/axton/issues/134)).
 use axton_binding::ffi;
 use std::ffi::{c_char, c_void};
+
+/// Monotonic sample for opt-in diagnostics clock correlation, never wall time.
+#[unsafe(no_mangle)]
+pub extern "C" fn axton_diagnostics_clock_us() -> u64 {
+    axton_binding::diagnostics::clock_us()
+}
+/// Identifies this loaded library's clock; not a timestamp or application ID.
+#[unsafe(no_mangle)]
+pub extern "C" fn axton_diagnostics_clock_id() -> u64 {
+    axton_binding::diagnostics::clock_id()
+}
 /// Initialize the application's durable container directory before any Store open.
 /// Returns 0, or 1 with `*error_out` set.
 ///

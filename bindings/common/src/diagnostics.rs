@@ -1,7 +1,9 @@
 //! Opt-in, instance-local tracing collection. Never installs a global subscriber.
 //! Records are measured here, not when a language bridge eventually drains them.
 use serde_json::{Map, Value, json};
-use std::sync::{Arc, Mutex};
+use std::collections::hash_map::RandomState;
+use std::hash::BuildHasher;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tracing::{
     Id, Subscriber,
@@ -11,6 +13,32 @@ use tracing::{
 use tracing_subscriber::{Layer, Registry, layer::Context, prelude::*, registry::LookupSpan};
 
 pub(crate) const CAPACITY: usize = 4096;
+
+struct ProcessClock {
+    origin: Instant,
+    id: u64,
+}
+fn process_clock() -> &'static ProcessClock {
+    static CLOCK: OnceLock<ProcessClock> = OnceLock::new();
+    CLOCK.get_or_init(|| ProcessClock {
+        origin: Instant::now(),
+        // An identifier, never a time measurement. Separate loaded libraries
+        // in one process must not advertise unrelated origins as one clock.
+        id: RandomState::new().hash_one(std::process::id()) & ((1_u64 << 52) - 1),
+    })
+}
+
+/// Synchronous calibration sample for this loaded native library, in microseconds.
+/// This is not wall time and is not comparable with another process/library.
+pub fn clock_us() -> u64 {
+    process_clock().origin.elapsed().as_micros() as u64
+}
+pub fn clock_id() -> u64 {
+    process_clock().id
+}
+pub fn clock_domain() -> String {
+    format!("native:{}:{}", std::process::id(), clock_id())
+}
 
 #[derive(Clone)]
 pub struct Diagnostics {
@@ -49,13 +77,19 @@ impl Visit for Fields {
 }
 impl Diagnostics {
     pub fn new(clock: String) -> Self {
-        Self {
+        let reference = process_clock().origin;
+        let origin = Instant::now();
+        let clock = format!("{}:{clock}", clock_domain());
+        let collector = Self {
             inner: Arc::new(Inner {
-                origin: Instant::now(),
+                origin,
                 clock,
                 records: Mutex::new((Vec::new(), 0)),
             }),
-        }
+        };
+        let offset = origin.duration_since(reference).as_micros() as u64;
+        collector.push(json!({"schemaVersion":1,"kind":"clock","name":"clock.origin","source":"rust","clockDomain":collector.inner.clock,"startUs":0,"attributes":{"referenceClockDomain":clock_domain(),"offsetLowerUs":offset,"offsetUpperUs":offset+1,"method":"shared-native-Instant-origin"}}));
+        collector
     }
     pub fn dispatch(&self) -> tracing::Dispatch {
         tracing::Dispatch::new(Registry::default().with(self.clone()))
@@ -126,10 +160,11 @@ mod tests {
         });
         let (records, dropped) = a.take();
         assert_eq!(dropped, 0);
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[0]["parentSpanId"], records[1]["spanId"]);
-        assert_eq!(records[0]["attributes"]["rows"], 100);
-        assert!(b.take().0.is_empty());
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0]["kind"], "clock");
+        assert_eq!(records[1]["parentSpanId"], records[2]["spanId"]);
+        assert_eq!(records[1]["attributes"]["rows"], 100);
+        assert_eq!(b.take().0.len(), 1);
     }
     #[test]
     fn bounded_buffer_reports_loss() {
@@ -141,7 +176,7 @@ mod tests {
         });
         let (records, dropped) = collector.take();
         assert_eq!(records.len(), CAPACITY);
-        assert_eq!(dropped, 3);
+        assert_eq!(dropped, 4);
         assert_eq!(collector.take(), (vec![], 0));
     }
 }

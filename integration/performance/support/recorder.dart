@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import '../fixture/generated/generated.dart';
 import 'package:axton/axton.dart' show Client;
+import 'clock.dart';
+export 'clock.dart' show sampleClock;
 
 const textBytes = 512;
 final fixtureText = 'x' * textBytes;
@@ -17,17 +19,23 @@ class Recorder implements AxtonDiagnostics {
   final Stopwatch clock;
   final String client;
   final records = <Map<String, Object?>>[];
+  final clocks = <Map<String, Object?>>[];
   int dropped = 0;
   bool active = true;
   Recorder(this.clock, this.client);
   @override
   void record(AxtonTraceRecord record) {
+    if (record.kind == 'clock') {
+      clocks.add({...record.toJson(), 'client': client});
+      return;
+    }
     if (!active) return;
     if (records.length < 200000) {
       records.add({
         ...record.toJson(),
         'client': client,
         'receivedAtUs': clock.elapsedMicroseconds,
+        'receivedAtReferenceUs': sampleClock.reference.elapsedMicroseconds,
       });
     } else {
       dropped++;
@@ -62,10 +70,7 @@ void progress(String phase, Map<String, Object?> data) =>
 
 Future<void> awaitStart() async {
   progress('ready', {});
-  final command = await stdin
-      .transform(utf8.decoder)
-      .transform(const LineSplitter())
-      .first;
+  final command = await sampleClock.command();
   check(command == 'go', 'runner start barrier');
 }
 
@@ -83,9 +88,15 @@ Future<void> runSample(
   final directory = Directory(options['directory'] as String);
   final recorders = <Recorder>[];
   final clock = Stopwatch();
+  sampleClock = SampleClock();
   Timer? keepAlive;
   try {
-    if (options['scenario'] == 'initial-sync') clock.start();
+    await sampleClock.synchronizeRunner('start');
+    sampleClock.prepareNative();
+    sampleClock.synchronizeDart('start');
+    if (options['diagnostics'] == true) sampleClock.synchronizeNative('start');
+    if (options['scenario'] == 'initial-sync')
+      sampleClock.startMeasurement(clock);
     Client.configureApplicationData(
       '${directory.path}/application',
       libraryPath: Platform.environment['AXTON_DART_LIBRARY'],
@@ -94,12 +105,17 @@ Future<void> runSample(
     // Native pending Calls alone do not keep a headless Dart isolate alive.
     keepAlive = Timer.periodic(const Duration(seconds: 1), (_) {});
     final result = await body(options, directory, clock, recorders);
+    sampleClock.synchronizeDart('end');
+    if (options['diagnostics'] == true) sampleClock.synchronizeNative('end');
+    await sampleClock.synchronizeRunner('end');
     check(recorders.every((r) => r.dropped == 0), 'incomplete diagnostics');
     stdout.writeln(
       jsonEncode({
         'type': 'result',
         'status': 'passed',
         ...result,
+        'clockCorrelation': sampleClock.toJson(),
+        'clockRecords': recorders.expand((r) => r.clocks).toList(),
         'diagnostics': recorders.expand((r) => r.records).toList(),
         'dropped': recorders.fold(0, (n, r) => n + r.dropped),
       }),
@@ -111,11 +127,14 @@ Future<void> runSample(
         'status': 'failed',
         'error': '$error',
         'stack': '$stack',
+        'clockCorrelation': sampleClock.toJson(),
+        'clockRecords': recorders.expand((r) => r.clocks).toList(),
         'diagnostics': recorders.expand((r) => r.records).toList(),
       }),
     );
     exitCode = 1;
   } finally {
     keepAlive?.cancel();
+    await sampleClock.input.cancel();
   }
 }

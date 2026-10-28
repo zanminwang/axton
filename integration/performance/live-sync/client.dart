@@ -92,7 +92,7 @@ Future<void> main(List<String> args) => runSample(args, (
     aRecorder.records.clear();
     bRecorder.records.clear();
     await awaitStart();
-    clock.start();
+    sampleClock.startMeasurement(clock);
     measuring = true;
     for (var i = 0; i < writes; i++) {
       final id = identity('live', i);

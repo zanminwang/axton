@@ -1,3 +1,6 @@
+import 'dart:io' show pid;
+import 'dart:math' show Random;
+
 /// Optional performance instrumentation. Receivers must return promptly;
 /// exceptions are ignored and cannot change a sync outcome.
 abstract interface class AxtonDiagnostics {
@@ -5,7 +8,8 @@ abstract interface class AxtonDiagnostics {
 }
 
 /// Schema 1 trace data. Stage names/attributes are experimental. Times are
-/// microseconds within [clockDomain], never comparable across clock domains.
+/// microseconds within [clockDomain]. Cross-domain placement requires measured
+/// clock correlation; a bridge's receipt timestamp is not the source timestamp.
 class AxtonTraceRecord {
   final String kind;
   final String name;
@@ -62,9 +66,30 @@ class AxtonTraceRecord {
 class TraceEmitter {
   final AxtonDiagnostics receiver;
   final String clockDomain;
-  final Stopwatch _clock = Stopwatch()..start();
+  static final Stopwatch _clock = Stopwatch()..start();
+  static final String isolateClockDomain =
+      'dart-isolate:$pid:${Random.secure().nextInt(1 << 32)}:${Random.secure().nextInt(1 << 32)}';
+  static int isolateClockUs() => _clock.elapsedMicroseconds;
   int _next = 0;
-  TraceEmitter(this.receiver, this.clockDomain);
+  TraceEmitter(this.receiver, String clockDomain)
+    : clockDomain = '$isolateClockDomain:$clockDomain' {
+    deliver(
+      AxtonTraceRecord(
+        kind: 'clock',
+        name: 'clock.origin',
+        source: 'dart',
+        clockDomain: this.clockDomain,
+        startUs: isolateClockUs(),
+        attributes: {
+          'referenceClockDomain': isolateClockDomain,
+          'offsetLowerUs': 0,
+          'offsetUpperUs': 0,
+          'method': 'shared-isolate-Stopwatch-origin',
+        },
+      ),
+    );
+  }
+
   void deliver(AxtonTraceRecord record) {
     try {
       receiver.record(record);
@@ -90,14 +115,18 @@ class TraceEmitter {
       );
   }
 
-  TraceSpan start(String name, [Map<String, Object?> attributes = const {}]) =>
-      TraceSpan._(
-        this,
-        name,
-        '${++_next}',
-        _clock.elapsedMicroseconds,
-        attributes,
-      );
+  TraceSpan start(
+    String name, [
+    Map<String, Object?> attributes = const {},
+    TraceSpan? parent,
+  ]) => TraceSpan._(
+    this,
+    name,
+    '${++_next}',
+    _clock.elapsedMicroseconds,
+    attributes,
+    parent?.id,
+  );
 }
 
 class TraceSpan {
@@ -106,8 +135,16 @@ class TraceSpan {
   final String id;
   final int startUs;
   final Map<String, Object?> attributes;
+  final String? parentSpanId;
   bool _ended = false;
-  TraceSpan._(this.emitter, this.name, this.id, this.startUs, this.attributes);
+  TraceSpan._(
+    this.emitter,
+    this.name,
+    this.id,
+    this.startUs,
+    this.attributes,
+    this.parentSpanId,
+  );
   void end([Map<String, Object?> result = const {}]) {
     if (_ended) return;
     _ended = true;
@@ -118,8 +155,9 @@ class TraceSpan {
         source: 'dart',
         clockDomain: emitter.clockDomain,
         startUs: startUs,
-        durationUs: emitter._clock.elapsedMicroseconds - startUs,
+        durationUs: TraceEmitter._clock.elapsedMicroseconds - startUs,
         spanId: id,
+        parentSpanId: parentSpanId,
         attributes: Map.unmodifiable({...attributes, ...result}),
       ),
     );

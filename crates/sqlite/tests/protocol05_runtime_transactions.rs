@@ -10,6 +10,7 @@ use std::sync::{
 };
 const NOW: u64 = 1000;
 const ENTROPY: u64 = 7;
+mod model_watch_incremental;
 struct Harness<S: ClientStore + 'static> {
     runtime: ClientRuntime<S>,
     _dir: tempfile::TempDir,

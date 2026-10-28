@@ -198,6 +198,7 @@ impl<S: ClientStore> Client<S> {
             watcher_ids: 0,
             session: None,
             last_changed: BTreeSet::new(),
+            model_changes: Default::default(),
             last_bootstrap: BTreeSet::new(),
         })
     }

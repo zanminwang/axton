@@ -1,10 +1,10 @@
 //! Filters run in SQL; ordering keeps the reference comparison rules (nulls first, UTF-16 order).
 use crate::engine::Engine;
 use crate::store::{ClientStore, SqlRows};
-use axton_core::{RecordKey, Result, ValueType, invalid};
+use axton_core::{ModelDescriptor, RecordKey, Result, Schema, ValueType, invalid};
 use serde_json::Value;
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub use axton_protocols::client_bridge::query::{Direction, QueryOrder, QuerySpec};
 fn compare(a: &Value, b: &Value) -> Ordering {
@@ -17,6 +17,47 @@ fn compare(a: &Value, b: &Value) -> Ordering {
         (Value::Number(a), Value::Number(b)) => a.as_f64().unwrap().total_cmp(&b.as_f64().unwrap()),
         _ => Ordering::Equal,
     }
+}
+pub(crate) fn compare_identity(model: &ModelDescriptor, a: &Value, b: &Value) -> Ordering {
+    for field in &model.identity {
+        let cmp = compare(&a[field], &b[field]);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+    }
+    Ordering::Equal
+}
+
+fn normalized_filter(
+    schema: &Schema,
+    model: &ModelDescriptor,
+    filter: &BTreeMap<String, Value>,
+) -> Result<Vec<(String, Value)>> {
+    filter
+        .iter()
+        .map(|(name, value)| {
+            let field = model
+                .fields
+                .iter()
+                .find(|field| field.name == *name)
+                .ok_or_else(|| invalid(format!("unknown query field {name}")))?;
+            if matches!(field.value_type, ValueType::List { .. }) {
+                return Err(invalid("list predicates unsupported"));
+            }
+            Ok((name.clone(), schema.normalize_value(field, value)?))
+        })
+        .collect()
+}
+
+pub(crate) fn evaluate_keys<S: ClientStore>(
+    engine: &mut Engine<'_, S>,
+    model: &str,
+    filter: &BTreeMap<String, Value>,
+    keys: &[RecordKey],
+) -> Result<Vec<Value>> {
+    let model = engine.schema.model(model)?.clone();
+    let filter = normalized_filter(engine.schema, &model, filter)?;
+    engine.rows_where_keys(&model, &filter, keys)
 }
 pub(crate) fn rows_to_objects(rows: SqlRows) -> Result<Vec<Value>> {
     if rows.columns.iter().collect::<BTreeSet<_>>().len() != rows.columns.len() {
@@ -44,14 +85,7 @@ pub fn evaluate<S: ClientStore>(
             .find(|f| f.name == name)
             .ok_or_else(|| invalid(format!("unknown query field {name}")))
     };
-    let mut filter = vec![];
-    for (name, value) in &spec.filter {
-        let field = field(name)?;
-        if matches!(field.value_type, ValueType::List { .. }) {
-            return Err(invalid("list predicates unsupported"));
-        }
-        filter.push((name.clone(), schema.normalize_value(field, value)?));
-    }
+    let filter = normalized_filter(schema, &model, &spec.filter)?;
     for order in &spec.order_by {
         if !matches!(field(&order.field)?.value_type, ValueType::Scalar { .. }) {
             return Err(invalid("ordering requires scalar field"));
@@ -69,13 +103,7 @@ pub fn evaluate<S: ClientStore>(
                 return cmp;
             }
         }
-        for field in &model.identity {
-            let cmp = compare(&a[field], &b[field]);
-            if cmp != Ordering::Equal {
-                return cmp;
-            }
-        }
-        Ordering::Equal
+        compare_identity(&model, a, b)
     });
     if let Some(limit) = spec.limit {
         rows.truncate(limit);

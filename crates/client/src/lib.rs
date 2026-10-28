@@ -1,7 +1,9 @@
-//! Client engine over per-model SQLite tables. No state lives in memory between calls.
+//! Client engine over per-model SQLite tables. Durable state lives in the Store;
+//! committed change candidates and observer caches are ephemeral projections.
 pub mod actions;
 pub mod authority;
 pub mod bootstrap;
+mod changes;
 pub mod ddl;
 mod defaults;
 pub mod engine;

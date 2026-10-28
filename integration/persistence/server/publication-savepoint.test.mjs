@@ -83,7 +83,6 @@ for (const [name, database] of adapters)
                   id,
                   id,
                 ]);
-                await backend.acquirePublicationFence(tx);
                 return backend.publish(tx, ({ stream: select, invalidate }) => {
                   invalidate.entry({ id });
                   select(stream).track.entry({ id });
@@ -227,7 +226,6 @@ for (const [name, first] of adapters)
               id,
               id,
             ]);
-            await backends[index].acquirePublicationFence(tx);
             return backends[index].publish(tx, ({ stream: select }) =>
               select(stream).track.entry(id),
             );

@@ -76,6 +76,67 @@ test("fresh namespace has only canonical identity, Store/result, StreamRecord fa
       "2",
     );
   }));
+test("retiring publication coordination preserves business and canonical facts across repeated installation", () =>
+  namespace(async (tx) => {
+    await tx.query(ddl);
+    await tx.query(`
+      CREATE TABLE business_entry(id text PRIMARY KEY, content text NOT NULL);
+      INSERT INTO business_entry VALUES('kept','unchanged');
+      INSERT INTO axton_stream VALUES('User:kept',3);
+      INSERT INTO axton_record(model,identity_key) VALUES('Entry','{"id":"kept"}');
+      INSERT INTO axton_stream_record SELECT 'User:kept',id,3,'upsert' FROM axton_record;
+      INSERT INTO axton_store(id,principal,stream,last_processed_batch_id,last_digest,last_count)
+        VALUES('kept','alice','User:kept',1,'retained',1);
+      INSERT INTO axton_mutation_result VALUES('kept',1,1,0,'{}');
+      CREATE TABLE axton_publication_fence(id integer PRIMARY KEY);
+      INSERT INTO axton_publication_fence VALUES(1);
+    `);
+    const snapshot = async () => {
+      const state = {};
+      for (const table of [
+        "business_entry",
+        "axton_stream",
+        "axton_record",
+        "axton_stream_record",
+        "axton_store",
+        "axton_mutation_result",
+      ])
+        state[table] = (await tx.query(`SELECT * FROM ${table}`)).rows;
+      return state;
+    };
+    const before = await snapshot();
+    for (let i = 0; i < 2; i++) {
+      await tx.query(ddl);
+      assert.equal(
+        (
+          await tx.query(
+            "SELECT to_regclass('axton_publication_fence') AS retired",
+          )
+        ).rows[0].retired,
+        null,
+      );
+      assert.deepEqual(await snapshot(), before);
+    }
+  }));
+test("legacy held-fence layout is refused before dropping its data", () =>
+  namespace(async (tx) => {
+    await tx.query(
+      "CREATE TABLE axton_publication_fence(id integer PRIMARY KEY,held boolean NOT NULL); INSERT INTO axton_publication_fence VALUES(1,true)",
+    );
+    await assert.rejects(tx.query(ddl), /fresh namespace/);
+    assert.deepEqual(
+      (await tx.query("SELECT * FROM axton_publication_fence")).rows,
+      [{ id: 1, held: true }],
+    );
+    assert.deepEqual(
+      (
+        await tx.query(
+          "SELECT tablename FROM pg_tables WHERE schemaname=current_schema()",
+        )
+      ).rows,
+      [{ tablename: "axton_publication_fence" }],
+    );
+  }));
 test("legacy namespace installation and Store admission refuse before any writes", () =>
   namespace(async (tx) => {
     await tx.query(

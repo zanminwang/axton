@@ -746,8 +746,6 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     closeLive: () => wakes.clear(),
     transaction,
     publish,
-    /** @deprecated Global publication fencing is retired; compatibility no-op. */
-    acquirePublicationFence: (_tx: T): Promise<void> => Promise.resolve(),
   };
   const authenticate = async (request: IncomingMessage) => {
     const id = await options.authenticate(request);

@@ -723,13 +723,11 @@ test("reused caller-owned PoolClient starts a fresh publication reservation afte
   await q("INSERT INTO v05_business VALUES($1,$2)", [id, "before"]);
   try {
     await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
-    await a.acquirePublicationFence(tx);
     await a.publish(tx, async ({ stream }) =>
       stream("User:reused").track.todo({ id }),
     );
     await tx.query("COMMIT");
     await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
-    await a.acquirePublicationFence(tx);
     await tx.query("UPDATE v05_business SET title=$2 WHERE id=$1", [
       id,
       "after",
@@ -909,7 +907,6 @@ for (const existing of [false, true])
       await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
       await tx.query("SAVEPOINT caller_act");
       await tx.query("INSERT INTO v05_business VALUES($1,'undone')", [undone]);
-      await backend.acquirePublicationFence(tx);
       const discardedWake = await backend.publish(
         tx,
         ({ stream: select, invalidate }) => {
@@ -920,7 +917,6 @@ for (const existing of [false, true])
       assert.equal(typeof discardedWake, "function");
       await tx.query("ROLLBACK TO SAVEPOINT caller_act");
       await tx.query("INSERT INTO v05_business VALUES($1,'kept')", [kept]);
-      await backend.acquirePublicationFence(tx);
       const wake = await backend.publish(
         tx,
         ({ stream: select, invalidate }) => {
@@ -977,7 +973,6 @@ test("reused caller-owned PoolClient restores reservations after full ROLLBACK",
       ["kept", true],
     ]) {
       await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
-      await backend.acquirePublicationFence(tx);
       await tx.query("INSERT INTO v05_business VALUES($1,$2)", [
         "reuse-" + id,
         id,

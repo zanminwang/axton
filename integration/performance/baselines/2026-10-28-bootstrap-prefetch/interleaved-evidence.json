@@ -1,0 +1,587 @@
+{
+  "commit": "23595a3db9d3638404c118f88cc3f0ffa009ad61",
+  "experiment": {
+    "purpose": "Interleaved live single-write regression check",
+    "sequence": [
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true
+    ],
+    "runnerSha256": "0e5becd92e6b48e99ccb39fe8e2de94780621307a0f6690ab100b5455d2c0c15",
+    "selection": "Five per condition; off/on, on/off pairs alternate; same fixture and measurement boundaries"
+  },
+  "comparison": [
+    {
+      "case": "live-sync/10000/1",
+      "metric": "localCommitMs",
+      "before": 2.048,
+      "after": 1.934,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -5.56640625
+    },
+    {
+      "case": "live-sync/10000/1",
+      "metric": "serverTransactionMs",
+      "before": 17.844,
+      "after": 17.741,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -0.5772248374803945
+    },
+    {
+      "case": "live-sync/10000/1",
+      "metric": "settlementMs",
+      "before": 28.892,
+      "after": 31.917,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 10.470026304859491
+    },
+    {
+      "case": "live-sync/10000/1",
+      "metric": "bVisibleMs",
+      "before": 29.25,
+      "after": 30.91,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 5.675213675213686
+    },
+    {
+      "case": "live-sync/10000/1",
+      "metric": "allVisibleMs",
+      "before": 29.254,
+      "after": 30.915,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 5.677856019689598
+    },
+    {
+      "case": "live-sync/10000/1",
+      "metric": "allSettledMs",
+      "before": 28.903,
+      "after": 31.927,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 10.46258173891983
+    },
+    {
+      "case": "live-sync/10000/1",
+      "metric": "entriesPerSecond",
+      "before": 34.18335954057565,
+      "after": 32.34675723758693,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -5.372796377163214
+    }
+  ],
+  "runs": [
+    {
+      "sequenceIndex": 0,
+      "enabled": false,
+      "repetition": 1,
+      "metrics": {
+        "localCommitMs": [
+          2.394
+        ],
+        "serverTransactionMs": [
+          26.563
+        ],
+        "settlementMs": [
+          40.901
+        ],
+        "bVisibleMs": [
+          41.246
+        ],
+        "allVisibleMs": [
+          41.253
+        ],
+        "allSettledMs": [
+          40.914
+        ],
+        "entriesPerSecond": [
+          24.240661285239863
+        ]
+      },
+      "bApplyMs": 0.551,
+      "transactionStartMs": 5.8595,
+      "transactionEndMs": 32.4225,
+      "commitToBVisibleMs": 8.8235,
+      "frameworkSql": 41,
+      "ordinaryPulls": 0
+    },
+    {
+      "sequenceIndex": 1,
+      "enabled": true,
+      "repetition": 1,
+      "metrics": {
+        "localCommitMs": [
+          2.448
+        ],
+        "serverTransactionMs": [
+          17.582
+        ],
+        "settlementMs": [
+          33.081
+        ],
+        "bVisibleMs": [
+          32.115
+        ],
+        "allVisibleMs": [
+          32.125
+        ],
+        "allSettledMs": [
+          33.097
+        ],
+        "entriesPerSecond": [
+          31.1284046692607
+        ]
+      },
+      "bApplyMs": 0.521,
+      "transactionStartMs": 5.424,
+      "transactionEndMs": 23.006,
+      "commitToBVisibleMs": 9.109,
+      "frameworkSql": 41,
+      "ordinaryPulls": 0
+    },
+    {
+      "sequenceIndex": 2,
+      "enabled": true,
+      "repetition": 2,
+      "metrics": {
+        "localCommitMs": [
+          1.934
+        ],
+        "serverTransactionMs": [
+          17.741
+        ],
+        "settlementMs": [
+          28.302
+        ],
+        "bVisibleMs": [
+          28.792
+        ],
+        "allVisibleMs": [
+          28.796
+        ],
+        "allSettledMs": [
+          28.312
+        ],
+        "entriesPerSecond": [
+          34.727045422975415
+        ]
+      },
+      "bApplyMs": 0.407,
+      "transactionStartMs": 4.557,
+      "transactionEndMs": 22.298,
+      "commitToBVisibleMs": 6.494,
+      "frameworkSql": 41,
+      "ordinaryPulls": 0
+    },
+    {
+      "sequenceIndex": 3,
+      "enabled": false,
+      "repetition": 2,
+      "metrics": {
+        "localCommitMs": [
+          1.57
+        ],
+        "serverTransactionMs": [
+          16.986
+        ],
+        "settlementMs": [
+          28.892
+        ],
+        "bVisibleMs": [
+          29.147
+        ],
+        "allVisibleMs": [
+          29.152
+        ],
+        "allSettledMs": [
+          28.903
+        ],
+        "entriesPerSecond": [
+          34.30296377607025
+        ]
+      },
+      "bApplyMs": 0.518,
+      "transactionStartMs": 4.6945,
+      "transactionEndMs": 21.6805,
+      "commitToBVisibleMs": 7.4665,
+      "frameworkSql": 41,
+      "ordinaryPulls": 0
+    },
+    {
+      "sequenceIndex": 4,
+      "enabled": false,
+      "repetition": 3,
+      "metrics": {
+        "localCommitMs": [
+          1.124
+        ],
+        "serverTransactionMs": [
+          15.462
+        ],
+        "settlementMs": [
+          28.317
+        ],
+        "bVisibleMs": [
+          29.25
+        ],
+        "allVisibleMs": [
+          29.254
+        ],
+        "allSettledMs": [
+          28.328
+        ],
+        "entriesPerSecond": [
+          34.18335954057565
+        ]
+      },
+      "bApplyMs": 0.553,
+      "transactionStartMs": 3.9355,
+      "transactionEndMs": 19.3975,
+      "commitToBVisibleMs": 9.8525,
+      "frameworkSql": 41,
+      "ordinaryPulls": 0
+    },
+    {
+      "sequenceIndex": 5,
+      "enabled": true,
+      "repetition": 3,
+      "metrics": {
+        "localCommitMs": [
+          0.877
+        ],
+        "serverTransactionMs": [
+          16.616
+        ],
+        "settlementMs": [
+          28.408
+        ],
+        "bVisibleMs": [
+          28.706
+        ],
+        "allVisibleMs": [
+          28.71
+        ],
+        "allSettledMs": [
+          28.418
+        ],
+        "entriesPerSecond": [
+          34.83106931382793
+        ]
+      },
+      "bApplyMs": 1.658,
+      "transactionStartMs": 3.555,
+      "transactionEndMs": 20.171,
+      "commitToBVisibleMs": 8.535,
+      "frameworkSql": 41,
+      "ordinaryPulls": 0
+    },
+    {
+      "sequenceIndex": 6,
+      "enabled": true,
+      "repetition": 4,
+      "metrics": {
+        "localCommitMs": [
+          2.125
+        ],
+        "serverTransactionMs": [
+          17.802
+        ],
+        "settlementMs": [
+          31.917
+        ],
+        "bVisibleMs": [
+          30.91
+        ],
+        "allVisibleMs": [
+          30.915
+        ],
+        "allSettledMs": [
+          31.927
+        ],
+        "entriesPerSecond": [
+          32.34675723758693
+        ]
+      },
+      "bApplyMs": 0.566,
+      "transactionStartMs": 5.2475,
+      "transactionEndMs": 23.0495,
+      "commitToBVisibleMs": 7.8605,
+      "frameworkSql": 41,
+      "ordinaryPulls": 0
+    },
+    {
+      "sequenceIndex": 7,
+      "enabled": false,
+      "repetition": 4,
+      "metrics": {
+        "localCommitMs": [
+          2.048
+        ],
+        "serverTransactionMs": [
+          17.844
+        ],
+        "settlementMs": [
+          28.513
+        ],
+        "bVisibleMs": [
+          28.874
+        ],
+        "allVisibleMs": [
+          28.878
+        ],
+        "allSettledMs": [
+          28.522
+        ],
+        "entriesPerSecond": [
+          34.62843687235958
+        ]
+      },
+      "bApplyMs": 0.443,
+      "transactionStartMs": 4.572,
+      "transactionEndMs": 22.416,
+      "commitToBVisibleMs": 6.458,
+      "frameworkSql": 41,
+      "ordinaryPulls": 0
+    },
+    {
+      "sequenceIndex": 8,
+      "enabled": false,
+      "repetition": 5,
+      "metrics": {
+        "localCommitMs": [
+          2.134
+        ],
+        "serverTransactionMs": [
+          31.081
+        ],
+        "settlementMs": [
+          46.152
+        ],
+        "bVisibleMs": [
+          45.017
+        ],
+        "allVisibleMs": [
+          45.023
+        ],
+        "allSettledMs": [
+          46.163
+        ],
+        "entriesPerSecond": [
+          22.21086999977789
+        ]
+      },
+      "bApplyMs": 0.744,
+      "transactionStartMs": 5.7385,
+      "transactionEndMs": 36.8195,
+      "commitToBVisibleMs": 8.1975,
+      "frameworkSql": 41,
+      "ordinaryPulls": 0
+    },
+    {
+      "sequenceIndex": 9,
+      "enabled": true,
+      "repetition": 5,
+      "metrics": {
+        "localCommitMs": [
+          1.729
+        ],
+        "serverTransactionMs": [
+          20.572
+        ],
+        "settlementMs": [
+          33.926
+        ],
+        "bVisibleMs": [
+          34.156
+        ],
+        "allVisibleMs": [
+          34.161
+        ],
+        "allSettledMs": [
+          33.937
+        ],
+        "entriesPerSecond": [
+          29.273147741576654
+        ]
+      },
+      "bApplyMs": 0.509,
+      "transactionStartMs": 4.218,
+      "transactionEndMs": 24.79,
+      "commitToBVisibleMs": 9.366,
+      "frameworkSql": 41,
+      "ordinaryPulls": 0
+    }
+  ],
+  "conditions": {
+    "off": {
+      "metrics": {
+        "localCommitMs": {
+          "n": 5,
+          "median": 2.048,
+          "min": 1.124,
+          "max": 2.394
+        },
+        "serverTransactionMs": {
+          "n": 5,
+          "median": 17.844,
+          "min": 15.462,
+          "max": 31.081
+        },
+        "settlementMs": {
+          "n": 5,
+          "median": 28.892,
+          "min": 28.317,
+          "max": 46.152
+        },
+        "bVisibleMs": {
+          "n": 5,
+          "median": 29.25,
+          "min": 28.874,
+          "max": 45.017
+        },
+        "allVisibleMs": {
+          "n": 5,
+          "median": 29.254,
+          "min": 28.878,
+          "max": 45.023
+        },
+        "allSettledMs": {
+          "n": 5,
+          "median": 28.903,
+          "min": 28.328,
+          "max": 46.163
+        },
+        "entriesPerSecond": {
+          "n": 5,
+          "median": 34.18335954057565,
+          "min": 22.21086999977789,
+          "max": 34.62843687235958
+        }
+      },
+      "bApplyMs": {
+        "n": 5,
+        "median": 0.551,
+        "min": 0.443,
+        "max": 0.744
+      }
+    },
+    "on": {
+      "metrics": {
+        "localCommitMs": {
+          "n": 5,
+          "median": 1.934,
+          "min": 0.877,
+          "max": 2.448
+        },
+        "serverTransactionMs": {
+          "n": 5,
+          "median": 17.741,
+          "min": 16.616,
+          "max": 20.572
+        },
+        "settlementMs": {
+          "n": 5,
+          "median": 31.917,
+          "min": 28.302,
+          "max": 33.926
+        },
+        "bVisibleMs": {
+          "n": 5,
+          "median": 30.91,
+          "min": 28.706,
+          "max": 34.156
+        },
+        "allVisibleMs": {
+          "n": 5,
+          "median": 30.915,
+          "min": 28.71,
+          "max": 34.161
+        },
+        "allSettledMs": {
+          "n": 5,
+          "median": 31.927,
+          "min": 28.312,
+          "max": 33.937
+        },
+        "entriesPerSecond": {
+          "n": 5,
+          "median": 32.34675723758693,
+          "min": 29.273147741576654,
+          "max": 34.83106931382793
+        }
+      },
+      "bApplyMs": {
+        "n": 5,
+        "median": 0.521,
+        "min": 0.407,
+        "max": 1.658
+      }
+    }
+  },
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "off",
+        "on"
+      ],
+      "bVisibleDifferenceMs": -9.131,
+      "serverTransactionDifferenceMs": -8.980999999999998
+    },
+    {
+      "pair": 2,
+      "order": [
+        "on",
+        "off"
+      ],
+      "bVisibleDifferenceMs": -0.3549999999999969,
+      "serverTransactionDifferenceMs": 0.754999999999999
+    },
+    {
+      "pair": 3,
+      "order": [
+        "off",
+        "on"
+      ],
+      "bVisibleDifferenceMs": -0.5440000000000005,
+      "serverTransactionDifferenceMs": 1.154
+    },
+    {
+      "pair": 4,
+      "order": [
+        "on",
+        "off"
+      ],
+      "bVisibleDifferenceMs": 2.0360000000000014,
+      "serverTransactionDifferenceMs": -0.04200000000000159
+    },
+    {
+      "pair": 5,
+      "order": [
+        "off",
+        "on"
+      ],
+      "bVisibleDifferenceMs": -10.861000000000004,
+      "serverTransactionDifferenceMs": -10.509
+    }
+  ],
+  "pairedBVisibleDifferenceMs": {
+    "n": 5,
+    "median": -0.5440000000000005,
+    "min": -10.861000000000004,
+    "max": 2.0360000000000014
+  },
+  "maxPlacementUncertaintyUs": 33
+}

@@ -43,6 +43,43 @@ variation, warm-state effects or the experiment. They do not establish the
 absence of a live regression. All observations are retained; this experiment
 does not enable prefetch by default.
 
+### Interleaved single-write check
+
+A focused follow-up at `23595a3` reuses the exact same native/Dart binaries and
+source fingerprint. This intervening commit only archives the first campaign.
+The frozen diagnostic runner changes sample order, not fixture or timing
+boundaries: ten fresh N = 10,000 live samples alternate off/on and on/off pairs,
+five samples per condition. All ten passed state, backend and clock checks;
+maximum clock placement uncertainty is ±33 microseconds.
+
+| Single-write metric (ms) | Prefetch off | Prefetch on |
+| --- | ---: | ---: |
+| B visible: median [min, max] | 29.250 [28.874, 45.017] | 30.910 [28.706, 34.156] |
+| A settlement: median [min, max] | 28.892 [28.317, 46.152] | 31.917 [28.302, 33.926] |
+| Server transaction median | 17.844 | 17.741 |
+| B apply median | 0.551 | 0.521 |
+
+The difference between condition B-visible medians is now +1.660 ms (+5.7%),
+rather than the original +8.131 ms (+29.5%). Four adjacent pairs favor on and
+one favors off. Paired on-minus-off differences have median -0.544 ms and range
+[-10.861, +2.036] ms. Thus this check does not reproduce a stable 8.131 ms penalty;
+it also does not establish zero regression. There was no implementation fix
+between campaigns, and the 100-write case was not retested in this follow-up.
+Both original campaigns and the complete interleaved check remain archived.
+
+Every follow-up sample still has 41 framework SQL calls, zero ordinary repair
+Pulls and one B apply. The original first-campaign B-apply median was 0.556 ms
+off and 0.475 ms on, while the backend transaction medians differed more. These
+observations narrow the investigation; they do not identify the cause of the
+wall-time differences. Prefetch remains opt-in.
+
+`interleaved-live.json.gz` retains the ten raw observations,
+`interleaved-evidence.json` includes every ordered/paired measurement, and the
+two `interleaved-*-single.trace.json` files select each condition's median-B
+sample. `audit-live.mjs` verifies source/artifact/machine compatibility, the
+frozen runner hash, all final states and clock correlations, SQL/Pull counts,
+and derives these measurements.
+
 The improvement is in the interval between initial pages. First-page latency
 does not show a comparable improvement. Store-open observations also vary
 substantially (off 6.433–177.699 ms; on 24.431–63.283 ms).
@@ -127,6 +164,22 @@ the derived evidence, selected traces and SVG from any directory:
 ```sh
 node integration/performance/baselines/2026-10-28-bootstrap-prefetch/audit.mjs
 node integration/performance/baselines/2026-10-28-bootstrap-prefetch/render.mjs
+node integration/performance/baselines/2026-10-28-bootstrap-prefetch/audit-live.mjs
+```
+
+To repeat the fixed ten-sample live check immediately after a regular release
+run, without changing source/artifacts, copy its frozen runner to the ignored
+artifacts directory so its normal repository-relative imports resolve:
+
+```sh
+cp integration/performance/baselines/2026-10-28-bootstrap-prefetch/interleaved-runner.mjs \
+  artifacts/performance/prefetch-live-check.mjs
+cp integration/performance/baselines/2026-10-28-bootstrap-prefetch/interleaved-runner.sh \
+  artifacts/performance/prefetch-live-check.sh
+AXTON_PERFORMANCE_SKIP_BUILD=1 \
+bash artifacts/performance/prefetch-live-check.sh --samples 5 --sizes 10000 \
+  --writes 1 --timeout-ms 120000 \
+  --output /tmp/axton-bootstrap-prefetch-interleaved-live-v3.json
 ```
 
 Before measurement, client/sqlite tests passed (229 passed, 7 ignored), strict

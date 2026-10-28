@@ -25,7 +25,7 @@ authority, B/C, schema and settlement ownership.
   compatibility contract or public SDK/protocol fields.
 - [x] Run client/sqlite tests and strict Clippy, then real host E2E with the
   experiment enabled. Update the owning downlink documentation.
-- [ ] Commit implementation, rebuild release native/Dart AOT, then run serial
+- [x] Commit implementation, rebuild release native/Dart AOT, then run serial
   off/on comparisons at identical sizes/repetitions/instrumentation. Audit all
   samples and clocks, archive results and show a shared-axis timing figure.
 
@@ -35,3 +35,20 @@ prefetch enabled, and report/timeline Node tests 12 passed. Independent review
 found an auth-refresh waiter retirement/duplicate-request path; three regressions
 first reproduced it, then passed with the fix. Follow-up review found no remaining
 issues. Implementation remains opt-in, with no merge or release in this experiment.
+
+Measurement complete at clean `ab1c3bfb`, using identical binaries for off/on.
+All 30 samples passed, and all clocks aligned. Initial 10k all-visible median
+1971.997 → 1324.754 ms (-32.8%). Live single B-visible 27.552 → 35.683 ms
+(+29.5%); 100-write all-visible 1673.770 → 1758.070 ms (+5.0%). These live
+differences remain unattributed in five serial repetitions. The experiment stays
+disabled by default. Full raw results, audit, selected shared-axis traces and
+figure live in `integration/performance/baselines/2026-10-28-bootstrap-prefetch/`.
+
+A follow-up interleaved live single-write check reused the exact binaries and
+source fingerprint, five samples per condition, all ten passing. B-visible
+medians 29.250 → 30.910 ms (+1.660 ms); four adjacent pairs favored on, one off,
+with paired median -0.544 ms. The original +8.131 ms difference did not reproduce
+stably; zero regression is not established, and the 100-write follow-up remains
+unmeasured. No runtime fix was made, and no default enablement/merge/release is
+authorized by this experiment. Its raw data, frozen runner, audit and selected
+traces are archived beside the original campaign.

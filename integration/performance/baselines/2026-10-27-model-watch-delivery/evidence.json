@@ -1,0 +1,1148 @@
+{
+  "contract": {
+    "schemaVersion": 1,
+    "stageInstrumentation": 3,
+    "clockCorrelation": "bounded-monotonic-v1",
+    "boundaries": "sync-performance-v2",
+    "fixtureSchemaSha256": "1a43ae379aabf5e5219fef6c9ca0294d4bad2f0d76b8e5945d969bc1c0cd8320",
+    "textBytes": 512,
+    "fixtureBatchSize": 100,
+    "sdk": "dart",
+    "nativeProfile": "release",
+    "dartMode": "aot",
+    "diagnostics": true,
+    "watch": "full Entry model snapshots; first expected nonempty snapshot",
+    "initialCondition": "fresh process and SQLite files per sample; native library prepared and clock calibration before timing; application configuration/open/connect/bootstrap timed; process startup excluded",
+    "cacheCondition": "new PostgreSQL database per sample; fixture just written; OS/PostgreSQL caches are not flushed",
+    "liveCondition": "two initialized Stores in one process; await each local commit, do not await settlement before next write"
+  },
+  "before": {
+    "commit": "9895d13cc5b45b06bf6408edd5822bd3e9412d9a",
+    "build": {
+      "sourceSha256": "e57a81910bc420febc752ee13f9976e965eb6179a7e0cf1c22d5b6cdb8dea5fb",
+      "artifacts": {
+        "bindings/node/axton-node.node": "1a8ec795a61305056e47d014c8bcb3a095292c8ab1818efe725fa1883287728e",
+        "target/release/libaxton_dart.dylib": "324fc55366068d96bc3c9e29a5e8a398a29a69d8a0d566b7a9056926f152a3dc",
+        "artifacts/performance/initial-sync": "8c68f5626d670e5636fe34f6166ebec05c099d815bf6cf86348d75ea0d739755",
+        "artifacts/performance/live-sync": "ba46e19994eff1d13f2e8dc0319ec709311c2956a2f0c2148b3be1cd4ed02989"
+      }
+    },
+    "samples": 27,
+    "maxPlacementUncertaintyUs": 36,
+    "recordReports": 869,
+    "selectedSingle": {
+      "sampleIndex": 22,
+      "repetition": 2,
+      "writeStartUs": 7,
+      "backend": {
+        "timeAxis": "milliseconds from shared scenario measurement start",
+        "transactionStartMs": 4.203,
+        "transactionEndMs": 23.68,
+        "transactionDurationMs": 19.477,
+        "frameworkSqlCalls": 17,
+        "phases": [
+          {
+            "name": "postgres.acquire",
+            "startMs": 4.208,
+            "endMs": 4.23,
+            "durationMs": 0.022
+          },
+          {
+            "name": "host.beginBatch",
+            "startMs": 5.729,
+            "endMs": 7.101,
+            "durationMs": 1.372
+          },
+          {
+            "name": "handler.invoke",
+            "startMs": 7.456,
+            "endMs": 7.876,
+            "durationMs": 0.42
+          },
+          {
+            "name": "host.readTracking",
+            "startMs": 7.967,
+            "endMs": 9.81,
+            "durationMs": 1.843
+          },
+          {
+            "name": "host.readTracking",
+            "startMs": 10.928,
+            "endMs": 12.915,
+            "durationMs": 1.987
+          },
+          {
+            "name": "host.applyStreamMembers",
+            "startMs": 13.022,
+            "endMs": 18.514,
+            "durationMs": 5.492
+          },
+          {
+            "name": "host.targetPositions",
+            "startMs": 18.734,
+            "endMs": 20.136,
+            "durationMs": 1.402
+          },
+          {
+            "name": "postgres.commit",
+            "startMs": 22.24,
+            "endMs": 23.664,
+            "durationMs": 1.424
+          }
+        ]
+      },
+      "localCommitMs": 1.348,
+      "settlementMs": 31.854,
+      "bVisibleMs": 64.462,
+      "maxPlacementUncertaintyUs": 28.5,
+      "stages": {
+        "delivery.apply": {
+          "count": 1,
+          "totalMs": 0.772,
+          "maxMs": 0.772
+        },
+        "watch.read": {
+          "count": 1,
+          "totalMs": 0.1,
+          "maxMs": 0.1
+        },
+        "watch.convert": {
+          "count": 1,
+          "totalMs": 0.212,
+          "maxMs": 0.212
+        },
+        "watch.compare": {
+          "count": 1,
+          "totalMs": 0.02,
+          "maxMs": 0.02
+        },
+        "watch.snapshot": {
+          "count": 1,
+          "totalMs": 2.06,
+          "maxMs": 2.06
+        },
+        "bridge.nativeDrain": {
+          "count": 3,
+          "totalMs": 14.896,
+          "maxMs": 14.83
+        },
+        "bridge.decode": {
+          "count": 3,
+          "totalMs": 12.422,
+          "maxMs": 12.393
+        },
+        "watch.enqueue": {
+          "count": 1,
+          "totalMs": 0.003,
+          "maxMs": 0.003
+        }
+      },
+      "warning": "Source elapsed spans can overlap or nest. Totals do not form an end-to-end partition. watch.enqueue includes the synchronous SDK receiver after optimization."
+    }
+  },
+  "after": {
+    "commit": "74b8967c843d477b9514a08fb3f8fa196b18a1e0",
+    "build": {
+      "sourceSha256": "5bfedb6f95618fcfcdebd38ebd99aa2306ec9c8ee25e27f97e5191002faa8f2a",
+      "artifacts": {
+        "bindings/node/axton-node.node": "d6d0f30a8e9f53262cd8fff4224c49d43eb19c5a5a7e6b3a75f5e721ab64178c",
+        "target/release/libaxton_dart.dylib": "51d50e38c6b2250e3276743d8b3bdb5953bd360c995d7be772016aed2b07f2dd",
+        "artifacts/performance/initial-sync": "0a52a80857c632f1e2e1089d16cf859d804307ba2a0e2acce77c7ef4ae64cb22",
+        "artifacts/performance/live-sync": "e57c2a0994ea9cdd2478cb7791a4e1c56978661775a49fc89a8ad756a2e76a28"
+      }
+    },
+    "samples": 45,
+    "maxPlacementUncertaintyUs": 39,
+    "recordReports": 1455,
+    "selectedSingle": {
+      "sampleIndex": 35,
+      "repetition": 1,
+      "writeStartUs": 4,
+      "backend": {
+        "timeAxis": "milliseconds from shared scenario measurement start",
+        "transactionStartMs": 4.6725,
+        "transactionEndMs": 20.1985,
+        "transactionDurationMs": 15.526,
+        "frameworkSqlCalls": 17,
+        "phases": [
+          {
+            "name": "postgres.acquire",
+            "startMs": 4.6835,
+            "endMs": 4.7115,
+            "durationMs": 0.028
+          },
+          {
+            "name": "host.beginBatch",
+            "startMs": 6.0695,
+            "endMs": 7.2355,
+            "durationMs": 1.166
+          },
+          {
+            "name": "handler.invoke",
+            "startMs": 7.6065,
+            "endMs": 8.0195,
+            "durationMs": 0.413
+          },
+          {
+            "name": "host.readTracking",
+            "startMs": 8.0925,
+            "endMs": 9.7125,
+            "durationMs": 1.62
+          },
+          {
+            "name": "host.readTracking",
+            "startMs": 10.7345,
+            "endMs": 12.1855,
+            "durationMs": 1.451
+          },
+          {
+            "name": "host.applyStreamMembers",
+            "startMs": 12.2265,
+            "endMs": 15.6135,
+            "durationMs": 3.387
+          },
+          {
+            "name": "host.targetPositions",
+            "startMs": 15.7995,
+            "endMs": 17.0765,
+            "durationMs": 1.277
+          },
+          {
+            "name": "postgres.commit",
+            "startMs": 19.3585,
+            "endMs": 20.1805,
+            "durationMs": 0.822
+          }
+        ]
+      },
+      "localCommitMs": 1.737,
+      "settlementMs": 28.358,
+      "bVisibleMs": 28.644,
+      "maxPlacementUncertaintyUs": 33.5,
+      "stages": {
+        "delivery.apply": {
+          "count": 1,
+          "totalMs": 0.842,
+          "maxMs": 0.842
+        },
+        "watch.read": {
+          "count": 1,
+          "totalMs": 0.049,
+          "maxMs": 0.049
+        },
+        "watch.convert": {
+          "count": 1,
+          "totalMs": 0.006,
+          "maxMs": 0.006
+        },
+        "watch.compare": {
+          "count": 1,
+          "totalMs": 0.02,
+          "maxMs": 0.02
+        },
+        "watch.snapshot": {
+          "count": 1,
+          "totalMs": 0.002,
+          "maxMs": 0.002
+        },
+        "bridge.nativeDrain": {
+          "count": 3,
+          "totalMs": 0.074,
+          "maxMs": 0.052
+        },
+        "bridge.decode": {
+          "count": 3,
+          "totalMs": 0.044,
+          "maxMs": 0.035
+        },
+        "watch.enqueue": {
+          "count": 1,
+          "totalMs": 0.135,
+          "maxMs": 0.135
+        }
+      },
+      "warning": "Source elapsed spans can overlap or nest. Totals do not form an end-to-end partition. watch.enqueue includes the synchronous SDK receiver after optimization."
+    }
+  },
+  "cases": [
+    {
+      "key": "initial-sync/100/0",
+      "metrics": {
+        "storeOpenMs": {
+          "before": {
+            "n": 3,
+            "median": 3.587,
+            "min": 3.31,
+            "max": 9.345
+          },
+          "after": {
+            "n": 5,
+            "median": 3.327,
+            "min": 3.083,
+            "max": 5.907
+          },
+          "medianRatio": 0.9275160301087259
+        },
+        "firstVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 37.087,
+            "min": 35.769,
+            "max": 65.085
+          },
+          "after": {
+            "n": 5,
+            "median": 36.124,
+            "min": 34.385,
+            "max": 50.738
+          },
+          "medianRatio": 0.9740340280960983
+        },
+        "allVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 37.087,
+            "min": 35.769,
+            "max": 65.085
+          },
+          "after": {
+            "n": 5,
+            "median": 36.124,
+            "min": 34.385,
+            "max": 50.738
+          },
+          "medianRatio": 0.9740340280960983
+        },
+        "bootstrapMs": {
+          "before": {
+            "n": 3,
+            "median": 37.052,
+            "min": 35.733,
+            "max": 65.048
+          },
+          "after": {
+            "n": 5,
+            "median": 36.096,
+            "min": 34.35,
+            "max": 50.713
+          },
+          "medianRatio": 0.9741984238367699
+        }
+      }
+    },
+    {
+      "key": "initial-sync/1000/0",
+      "metrics": {
+        "storeOpenMs": {
+          "before": {
+            "n": 3,
+            "median": 4.217,
+            "min": 3.434,
+            "max": 27.569
+          },
+          "after": {
+            "n": 5,
+            "median": 3.338,
+            "min": 3.165,
+            "max": 3.958
+          },
+          "medianRatio": 0.7915579796063553
+        },
+        "firstVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 110.074,
+            "min": 108.978,
+            "max": 130.583
+          },
+          "after": {
+            "n": 5,
+            "median": 103.524,
+            "min": 102.765,
+            "max": 109.985
+          },
+          "medianRatio": 0.9404945763758926
+        },
+        "allVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 206.139,
+            "min": 199.638,
+            "max": 232.081
+          },
+          "after": {
+            "n": 5,
+            "median": 194.328,
+            "min": 192.768,
+            "max": 201.279
+          },
+          "medianRatio": 0.9427037096328206
+        },
+        "bootstrapMs": {
+          "before": {
+            "n": 3,
+            "median": 206.045,
+            "min": 199.544,
+            "max": 231.986
+          },
+          "after": {
+            "n": 5,
+            "median": 194.3,
+            "min": 192.739,
+            "max": 201.251
+          },
+          "medianRatio": 0.9429978888106968
+        }
+      }
+    },
+    {
+      "key": "initial-sync/10000/0",
+      "metrics": {
+        "storeOpenMs": {
+          "before": {
+            "n": 3,
+            "median": 28.701,
+            "min": 4.545,
+            "max": 34.137
+          },
+          "after": {
+            "n": 5,
+            "median": 23.831,
+            "min": 21.774,
+            "max": 29.703
+          },
+          "medianRatio": 0.8303195010626807
+        },
+        "firstVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 136.246,
+            "min": 115.153,
+            "max": 179.251
+          },
+          "after": {
+            "n": 5,
+            "median": 135.345,
+            "min": 127.582,
+            "max": 148.32
+          },
+          "medianRatio": 0.9933869618190625
+        },
+        "allVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 2201.035,
+            "min": 2178.364,
+            "max": 2257.126
+          },
+          "after": {
+            "n": 5,
+            "median": 1923.484,
+            "min": 1916.93,
+            "max": 1987.102
+          },
+          "medianRatio": 0.873899778967622
+        },
+        "bootstrapMs": {
+          "before": {
+            "n": 3,
+            "median": 2200.495,
+            "min": 2177.739,
+            "max": 2256.541
+          },
+          "after": {
+            "n": 5,
+            "median": 1923.455,
+            "min": 1916.904,
+            "max": 1987.059
+          },
+          "medianRatio": 0.8741010545354568
+        }
+      }
+    },
+    {
+      "key": "live-sync/100/1",
+      "metrics": {
+        "localCommitMs": {
+          "before": {
+            "n": 3,
+            "median": 0.781,
+            "min": 0.72,
+            "max": 1.14
+          },
+          "after": {
+            "n": 5,
+            "median": 0.711,
+            "min": 0.651,
+            "max": 1.621
+          },
+          "medianRatio": 0.9103713188220229
+        },
+        "serverTransactionMs": {
+          "before": {
+            "n": 3,
+            "median": 13.737,
+            "min": 11.481,
+            "max": 14.187
+          },
+          "after": {
+            "n": 5,
+            "median": 9.806,
+            "min": 8.534,
+            "max": 12.946
+          },
+          "medianRatio": 0.7138385382543495
+        },
+        "settlementMs": {
+          "before": {
+            "n": 3,
+            "median": 26.812,
+            "min": 24.566,
+            "max": 28.17
+          },
+          "after": {
+            "n": 5,
+            "median": 24.096,
+            "min": 17.287,
+            "max": 27.171
+          },
+          "medianRatio": 0.898702073698344
+        },
+        "bVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 26.705,
+            "min": 24.431,
+            "max": 28.736
+          },
+          "after": {
+            "n": 5,
+            "median": 24.179,
+            "min": 17.881,
+            "max": 27.307
+          },
+          "medianRatio": 0.9054109717281408
+        },
+        "allVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 26.709,
+            "min": 24.434,
+            "max": 28.739
+          },
+          "after": {
+            "n": 5,
+            "median": 24.182,
+            "min": 17.884,
+            "max": 27.31
+          },
+          "medianRatio": 0.9053876970309633
+        },
+        "allSettledMs": {
+          "before": {
+            "n": 3,
+            "median": 26.822,
+            "min": 24.576,
+            "max": 28.179
+          },
+          "after": {
+            "n": 5,
+            "median": 24.106,
+            "min": 17.296,
+            "max": 27.199
+          },
+          "medianRatio": 0.8987398404294983
+        },
+        "entriesPerSecond": {
+          "before": {
+            "n": 3,
+            "median": 37.44056310606911,
+            "min": 34.79592191795121,
+            "max": 40.926577719571085
+          },
+          "after": {
+            "n": 5,
+            "median": 41.35307253328923,
+            "min": 36.61662394727206,
+            "max": 55.91590248266607
+          },
+          "medianRatio": 1.1044992142916221
+        }
+      }
+    },
+    {
+      "key": "live-sync/100/100",
+      "metrics": {
+        "localCommitMs": {
+          "before": {
+            "n": 300,
+            "median": 1.6865,
+            "min": 0.628,
+            "max": 20.801,
+            "p95": 2.939
+          },
+          "after": {
+            "n": 500,
+            "median": 1.6375,
+            "min": 0.654,
+            "max": 27.559,
+            "p95": 2.875
+          },
+          "medianRatio": 0.9709457456270382
+        },
+        "serverTransactionMs": {
+          "before": {
+            "n": 300,
+            "median": 10.2395,
+            "min": 7.997,
+            "max": 48.832,
+            "p95": 14.991
+          },
+          "after": {
+            "n": 500,
+            "median": 10.123000000000001,
+            "min": 8.053,
+            "max": 48.346,
+            "p95": 13.1
+          },
+          "medianRatio": 0.9886224913325847
+        },
+        "settlementMs": {
+          "before": {
+            "n": 300,
+            "median": 735.187,
+            "min": 42.825,
+            "max": 1169.29,
+            "p95": 1139.179
+          },
+          "after": {
+            "n": 500,
+            "median": 613.462,
+            "min": 41.788,
+            "max": 1124.84,
+            "p95": 1073.079
+          },
+          "medianRatio": 0.8344298797448813
+        },
+        "bVisibleMs": {
+          "before": {
+            "n": 300,
+            "median": 589.85,
+            "min": 21.278,
+            "max": 1062.318,
+            "p95": 971.137
+          },
+          "after": {
+            "n": 500,
+            "median": 533.767,
+            "min": 19.808,
+            "max": 963.876,
+            "p95": 916.201
+          },
+          "medianRatio": 0.9049198948885311
+        },
+        "allVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 1194.726,
+            "min": 1144.48,
+            "max": 1230.256
+          },
+          "after": {
+            "n": 5,
+            "median": 1126.336,
+            "min": 1114.509,
+            "max": 1180.58
+          },
+          "medianRatio": 0.9427567492462706
+        },
+        "allSettledMs": {
+          "before": {
+            "n": 3,
+            "median": 1203.518,
+            "min": 1153.226,
+            "max": 1236.832
+          },
+          "after": {
+            "n": 5,
+            "median": 1133.784,
+            "min": 1121.917,
+            "max": 1187.767
+          },
+          "medianRatio": 0.9420581993788212
+        },
+        "entriesPerSecond": {
+          "before": {
+            "n": 3,
+            "median": 83.70120010780715,
+            "min": 81.28389538437528,
+            "max": 87.37592618481756
+          },
+          "after": {
+            "n": 5,
+            "median": 88.78345360531848,
+            "min": 84.70412847922208,
+            "max": 89.72561011171736
+          },
+          "medianRatio": 1.0607190039206773
+        }
+      }
+    },
+    {
+      "key": "live-sync/1000/1",
+      "metrics": {
+        "localCommitMs": {
+          "before": {
+            "n": 3,
+            "median": 0.782,
+            "min": 0.736,
+            "max": 0.969
+          },
+          "after": {
+            "n": 5,
+            "median": 1.105,
+            "min": 0.788,
+            "max": 1.296
+          },
+          "medianRatio": 1.4130434782608694
+        },
+        "serverTransactionMs": {
+          "before": {
+            "n": 3,
+            "median": 12.88,
+            "min": 12.812,
+            "max": 12.986
+          },
+          "after": {
+            "n": 5,
+            "median": 13.969,
+            "min": 12.198,
+            "max": 19.492
+          },
+          "medianRatio": 1.0845496894409936
+        },
+        "settlementMs": {
+          "before": {
+            "n": 3,
+            "median": 26.71,
+            "min": 26.101,
+            "max": 27.018
+          },
+          "after": {
+            "n": 5,
+            "median": 26.689,
+            "min": 21.621,
+            "max": 33.857
+          },
+          "medianRatio": 0.9992137776113815
+        },
+        "bVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 29.569,
+            "min": 28.752,
+            "max": 30.417
+          },
+          "after": {
+            "n": 5,
+            "median": 27.232,
+            "min": 21.835,
+            "max": 33.521
+          },
+          "medianRatio": 0.9209645236565321
+        },
+        "allVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 29.572,
+            "min": 28.756,
+            "max": 30.42
+          },
+          "after": {
+            "n": 5,
+            "median": 27.238,
+            "min": 21.838,
+            "max": 33.527
+          },
+          "medianRatio": 0.921073988908427
+        },
+        "allSettledMs": {
+          "before": {
+            "n": 3,
+            "median": 26.72,
+            "min": 26.112,
+            "max": 27.027
+          },
+          "after": {
+            "n": 5,
+            "median": 26.703,
+            "min": 21.63,
+            "max": 33.87
+          },
+          "medianRatio": 0.9993637724550899
+        },
+        "entriesPerSecond": {
+          "before": {
+            "n": 3,
+            "median": 33.815771675909645,
+            "min": 32.87310979618672,
+            "max": 34.77535123104743
+          },
+          "after": {
+            "n": 5,
+            "median": 36.71341508187092,
+            "min": 29.826706833298534,
+            "max": 45.791739170253685
+          },
+          "medianRatio": 1.0856891108010869
+        }
+      }
+    },
+    {
+      "key": "live-sync/1000/100",
+      "metrics": {
+        "localCommitMs": {
+          "before": {
+            "n": 300,
+            "median": 1.579,
+            "min": 0.687,
+            "max": 7.287,
+            "p95": 4.601
+          },
+          "after": {
+            "n": 500,
+            "median": 1.8285,
+            "min": 0.67,
+            "max": 40.063,
+            "p95": 5.369
+          },
+          "medianRatio": 1.1580113996200128
+        },
+        "serverTransactionMs": {
+          "before": {
+            "n": 300,
+            "median": 13.154499999999999,
+            "min": 10.386,
+            "max": 27.22,
+            "p95": 16.568
+          },
+          "after": {
+            "n": 500,
+            "median": 13.486,
+            "min": 11.012,
+            "max": 133.186,
+            "p95": 20.231
+          },
+          "medianRatio": 1.0252005017294463
+        },
+        "settlementMs": {
+          "before": {
+            "n": 300,
+            "median": 1236.2165,
+            "min": 37.391,
+            "max": 1390.248,
+            "p95": 1359.061
+          },
+          "after": {
+            "n": 500,
+            "median": 978.2715000000001,
+            "min": 47.118,
+            "max": 1538.996,
+            "p95": 1487.233
+          },
+          "medianRatio": 0.7913431830104194
+        },
+        "bVisibleMs": {
+          "before": {
+            "n": 300,
+            "median": 683.519,
+            "min": 24.147,
+            "max": 1288.337,
+            "p95": 1189.449
+          },
+          "after": {
+            "n": 500,
+            "median": 755.1145,
+            "min": 22.095,
+            "max": 1406.842,
+            "p95": 1295.825
+          },
+          "medianRatio": 1.1047454423359118
+        },
+        "allVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 1413.742,
+            "min": 1408.115,
+            "max": 1466.915
+          },
+          "after": {
+            "n": 5,
+            "median": 1583.575,
+            "min": 1427.366,
+            "max": 1793.657
+          },
+          "medianRatio": 1.120130122752242
+        },
+        "allSettledMs": {
+          "before": {
+            "n": 3,
+            "median": 1420.719,
+            "min": 1413.079,
+            "max": 1469.919
+          },
+          "after": {
+            "n": 5,
+            "median": 1589.661,
+            "min": 1434.48,
+            "max": 1806.178
+          },
+          "medianRatio": 1.1189130292478668
+        },
+        "entriesPerSecond": {
+          "before": {
+            "n": 3,
+            "median": 70.73426410193656,
+            "min": 68.17027571468013,
+            "max": 71.01692688452293
+          },
+          "after": {
+            "n": 5,
+            "median": 63.1482563187724,
+            "min": 55.75201947752552,
+            "max": 70.05911588198121
+          },
+          "medianRatio": 0.8927534218461393
+        }
+      }
+    },
+    {
+      "key": "live-sync/10000/1",
+      "metrics": {
+        "localCommitMs": {
+          "before": {
+            "n": 3,
+            "median": 0.98,
+            "min": 0.893,
+            "max": 1.348
+          },
+          "after": {
+            "n": 5,
+            "median": 1.217,
+            "min": 1.073,
+            "max": 2.195
+          },
+          "medianRatio": 1.2418367346938777
+        },
+        "serverTransactionMs": {
+          "before": {
+            "n": 3,
+            "median": 19.477,
+            "min": 14.76,
+            "max": 26.019
+          },
+          "after": {
+            "n": 5,
+            "median": 15.526,
+            "min": 13.87,
+            "max": 23.924
+          },
+          "medianRatio": 0.7971453509267341
+        },
+        "settlementMs": {
+          "before": {
+            "n": 3,
+            "median": 31.854,
+            "min": 27.223,
+            "max": 38.768
+          },
+          "after": {
+            "n": 5,
+            "median": 28.358,
+            "min": 23.999,
+            "max": 42.765
+          },
+          "medianRatio": 0.890249262259057
+        },
+        "bVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 64.462,
+            "min": 56.3,
+            "max": 68.198
+          },
+          "after": {
+            "n": 5,
+            "median": 28.644,
+            "min": 24.82,
+            "max": 43.955
+          },
+          "medianRatio": 0.44435481368868474
+        },
+        "allVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 64.469,
+            "min": 56.304,
+            "max": 68.202
+          },
+          "after": {
+            "n": 5,
+            "median": 28.648,
+            "min": 24.824,
+            "max": 43.962
+          },
+          "medianRatio": 0.4443686112705332
+        },
+        "allSettledMs": {
+          "before": {
+            "n": 3,
+            "median": 32.831,
+            "min": 27.234,
+            "max": 38.777
+          },
+          "after": {
+            "n": 5,
+            "median": 28.368,
+            "min": 24.009,
+            "max": 42.778
+          },
+          "medianRatio": 0.8640614053790624
+        },
+        "entriesPerSecond": {
+          "before": {
+            "n": 3,
+            "median": 15.511331027315455,
+            "min": 14.662326617987743,
+            "max": 17.760727479397556
+          },
+          "after": {
+            "n": 5,
+            "median": 34.9064507120916,
+            "min": 22.746917792639096,
+            "max": 40.283596519497266
+          },
+          "medianRatio": 2.250383970957833
+        }
+      }
+    },
+    {
+      "key": "live-sync/10000/100",
+      "metrics": {
+        "localCommitMs": {
+          "before": {
+            "n": 300,
+            "median": 1.863,
+            "min": 0.688,
+            "max": 40.739,
+            "p95": 30.743
+          },
+          "after": {
+            "n": 500,
+            "median": 1.5675,
+            "min": 0.565,
+            "max": 8.103,
+            "p95": 2.842
+          },
+          "medianRatio": 0.8413848631239935
+        },
+        "serverTransactionMs": {
+          "before": {
+            "n": 300,
+            "median": 16.2245,
+            "min": 12.62,
+            "max": 42.059,
+            "p95": 21.319
+          },
+          "after": {
+            "n": 500,
+            "median": 15.0225,
+            "min": 12.252,
+            "max": 39.241,
+            "p95": 18.887
+          },
+          "medianRatio": 0.9259145120034517
+        },
+        "settlementMs": {
+          "before": {
+            "n": 300,
+            "median": 1451.0735,
+            "min": 91.591,
+            "max": 1874.198,
+            "p95": 1850.409
+          },
+          "after": {
+            "n": 500,
+            "median": 1056.242,
+            "min": 55.777,
+            "max": 1687.056,
+            "p95": 1633.237
+          },
+          "medianRatio": 0.7279038587638738
+        },
+        "bVisibleMs": {
+          "before": {
+            "n": 300,
+            "median": 992.807,
+            "min": 61.43,
+            "max": 1409.228,
+            "p95": 1315.294
+          },
+          "after": {
+            "n": 500,
+            "median": 786.1334999999999,
+            "min": 28.572,
+            "max": 1594.953,
+            "p95": 1412.118
+          },
+          "medianRatio": 0.7918291269098625
+        },
+        "allVisibleMs": {
+          "before": {
+            "n": 3,
+            "median": 1936.321,
+            "min": 1850.261,
+            "max": 2012.59
+          },
+          "after": {
+            "n": 5,
+            "median": 1591.541,
+            "min": 1553.896,
+            "max": 1767.554
+          },
+          "medianRatio": 0.8219406802900965
+        },
+        "allSettledMs": {
+          "before": {
+            "n": 3,
+            "median": 1902.172,
+            "min": 1822.855,
+            "max": 1978.042
+          },
+          "after": {
+            "n": 5,
+            "median": 1597.536,
+            "min": 1559.941,
+            "max": 1774.316
+          },
+          "medianRatio": 0.8398483417903323
+        },
+        "entriesPerSecond": {
+          "before": {
+            "n": 3,
+            "median": 51.64432963336141,
+            "min": 49.68721895666778,
+            "max": 54.04642912540447
+          },
+          "after": {
+            "n": 5,
+            "median": 62.83218591289825,
+            "min": 56.57535781085047,
+            "max": 64.35437120630982
+          },
+          "medianRatio": 1.2166328105904904
+        }
+      }
+    }
+  ]
+}

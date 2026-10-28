@@ -46,7 +46,8 @@ application snapshot: TypeScript copies objects, Lists and Dates; Dart reuses
 immutable scalar-only Models and copies List-bearing Models. Each Dart listen
 owns its cache. Public watch signatures still return complete result lists, so
 building a delivered list remains proportional to its length. Legacy generated
-watches use the generic row API and remain supported. SQL watches keep their
+watches use the generic row API and remain supported, but retain their full-list
+Model conversion until regenerated. SQL watches keep their
 full result and dependency-table refresh behavior.
 
 A malformed patch or failed decode/copy reports an observer error and requests

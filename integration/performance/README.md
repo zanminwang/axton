@@ -139,6 +139,14 @@ silently discarded; summaries/comparisons show report counts alongside timings.
 
 ## Results
 
+The [incremental Model-watch delivery comparison](baselines/2026-10-27-model-watch-delivery/README.md)
+retains 27 before and 45 after instrumentation-3 samples, all passing, with
+clock-correlated traces. At N = 10,000 a single-write B-visible median fell from
+64.462 ms to 28.644 ms. It also retains the N = 1,000 burst regression rather than
+claiming every case improved. This comparison starts after incremental Rust
+queries; it isolates the added delivery/typed-decoding implementation more
+closely than the incompatible older instrumentation-2 archive.
+
 The first [Dart measurements and findings](baselines/2026-10-27-dart/README.md)
 include a full 45-sample matrix and a tracing-disabled control. Initial sync and
 single writes passed; continuous writes exposed backend serialization/connection

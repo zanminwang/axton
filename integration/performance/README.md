@@ -118,8 +118,8 @@ Those original measurements used the former global publication fence. Current
 code removes its database writes and native call sites while retaining
 Serializable isolation, record/Stream guards, Store ordering and bounded retries.
 Raw results identify the implementation/commit; reruns are separate evidence,
-never replacements for the original samples. The old public helper and bridge
-request remain compatibility no-ops, and fresh namespaces omit the old table.
+never replacements for the original samples. The old bridge request is removed;
+the public helper remains a compatibility no-op. Fresh namespaces omit the old table.
 The [fence-removal results](baselines/2026-10-27-fence-removal/README.md) retain
 the second full matrix, comparisons and remaining Store/delivery-plan conflicts.
 The [Store snapshot-read results](baselines/2026-10-27-store-reads/README.md)

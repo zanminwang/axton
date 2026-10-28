@@ -111,7 +111,6 @@ export type Protocol05Request = {
 };
 export type HostRequest =
   | Protocol05Request
-  | PublicationFenceRequest
   | HeadRequest
   | SavepointRequest
   | RollbackRequest
@@ -192,7 +191,6 @@ export type Loaded =
 /** The answer each operation owes, keyed by `op`. */
 export type HostResponse = {
   protocol05: unknown;
-  publicationFence: Acknowledged;
   head: Head;
   savepoint: Acknowledged;
   rollback: Acknowledged;
@@ -211,7 +209,6 @@ export type HostResponse = {
  */
 const OPERATIONS: Record<HostOperation, true> = {
   protocol05: true,
-  publicationFence: true,
   head: true,
   savepoint: true,
   rollback: true,
@@ -227,9 +224,6 @@ const OPERATIONS: Record<HostOperation, true> = {
 export const HOST_OPERATIONS: readonly HostOperation[] = Object.keys(
   OPERATIONS,
 ) as HostOperation[];
-
-/** @deprecated Retained bridge compatibility operation; performs no publication locking. */
-export type PublicationFenceRequest = { op: "publicationFence" };
 
 /** Authenticated internal handler context; never supplied by a public caller. */
 export type HandlerContext = {

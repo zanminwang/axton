@@ -168,17 +168,6 @@ async function staleWaiter(sql, params, { insert = false } = {}) {
     }
   });
 }
-test("retired publication fence accepts legacy callers without writing shared state", () =>
-  namespace(async (tx) => {
-    await tx.query(ddl);
-    await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE READ ONLY");
-    try {
-      assert.equal(await answer(driver, tx, { op: "publicationFence" }), null);
-      await tx.query("COMMIT");
-    } finally {
-      await tx.query("ROLLBACK");
-    }
-  }));
 test("identity no-op write lock rejects a pre-existing-snapshot waiter", () =>
   staleWaiter(SQL.LOCK_IDENTITY, ["Entry", '{"id":"x"}']));
 test("identity ensure rejects a pre-existing-snapshot waiter on a new identity", () =>

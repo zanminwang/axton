@@ -26,7 +26,7 @@ impl Host for BatchHost {
             let mut s = self.0.lock().unwrap();
             let q = &request["request"];
             Ok(match (request["op"].as_str(), q["op"].as_str()) {
-                (Some("publicationFence" | "savepoint" | "rollback" | "release"), _) => Value::Null,
+                (Some("savepoint" | "rollback" | "release"), _) => Value::Null,
                 (Some("head"), _) => json!(0),
                 (Some("handleAction"), _) => {
                     assert_eq!(request["version"], 1, "unsupported handler must never run");

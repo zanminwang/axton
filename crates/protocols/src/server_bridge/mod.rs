@@ -83,9 +83,8 @@ pub enum LoaderMode {
     Canonical,
 }
 
-pub const OPERATIONS: [&str; 12] = [
+pub const OPERATIONS: [&str; 11] = [
     "protocol05",
-    "publicationFence",
     "head",
     "savepoint",
     "rollback",
@@ -208,8 +207,6 @@ pub enum HostRequest {
     Protocol05 {
         request: Protocol05Operation,
     },
-    /// Persisted namespace-wide write fence; acquire before relevant work.
-    PublicationFence {},
     /// The stream's current head cursor.
     Head {
         stream: String,

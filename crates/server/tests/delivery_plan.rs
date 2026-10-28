@@ -11,7 +11,6 @@ impl Host for TestHost {
             self.calls.lock().unwrap().push(r.clone());
             let q = &r["request"];
             Ok(match (r["op"].as_str(), q["op"].as_str()) {
-                (Some("publicationFence"), _) => Value::Null,
                 (_, Some("claimStore" | "inspectStore")) => {
                     json!({"principal":"alice","stream":"User:alice"})
                 }

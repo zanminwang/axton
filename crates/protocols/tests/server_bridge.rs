@@ -84,9 +84,7 @@ fn round_trip_response(op: &str, value: &serde_json::Value) -> serde_json::Value
     use axton_protocols::server_bridge::{Acknowledged, Guards, Head, Positions, Tracking};
     match op {
         "protocol05" => value.clone(),
-        "publicationFence" | "savepoint" | "rollback" | "release" | "lockStreams" => {
-            round!(Acknowledged)
-        }
+        "savepoint" | "rollback" | "release" | "lockStreams" => round!(Acknowledged),
         "head" => round!(Head),
         "handleAction" => round!(HandledAction),
         "load" => round!(Loaded),

@@ -319,7 +319,6 @@ export function createHost<T>(
         // compile error, not a silent forward.
         switch (req.op) {
           case "protocol05":
-          case "publicationFence":
           case "head":
           case "savepoint":
           case "rollback":

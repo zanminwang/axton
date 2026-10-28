@@ -20,7 +20,7 @@ Protocol 5 requires a fresh PostgreSQL framework namespace and fresh format-5 cl
 | [Client settlement](../../../../crates/client/src/settlement05.rs) | Queue-owned outcomes and accepted work's authority obligations. |
 | [Server Batch](../../../../crates/server/src/mutation_batch.rs) | Store admission, per-member transactions, replay and durable results. |
 | [Server delivery](../../../../crates/server/src/delivery_plan.rs) | Serializable current-state cursor pages, preparation closure and owned materialization. |
-| [PostgreSQL schema](../../../../packages/backend/postgres/migration.sql) | Eight fresh tables: Stream, Record, PublicationFence, Store, MutationResult, StreamRecord, DeliveryPlan and DeliveryUnit. Per-transaction cursor reservation is ephemeral SQL state, not a ninth durable table. |
+| [PostgreSQL schema](../../../../packages/backend/postgres/migration.sql) | Five fresh tables: Stream, Record, Store, MutationResult and StreamRecord. Per-transaction cursor reservation is ephemeral SQL state, not another durable table. |
 
 ## 6. Runtime View
 

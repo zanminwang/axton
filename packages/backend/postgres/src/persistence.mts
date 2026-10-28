@@ -438,12 +438,6 @@ export async function answer<Tx>(
       const [row] = await q(SQL.HEAD, r.stream);
       return row ? safe(row.head) : 0;
     }
-    case "publicationFence": {
-      fieldsOf(r, ["op"], "publicationFence");
-      // Retired bridge operation: retained for older native callers only.
-      // Serializable transactions and record/Stream guards own concurrency.
-      return null;
-    }
     case "lockStreams":
       return lockStreams(q, r);
     case "readTracking":

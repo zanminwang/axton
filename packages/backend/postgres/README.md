@@ -18,7 +18,7 @@ import { drizzle } from "@axtonjs/postgres/drizzle";      // drizzle-orm/node-po
 
 Global publication fencing is removed. An already installed `axton_publication_fence`
 table may remain unused; this migration does not drop it. The retired host operation
-and backend `acquirePublicationFence()` are compatibility no-ops. Serializable
+is removed; backend `acquirePublicationFence()` remains a compatibility no-op. Serializable
 transactions, record/Stream guards and whole-transaction retries remain required.
 
 Initialized read requests inspect Store ownership with a snapshot SELECT. Progress

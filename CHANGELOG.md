@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.6](https://github.com/zanminwang/axton/compare/v0.5.5...v0.5.6) (2026-10-28)
+
+
+### Features
+
+* add sync performance diagnostics and streamline cursor delivery ([86d2116](https://github.com/zanminwang/axton/commit/86d2116a4a40a0fab211eb48de8b3d8c0450e192))
+
 ## [0.5.5](https://github.com/zanminwang/axton/compare/v0.5.4...v0.5.5) (2026-10-13)
 
 

@@ -925,14 +925,19 @@ test("queued Update divergence remains durable and later absence cannot be undon
 test("bounded live receive recovery preserves held HTTP progress and catches the latest real head", async () => {
   const f = await openClient(),
     entered = Promise.withResolvers(),
-    gate = Promise.withResolvers();
+    gate = Promise.withResolvers(),
+    clientErrors = [];
   const n = await syncFixture({
     onPull: async (b, r, count) => {
+      const head = n.state.head,
+        through = Math.min(b.through, head);
+      // A current-state row beyond the requested prefix belongs to a later pull.
       const response = page(
         b,
         b.after,
-        n.state.head,
-        `head ${n.state.head}`,
+        through,
+        through === head ? `live ${head}` : undefined,
+        head,
       );
       if (count === 1) {
         entered.resolve();
@@ -942,7 +947,9 @@ test("bounded live receive recovery preserves held HTTP progress and catches the
     },
   });
   try {
-    const c = await connected(f, n);
+    const c = await connected(f, n, {
+      onError: (error) => clientErrors.push(error),
+    });
     await c.pause();
     n.state.head = 1;
     await c.resume();
@@ -966,6 +973,15 @@ test("bounded live receive recovery preserves held HTTP progress and catches the
       n.sockets.length <= opened + 1,
       "one overflow permits bounded reconnect, never starvation",
     );
+    assert.ok(
+      clientErrors.length <= 1,
+      "one bounded transport overflow is admissible",
+    );
+    assert.ok(
+      clientErrors.every((error) => error.message === "socket closed or overflow"),
+      "valid current-state replies never cause a delta correlation error",
+    );
+    assert.equal((await f.client.read("Entry", { id: "live" })).text, "live 201");
     assert.ok(deltas(n).length <= 5);
     assert.equal(deltas(n)[0].body.after, 0);
     assert.ok(

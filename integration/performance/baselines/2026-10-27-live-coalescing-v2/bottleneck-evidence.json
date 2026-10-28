@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "auditedHead": "adc9b95a2b9e6c54c55179a0676e5c0f9c5e7e7f",
+  "runtimeCommit": "7e495814de0cfce65da3ae04e387f40944608790",
+  "kind": "Source audit and already archived trace aggregates; no new benchmark or behavior change",
+  "priorMeasuredRun": {
+    "commit": "ecf5a21a2d661cf38bf9ab8bf61a60c61f9b8067",
+    "runUrl": "https://github.com/zanminwang/axton/actions/runs/40609260912",
+    "evidence": "../2026-10-27-live-coalescing/evidence.json",
+    "N1000M100": {
+      "bWatchQueryCount": {
+        "n": 5,
+        "median": 598,
+        "min": 598,
+        "max": 600
+      },
+      "bWatchEnqueueCount": {
+        "n": 5,
+        "median": 100,
+        "min": 100,
+        "max": 100
+      },
+      "bWatchQueryMs": {
+        "n": 5,
+        "median": 1346.8110000000004,
+        "min": 1293.2219999999995,
+        "max": 1372.8919999999996
+      }
+    },
+    "N10000M100": {
+      "bWatchQueryCount": {
+        "n": 5,
+        "median": 154,
+        "min": 152,
+        "max": 160
+      },
+      "bWatchEnqueueCount": {
+        "n": 5,
+        "median": 49,
+        "min": 48,
+        "max": 50
+      },
+      "bApplyCount": {
+        "n": 5,
+        "median": 49,
+        "min": 48,
+        "max": 50
+      },
+      "handlerTotalMs": {
+        "n": 5,
+        "median": 74.01399999999998,
+        "min": 67.74500000000002,
+        "max": 83.12499999999997
+      },
+      "memberOperationTotalMs": {
+        "n": 5,
+        "median": 5917.107999999999,
+        "min": 5853.410000000003,
+        "max": 5981.524999999999
+      },
+      "readTrackingCount": {
+        "n": 5,
+        "median": 200,
+        "min": 200,
+        "max": 200
+      },
+      "readTrackingTotalMs": {
+        "n": 5,
+        "median": 1302.233000000001,
+        "min": 1255.4720000000002,
+        "max": 1348.4180000000008
+      },
+      "inferredUploadLayoutChecks": 1103,
+      "layoutCountMethod": "Sum persistence-answered upload host counts (all constant over five runs); each answer calls CHECK_LAYOUT once. Inference from source + host counts, not independent SQL instrumentation."
+    }
+  },
+  "cpuMetadataInspection": {
+    "before": "AMD EPYC 7763 64-Core Processor",
+    "final": "AMD EPYC 9V74 80-Core Processor",
+    "status": "different",
+    "finalMetadataRead": "Final results.json was successfully downloaded and metadata printed; further profiling command was interrupted by environment transport loss.",
+    "strictComparisonCommand": "did not complete; existing machine-equality check would reject the CPU mismatch"
+  },
+  "sourceFindings": [
+    {
+      "kind": "repeated legacy layout check",
+      "path": "packages/backend/postgres/src/persistence.mts",
+      "line": 433,
+      "dependency": "packages/backend/postgres/src/sql.mts:103",
+      "isolatedTimeMeasured": false
+    },
+    {
+      "kind": "global generation invalidates all Model watches",
+      "path": "crates/client/src/runtime/mod.rs",
+      "line": 187,
+      "consumer": "crates/client/src/runtime/observers.rs:394",
+      "resultComparison": "after query and conversion"
+    },
+    {
+      "kind": "no-op settlement poll writes and increments generation",
+      "path": "crates/client/src/settlement05.rs",
+      "line": 382,
+      "caller": "crates/client/src/runtime/mod.rs:248"
+    },
+    {
+      "kind": "Batch upload awaits one independently committed transaction per member",
+      "path": "packages/backend/server/api/backend.mts",
+      "line": 684
+    }
+  ],
+  "limitations": [
+    "No isolated CHECK_LAYOUT/SQL/lock-wait/pool-wait measurement.",
+    "First-round detailed counts belong to ecf5a21; they are not presented as final-round counts.",
+    "Nested/overlapping stages cannot be added into wall time.",
+    "No new benchmark or runtime modification was performed during this audit.",
+    "Final raw JSON not archived into Git; artifact location/retention remain in evidence.json."
+  ]
+}

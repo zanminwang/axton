@@ -135,7 +135,9 @@ The [final live-prefix measurements](baselines/2026-10-27-live-coalescing-v2/REA
 passed 45/45, with full Linux/macOS Verify at the measured runtime. At N=10,000,
 B saw all 100 new Entries in a 5.61 s median [5.13–6.38 s]. The report separates
 observed timing changes from causal claims and records the final artifact's
-pending unpack/compatibility audit after the execution environment disconnected.
+pending raw archival/audit. Subsequent metadata inspection confirmed different
+CPU models across runs; the [bottleneck audit](baselines/2026-10-27-live-coalescing-v2/bottlenecks.md)
+records that mismatch and the repeated layout checks/Model-watch work.
 
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,

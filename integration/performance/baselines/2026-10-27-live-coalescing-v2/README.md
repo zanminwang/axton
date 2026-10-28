@@ -71,8 +71,9 @@ holds HTTP open and verifies live progress and the late-reply boundary.
 
 These are observations from separate runs, **not a strict compatible-result
 comparison or a causal percentage improvement**. The cursor-only run failed and
-cannot be admitted by full-matrix comparison. The final artifact's machine/tool
-metadata has not yet been unpacked for compatibility checking. Unaffected
+cannot be admitted by full-matrix comparison. Subsequent metadata inspection confirms different CPUs: the earlier runs used
+AMD EPYC 7763; the final run used AMD EPYC 9V74. The strict machine comparison
+would reject this mismatch. Unaffected
 single-write and initial metrics also changed between runs, and shared-runner
 tails are wide. No samples were filtered.
 
@@ -80,6 +81,10 @@ This is receiver-side coalescing, not full transport flow control: servers may
 still transmit live payloads that are reduced to head hints at the client.
 
 ## Remaining bottlenecks
+
+The [source and trace audit](bottlenecks.md) identifies repeated per-operation
+legacy-layout catalog checks and broad Model-watch invalidation as concrete
+next experiments; it separates first-round trace counts from final timings.
 
 Measured stage totals at N=10,000/M=100:
 
@@ -123,8 +128,9 @@ loopback on a shared Actions runner, not a cold hardware cache or WAN/phone
 measurement. No performance threshold is introduced. Five repetitions do not
 support a run-level p95 claim.
 
-The execution environment disconnected before the final artifact could be
-downloaded and unpacked. Consequently this directory preserves the completed
+The execution environment initially disconnected before final artifact download.
+It briefly recovered for download and metadata inspection, then disconnected
+again before full profiling/audit and archival. Consequently this directory preserves the completed
 summary and artifact/evidence index, **not a local copy of final raw samples**.
 The uploaded JSON contains samples, traces, failures/timeouts, source/dirty state,
 artifact fingerprints and environment versions. The GitHub-reported archive
@@ -145,5 +151,7 @@ node integration/performance/report.mjs compare \
   artifacts/performance/live-coalescing-v2/results.json
 ```
 
-No second comparison is claimed until that command succeeds. A metadata mismatch
-must remain a refusal, not be overridden.
+The inspected CPU metadata already differs, so strict comparison must refuse
+these runs. The complete comparison command did not finish during this audit;
+no compatible-result comparison is claimed. Re-measure on matched conditions
+rather than overriding the mismatch.

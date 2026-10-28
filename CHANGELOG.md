@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.7](https://github.com/zanminwang/axton/compare/v0.5.6...v0.5.7) (2026-10-28)
+
+
+### Performance Improvements
+
+* add opt-in bounded Bootstrap prefetch ([#280](https://github.com/zanminwang/axton/issues/280)) ([144a482](https://github.com/zanminwang/axton/commit/144a482e62cc8c45c9604304e46d4d7a3a8bbed8))
+* incrementally deliver Model watches across SDK bridges ([#278](https://github.com/zanminwang/axton/issues/278)) ([985b955](https://github.com/zanminwang/axton/commit/985b9551b9f0e927ef61c4b43d7305b36bfb21fa))
+
 ## [0.5.6](https://github.com/zanminwang/axton/compare/v0.5.5...v0.5.6) (2026-10-28)
 
 

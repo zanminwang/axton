@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:axton/axton.dart';
 import 'package:axton/src/bindings/bridge.dart';
+import 'package:axton/src/api/diagnostics.dart' show TraceEmitter;
 import 'package:test/test.dart';
 import 'fake_carrier.dart';
 
@@ -32,6 +34,38 @@ Map<String, dynamic> trace() => {
 
 void main() {
   test(
+    'SDK collectors share a monotonic clock and retain explicit span parents',
+    () {
+      final records = <AxtonTraceRecord>[];
+      final a = TraceEmitter(Sink(records.add), 'a');
+      final b = TraceEmitter(Sink(records.add), 'b');
+      final anchors = records.where((r) => r.kind == 'clock').toList();
+      expect(anchors, hasLength(2));
+      expect(
+        anchors[0].attributes['referenceClockDomain'],
+        anchors[1].attributes['referenceClockDomain'],
+      );
+      expect(
+        anchors.every(
+          (r) =>
+              r.attributes['offsetLowerUs'] == 0 &&
+              r.attributes['offsetUpperUs'] == 0,
+        ),
+        true,
+      );
+      final parent = a.start('parent');
+      final child = a.start('child', const {}, parent);
+      child.end();
+      parent.end();
+      final other = b.start('other');
+      other.end();
+      final spans = records.where((r) => r.kind == 'span').toList();
+      expect(spans[0].parentSpanId, spans[1].spanId);
+      expect(spans[2].startUs, greaterThanOrEqualTo(spans[1].startUs));
+      expect(spans[2].parentSpanId, isNull);
+    },
+  );
+  test(
     'diagnostics is opt-in and native records preserve source timing and loss',
     () async {
       final carrier = FakeCarrier(), records = <AxtonTraceRecord>[];
@@ -48,8 +82,10 @@ void main() {
       final native = records.firstWhere((r) => r.name == 'store.open');
       expect(native.startUs, 10);
       expect(native.durationUs, 20);
-      expect(records.last.kind, 'loss');
-      expect(records.last.attributes['records'], 2);
+      expect(
+        records.singleWhere((r) => r.kind == 'loss').attributes['records'],
+        2,
+      );
       expect(() => native.attributes['rows'] = 4, throwsUnsupportedError);
       await bridge.close();
       final off = FakeCarrier();
@@ -97,6 +133,7 @@ void main() {
               as Map<String, dynamic>;
       final records = <AxtonTraceRecord>[];
       Client? a, b;
+      StreamSubscription<List<Map<String, dynamic>>>? watch;
       try {
         final applicationData =
             Platform.environment['AXTON_TEST_APPLICATION_DATA'];
@@ -127,7 +164,30 @@ void main() {
           'identity': {'id': 'e'},
           'values': {'text': 'kept', 'note': null},
         };
+        final first = Completer<void>(), changed = Completer<void>();
+        watch = a.watch('Entry').listen((rows) {
+          if (!first.isCompleted) first.complete();
+          if (rows.any((r) => r['id'] == 'e') && !changed.isCompleted)
+            changed.complete();
+        });
+        await first.future;
         await a.transaction((tx) => tx.direct(operation));
+        await changed.future;
+        for (final name in [
+          'watch.read',
+          'watch.convert',
+          'watch.compare',
+          'watch.snapshot',
+          'bridge.nativeDrain',
+          'bridge.decode',
+        ]) {
+          expect(
+            records.any((r) => r.name == name && r.durationUs != null),
+            true,
+            reason: name,
+          );
+        }
+        expect(records.any((r) => r.name == 'watch.invalidate'), true);
         await b.transaction((tx) => tx.direct(operation));
         expect((await a.read('Entry', {'id': 'e'}))?['text'], 'kept');
         expect((await b.read('Entry', {'id': 'e'}))?['text'], 'kept');
@@ -141,6 +201,7 @@ void main() {
           hasLength(1),
         );
       } finally {
+        await watch?.cancel();
         await b?.close();
         await a?.close();
         await dir.delete(recursive: true);

@@ -61,8 +61,13 @@ describe their recorded environment, not dedicated hardware or phone performance
 | Live | Server transaction | Server transaction entry until the adapter returns after COMMIT, including retries. Its end is a server commit confirmation in the Node clock domain. |
 | Live | B visible | That write's start until B's watch contains its identity. |
 
-Initial timing starts before application-data configuration/native-library loading,
+Initial timing starts before application-data configuration,
 then opens an empty Store, registers a watch, connects and requests Bootstrap.
+The native library handle is prepared before timing so clock calibration can run
+outside the measured interval; its first load is excluded. Instrumentation version
+3 records this condition and is incompatible with the earlier library-load boundary.
+Library preparation has its own measured span before zero, labeled excluded setup
+in the common-axis trace; it is not silently included in Store-open statistics.
 Process launch and code loading before Dart main are excluded. Raw milestones also
 retain application configuration, connect start/return and Bootstrap request times.
 Connect return alone does not establish handshake completion.
@@ -76,7 +81,48 @@ With diagnostics enabled, each CreateEntry's host call ID/ordinal correlates its
 successful transaction span to the write. `serverSettlements` retains that source
 start, duration and commit-confirmed timestamp. Older raw files retain the same
 evidence in spans; the report reconstructs it. This server duration is not an
-A-to-server latency. No clock synchronization is claimed between Dart and Node.
+A-to-server latency. Older archives have no cross-process clock calibration and
+cannot establish when that server timestamp occurred on the clients' timeline.
+
+### One shared timeline
+
+Each new sample writes a `*.trace.json` file under `<output>.traces/` in Chrome Trace Event format,
+readable by Perfetto. All lanes use mapped source start/end times on one axis,
+with zero at the scenario's measured start. They are not stacked stage totals.
+Separate result paths keep their traces separate, including before/after runs in
+the same directory.
+Client A/B milestones, Dart bridge spans, Rust client spans, Node backend/SQL and
+Rust backend spans can overlap. Their raw clocks, span IDs, parent IDs and clock
+placement uncertainty remain in each event's arguments and in the raw result.
+
+```sh
+# Regenerate one sample's trace from its retained calibration and observations.
+node integration/performance/timeline.mjs artifacts/performance/baseline.json 0 \
+  artifacts/performance/selected.trace.json
+```
+
+The benchmark uses an always-running Dart reference Stopwatch shared by A and B,
+plus an explicit anchor for the Stopwatch that starts at the measurement barrier.
+SDK emitters share another isolate-local Stopwatch. Rust collectors link to one
+monotonic origin per loaded native library; Node collectors link to process hrtime.
+Synchronous FFI/N-API brackets and stdin/stdout round trips correlate these clocks
+before and after the scenario. All probes and offset intervals are retained.
+Round-trip bounds include asymmetric scheduling/transport delay; midpoint placement
+is an estimate within those bounds, not an exact one-way network measurement.
+Endpoint offset intervals must intersect under the constant-offset model; otherwise
+the sample fails trace validation and retains its raw timings, probes and reason.
+Calibration and
+library preparation run outside the scenario timing, including in tracing-disabled
+controls. Clock metadata emitted while opening a client does not perform probes.
+
+The exporter preserves real parent relationships. Concurrent siblings occupy
+separate tracks so an overlapping asynchronous operation is not rendered as a
+child merely because its timestamps fit. Native drain/decode spans name their
+drain parent, including empty drains. Intervals with no recorded source span are
+marked **unattributed**: they do not establish network, queue, idle or CPU time.
+Elapsed spans that wait for callbacks include that waiting. Nested and overlapping
+durations must never be summed into an end-to-end latency. Old raw archives are
+rejected by this exporter rather than assigned fabricated common-axis positions.
 
 Each sample verifies exact identities, counts and every text value in the final
 watch and local queries. Live verifies both clients, accepted settlement outputs,
@@ -92,6 +138,22 @@ settlement are independently verified. Other reports fail. No reported sample is
 silently discarded; summaries/comparisons show report counts alongside timings.
 
 ## Results
+
+The [receipt-cursor scheduling rerun](baselines/2026-10-28-receipt-cursor/README.md)
+adds 45 passing instrumentation-3 samples against the matching 45-sample
+Model-watch delivery control. Receipt-driven ordinary Pulls disappear in all
+single-write cases, reducing backend transactions from 5 to 4 and framework SQL
+from 47 to 41. It does not establish a general latency speedup: at N = 10,000,
+single-write B visibility measured 28.644 → 29.607 ms. The archive retains the
+full matrix, ranges, operation counts and aligned traces.
+
+The [incremental Model-watch delivery comparison](baselines/2026-10-27-model-watch-delivery/README.md)
+retains 27 before and 45 after instrumentation-3 samples, all passing, with
+clock-correlated traces. At N = 10,000 a single-write B-visible median fell from
+64.462 ms to 28.644 ms. It also retains the N = 1,000 burst regression rather than
+claiming every case improved. This comparison starts after incremental Rust
+queries; it isolates the added delivery/typed-decoding implementation more
+closely than the incompatible older instrumentation-2 archive.
 
 The first [Dart measurements and findings](baselines/2026-10-27-dart/README.md)
 include a full 45-sample matrix and a tracing-disabled control. Initial sync and
@@ -140,6 +202,11 @@ A strict compatible comparison with the earlier 6.61 s baseline passed, covering
 both the live-prefix refinement and startup layout validation. Model-watch
 invalidation remains unchanged; its internal costs are the next investigation.
 
+
+The [detailed server/watch phase measurements](baselines/2026-10-27-stage-breakdown/README.md)
+archive 45 passing samples with split handler/SQL/transaction and B-only watch
+read/conversion/equality/bridge evidence. Instrumentation version 2 establishes
+a separate baseline; those timings are not directly comparable with earlier traces.
 
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,
@@ -225,11 +292,47 @@ test recorders also cap retention and reject incomplete evidence.
 Client traces use the existing runtime outbox. Enabled backend native operations
 deliver records once through their existing host callback, outside business
 declaration handling. Sync state and wire authority never depend on telemetry.
-Client milestones share a clock; server/native clocks remain separate. Identifiers
-support correlation, never subtraction across clock domains. HTTP duration includes
+Raw source clock domains remain separate; new benchmark runs retain bounded clock
+correlation for common-axis export. Identifiers alone never justify subtraction
+across clock domains. HTTP duration includes
 server and transport work; no residual is labeled measured network-only or CPU time.
 
 Scenario files own sequencing/assertions; `support/recorder.dart` collects records;
 `fixture/` owns the shared contract/backend; `run.mjs` owns experiments/metadata;
 `report.mjs` owns statistics. Historical [Channel evidence](channel-removal/README.md)
 is unchanged. The old Scope removal runner called retired APIs and was removed.
+
+### Detailed phase diagnostics
+
+Stage instrumentation version 2 separates `handler.invoke`, framework
+`postgres.query`, pg pool acquisition, BEGIN/COMMIT/ROLLBACK and transaction-body
+work. Node host JSON encode/decode and Rust callback encode/wait/decode remain in
+separate source clock domains. `host.await` includes Node scheduling, handler/SQL
+execution and response waiting; it is not a measured queue-only delay. Framework
+SQL spans record statement kind, not SQL text or parameter values. Application
+SQL inside handlers is included in `handler.invoke` but is not separately traced
+by the framework. Prisma/Drizzle own their commit internals: only the pg adapter
+reports isolated transaction commands; no residual is labeled ORM COMMIT time.
+
+Ordinary Model-watch reruns contain `watch.read` (SQL plus native row assembly),
+`watch.convert` (JSON Value conversion), `watch.compare` (equality) and
+`watch.snapshot` (snapshot construction/copy). `bridge.nativeDrain` includes the
+FFI drain, native serialization, copying and freeing; `bridge.decode` isolates
+Dart JSON parsing. `watch.enqueue` measures synchronous observer dispatch and
+enqueue. With incremental Model delivery this includes SDK patch application,
+changed-row decoding and snapshot copying; older generated Model mapping ran
+later in the Dart stream. It excludes later asynchronous application/UI work.
+Its before/after durations therefore describe the work actually inside that
+span, not an invariant isolated Model-conversion phase.
+
+`watch.invalidate` records the runtime cause, generations and last commit's
+written tables. A generation jump greater than one can contain several commits:
+`lastCommitTables` is not their cumulative written set. It must not be used alone
+to skip watches across that jump. These records investigate metadata-only
+refreshes without changing invalidation, transaction or notification semantics.
+SQL-watch internals are not split by these Model-watch spans.
+
+The raw compatibility contract records the instrumentation version. New detailed
+runs are deliberately incompatible with earlier instrumented timings; retain a
+separate disabled-diagnostics control when estimating instrumentation overhead.
+Summed stages overlap and cannot be added into an end-to-end latency breakdown.

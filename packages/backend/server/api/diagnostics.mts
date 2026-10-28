@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 /** Times are microseconds in one clock domain. Stage names are experimental. */
 export interface AxtonTraceRecord {
   readonly schemaVersion: 1;
-  readonly kind: "span" | "event" | "loss";
+  readonly kind: "span" | "event" | "loss" | "clock";
   readonly name: string;
   readonly source: string;
   readonly clockDomain: string;
@@ -22,7 +22,7 @@ let instance = 0;
 /** @internal One backend, no process-global tracer or subscriber changes. */
 export class Diagnostics {
   private readonly origin = process.hrtime.bigint();
-  private readonly clockDomain = `backend:${++instance}`;
+  private readonly clockDomain = `backend:${process.pid}:${++instance}`;
   private readonly context = new AsyncLocalStorage<{
     spanId: string;
     operationId: string;
@@ -31,6 +31,23 @@ export class Diagnostics {
   private readonly receiver: AxtonDiagnostics | undefined;
   constructor(receiver?: AxtonDiagnostics) {
     this.receiver = receiver;
+    if (receiver) {
+      const offset = Number(this.origin / 1000n);
+      this.record({
+        schemaVersion: 1,
+        kind: "clock",
+        name: "clock.origin",
+        source: "node",
+        clockDomain: this.clockDomain,
+        startUs: 0,
+        attributes: Object.freeze({
+          referenceClockDomain: `node:${process.pid}`,
+          offsetLowerUs: offset,
+          offsetUpperUs: offset + 1,
+          method: "shared-node-hrtime-origin",
+        }),
+      });
+    }
   }
   /** Preserve this operation across native ThreadsafeFunction callbacks. */
   bind<A extends unknown[], R>(body: (...args: A) => R): (...args: A) => R {
@@ -67,6 +84,37 @@ export class Diagnostics {
         startUs: Number((process.hrtime.bigint() - this.origin) / 1000n),
         attributes: Object.freeze({ records: dropped, operationId }),
       });
+  }
+  syncSpan<T>(
+    name: string,
+    attributes: Record<string, unknown>,
+    body: () => T,
+  ): T {
+    if (!this.receiver) return body();
+    const parent = this.context.getStore();
+    const spanId = String(++this.next),
+      operationId = parent?.operationId ?? `${this.clockDomain}:${spanId}`;
+    const start = process.hrtime.bigint();
+    let outcome = "success";
+    try {
+      return this.context.run({ spanId, operationId }, body);
+    } catch (error) {
+      outcome = "error";
+      throw error;
+    } finally {
+      this.record({
+        schemaVersion: 1,
+        kind: "span",
+        name,
+        source: "node",
+        clockDomain: this.clockDomain,
+        spanId,
+        ...(parent ? { parentSpanId: parent.spanId } : {}),
+        startUs: Number((start - this.origin) / 1000n),
+        durationUs: Number((process.hrtime.bigint() - start) / 1000n),
+        attributes: Object.freeze({ ...attributes, operationId, outcome }),
+      });
+    }
   }
   span<T>(
     name: string,

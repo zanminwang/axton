@@ -546,7 +546,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             self.fail(request_id, kind, caused(kind, error));
             return;
         }
-        self.committed_since(generation);
+        self.committed_since(generation, "direct");
         let outcome = match response.outcome {
             crate::v05::ReadOutcome::Succeeded { result } => {
                 json!({"status":"succeeded","result":result})

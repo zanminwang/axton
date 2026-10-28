@@ -35,14 +35,16 @@
 //! not failure and has no timeout.
 //!
 //! **Watches.** `watch {model, spec}` runs the query on the committed reader,
-//! answers its observer id and publishes the rows; after every commit every
-//! watch re-runs - a coarse rule, with no query dependency tracking - and
-//! publishes only a result that differs from the last one it published. A re-run that fails is reported
+//! answers its observer id and publishes the rows. Committed Model keys refresh
+//! only those identities in its authoritative result cache; metadata-only commits
+//! do no Model reads. Unknown/bulk changes conservatively refresh the full result.
+//! It publishes only a result that differs from the last one. A refresh that fails is reported
 //! and the watch stays. A callback transaction's writes are invisible to a
 //! watch until they commit: nothing re-runs while the session is open.
 //! A watched SQL statement (`watchSql`) is published here beside them, but
 //! re-runs only after a commit that writes a table it reads (`sql_watches`).
 use super::*;
+use crate::changes::ModelChange;
 use crate::{BootstrapPhase, BootstrapState, ClientStore};
 use std::collections::BTreeSet;
 
@@ -51,7 +53,7 @@ const CLIENT_CLOSED: &str = "client_closed";
 
 #[derive(Default)]
 pub(super) struct Observers {
-    /// A commit landed since the watches last ran.
+    /// A commit landed since observers last published.
     pub(super) stale: bool,
     /// Every subscription identity this runtime observes or waits on, by
     /// `subscriptionId`.
@@ -90,6 +92,85 @@ struct Watch {
     rows: Value,
     /// `rows` were published.
     published: bool,
+    generation: u64,
+    // A failed read must not discard the invalidation it could not consume.
+    retry_full: bool,
+    /// Only callers that negotiated this protocol receive patches.
+    delta_delivery: bool,
+    version: u64,
+    /// None means the next publication must carry the complete cache.
+    /// Otherwise these edits apply sequentially to the last published result.
+    splices: Option<Vec<Value>>,
+}
+
+impl Watch {
+    fn replace(&mut self, rows: Value) {
+        let compare = tracing::info_span!(target: "axton::client", "watch.compare", changed = tracing::field::Empty);
+        let changed = {
+            let _compare = compare.enter();
+            self.rows != rows
+        };
+        compare.record("changed", changed);
+        if changed {
+            self.rows = rows;
+            self.published = false;
+            self.splices = None;
+        }
+    }
+
+    fn update_keys(
+        &mut self,
+        model: &axton_core::ModelDescriptor,
+        updates: Vec<(Value, Option<Value>)>,
+    ) {
+        let rows = self.rows.as_array_mut().expect("watch cache is an array");
+        let compare = tracing::info_span!(target: "axton::client", "watch.compare", changed = tracing::field::Empty);
+        let edits = {
+            let _compare = compare.enter();
+            updates
+                .into_iter()
+                .filter(|(identity, row)| {
+                    match rows.binary_search_by(|old| {
+                        crate::query::compare_identity(model, old, identity)
+                    }) {
+                        Ok(index) => row.as_ref() != Some(&rows[index]),
+                        Err(_) => row.is_some(),
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        compare.record("changed", !edits.is_empty());
+        if edits.is_empty() {
+            return;
+        }
+        let _update = tracing::info_span!(target: "axton::client", "watch.update").entered();
+        for (identity, row) in edits {
+            let (index, delete_count, inserted) = match (
+                rows.binary_search_by(|old| crate::query::compare_identity(model, old, &identity)),
+                row,
+            ) {
+                (Ok(index), Some(row)) => {
+                    rows[index] = row.clone();
+                    (index, 1, vec![row])
+                }
+                (Ok(index), None) => {
+                    rows.remove(index);
+                    (index, 1, vec![])
+                }
+                (Err(index), Some(row)) => {
+                    rows.insert(index, row.clone());
+                    (index, 0, vec![row])
+                }
+                (Err(_), None) => continue,
+            };
+            if self.delta_delivery
+                && let Some(splices) = &mut self.splices
+            {
+                splices.push(json!({"index":index,"deleteCount":delete_count,"rows":inserted}));
+            }
+        }
+        self.published = false;
+    }
 }
 
 /// How far a run has got: a transition never moves the status backwards.
@@ -204,7 +285,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             } => self.client.bootstrap_state05(stream, *subscription_id),
             _ => Err(crate::invalid("invalid Bootstrap command")),
         };
-        self.committed_since(generation);
+        self.committed_since(generation, "observers");
         let state = match answered {
             Ok(state) => state,
             Err(e) => return Some(Err(e.to_string())),
@@ -396,29 +477,112 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         // Every publication path shares the commit mark. Unsent observers
         // must consume it before Model watches clear it.
         self.publish_unsent();
-        if self.observers.stale && self.transaction.is_none() {
+        if self.transaction.is_none() {
+            // Client commit hooks accumulate all successful commits, including
+            // several commits in a single worker turn and test-seam writes.
+            let changes = std::mem::take(&mut self.client.model_changes);
+            let committed = self.observers.stale || !changes.models.is_empty();
             self.observers.stale = false;
             let ids: Vec<u64> = self.observers.watches.keys().copied().collect();
             for id in ids {
                 let Some(watch) = self.observers.watches.get(&id) else {
                     continue;
                 };
-                let _span = tracing::info_span!(target: "axton::client", "watch.query", observerId = id, model = %watch.model).entered();
-                let rows = self
+                if watch.generation == self.client.generation() {
+                    continue;
+                }
+                let change = changes.models.get(&watch.model);
+                if change.is_none() && !(watch.retry_full && committed) {
+                    continue;
+                }
+                let keys = if watch.retry_full {
+                    None
+                } else if let Some(ModelChange::Keys(keys)) = change {
+                    Some(keys.values().cloned().collect::<Vec<_>>())
+                } else {
+                    None
+                };
+                let model = self
                     .client
-                    .query(&watch.model, &watch.filter)
+                    .schema
+                    .model(&watch.model)
+                    .expect("registered watch model")
+                    .clone();
+                let _span = tracing::info_span!(target: "axton::client", "watch.query", observerId = id, model = %watch.model).entered();
+                let rows = {
+                    let _read =
+                        tracing::info_span!(target: "axton::client", "watch.read").entered();
+                    match &keys {
+                        Some(keys) => self.client.query_keys(&watch.model, &watch.filter, keys),
+                        None => self.client.query(&watch.model, &watch.filter),
+                    }
                     .map_err(|e| e.to_string())
-                    .and_then(|rows| serde_json::to_value(rows).map_err(|e| e.to_string()));
+                };
                 match rows {
                     Ok(rows) => {
-                        if let Some(watch) = self.observers.watches.get_mut(&id)
-                            && watch.rows != rows
-                        {
-                            watch.rows = rows;
-                            watch.published = false;
+                        let converted = (|| {
+                            let _convert =
+                                tracing::info_span!(target: "axton::client", "watch.convert")
+                                    .entered();
+                            match &keys {
+                                None => Ok::<_, String>((Some(Value::Array(rows)), vec![])),
+                                Some(keys) => {
+                                    let mut matching = rows
+                                        .into_iter()
+                                        .map(|row| {
+                                            let identity = Value::Object(
+                                                model
+                                                    .identity
+                                                    .iter()
+                                                    .map(|field| {
+                                                        (field.clone(), row[field].clone())
+                                                    })
+                                                    .collect(),
+                                            );
+                                            axton_core::canonical_json(&identity)
+                                                .map(|key| (key, row))
+                                                .map_err(|e| e.to_string())
+                                        })
+                                        .collect::<std::result::Result<BTreeMap<_, _>, _>>()?;
+                                    let updates = keys
+                                        .iter()
+                                        .map(|key| {
+                                            key.encoded_identity()
+                                                .map(|identity| {
+                                                    (
+                                                        key.identity.clone(),
+                                                        matching.remove(&identity),
+                                                    )
+                                                })
+                                                .map_err(|e| e.to_string())
+                                        })
+                                        .collect::<std::result::Result<Vec<_>, _>>()?;
+                                    Ok((None, updates))
+                                }
+                            }
+                        })();
+                        let (full, updates) = match converted {
+                            Ok(result) => result,
+                            Err(error) => {
+                                self.observers.watches.get_mut(&id).unwrap().retry_full = true;
+                                self.error(error);
+                                continue;
+                            }
+                        };
+                        if let Some(watch) = self.observers.watches.get_mut(&id) {
+                            if let Some(rows) = full {
+                                watch.replace(rows);
+                            } else {
+                                watch.update_keys(&model, updates);
+                            }
+                            watch.generation = self.client.generation();
+                            watch.retry_full = false;
                         }
                     }
-                    Err(error) => self.error(error),
+                    Err(error) => {
+                        self.observers.watches.get_mut(&id).unwrap().retry_full = true;
+                        self.error(error);
+                    }
                 }
             }
         }
@@ -428,9 +592,24 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         for (id, watch) in &mut self.observers.watches {
             if !watch.published {
                 watch.published = true;
+                let snapshot = {
+                    let _snapshot = tracing::info_span!(target: "axton::client", "watch.snapshot", observerId = id).entered();
+                    if watch.delta_delivery {
+                        let base_version = watch.version;
+                        watch.version += 1;
+                        match watch.splices.replace(vec![]) {
+                            Some(splices) => json!({"kind":"watch","protocol":"splice-v1",
+                                "baseVersion":base_version,"version":watch.version,"splices":splices}),
+                            None => json!({"kind":"watch","protocol":"splice-v1",
+                                "version":watch.version,"rows":watch.rows}),
+                        }
+                    } else {
+                        json!({"kind": "watch", "rows": watch.rows})
+                    }
+                };
                 snapshots.push(Event::ObserverChanged {
                     observer_id: id.to_string(),
-                    snapshot: json!({"kind": "watch", "rows": watch.rows}),
+                    snapshot,
                 });
             }
         }
@@ -447,6 +626,11 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         model: &str,
         spec: Option<&WatchSpec>,
     ) -> std::result::Result<Value, String> {
+        let delta_delivery = match spec.and_then(|spec| spec.delivery.as_deref()) {
+            None => false,
+            Some("splice-v1") => true,
+            Some(_) => return Err("unsupported watch delivery".into()),
+        };
         let filter = spec
             .and_then(|spec| spec.filter.clone())
             .filter(|filter| !filter.is_null())
@@ -464,9 +648,29 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 filter,
                 rows,
                 published: false,
+                generation: self.client.generation(),
+                retry_full: false,
+                delta_delivery,
+                version: 0,
+                splices: None,
             },
         );
         Ok(json!({"observerId": id.to_string()}))
+    }
+    /// A receiver that cannot apply a patch asks for a newer full cache result.
+    /// Normal publication consumes pending committed changes before sending it.
+    pub(super) fn watch_snapshot(
+        &mut self,
+        observer_id: &str,
+    ) -> std::result::Result<Value, String> {
+        let watch = observer_id
+            .parse::<u64>()
+            .ok()
+            .and_then(|id| self.observers.watches.get_mut(&id))
+            .ok_or_else(|| "unknown Model watch".to_string())?;
+        watch.splices = None;
+        watch.published = false;
+        Ok(Value::Null)
     }
     /// `unwatch {observerId}`: nothing more is published for it.
     pub(super) fn unwatch(&mut self, observer_id: &str) -> std::result::Result<Value, String> {
@@ -502,7 +706,11 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         for (id, watch) in std::mem::take(&mut self.observers.watches) {
             self.events.push(Event::ObserverChanged {
                 observer_id: id.to_string(),
-                snapshot: json!({"kind": "watch", "rows": watch.rows, "closed": true}),
+                snapshot: if watch.delta_delivery {
+                    json!({"kind":"watch","closed":true})
+                } else {
+                    json!({"kind": "watch", "rows": watch.rows, "closed": true})
+                },
             });
         }
         self.close_sql_watches();

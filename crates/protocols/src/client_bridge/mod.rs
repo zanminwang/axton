@@ -318,6 +318,10 @@ pub enum Command {
         sql: String,
         parameters: Vec<Value>,
     },
+    // Re-publish a Model watch's authoritative cache after SDK patch recovery.
+    WatchSnapshot {
+        observer_id: String,
+    },
     // Stop publishing a watch.
     Unwatch {
         observer_id: String,
@@ -376,6 +380,9 @@ pub enum UnsentView {
 pub struct WatchSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<Value>,
+    /// Opt-in internal delivery; absent retains legacy full snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<String>,
 }
 
 // The controls of the runtime-owned connection.
@@ -684,7 +691,12 @@ pub enum Event {
     //   "waiting-for-initialization"|"loading"|"catching-up"|"complete"|
     //   "failed","error":null|{"code","message"}}}}` - the SDK
     //   `SubscriptionStatus`, verbatim;
-    // - a watch observer (`watch`, `watchSql`): `{"kind":"watch","rows":[…]}`;
+    // - a legacy watch observer (`watch`, `watchSql`): `{"kind":"watch","rows":[…]}`;
+    // - a Model watch opting into `spec.delivery:"splice-v1"`: the first/full
+    //   result adds `protocol:"splice-v1",version`; patches replace `rows`
+    //   with `baseVersion,splices:[{index,deleteCount,rows}]`. Splices apply
+    //   sequentially; a patch version is its base plus one. `watchSnapshot`
+    //   requests a newer full result from the cache. A delta close needs no rows;
     // - an unsent-work observer (`unsentWatch`): `{"kind":"rejections",
     //   "items":[{"id","name","version","code","act":{"args","operations"}}]}`,
     //   `{"kind":"failures","items":[{"ordinal","name","version","act",

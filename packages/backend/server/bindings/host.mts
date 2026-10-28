@@ -37,7 +37,7 @@ export interface HostDependencies<T> {
   onError(error: unknown): void;
 }
 /** JSON cannot represent nonfinite values or undefined array items. Never turn either into null. */
-function callbackJson(value: unknown): string {
+function encodeCallbackJson(value: unknown): string {
   return JSON.stringify(value, (_key, item) => {
     if (typeof item === "bigint") {
       const number = Number(item);
@@ -111,7 +111,12 @@ export function createHost<T>(
     refusal,
     onError,
   } = dependencies;
-  const storage = options.database.persistence(tx);
+  const callbackJson = (value: unknown) =>
+    diagnostics.syncSpan("host.encode", {}, () => encodeCallbackJson(value));
+  const storage = options.database.persistence(
+    tx,
+    options.diagnostics ? diagnostics : undefined,
+  );
   const execute = (req: HostRequest) =>
     session.track(async () => {
       let result: unknown;
@@ -194,26 +199,31 @@ export function createHost<T>(
             : undefined
           : createEffects();
         try {
-          const outputs = await handler({
-            ctx: effects
-              ? {
-                  tx,
-                  userId: req.owner,
-                  callId: req.callId,
-                  ...(req.context
-                    ? scopedStreams(effects, req.context)
-                    : { stream: effects.stream }),
-                  ...(!query
-                    ? {
-                        invalidate: (
-                          effects as ReturnType<typeof createEffects>
-                        ).invalidate,
-                      }
-                    : {}),
-                }
-              : { tx, userId: req.owner, callId: req.callId },
-            args,
-          } as Parameters<MutationHandler<T>>[0]);
+          const outputs = await diagnostics.span(
+            "handler.invoke",
+            { callId: req.callId, name: req.name },
+            async () =>
+              handler({
+                ctx: effects
+                  ? {
+                      tx,
+                      userId: req.owner,
+                      callId: req.callId,
+                      ...(req.context
+                        ? scopedStreams(effects, req.context)
+                        : { stream: effects.stream }),
+                      ...(!query
+                        ? {
+                            invalidate: (
+                              effects as ReturnType<typeof createEffects>
+                            ).invalidate,
+                          }
+                        : {}),
+                    }
+                  : { tx, userId: req.owner, callId: req.callId },
+                args,
+              } as Parameters<MutationHandler<T>>[0]),
+          );
           // A caught declaration refusal still fails the entire read. Never
           // settle the prefix collected before an overflow or invalid input.
           if (query && effects) {
@@ -352,7 +362,9 @@ export function createHost<T>(
       return callbackJson(result);
     });
   return diagnostics.bind((raw: string) => {
-    const req = JSON.parse(raw) as
+    const req = diagnostics.syncSpan("host.decode", {}, () =>
+      JSON.parse(raw),
+    ) as
       | HostRequest
       | { op: "trace"; records: AxtonTraceRecord[]; dropped: number };
     if (req.op === "trace") {

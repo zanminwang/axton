@@ -2,7 +2,7 @@
 use crate::ddl::{before_table, quote};
 use crate::engine::{Engine, as_u64};
 use crate::store::ClientStore;
-use axton_core::{ModelDescriptor, Result, ScalarType, ValueType, invalid};
+use axton_core::{ModelDescriptor, RecordKey, Result, ScalarType, ValueType, invalid};
 use serde_json::{Map, Value};
 
 pub fn columns_sql(model: &ModelDescriptor) -> String {
@@ -84,6 +84,30 @@ fn filter_sql(filter: &[(String, Value)]) -> (String, Vec<Value>) {
 }
 
 impl<S: ClientStore> Engine<'_, S> {
+    // Only concrete main rows enter the candidate journal. Before images and
+    // other engine tables retain their existing table-only notifications.
+    fn exec_row(
+        &mut self,
+        table: &str,
+        model: &ModelDescriptor,
+        identity: &Value,
+        sql: &str,
+        parameters: &[Value],
+    ) -> Result<usize> {
+        if table == model.name {
+            self.exec_record(
+                table,
+                RecordKey {
+                    model: model.name.clone(),
+                    identity: identity.clone(),
+                },
+                sql,
+                parameters,
+            )
+        } else {
+            self.exec(table, sql, parameters)
+        }
+    }
     pub fn row_get(
         &mut self,
         table: &str,
@@ -109,7 +133,14 @@ impl<S: ClientStore> Engine<'_, S> {
             quote(table),
             columns_sql(model)
         );
-        self.exec(table, &sql, &row_params(model, row))?;
+        let identity = Value::Object(
+            model
+                .identity
+                .iter()
+                .map(|f| (f.clone(), row[f].clone()))
+                .collect(),
+        );
+        self.exec_row(table, model, &identity, &sql, &row_params(model, row))?;
         Ok(())
     }
     pub fn row_upsert(&mut self, table: &str, model: &ModelDescriptor, row: &Value) -> Result<()> {
@@ -136,7 +167,14 @@ impl<S: ClientStore> Engine<'_, S> {
             quote(table),
             columns_sql(model)
         );
-        self.exec(table, &sql, &row_params(model, row))?;
+        let identity = Value::Object(
+            model
+                .identity
+                .iter()
+                .map(|f| (f.clone(), row[f].clone()))
+                .collect(),
+        );
+        self.exec_row(table, model, &identity, &sql, &row_params(model, row))?;
         Ok(())
     }
     pub fn row_delete(
@@ -150,8 +188,47 @@ impl<S: ClientStore> Engine<'_, S> {
             quote(table),
             identity_where(model)
         );
-        self.exec(table, &sql, &identity_params(model, identity))?;
+        self.exec_row(
+            table,
+            model,
+            identity,
+            &sql,
+            &identity_params(model, identity),
+        )?;
         Ok(())
+    }
+    pub(crate) fn rows_where_keys(
+        &mut self,
+        model: &ModelDescriptor,
+        filter: &[(String, Value)],
+        keys: &[RecordKey],
+    ) -> Result<Vec<Value>> {
+        let (clause, filter_params) = filter_sql(filter);
+        // Stay below conservative SQLite variable/expression limits. Filters
+        // and identities remain SQL predicates, preserving normal query rules.
+        let batch = ((900usize.saturating_sub(filter_params.len())) / model.identity.len().max(1))
+            .clamp(1, 128);
+        let mut result = vec![];
+        for keys in keys.chunks(batch) {
+            let identities = vec![format!("({})", identity_where(model)); keys.len()].join(" OR ");
+            let sql = format!(
+                "SELECT {} FROM {} WHERE ({clause}) AND ({identities})",
+                columns_sql(model),
+                quote(&model.name)
+            );
+            let mut parameters = filter_params.clone();
+            for key in keys {
+                parameters.extend(identity_params(model, &key.identity));
+            }
+            let rows = self.rows(&sql, &parameters)?;
+            result.extend(
+                rows.rows
+                    .iter()
+                    .map(|row| decode_row(model, &rows.columns, row))
+                    .collect::<Result<Vec<_>>>()?,
+            );
+        }
+        Ok(result)
     }
     pub fn rows_where(
         &mut self,

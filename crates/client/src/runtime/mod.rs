@@ -184,8 +184,9 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     }
     // When a unit committed since `generation`, the watches re-run before
     // the unit ends.
-    fn committed_since(&mut self, generation: u64) {
+    fn committed_since(&mut self, generation: u64, cause: &str) {
         if self.client.generation() != generation {
+            tracing::info!(name: "watch.invalidate", target: "axton::client", cause, fromGeneration = generation, toGeneration = self.client.generation(), lastCommitTables = ?self.client.last_changed());
             self.observers.stale = true;
             self.reconcile_registrations();
         }
@@ -231,6 +232,15 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         if self.transaction.is_some() {
             return Err(crate::invalid("Store worker transaction active"));
         }
+        let cause = match &command {
+            StoreCommand::Needs => "store.needs",
+            StoreCommand::Cleanup(_) => "store.cleanup",
+            StoreCommand::Freeze => "store.freeze",
+            StoreCommand::Acknowledge(_) => "store.acknowledge",
+            StoreCommand::Apply { .. } => "store.apply",
+            StoreCommand::Initialize(_) => "store.initialize",
+            _ => "store.other",
+        };
         let generation = self.client.generation();
         let result = match command {
             StoreCommand::Guarded { .. } => unreachable!(),
@@ -300,7 +310,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 }
             }
         };
-        self.committed_since(generation);
+        self.committed_since(generation, cause);
         self.publish();
         Ok(result)
     }

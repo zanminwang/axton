@@ -51,6 +51,37 @@ try {
  if(defaulted?.body!=='q \'single\' "double" \'\'\' """ $dollar ${x} \\ back\nline'||defaulted.note!=='n')throw Error(`literal defaults ${JSON.stringify(defaulted)}`);
  const explicit=drafts.find(d=>d.memo==='explicit');
  if(explicit?.body!=='mine'||explicit.note!==null)throw Error('explicit values and null win');
+
+ // Each emission owns its mutable objects, arrays and Dates; unchanged rows
+ // are decoded only in the SDK cache, then copied for each application snapshot.
+ const snapshots: import('./generated.ts').Entry[][]=[];
+ const errors: unknown[]=[];
+ const stopEntries=client.models.entry.watch({},rows=>snapshots.push(rows),error=>errors.push(error));
+ const until=async(predicate:()=>boolean)=>{
+  const deadline=Date.now()+5000;
+  while(!predicate()){
+   if(Date.now()>deadline)throw Error('typed watch snapshot timed out');
+   await new Promise(resolve=>setTimeout(resolve,5));
+  }
+ };
+ try {
+  await until(()=>snapshots.length===1);
+  const first=snapshots[0]!;
+  const callerRow=first.find(entry=>entry.id===id)!;
+  callerRow.title='application';callerRow.tags.push('application');callerRow.at.setUTCFullYear(1999);
+  first.reverse();first.pop();
+  await client.models.entry.update({id:pendingId},{note:'changed other row'});
+  await until(()=>snapshots.length===2);
+  const retained=snapshots[1]!;
+  const unchanged=retained.find(entry=>entry.id===id)!;
+  if(unchanged.title!=='native'||unchanged.tags.length!==0||unchanged.at.getUTCFullYear()!==2026)
+   throw Error('application mutation corrupted unchanged watch cache');
+  await client.models.entry.update({id},{title:'new native'});
+  await until(()=>snapshots.length===3);
+  if(unchanged.title!=='native'||snapshots[2]!.find(entry=>entry.id===id)!.title!=='new native')
+   throw Error('later patch changed an earlier typed watch result');
+  if(errors.length)throw errors[0];
+ }finally{stopEntries();}
  if(call.status!=='pending')throw Error('named Call remains pending without backend settlement');
 }finally{await client.close();await rm(directory,{recursive:true,force:true})}
 

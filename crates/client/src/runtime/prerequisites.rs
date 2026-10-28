@@ -162,7 +162,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         if let Err(e) = self.client.outcome(&key, error.as_deref()) {
             self.error(format!("prerequisite outcome: {e}"));
         }
-        self.committed_since(generation);
+        self.committed_since(generation, "prerequisites");
     }
     /// The application changed a task's readiness: its backoff is over.
     pub(super) fn prerequisite_readiness(&mut self, key: &str) {

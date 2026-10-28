@@ -6,10 +6,13 @@ import {tmpdir,cpus,totalmem,platform,release,arch,loadavg} from 'node:os';
 import {dirname,resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createInterface} from 'node:readline';
+import {createRequire} from 'node:module';
 import {Pool} from 'pg';
 import {startFixture,textBytes,fixtureBatchSize} from './fixture/server.mjs';
 import {printSummary,summarize,metrics,validateRecordReports,serverSettlements} from './report.mjs';
 import {poolLifecycle} from './support/postgres.mjs';
+import {nowUs,runnerClockDomain,sampleNativeClock,retainClockRecords,ClockHandshake} from './support/clock.mjs';
+import {timeline} from './timeline.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
 process.chdir(root);
@@ -72,10 +75,10 @@ const result={schemaVersion:1,completed:false,createdAt:new Date().toISOString()
     node:process.version,dart:command(process.env.AXTON_DART??'dart',['--version']),rustc:command('rustc',['--version']),
     cargo:command('cargo',['--version']),typescript:command(process.execPath,['node_modules/typescript/bin/tsc','--version']),
     postgres:(await admin.query('SELECT version() AS version')).rows[0].version,settings},
-  compatibility:{schemaVersion:1,boundaries:'sync-performance-v2',fixtureSchemaSha256:hash(await readFile('integration/performance/fixture/generated/schema.json')),
+  compatibility:{schemaVersion:1,stageInstrumentation:3,clockCorrelation:'bounded-monotonic-v1',boundaries:'sync-performance-v2',fixtureSchemaSha256:hash(await readFile('integration/performance/fixture/generated/schema.json')),
     textBytes,fixtureBatchSize,sdk:'dart',nativeProfile:'release',dartMode:'aot',diagnostics:options.diagnostics,
     watch:'full Entry model snapshots; first expected nonempty snapshot',
-    initialCondition:'fresh process and SQLite files per sample; timed interval starts before open, process startup excluded',
+    initialCondition:'fresh process and SQLite files per sample; native library prepared and clock calibration before timing; application configuration/open/connect/bootstrap timed; process startup excluded',
     cacheCondition:'new PostgreSQL database per sample; fixture just written; OS/PostgreSQL caches are not flushed',
     liveCondition:'two initialized Stores in one process; await each local commit, do not await settlement before next write'},
   parameters:options,adminErrors,samples:[]};
@@ -89,13 +92,19 @@ async function save() {
 async function execute(scenario,records,writes,directory,serverDiagnostics) {
   return new Promise(resolveSample=>{
     const progress=[],stderr=[];let output,timeout=false,overflow=false,bytes=0,force;
+    const native=options.diagnostics?createRequire(import.meta.url)(resolve(artifactPaths[0])):undefined;
+    const clockCorrelation={runnerClockDomain,nodeNativeClockDomain:native?.diagnosticsClockDomain(),
+      nodeNativeProbes:options.diagnostics?{start:sampleNativeClock(()=>native.diagnosticsClockUs())}:{},dartRunnerProbes:{}};
     child=spawn(resolve(`artifacts/performance/${scenario}`),[JSON.stringify({scenario,url:fixture.url,records,writes,directory,diagnostics:options.diagnostics})],
       {stdio:['pipe','pipe','pipe'],env:{...process.env,AXTON_DART_LIBRARY:resolve(artifactPaths[1])}});
     const running=child;
     const kill=()=>{running.kill('SIGTERM');force??=setTimeout(()=>running.kill('SIGKILL'),1000);};
     const timer=setTimeout(()=>{timeout=true;kill();},options.timeout);
     const lines=createInterface({input:running.stdout});
+    const handshake=new ClockHandshake(line=>running.stdin.write(line));
+    clockCorrelation.dartRunnerProbes=handshake.endpoints;
     lines.on('line',line=>{
+      const receivedAtUs=nowUs();
       bytes+=Buffer.byteLength(line);
       if(bytes>128*1024*1024){overflow=true;kill();return;}
       try {
@@ -103,7 +112,7 @@ async function execute(scenario,records,writes,directory,serverDiagnostics) {
         if(event.type==='result') output=event;
         else {
           progress.push(event);
-          if(event.phase==='ready') {serverDiagnostics.length=0;running.stdin.end('go\n');}
+          if(!handshake.accept(event,receivedAtUs)&&event.phase==='ready') {retainClockRecords(serverDiagnostics);running.stdin.write('go\n');}
         }
       } catch(error) {progress.push({type:'invalid-output',line:line.slice(0,1000),error:String(error)});}
     });
@@ -111,9 +120,10 @@ async function execute(scenario,records,writes,directory,serverDiagnostics) {
     running.on('error',error=>{progress.push({type:'spawn-error',error:String(error)});});
     running.on('close',(code,exitSignal)=>{
       clearTimeout(timer);clearTimeout(force);lines.close();child=undefined;
+      if(options.diagnostics)clockCorrelation.nodeNativeProbes.end=sampleNativeClock(()=>native.diagnosticsClockUs());
       const errorProgress=progress.some(e=>e.phase==='connection.error'||e.type==='invalid-output'||e.type==='spawn-error');
       const status=timeout?'timeout':interrupted?'interrupted':overflow?'output-overflow':code===0&&output?.status==='passed'&&!errorProgress?'passed':'failed';
-      resolveSample({status,exitCode:code,signal:exitSignal,result:output??null,progress,stderr:stderr.join('')});
+      resolveSample({status,exitCode:code,signal:exitSignal,result:output??null,progress,clockCorrelation,stderr:stderr.join('')});
     });
   });
 }
@@ -134,7 +144,7 @@ try {
             if(sample.serverDiagnostics.length<200000)sample.serverDiagnostics.push(record);else dropped++;
             if(record.kind==='loss')dropped+=Number(record.attributes.records??1);
           }}:undefined);
-          sample.serverDiagnostics.length=0;
+          retainClockRecords(sample.serverDiagnostics);
           Object.assign(sample,await execute(scenario,records,writes,directory,sample.serverDiagnostics));
           // Final-state evidence is useful even when the child recovered from a
           // connection error. Such a sample still fails; never hide that error.
@@ -148,6 +158,17 @@ try {
               assert.ok(values.every(value=>Number.isFinite(value)&&value>=0),'invalid timing observation');
             sample.serverVerification=await fixture.verify(writes);assert.equal(dropped,0,'server diagnostics incomplete');
             sample.serverVerified=true;
+          }
+          if(sample.result) {
+            try {
+              const trace=timeline(sample);
+              const path=resolve(options.output+'.traces',`${scenario}-N${records}-M${writes}-r${repetition}.trace.json`);
+              await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(trace)+'\n');
+              sample.timeline={status:'aligned',path,clockAlignment:trace.clockAlignment,unattributedIntervals:trace.unattributedIntervals};
+            } catch(error) {
+              sample.timeline={status:'unavailable',reason:String(error)};
+              sample.status='failed';sample.error??='common-axis trace unavailable (see timeline.reason)';
+            }
           }
         } catch(error) {sample.status='failed';sample.error=String(error);}
         finally {

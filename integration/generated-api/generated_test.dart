@@ -32,6 +32,58 @@ Future<GeneratedClient> _open(
 
 void main() {
   test(
+    'typed watch snapshots keep mutable Lists private and earlier results stable',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'generated-watch-copy-',
+      );
+      final client = await _open(temp);
+      StreamSubscription<List<Entry>>? subscription;
+      try {
+        await client.models.entry.create(row);
+        final snapshots = <List<Entry>>[];
+        final errors = <Object>[];
+        subscription = client.models.entry.watch().listen(
+          snapshots.add,
+          onError: (Object error) => errors.add(error),
+        );
+        await _until(() => snapshots.length == 1, 'initial copied watch');
+        snapshots.first.single.tags.add('application');
+        snapshots.first.clear();
+        await client.models.entry.create(
+          Entry(
+            id: '123e4567-e89b-42d3-a456-426614174009',
+            title: 'other',
+            note: null,
+            at: DateTime.utc(2026),
+            tags: [],
+            status: Status.active,
+          ),
+        );
+        await _until(() => snapshots.length == 2, 'unchanged copied row');
+        final retained = snapshots[1];
+        final unchanged = retained.singleWhere((entry) => entry.id == id);
+        expect(unchanged.tags, ['x']);
+        expect(unchanged.title, 'hello');
+        await client.models.entry.update(
+          EntryIdentity(id: id),
+          EntryPatch(title: Present('new')),
+        );
+        await _until(() => snapshots.length == 3, 'updated typed row');
+        expect(unchanged.title, 'hello');
+        expect(
+          snapshots.last.singleWhere((entry) => entry.id == id).title,
+          'new',
+        );
+        expect(errors, isEmpty);
+      } finally {
+        await subscription?.cancel();
+        await client.close();
+        await temp.delete(recursive: true);
+      }
+    },
+  );
+  test(
     'concrete records implement inherited fields without inheriting input or identity types',
     () {
       final EntryFields fields = Entry(

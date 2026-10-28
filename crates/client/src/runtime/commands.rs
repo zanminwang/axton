@@ -99,6 +99,7 @@ pub(super) fn execute<S: ClientStore + 'static>(
         | Command::ResetStore { .. }
         | Command::StreamSubscribe { .. }
         | Command::Watch { .. }
+        | Command::WatchSnapshot { .. }
         | Command::WatchSql { .. }
         | Command::Unwatch { .. }
         | Command::UnsentWatch { .. } => {

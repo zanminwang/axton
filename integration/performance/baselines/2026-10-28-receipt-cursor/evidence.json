@@ -1,0 +1,2198 @@
+{
+  "contract": {
+    "schemaVersion": 1,
+    "stageInstrumentation": 3,
+    "clockCorrelation": "bounded-monotonic-v1",
+    "boundaries": "sync-performance-v2",
+    "fixtureSchemaSha256": "1a43ae379aabf5e5219fef6c9ca0294d4bad2f0d76b8e5945d969bc1c0cd8320",
+    "textBytes": 512,
+    "fixtureBatchSize": 100,
+    "sdk": "dart",
+    "nativeProfile": "release",
+    "dartMode": "aot",
+    "diagnostics": true,
+    "watch": "full Entry model snapshots; first expected nonempty snapshot",
+    "initialCondition": "fresh process and SQLite files per sample; native library prepared and clock calibration before timing; application configuration/open/connect/bootstrap timed; process startup excluded",
+    "cacheCondition": "new PostgreSQL database per sample; fixture just written; OS/PostgreSQL caches are not flushed",
+    "liveCondition": "two initialized Stores in one process; await each local commit, do not await settlement before next write"
+  },
+  "machine": {
+    "platform": "darwin",
+    "release": "25.5.0",
+    "arch": "arm64",
+    "cpu": "Apple M1 Pro",
+    "cpus": 10,
+    "memoryBytes": 17179869184,
+    "node": "v26.4.0",
+    "dart": "Dart SDK version: 3.12.1 (stable) (Tue May 26 01:02:21 2026 -0700) on \"macos_arm64\"",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "typescript": "Version 5.8.3",
+    "postgres": "PostgreSQL 14.23 (Homebrew) on aarch64-apple-darwin25.4.0, compiled by Apple clang version 21.0.0 (clang-2100.0.123.102), 64-bit",
+    "settings": [
+      {
+        "name": "fsync",
+        "setting": "on",
+        "unit": null
+      },
+      {
+        "name": "full_page_writes",
+        "setting": "on",
+        "unit": null
+      },
+      {
+        "name": "shared_buffers",
+        "setting": "16384",
+        "unit": "8kB"
+      },
+      {
+        "name": "synchronous_commit",
+        "setting": "on",
+        "unit": null
+      },
+      {
+        "name": "wal_level",
+        "setting": "replica",
+        "unit": null
+      }
+    ]
+  },
+  "comparison": [
+    {
+      "case": "initial-sync/100/0",
+      "metric": "storeOpenMs",
+      "before": 3.327,
+      "after": 3.38,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 1.593026750826576
+    },
+    {
+      "case": "initial-sync/100/0",
+      "metric": "firstVisibleMs",
+      "before": 36.124,
+      "after": 35.099,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -2.8374487875097
+    },
+    {
+      "case": "initial-sync/100/0",
+      "metric": "allVisibleMs",
+      "before": 36.124,
+      "after": 35.099,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -2.8374487875097
+    },
+    {
+      "case": "initial-sync/100/0",
+      "metric": "bootstrapMs",
+      "before": 36.096,
+      "after": 35.074,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -2.8313386524822626
+    },
+    {
+      "case": "initial-sync/1000/0",
+      "metric": "storeOpenMs",
+      "before": 3.338,
+      "after": 3.487,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 4.463750748951467
+    },
+    {
+      "case": "initial-sync/1000/0",
+      "metric": "firstVisibleMs",
+      "before": 103.524,
+      "after": 103.924,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 0.38638383370039886
+    },
+    {
+      "case": "initial-sync/1000/0",
+      "metric": "allVisibleMs",
+      "before": 194.328,
+      "after": 195.059,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 0.3761681281132967
+    },
+    {
+      "case": "initial-sync/1000/0",
+      "metric": "bootstrapMs",
+      "before": 194.3,
+      "after": 195.032,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 0.37673700463201065
+    },
+    {
+      "case": "initial-sync/10000/0",
+      "metric": "storeOpenMs",
+      "before": 23.831,
+      "after": 23.241,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -2.4757668582938153
+    },
+    {
+      "case": "initial-sync/10000/0",
+      "metric": "firstVisibleMs",
+      "before": 135.345,
+      "after": 134.823,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -0.38568103734899495
+    },
+    {
+      "case": "initial-sync/10000/0",
+      "metric": "allVisibleMs",
+      "before": 1923.484,
+      "after": 1926.588,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 0.1613738403854592
+    },
+    {
+      "case": "initial-sync/10000/0",
+      "metric": "bootstrapMs",
+      "before": 1923.455,
+      "after": 1926.558,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 0.16132428364583618
+    },
+    {
+      "case": "live-sync/100/1",
+      "metric": "localCommitMs",
+      "before": 0.711,
+      "after": 0.665,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -6.469760900140642
+    },
+    {
+      "case": "live-sync/100/1",
+      "metric": "serverTransactionMs",
+      "before": 9.806,
+      "after": 10.974,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 11.911074852131364
+    },
+    {
+      "case": "live-sync/100/1",
+      "metric": "settlementMs",
+      "before": 24.096,
+      "after": 20.637,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -14.355079681274896
+    },
+    {
+      "case": "live-sync/100/1",
+      "metric": "bVisibleMs",
+      "before": 24.179,
+      "after": 20.44,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -15.463832251126997
+    },
+    {
+      "case": "live-sync/100/1",
+      "metric": "allVisibleMs",
+      "before": 24.182,
+      "after": 20.443,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -15.461913820196827
+    },
+    {
+      "case": "live-sync/100/1",
+      "metric": "allSettledMs",
+      "before": 24.106,
+      "after": 20.645,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -14.357421388865854
+    },
+    {
+      "case": "live-sync/100/1",
+      "metric": "entriesPerSecond",
+      "before": 41.35307253328923,
+      "after": 48.916499535293255,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 18.28987917624614
+    },
+    {
+      "case": "live-sync/100/100",
+      "metric": "localCommitMs",
+      "before": 1.6375,
+      "after": 1.7765,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": 8.488549618320619
+    },
+    {
+      "case": "live-sync/100/100",
+      "metric": "serverTransactionMs",
+      "before": 10.123000000000001,
+      "after": 10.4295,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": 3.0277585695939857
+    },
+    {
+      "case": "live-sync/100/100",
+      "metric": "settlementMs",
+      "before": 613.462,
+      "after": 969.912,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": 58.104658479253814
+    },
+    {
+      "case": "live-sync/100/100",
+      "metric": "bVisibleMs",
+      "before": 533.767,
+      "after": 634.5635,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": 18.883988706682864
+    },
+    {
+      "case": "live-sync/100/100",
+      "metric": "allVisibleMs",
+      "before": 1126.336,
+      "after": 1208.89,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": 7.329429228933471
+    },
+    {
+      "case": "live-sync/100/100",
+      "metric": "allSettledMs",
+      "before": 1133.784,
+      "after": 1217.922,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": 7.42099024152747
+    },
+    {
+      "case": "live-sync/100/100",
+      "metric": "entriesPerSecond",
+      "before": 88.78345360531848,
+      "after": 82.72051220541158,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": -6.8289091646055455
+    },
+    {
+      "case": "live-sync/1000/1",
+      "metric": "localCommitMs",
+      "before": 1.105,
+      "after": 0.89,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -19.457013574660632
+    },
+    {
+      "case": "live-sync/1000/1",
+      "metric": "serverTransactionMs",
+      "before": 13.969,
+      "after": 20.807,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 48.951249194645285
+    },
+    {
+      "case": "live-sync/1000/1",
+      "metric": "settlementMs",
+      "before": 26.689,
+      "after": 32.908,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 23.30173479710742
+    },
+    {
+      "case": "live-sync/1000/1",
+      "metric": "bVisibleMs",
+      "before": 27.232,
+      "after": 32.727,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 20.178466509988247
+    },
+    {
+      "case": "live-sync/1000/1",
+      "metric": "allVisibleMs",
+      "before": 27.238,
+      "after": 32.73,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 20.163007562963497
+    },
+    {
+      "case": "live-sync/1000/1",
+      "metric": "allSettledMs",
+      "before": 26.703,
+      "after": 32.916,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 23.267048646219514
+    },
+    {
+      "case": "live-sync/1000/1",
+      "metric": "entriesPerSecond",
+      "before": 36.71341508187092,
+      "after": 30.553009471432933,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -16.77971280171099
+    },
+    {
+      "case": "live-sync/1000/100",
+      "metric": "localCommitMs",
+      "before": 1.8285,
+      "after": 1.4805000000000001,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": -19.03199343724363
+    },
+    {
+      "case": "live-sync/1000/100",
+      "metric": "serverTransactionMs",
+      "before": 13.486,
+      "after": 12.733,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": -5.583568144742701
+    },
+    {
+      "case": "live-sync/1000/100",
+      "metric": "settlementMs",
+      "before": 978.2715000000001,
+      "after": 825.7905000000001,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": -15.58677729035345
+    },
+    {
+      "case": "live-sync/1000/100",
+      "metric": "bVisibleMs",
+      "before": 755.1145,
+      "after": 675.8199999999999,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": -10.500990247174446
+    },
+    {
+      "case": "live-sync/1000/100",
+      "metric": "allVisibleMs",
+      "before": 1583.575,
+      "after": 1399.757,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": -11.607786180004098
+    },
+    {
+      "case": "live-sync/1000/100",
+      "metric": "allSettledMs",
+      "before": 1589.661,
+      "after": 1406.737,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": -11.50710749021332
+    },
+    {
+      "case": "live-sync/1000/100",
+      "metric": "entriesPerSecond",
+      "before": 63.1482563187724,
+      "after": 71.44097154006018,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": 13.132136506550784
+    },
+    {
+      "case": "live-sync/10000/1",
+      "metric": "localCommitMs",
+      "before": 1.217,
+      "after": 1.234,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 1.396877567789634
+    },
+    {
+      "case": "live-sync/10000/1",
+      "metric": "serverTransactionMs",
+      "before": 15.526,
+      "after": 17.076,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 9.983253896689437
+    },
+    {
+      "case": "live-sync/10000/1",
+      "metric": "settlementMs",
+      "before": 28.358,
+      "after": 30.696,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 8.244587065378383
+    },
+    {
+      "case": "live-sync/10000/1",
+      "metric": "bVisibleMs",
+      "before": 28.644,
+      "after": 29.607,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 3.3619606200251395
+    },
+    {
+      "case": "live-sync/10000/1",
+      "metric": "allVisibleMs",
+      "before": 28.648,
+      "after": 29.61,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 3.3580005585032158
+    },
+    {
+      "case": "live-sync/10000/1",
+      "metric": "allSettledMs",
+      "before": 28.368,
+      "after": 30.705,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 8.238155668358704
+    },
+    {
+      "case": "live-sync/10000/1",
+      "metric": "entriesPerSecond",
+      "before": 34.9064507120916,
+      "after": 33.77237419790611,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -3.2489023978385823
+    },
+    {
+      "case": "live-sync/10000/100",
+      "metric": "localCommitMs",
+      "before": 1.5675,
+      "after": 1.545,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": -1.4354066985645897
+    },
+    {
+      "case": "live-sync/10000/100",
+      "metric": "serverTransactionMs",
+      "before": 15.0225,
+      "after": 15.08,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": 0.3827591945415154
+    },
+    {
+      "case": "live-sync/10000/100",
+      "metric": "settlementMs",
+      "before": 1056.242,
+      "after": 1161.3294999999998,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": 9.949187780830515
+    },
+    {
+      "case": "live-sync/10000/100",
+      "metric": "bVisibleMs",
+      "before": 786.1334999999999,
+      "after": 816.624,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": 3.8785397136746003
+    },
+    {
+      "case": "live-sync/10000/100",
+      "metric": "allVisibleMs",
+      "before": 1591.541,
+      "after": 1637.025,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": 2.857859144062269
+    },
+    {
+      "case": "live-sync/10000/100",
+      "metric": "allSettledMs",
+      "before": 1597.536,
+      "after": 1642.256,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": 2.7993109388458226
+    },
+    {
+      "case": "live-sync/10000/100",
+      "metric": "entriesPerSecond",
+      "before": 62.83218591289825,
+      "after": 61.086422015546496,
+      "beforeRecordReports": 485,
+      "afterRecordReports": 485,
+      "changePercent": -2.7784548189551006
+    }
+  ],
+  "cases": [
+    {
+      "key": "initial-sync/100/0",
+      "before": {
+        "metrics": {
+          "storeOpenMs": {
+            "n": 5,
+            "median": 3.327,
+            "min": 3.083,
+            "max": 5.907
+          },
+          "firstVisibleMs": {
+            "n": 5,
+            "median": 36.124,
+            "min": 34.385,
+            "max": 50.738
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 36.124,
+            "min": 34.385,
+            "max": 50.738
+          },
+          "bootstrapMs": {
+            "n": 5,
+            "median": 36.096,
+            "min": 34.35,
+            "max": 50.713
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 24,
+            "min": 24,
+            "max": 24
+          },
+          "transactions": {
+            "n": 5,
+            "median": 4,
+            "min": 4,
+            "max": 4
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        }
+      },
+      "after": {
+        "metrics": {
+          "storeOpenMs": {
+            "n": 5,
+            "median": 3.38,
+            "min": 3.194,
+            "max": 6.312
+          },
+          "firstVisibleMs": {
+            "n": 5,
+            "median": 35.099,
+            "min": 33.426,
+            "max": 55.394
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 35.099,
+            "min": 33.426,
+            "max": 55.394
+          },
+          "bootstrapMs": {
+            "n": 5,
+            "median": 35.074,
+            "min": 33.401,
+            "max": 55.363
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 24,
+            "min": 24,
+            "max": 24
+          },
+          "transactions": {
+            "n": 5,
+            "median": 4,
+            "min": 4,
+            "max": 4
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        }
+      }
+    },
+    {
+      "key": "initial-sync/1000/0",
+      "before": {
+        "metrics": {
+          "storeOpenMs": {
+            "n": 5,
+            "median": 3.338,
+            "min": 3.165,
+            "max": 3.958
+          },
+          "firstVisibleMs": {
+            "n": 5,
+            "median": 103.524,
+            "min": 102.765,
+            "max": 109.985
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 194.328,
+            "min": 192.768,
+            "max": 201.279
+          },
+          "bootstrapMs": {
+            "n": 5,
+            "median": 194.3,
+            "min": 192.739,
+            "max": 201.251
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 30,
+            "min": 30,
+            "max": 30
+          },
+          "transactions": {
+            "n": 5,
+            "median": 5,
+            "min": 5,
+            "max": 5
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        }
+      },
+      "after": {
+        "metrics": {
+          "storeOpenMs": {
+            "n": 5,
+            "median": 3.487,
+            "min": 3.197,
+            "max": 4.076
+          },
+          "firstVisibleMs": {
+            "n": 5,
+            "median": 103.924,
+            "min": 102.865,
+            "max": 108.275
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 195.059,
+            "min": 191.025,
+            "max": 205.269
+          },
+          "bootstrapMs": {
+            "n": 5,
+            "median": 195.032,
+            "min": 190.993,
+            "max": 205.238
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 30,
+            "min": 30,
+            "max": 30
+          },
+          "transactions": {
+            "n": 5,
+            "median": 5,
+            "min": 5,
+            "max": 5
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        }
+      }
+    },
+    {
+      "key": "initial-sync/10000/0",
+      "before": {
+        "metrics": {
+          "storeOpenMs": {
+            "n": 5,
+            "median": 23.831,
+            "min": 21.774,
+            "max": 29.703
+          },
+          "firstVisibleMs": {
+            "n": 5,
+            "median": 135.345,
+            "min": 127.582,
+            "max": 148.32
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 1923.484,
+            "min": 1916.93,
+            "max": 1987.102
+          },
+          "bootstrapMs": {
+            "n": 5,
+            "median": 1923.455,
+            "min": 1916.904,
+            "max": 1987.059
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 138,
+            "min": 138,
+            "max": 138
+          },
+          "transactions": {
+            "n": 5,
+            "median": 23,
+            "min": 23,
+            "max": 23
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        }
+      },
+      "after": {
+        "metrics": {
+          "storeOpenMs": {
+            "n": 5,
+            "median": 23.241,
+            "min": 16.9,
+            "max": 27.231
+          },
+          "firstVisibleMs": {
+            "n": 5,
+            "median": 134.823,
+            "min": 121.216,
+            "max": 143.818
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 1926.588,
+            "min": 1911.479,
+            "max": 1986.132
+          },
+          "bootstrapMs": {
+            "n": 5,
+            "median": 1926.558,
+            "min": 1911.444,
+            "max": 1985.655
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 138,
+            "min": 138,
+            "max": 138
+          },
+          "transactions": {
+            "n": 5,
+            "median": 23,
+            "min": 23,
+            "max": 23
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          }
+        }
+      }
+    },
+    {
+      "key": "live-sync/100/1",
+      "before": {
+        "metrics": {
+          "localCommitMs": {
+            "n": 5,
+            "median": 0.711,
+            "min": 0.651,
+            "max": 1.621
+          },
+          "serverTransactionMs": {
+            "n": 5,
+            "median": 9.806,
+            "min": 8.534,
+            "max": 12.946
+          },
+          "settlementMs": {
+            "n": 5,
+            "median": 24.096,
+            "min": 17.287,
+            "max": 27.171
+          },
+          "bVisibleMs": {
+            "n": 5,
+            "median": 24.179,
+            "min": 17.881,
+            "max": 27.307
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 24.182,
+            "min": 17.884,
+            "max": 27.31
+          },
+          "allSettledMs": {
+            "n": 5,
+            "median": 24.106,
+            "min": 17.296,
+            "max": 27.199
+          },
+          "entriesPerSecond": {
+            "n": 5,
+            "median": 41.35307253328923,
+            "min": 36.61662394727206,
+            "max": 55.91590248266607
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 47,
+            "min": 47,
+            "max": 47
+          },
+          "transactions": {
+            "n": 5,
+            "median": 5,
+            "min": 5,
+            "max": 5
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        }
+      },
+      "after": {
+        "metrics": {
+          "localCommitMs": {
+            "n": 5,
+            "median": 0.665,
+            "min": 0.592,
+            "max": 1.129
+          },
+          "serverTransactionMs": {
+            "n": 5,
+            "median": 10.974,
+            "min": 9.395,
+            "max": 14.507
+          },
+          "settlementMs": {
+            "n": 5,
+            "median": 20.637,
+            "min": 18.413,
+            "max": 23.876
+          },
+          "bVisibleMs": {
+            "n": 5,
+            "median": 20.44,
+            "min": 18.339,
+            "max": 24.096
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 20.443,
+            "min": 18.342,
+            "max": 24.102
+          },
+          "allSettledMs": {
+            "n": 5,
+            "median": 20.645,
+            "min": 18.424,
+            "max": 23.889
+          },
+          "entriesPerSecond": {
+            "n": 5,
+            "median": 48.916499535293255,
+            "min": 41.490332752468674,
+            "max": 54.519681605059425
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 41,
+            "min": 41,
+            "max": 41
+          },
+          "transactions": {
+            "n": 5,
+            "median": 4,
+            "min": 4,
+            "max": 4
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        }
+      }
+    },
+    {
+      "key": "live-sync/100/100",
+      "before": {
+        "metrics": {
+          "localCommitMs": {
+            "n": 500,
+            "median": 1.6375,
+            "min": 0.654,
+            "max": 27.559,
+            "p95": 2.875
+          },
+          "serverTransactionMs": {
+            "n": 500,
+            "median": 10.123000000000001,
+            "min": 8.053,
+            "max": 48.346,
+            "p95": 13.1
+          },
+          "settlementMs": {
+            "n": 500,
+            "median": 613.462,
+            "min": 41.788,
+            "max": 1124.84,
+            "p95": 1073.079
+          },
+          "bVisibleMs": {
+            "n": 500,
+            "median": 533.767,
+            "min": 19.808,
+            "max": 963.876,
+            "p95": 916.201
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 1126.336,
+            "min": 1114.509,
+            "max": 1180.58
+          },
+          "allSettledMs": {
+            "n": 5,
+            "median": 1133.784,
+            "min": 1121.917,
+            "max": 1187.767
+          },
+          "entriesPerSecond": {
+            "n": 5,
+            "median": 88.78345360531848,
+            "min": 84.70412847922208,
+            "max": 89.72561011171736
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 3144,
+            "min": 3138,
+            "max": 3144
+          },
+          "transactions": {
+            "n": 5,
+            "median": 306,
+            "min": 305,
+            "max": 306
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 200,
+            "min": 200,
+            "max": 200
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 5,
+            "min": 4,
+            "max": 5
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        }
+      },
+      "after": {
+        "metrics": {
+          "localCommitMs": {
+            "n": 500,
+            "median": 1.7765,
+            "min": 0.588,
+            "max": 61.875,
+            "p95": 3.755
+          },
+          "serverTransactionMs": {
+            "n": 500,
+            "median": 10.4295,
+            "min": 8.073,
+            "max": 133.69,
+            "p95": 16.496
+          },
+          "settlementMs": {
+            "n": 500,
+            "median": 969.912,
+            "min": 45.315,
+            "max": 1305.095,
+            "p95": 1257.478
+          },
+          "bVisibleMs": {
+            "n": 500,
+            "median": 634.5635,
+            "min": 21.272,
+            "max": 1152.133,
+            "p95": 1008.982
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 1208.89,
+            "min": 1131.2,
+            "max": 1367.019
+          },
+          "allSettledMs": {
+            "n": 5,
+            "median": 1217.922,
+            "min": 1141.289,
+            "max": 1375.87
+          },
+          "entriesPerSecond": {
+            "n": 5,
+            "median": 82.72051220541158,
+            "min": 73.15187279767143,
+            "max": 88.4016973125884
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 3132,
+            "min": 3132,
+            "max": 3144
+          },
+          "transactions": {
+            "n": 5,
+            "median": 304,
+            "min": 304,
+            "max": 306
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 200,
+            "min": 200,
+            "max": 200
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 3,
+            "min": 3,
+            "max": 5
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        }
+      }
+    },
+    {
+      "key": "live-sync/1000/1",
+      "before": {
+        "metrics": {
+          "localCommitMs": {
+            "n": 5,
+            "median": 1.105,
+            "min": 0.788,
+            "max": 1.296
+          },
+          "serverTransactionMs": {
+            "n": 5,
+            "median": 13.969,
+            "min": 12.198,
+            "max": 19.492
+          },
+          "settlementMs": {
+            "n": 5,
+            "median": 26.689,
+            "min": 21.621,
+            "max": 33.857
+          },
+          "bVisibleMs": {
+            "n": 5,
+            "median": 27.232,
+            "min": 21.835,
+            "max": 33.521
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 27.238,
+            "min": 21.838,
+            "max": 33.527
+          },
+          "allSettledMs": {
+            "n": 5,
+            "median": 26.703,
+            "min": 21.63,
+            "max": 33.87
+          },
+          "entriesPerSecond": {
+            "n": 5,
+            "median": 36.71341508187092,
+            "min": 29.826706833298534,
+            "max": 45.791739170253685
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 47,
+            "min": 47,
+            "max": 47
+          },
+          "transactions": {
+            "n": 5,
+            "median": 5,
+            "min": 5,
+            "max": 5
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        }
+      },
+      "after": {
+        "metrics": {
+          "localCommitMs": {
+            "n": 5,
+            "median": 0.89,
+            "min": 0.685,
+            "max": 1.039
+          },
+          "serverTransactionMs": {
+            "n": 5,
+            "median": 20.807,
+            "min": 11.356,
+            "max": 26.051
+          },
+          "settlementMs": {
+            "n": 5,
+            "median": 32.908,
+            "min": 19.869,
+            "max": 40.48
+          },
+          "bVisibleMs": {
+            "n": 5,
+            "median": 32.727,
+            "min": 20.184,
+            "max": 40.196
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 32.73,
+            "min": 20.188,
+            "max": 40.201
+          },
+          "allSettledMs": {
+            "n": 5,
+            "median": 32.916,
+            "min": 19.879,
+            "max": 40.491
+          },
+          "entriesPerSecond": {
+            "n": 5,
+            "median": 30.553009471432933,
+            "min": 24.87500310937539,
+            "max": 49.53437685753913
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 41,
+            "min": 41,
+            "max": 41
+          },
+          "transactions": {
+            "n": 5,
+            "median": 4,
+            "min": 4,
+            "max": 4
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        }
+      }
+    },
+    {
+      "key": "live-sync/1000/100",
+      "before": {
+        "metrics": {
+          "localCommitMs": {
+            "n": 500,
+            "median": 1.8285,
+            "min": 0.67,
+            "max": 40.063,
+            "p95": 5.369
+          },
+          "serverTransactionMs": {
+            "n": 500,
+            "median": 13.486,
+            "min": 11.012,
+            "max": 133.186,
+            "p95": 20.231
+          },
+          "settlementMs": {
+            "n": 500,
+            "median": 978.2715000000001,
+            "min": 47.118,
+            "max": 1538.996,
+            "p95": 1487.233
+          },
+          "bVisibleMs": {
+            "n": 500,
+            "median": 755.1145,
+            "min": 22.095,
+            "max": 1406.842,
+            "p95": 1295.825
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 1583.575,
+            "min": 1427.366,
+            "max": 1793.657
+          },
+          "allSettledMs": {
+            "n": 5,
+            "median": 1589.661,
+            "min": 1434.48,
+            "max": 1806.178
+          },
+          "entriesPerSecond": {
+            "n": 5,
+            "median": 63.1482563187724,
+            "min": 55.75201947752552,
+            "max": 70.05911588198121
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 3138,
+            "min": 3132,
+            "max": 3150
+          },
+          "transactions": {
+            "n": 5,
+            "median": 305,
+            "min": 304,
+            "max": 307
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 200,
+            "min": 200,
+            "max": 200
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 4,
+            "min": 3,
+            "max": 6
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        }
+      },
+      "after": {
+        "metrics": {
+          "localCommitMs": {
+            "n": 500,
+            "median": 1.4805000000000001,
+            "min": 0.602,
+            "max": 8.547,
+            "p95": 2.423
+          },
+          "serverTransactionMs": {
+            "n": 500,
+            "median": 12.733,
+            "min": 9.687,
+            "max": 38.27,
+            "p95": 16.074
+          },
+          "settlementMs": {
+            "n": 500,
+            "median": 825.7905000000001,
+            "min": 51.101,
+            "max": 1354.397,
+            "p95": 1328.576
+          },
+          "bVisibleMs": {
+            "n": 500,
+            "median": 675.8199999999999,
+            "min": 25.621,
+            "max": 1255.063,
+            "p95": 1189.055
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 1399.757,
+            "min": 1359.668,
+            "max": 1421.077
+          },
+          "allSettledMs": {
+            "n": 5,
+            "median": 1406.737,
+            "min": 1365.958,
+            "max": 1427.974
+          },
+          "entriesPerSecond": {
+            "n": 5,
+            "median": 71.44097154006018,
+            "min": 70.36916366952671,
+            "max": 73.54736597463499
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 3132,
+            "min": 3132,
+            "max": 3144
+          },
+          "transactions": {
+            "n": 5,
+            "median": 304,
+            "min": 304,
+            "max": 306
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 200,
+            "min": 200,
+            "max": 200
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 3,
+            "min": 3,
+            "max": 5
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        }
+      }
+    },
+    {
+      "key": "live-sync/10000/1",
+      "before": {
+        "metrics": {
+          "localCommitMs": {
+            "n": 5,
+            "median": 1.217,
+            "min": 1.073,
+            "max": 2.195
+          },
+          "serverTransactionMs": {
+            "n": 5,
+            "median": 15.526,
+            "min": 13.87,
+            "max": 23.924
+          },
+          "settlementMs": {
+            "n": 5,
+            "median": 28.358,
+            "min": 23.999,
+            "max": 42.765
+          },
+          "bVisibleMs": {
+            "n": 5,
+            "median": 28.644,
+            "min": 24.82,
+            "max": 43.955
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 28.648,
+            "min": 24.824,
+            "max": 43.962
+          },
+          "allSettledMs": {
+            "n": 5,
+            "median": 28.368,
+            "min": 24.009,
+            "max": 42.778
+          },
+          "entriesPerSecond": {
+            "n": 5,
+            "median": 34.9064507120916,
+            "min": 22.746917792639096,
+            "max": 40.283596519497266
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 47,
+            "min": 47,
+            "max": 47
+          },
+          "transactions": {
+            "n": 5,
+            "median": 5,
+            "min": 5,
+            "max": 5
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        }
+      },
+      "after": {
+        "metrics": {
+          "localCommitMs": {
+            "n": 5,
+            "median": 1.234,
+            "min": 1.148,
+            "max": 1.398
+          },
+          "serverTransactionMs": {
+            "n": 5,
+            "median": 17.076,
+            "min": 14.737,
+            "max": 18.428
+          },
+          "settlementMs": {
+            "n": 5,
+            "median": 30.696,
+            "min": 27.441,
+            "max": 36.06
+          },
+          "bVisibleMs": {
+            "n": 5,
+            "median": 29.607,
+            "min": 26.562,
+            "max": 35.104
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 29.61,
+            "min": 26.567,
+            "max": 35.109
+          },
+          "allSettledMs": {
+            "n": 5,
+            "median": 30.705,
+            "min": 27.451,
+            "max": 36.07
+          },
+          "entriesPerSecond": {
+            "n": 5,
+            "median": 33.77237419790611,
+            "min": 28.482725227149732,
+            "max": 37.64068204915873
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 41,
+            "min": 41,
+            "max": 41
+          },
+          "transactions": {
+            "n": 5,
+            "median": 4,
+            "min": 4,
+            "max": 4
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        }
+      }
+    },
+    {
+      "key": "live-sync/10000/100",
+      "before": {
+        "metrics": {
+          "localCommitMs": {
+            "n": 500,
+            "median": 1.5675,
+            "min": 0.565,
+            "max": 8.103,
+            "p95": 2.842
+          },
+          "serverTransactionMs": {
+            "n": 500,
+            "median": 15.0225,
+            "min": 12.252,
+            "max": 39.241,
+            "p95": 18.887
+          },
+          "settlementMs": {
+            "n": 500,
+            "median": 1056.242,
+            "min": 55.777,
+            "max": 1687.056,
+            "p95": 1633.237
+          },
+          "bVisibleMs": {
+            "n": 500,
+            "median": 786.1334999999999,
+            "min": 28.572,
+            "max": 1594.953,
+            "p95": 1412.118
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 1591.541,
+            "min": 1553.896,
+            "max": 1767.554
+          },
+          "allSettledMs": {
+            "n": 5,
+            "median": 1597.536,
+            "min": 1559.941,
+            "max": 1774.316
+          },
+          "entriesPerSecond": {
+            "n": 5,
+            "median": 62.83218591289825,
+            "min": 56.57535781085047,
+            "max": 64.35437120630982
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 3132,
+            "min": 3132,
+            "max": 3138
+          },
+          "transactions": {
+            "n": 5,
+            "median": 304,
+            "min": 304,
+            "max": 305
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 200,
+            "min": 200,
+            "max": 200
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 3,
+            "min": 3,
+            "max": 4
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        }
+      },
+      "after": {
+        "metrics": {
+          "localCommitMs": {
+            "n": 500,
+            "median": 1.545,
+            "min": 0.571,
+            "max": 11.659,
+            "p95": 3.225
+          },
+          "serverTransactionMs": {
+            "n": 500,
+            "median": 15.08,
+            "min": 12.496,
+            "max": 29.853,
+            "p95": 20.221
+          },
+          "settlementMs": {
+            "n": 500,
+            "median": 1161.3294999999998,
+            "min": 59.894,
+            "max": 1709.784,
+            "p95": 1661.206
+          },
+          "bVisibleMs": {
+            "n": 500,
+            "median": 816.624,
+            "min": 32.489,
+            "max": 1597.891,
+            "p95": 1434.94
+          },
+          "allVisibleMs": {
+            "n": 5,
+            "median": 1637.025,
+            "min": 1562.618,
+            "max": 1784.252
+          },
+          "allSettledMs": {
+            "n": 5,
+            "median": 1642.256,
+            "min": 1567.435,
+            "max": 1792.211
+          },
+          "entriesPerSecond": {
+            "n": 5,
+            "median": 61.086422015546496,
+            "min": 56.04589486238491,
+            "max": 63.99516708498174
+          }
+        },
+        "counts": {
+          "frameworkSql": {
+            "n": 5,
+            "median": 3132,
+            "min": 3126,
+            "max": 3138
+          },
+          "transactions": {
+            "n": 5,
+            "median": 304,
+            "min": 303,
+            "max": 305
+          },
+          "server.processBatchMember": {
+            "n": 5,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          },
+          "server.processLive05": {
+            "n": 5,
+            "median": 200,
+            "min": 200,
+            "max": 200
+          },
+          "server.processDelivery05": {
+            "n": 5,
+            "median": 3,
+            "min": 2,
+            "max": 4
+          },
+          "server.processMaterialization05": {
+            "n": 5,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        }
+      }
+    }
+  ],
+  "before": {
+    "path": "../2026-10-27-model-watch-delivery/after.json.gz",
+    "commit": "74b8967c843d477b9514a08fb3f8fa196b18a1e0",
+    "dirty": false,
+    "build": {
+      "sourceSha256": "5bfedb6f95618fcfcdebd38ebd99aa2306ec9c8ee25e27f97e5191002faa8f2a",
+      "artifacts": {
+        "bindings/node/axton-node.node": "d6d0f30a8e9f53262cd8fff4224c49d43eb19c5a5a7e6b3a75f5e721ab64178c",
+        "target/release/libaxton_dart.dylib": "51d50e38c6b2250e3276743d8b3bdb5953bd360c995d7be772016aed2b07f2dd",
+        "artifacts/performance/initial-sync": "0a52a80857c632f1e2e1089d16cf859d804307ba2a0e2acce77c7ef4ae64cb22",
+        "artifacts/performance/live-sync": "e57c2a0994ea9cdd2478cb7791a4e1c56978661775a49fc89a8ad756a2e76a28"
+      }
+    },
+    "samples": 45,
+    "maxPlacementUncertaintyUs": 39,
+    "recordReports": 1455,
+    "selectedSingle": {
+      "sampleIndex": 35,
+      "repetition": 1,
+      "writeStartUs": 4,
+      "localCommitMs": 1.737,
+      "settlementMs": 28.358,
+      "bVisibleMs": 28.644,
+      "maxPlacementUncertaintyUs": 33.5,
+      "backend": {
+        "transactionStartMs": 4.6685,
+        "transactionDurationMs": 15.526,
+        "frameworkSqlCalls": 17
+      },
+      "transactions": [
+        {
+          "operationId": "backend:79203:36:4615",
+          "startMs": 4.6685,
+          "durationMs": 15.526,
+          "operation": "server.processBatchMember",
+          "frameworkSqlCalls": 17
+        },
+        {
+          "operationId": "backend:79203:36:4691",
+          "startMs": 20.4125,
+          "durationMs": 5.839,
+          "operation": "server.processLive05",
+          "frameworkSqlCalls": 8
+        },
+        {
+          "operationId": "backend:79203:36:4693",
+          "startMs": 20.4175,
+          "durationMs": 6.368,
+          "operation": "server.processLive05",
+          "frameworkSqlCalls": 8
+        },
+        {
+          "operationId": "backend:79203:36:4751",
+          "startMs": 22.8375,
+          "durationMs": 11.938,
+          "operation": "server.processDelivery05",
+          "frameworkSqlCalls": 6
+        },
+        {
+          "operationId": "backend:79203:36:4753",
+          "startMs": 23.3995,
+          "durationMs": 18.906,
+          "operation": "server.processMaterialization05",
+          "frameworkSqlCalls": 8
+        }
+      ],
+      "stages": {
+        "delivery.apply": {
+          "count": 1,
+          "totalMs": 0.842,
+          "maxMs": 0.842
+        },
+        "watch.query": {
+          "count": 1,
+          "totalMs": 0.079,
+          "maxMs": 0.079
+        },
+        "watch.snapshot": {
+          "count": 1,
+          "totalMs": 0.002,
+          "maxMs": 0.002
+        },
+        "bridge.nativeDrain": {
+          "count": 3,
+          "totalMs": 0.074,
+          "maxMs": 0.052
+        },
+        "bridge.decode": {
+          "count": 3,
+          "totalMs": 0.044000000000000004,
+          "maxMs": 0.035
+        },
+        "watch.enqueue": {
+          "count": 1,
+          "totalMs": 0.135,
+          "maxMs": 0.135
+        }
+      }
+    }
+  },
+  "after": {
+    "path": "after.json.gz",
+    "commit": "3b8923cc1119853b24ae6ac0140296ce672019a8",
+    "dirty": false,
+    "build": {
+      "sourceSha256": "55f72025d0e2cf556e6700727ed8366ce42fa5d03ed3c22b6ca68b6fc0395ab5",
+      "artifacts": {
+        "bindings/node/axton-node.node": "cc6ae17837fb104e7cefe965054e3e0c5114a81a9e57bc0eaa5e1e2516a544aa",
+        "target/release/libaxton_dart.dylib": "3b11b45a3dd191fa732308f24915cec4fb7706105ba40dda245f7a9b9acf3096",
+        "artifacts/performance/initial-sync": "d19a51a8d7d471604d0f56a8324157d23ae5a8b0d7dd9d1d62942a7c47cd37b3",
+        "artifacts/performance/live-sync": "683d159fd19f5480dbaa087394fc43d9cb9020592881bc37f27741bf97a0125c"
+      }
+    },
+    "samples": 45,
+    "maxPlacementUncertaintyUs": 37,
+    "recordReports": 1455,
+    "selectedSingle": {
+      "sampleIndex": 38,
+      "repetition": 4,
+      "writeStartUs": 3,
+      "localCommitMs": 1.336,
+      "settlementMs": 30.696,
+      "bVisibleMs": 29.607,
+      "maxPlacementUncertaintyUs": 24,
+      "backend": {
+        "transactionStartMs": 3.755,
+        "transactionDurationMs": 18.247,
+        "frameworkSqlCalls": 17
+      },
+      "transactions": [
+        {
+          "operationId": "backend:3044:39:4615",
+          "startMs": 3.755,
+          "durationMs": 18.247,
+          "operation": "server.processBatchMember",
+          "frameworkSqlCalls": 17
+        },
+        {
+          "operationId": "backend:3044:39:4691",
+          "startMs": 22.17,
+          "durationMs": 5.618,
+          "operation": "server.processLive05",
+          "frameworkSqlCalls": 8
+        },
+        {
+          "operationId": "backend:3044:39:4693",
+          "startMs": 22.177,
+          "durationMs": 5.819,
+          "operation": "server.processLive05",
+          "frameworkSqlCalls": 8
+        },
+        {
+          "operationId": "backend:3044:39:4747",
+          "startMs": 24.93,
+          "durationMs": 18.773,
+          "operation": "server.processMaterialization05",
+          "frameworkSqlCalls": 8
+        }
+      ],
+      "stages": {
+        "delivery.apply": {
+          "count": 1,
+          "totalMs": 0.611,
+          "maxMs": 0.611
+        },
+        "watch.query": {
+          "count": 1,
+          "totalMs": 0.057,
+          "maxMs": 0.057
+        },
+        "watch.snapshot": {
+          "count": 1,
+          "totalMs": 0.002,
+          "maxMs": 0.002
+        },
+        "bridge.nativeDrain": {
+          "count": 5,
+          "totalMs": 0.109,
+          "maxMs": 0.048
+        },
+        "bridge.decode": {
+          "count": 5,
+          "totalMs": 0.047,
+          "maxMs": 0.024
+        },
+        "watch.enqueue": {
+          "count": 1,
+          "totalMs": 0.157,
+          "maxMs": 0.157
+        }
+      }
+    }
+  }
+}

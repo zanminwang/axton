@@ -62,12 +62,13 @@ class EntryFilter {
 }
 enum EntryOrderField {byId('id'),byText('text'); final String wireName; const EntryOrderField(this.wireName);}
 class EntryOrder { final EntryOrderField field; final bool descending; const EntryOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
+Entry _copyEntryWatch(Entry value) => value;
 class EntryModel { final ReadPort port; EntryModel(this.port);
  Future<Entry?> get(EntryIdentity identity) async { final row=await port.read('Entry',identity.toRecord()); return row == null ? null : Entry.fromRecord(row); }
  Future<List<Entry>> query({EntryFilter? where,List<EntryOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Entry',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Entry.fromRecord).toList();
 }
 class EntryLiveModel extends EntryTxModel { final Client client; EntryLiveModel(this.client) : super(client);
- Stream<List<Entry>> watch({EntryFilter? where}) => client.watch('Entry', where:where?.toRecord()??{}).map((rows) => rows.map(Entry.fromRecord).toList());
+ Stream<List<Entry>> watch({EntryFilter? where}) => client.watchDecoded<Entry>('Entry', where:where?.toRecord()??{},decode:Entry.fromRecord,copy:_copyEntryWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(EntryIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Entry', identity.toRecord()));
 }

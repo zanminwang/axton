@@ -12,6 +12,21 @@ Define the JSON messages between a Frontend SDK and its Rust ClientRuntime: task
 
 [Client bridge](../../../../crates/protocols/src/client_bridge/mod.rs) owns messages and decoding, with local operation/report/readiness DTOs and QuerySpec ordering DTOs. The [frontend interface](../../../../crates/client/src/frontend_interface.rs) exposes Client operations; [ClientRuntime](../../../../crates/client/src/runtime) admits and executes commands. [Frontend Bindings](../frontend-sdk/bindings.md) carry messages and run requested platform effects.
 
+Model watches may request `spec.delivery: "splice-v1"`. Their initial result and
+full refreshes carry `{kind:"watch", protocol:"splice-v1", version, rows}`.
+Subsequent key refreshes carry `{kind:"watch", protocol:"splice-v1", baseVersion,
+version, splices:[{index, deleteCount, rows}]}`. Splices apply in message order,
+each against the preceding splice's result. Versions increase per publication;
+a patch's base is the receiver's last version and its version is base plus one.
+Rust alone decides membership and order. `watchSnapshot {observerId}` requests a
+newer full cache result for receiver recovery without another SQL query.
+
+Callers without the opt-in retain legacy `{kind:"watch", rows}` snapshots, as do
+`watchSql` observers. An older native ignores the opt-in; current SDKs accept its
+legacy full results. Unsupported delivery names are refused by current native.
+Close ends a negotiated Model watch with `{kind:"watch", closed:true}`; no rows
+are needed. Cancellation removes the observer without a terminal snapshot.
+
 ## 10. Quality Requirements
 
 An opt-in open request may enable `diagnostics`. Its `trace {records, dropped}`

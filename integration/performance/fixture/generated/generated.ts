@@ -2,7 +2,7 @@
 import type { Call, QueryOptions } from './client.ts';
 export interface ReadPort { read(model:string,identity:object):Promise<Record<string,unknown>|null>; querySpec(model:string,query:object):Promise<Record<string,unknown>[]>; related(model:string,identity:object,relation:string):Promise<Record<string,unknown>|null>; referencing(model:string,identity:object,source:string,relation:string):Promise<Record<string,unknown>[]>; }
 export interface WritePort extends ReadPort { direct(operation:object):Promise<void>; }
-export interface LivePort extends WritePort { watch(model:string,where:Record<string,unknown>,listener:(rows:Record<string,unknown>[])=>void,onError?:(error:unknown)=>void):()=>void; syncState(model:string,identity:object):Promise<unknown>; }
+export interface LivePort extends WritePort { watch(model:string,where:Record<string,unknown>,listener:(rows:Record<string,unknown>[])=>void,onError?:(error:unknown)=>void):()=>void; watchDecoded<T>(model:string,where:Record<string,unknown>,decode:(row:Record<string,unknown>)=>T,copy:(value:T)=>T,listener:(rows:T[])=>void,onError?:(error:unknown)=>void):()=>void; syncState(model:string,identity:object):Promise<unknown>; }
 export interface CallPort { invokeQuery<T>(name:string,version:number,args:object,decode:(value:unknown)=>T,options?:QueryOptions):Promise<T>; }
 export const schema = {"actions":[{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"create"}],"kind":"mutation","name":"CreateEntry","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":1}]} as const;
 export type MutationName = 'CreateEntry';
@@ -51,6 +51,10 @@ export function encodeEntryCreate(value:EntryCreate):Record<string,unknown> { re
 export function encodeEntryCreateIdentity(value:EntryCreate):Record<string,unknown> { return {
  id: value.id,
 }; }
+function _copyEntryWatch(value:Entry):Entry { return {
+ id: value.id,
+ text: value.text,
+}; }
 export class EntryModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:EntryIdentity):Promise<Entry|null> { const row=await this.port.read('Entry',encodeEntryIdentity(identity)); return row===null ? null : decodeEntry(row); }
  async query(options:{where?:Partial<Entry>;orderBy?:{field:'id' | 'text';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Entry[]> { return (await this.port.querySpec('Entry',{filter:encodeEntryWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeEntry); }
@@ -61,7 +65,7 @@ export class EntryTxModel<P extends WritePort=WritePort> extends EntryModel<P> {
  delete(identity:EntryIdentity):Promise<void> { return this.port.direct({model:'Entry',op:'delete',identity:encodeEntryIdentity(identity)}); }
 }
 export class EntryLiveModel extends EntryTxModel<LivePort> {
- watch(options:{where?:Partial<Entry>}, listener:(rows:Entry[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Entry',encodeEntryWhere(options.where??{}),(rows)=>listener(rows.map(decodeEntry)),onError); }
+ watch(options:{where?:Partial<Entry>}, listener:(rows:Entry[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watchDecoded('Entry',encodeEntryWhere(options.where??{}),decodeEntry,_copyEntryWatch,listener,onError); }
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:EntryIdentity):Promise<SyncState> { return (await this.port.syncState('Entry',encodeEntryIdentity(identity))) as SyncState; }
 }

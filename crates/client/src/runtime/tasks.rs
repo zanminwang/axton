@@ -296,6 +296,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             Command::StreamSubscribe { stream } => Some(self.subscribe_stream(stream)),
             Command::StreamBootstrap { .. } => self.bootstrap_stream(&request_id, &command),
             Command::Watch { model, spec } => Some(self.watch(model, spec.as_ref())),
+            Command::WatchSnapshot { observer_id } => Some(self.watch_snapshot(observer_id)),
             Command::WatchSql { sql, parameters } => Some(self.watch_sql(sql, parameters)),
             Command::Unwatch { observer_id } => {
                 self.unwatch_unsent(observer_id);
@@ -303,7 +304,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             }
             _ => Some(commands::execute(&mut self.client, &command).map_err(|e| e.to_string())),
         };
-        self.committed_since(generation);
+        self.committed_since(generation, "tasks");
         if let Some(Ok(value)) = &outcome {
             // The protocol seams settle calls too; every final outcome
             // travels as `callCompleted`, after the commit that decided it.

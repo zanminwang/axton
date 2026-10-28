@@ -508,11 +508,29 @@ export function persistence<Tx>(driver: PostgresDriver<Tx>): Database<Tx> & {
   return {
     driver,
     initialize,
-    transaction: (body) => driver.transaction(body),
-    persistence: (tx: Tx): Persistence => ({
+    transaction: (body, diagnostics) =>
+      driver.transaction(
+        (tx) =>
+          diagnostics
+            ? diagnostics.span("postgres.transaction.body", {}, () => body(tx))
+            : body(tx),
+        diagnostics,
+      ),
+    persistence: (tx: Tx, diagnostics): Persistence => ({
       call: async (request) => {
         await initialize(tx);
-        return answerInitialized(driver, tx, request as HostRequest);
+        const traced = diagnostics
+          ? {
+              ...driver,
+              query: (retained: Tx, sql: string, params: readonly unknown[]) =>
+                diagnostics.span(
+                  "postgres.query",
+                  { command: sql.trimStart().split(/\s/, 1)[0] },
+                  () => driver.query(retained, sql, params),
+                ),
+            }
+          : driver;
+        return answerInitialized(traced, tx, request as HostRequest);
       },
     }),
   };

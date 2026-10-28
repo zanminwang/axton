@@ -192,7 +192,7 @@ test('stop unregisters the watch by its observer id; a watch stopped before regi
   const seen = [];
   const stop = client.watch('Entry', { id: 'a' }, rows => seen.push(rows));
   await until(() => seen.length === 1, 'the rows published behind the task');
-  assert.deepEqual(tasks, [{ kind: 'watch', model: 'Entry', spec: { filter: { id: 'a' } } }]);
+  assert.deepEqual(tasks, [{ kind: 'watch', model: 'Entry', spec: { filter: { id: 'a' }, delivery: 'splice-v1' } }]);
   publish({ type: 'observerChanged', observerId: '3', snapshot: { kind: 'watch', rows: [] } });
   assert.deepEqual(seen, [[{ id: 'a' }], []], 'every published result, as published');
   stop();

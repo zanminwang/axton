@@ -1,4 +1,5 @@
 //! Client entry points over the local engine and store.
+use crate::changes::ModelChanges;
 use crate::engine::Engine;
 use crate::*;
 use serde::{Deserialize, Serialize};
@@ -83,6 +84,7 @@ impl ApplyReport {
 // A transaction the host holds open across calls, with its own savepoint stack.
 pub(crate) struct Session {
     changed: BTreeSet<String>,
+    model_changes: ModelChanges,
     savepoints: Vec<SessionSavepoint>,
     counter: u64,
     // Ordinals of the calls submitted in this transaction.
@@ -92,6 +94,7 @@ pub(crate) struct Session {
 struct SessionSavepoint {
     name: String,
     changed: BTreeSet<String>,
+    model_changes: ModelChanges,
     submitted: BTreeSet<u64>,
 }
 
@@ -107,6 +110,8 @@ pub struct Client<S: ClientStore> {
     pub(crate) watcher_ids: u64,
     pub(crate) session: Option<Session>,
     pub(crate) last_changed: BTreeSet<String>,
+    // Union of successful commits not yet consumed by Model observers.
+    pub(crate) model_changes: ModelChanges,
     pub(crate) last_bootstrap: BTreeSet<String>,
 }
 
@@ -208,12 +213,11 @@ impl<S: ClientStore> Client<S> {
         }
         self.store.begin()?;
         let mut changed = BTreeSet::new();
-        let applied = body(&mut Engine::new(
-            &mut self.store,
-            &self.schema,
-            &mut changed,
-            false,
-        ));
+        let mut model_changes = ModelChanges::default();
+        let applied = body(
+            &mut Engine::new(&mut self.store, &self.schema, &mut changed, false)
+                .tracking(&mut model_changes),
+        );
         match applied.and_then(|value| self.fence().map(|()| value)) {
             Ok(value) => {
                 // A failed COMMIT leaves the transaction open; without this rollback
@@ -223,6 +227,7 @@ impl<S: ClientStore> Client<S> {
                     return Err(e);
                 }
                 self.generation += 1;
+                self.model_changes.merge(model_changes);
                 changed.insert("axton_store".into());
                 self.notify(changed);
                 Ok(value)
@@ -252,12 +257,7 @@ impl<S: ClientStore> Client<S> {
         self.write(|engine| {
             let mut submitted = BTreeSet::new();
             let mut tx = ClientTransaction {
-                engine: Engine::new(
-                    &mut *engine.store,
-                    engine.schema,
-                    &mut *engine.changed,
-                    false,
-                ),
+                engine: engine.reborrow(),
                 depth: 0,
                 submitted: &mut submitted,
             };
@@ -271,6 +271,7 @@ impl<S: ClientStore> Client<S> {
         self.store.begin()?;
         self.session = Some(Session {
             changed: BTreeSet::new(),
+            model_changes: ModelChanges::default(),
             savepoints: vec![],
             counter: 0,
             submitted: BTreeSet::new(),
@@ -291,7 +292,8 @@ impl<S: ClientStore> Client<S> {
             .as_mut()
             .ok_or_else(|| invalid("no active transaction"))?;
         let mut tx = ClientTransaction {
-            engine: Engine::new(store, schema, &mut session.changed, false),
+            engine: Engine::new(store, schema, &mut session.changed, false)
+                .tracking(&mut session.model_changes),
             depth: 0,
             submitted: &mut session.submitted,
         };
@@ -315,6 +317,7 @@ impl<S: ClientStore> Client<S> {
             return Err(e);
         }
         self.generation += 1;
+        self.model_changes.merge(session.model_changes);
 
         let mut changed = session.changed;
         changed.insert("axton_store".into());
@@ -342,6 +345,7 @@ impl<S: ClientStore> Client<S> {
         session.savepoints.push(SessionSavepoint {
             name,
             changed: session.changed.clone(),
+            model_changes: session.model_changes.clone(),
             submitted: session.submitted.clone(),
         });
         Ok(())
@@ -371,6 +375,7 @@ impl<S: ClientStore> Client<S> {
         session.submitted = savepoint.submitted;
         self.store.rollback_to(&savepoint.name)?;
         session.changed = savepoint.changed;
+        session.model_changes = savepoint.model_changes;
         Ok(())
     }
     pub fn read(&mut self, key: &RecordKey) -> Result<Option<Value>> {
@@ -393,6 +398,15 @@ impl<S: ClientStore> Client<S> {
     }
     pub fn query_spec(&mut self, model: &str, spec: &QuerySpec) -> Result<Vec<Value>> {
         self.view(|e| query::evaluate(e, model, spec))
+    }
+    pub(crate) fn query_keys(
+        &mut self,
+        model: &str,
+        filter: &Value,
+        keys: &[RecordKey],
+    ) -> Result<Vec<Value>> {
+        let filter = serde_json::from_value(filter.clone())?;
+        self.view(|e| query::evaluate_keys(e, model, &filter, keys))
     }
     pub fn related(&mut self, key: &RecordKey, name: &str) -> Result<Option<Value>> {
         self.view(|e| query::related(e, key, name))
@@ -556,6 +570,7 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
         let name = format!("tx_{}", self.depth);
         self.engine.store.savepoint(&name)?;
         let submitted = self.submitted.clone();
+        let model_changes = self.engine.model_changes.as_deref().cloned();
         let result = body(self);
         self.depth -= 1;
         match result {
@@ -568,6 +583,11 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
                 // when the physical rollback fails and fails the rest.
                 *self.submitted = submitted;
                 self.engine.store.rollback_to(&name)?;
+                if let (Some(current), Some(saved)) =
+                    (self.engine.model_changes.as_deref_mut(), model_changes)
+                {
+                    *current = saved;
+                }
                 Err(e)
             }
         }

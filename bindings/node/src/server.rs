@@ -17,13 +17,20 @@ impl axton_server::Host for CallbackHost {
         request: Value,
     ) -> Pin<Box<dyn Future<Output = axton_server::HostResult<Value>> + Send + '_>> {
         Box::pin(async move {
-            let returned = self
+            let encoded = {
+                let _span = tracing::info_span!(target: "axton::server", "host.encode").entered();
+                request.to_string()
+            };
+            let returned = async { self
                 .0
-                .call_async_catch(request.to_string())
+                .call_async_catch(encoded)
                 .await
                 .map_err(|e| e.to_string())?
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| e.to_string()) }
+                .instrument(tracing::info_span!(target: "axton::server", "host.await", op = request.get("op").and_then(|value| value.as_str()).unwrap_or("unknown")))
+                .await?;
+            let _decode = tracing::info_span!(target: "axton::server", "host.decode").entered();
             serde_json::from_str(&returned).map_err(|e| e.to_string())
         })
     }

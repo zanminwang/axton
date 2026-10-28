@@ -20,7 +20,7 @@ Future<void> main(List<String> args) => runSample(args, (
   List<Entry> last = [];
   var measuring = true;
   try {
-    clock.start();
+    sampleClock.startMeasurement(clock);
     timings['initializationStartUs'] = 0;
     timings['applicationConfiguredUs'] =
         options['applicationConfiguredUs'] as int;

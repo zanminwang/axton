@@ -31,6 +31,7 @@ pub struct Control {
     network_state: Option<(bool, bool)>,
     /// Highest handshake/delivery head. Receipt cursors belong to settlement.
     delivery_head: u64,
+    bootstrap_prefetch: bool,
     events: Vec<Event>,
     jobs: VecDeque<StoreCommand>,
     applying: bool,
@@ -46,9 +47,14 @@ pub struct Control {
 }
 impl Control {
     pub fn new(status: StoreStatus05) -> Self {
+        Self::with_bootstrap_prefetch(status, false)
+    }
+    /// Internal opt-in experiment. Received positions never become Store progress.
+    pub fn with_bootstrap_prefetch(status: StoreStatus05, enabled: bool) -> Self {
         Self {
             context: status.context.clone(),
             delivery_head: status.cursor.unwrap_or(0),
+            bootstrap_prefetch: enabled,
             status,
             queue: DeliveryQueue::new(16 * 1024 * 1024, 32),
             flights: BTreeMap::new(),
@@ -99,6 +105,7 @@ impl Control {
         Ok(())
     }
     fn handshake(&mut self) -> Result<()> {
+        self.retire_bootstrap_prefetch();
         self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.applying = false;
         self.applying_plan = None;
@@ -371,8 +378,23 @@ impl Control {
                 response.admit(&request, &self.context)?;
                 response.require_complete()?;
                 self.delivery_head = self.delivery_head.max(response.header.observed_head);
-                self.queue
-                    .receive(&response.header, &response.parts, &self.context, now)?;
+                let speculative =
+                    request.bootstrap && request.after > self.status.bootstrap_cursor.unwrap_or(0);
+                if speculative {
+                    if !self.queue.receive_prefetched(
+                        &response.header,
+                        &response.parts,
+                        &self.context,
+                        now,
+                    )? {
+                        // Retry from committed B after the current page finishes.
+                        // Do not repeatedly fetch a successor that cannot fit.
+                        self.bootstrap_prefetch = false;
+                    }
+                } else {
+                    self.queue
+                        .receive(&response.header, &response.parts, &self.context, now)?;
+                }
                 self.schedule(now)?;
             }
             Flight::Owned(request) => {
@@ -435,6 +457,7 @@ impl Control {
         self.retry(message)
     }
     pub fn failed(&mut self, message: String) {
+        self.retire_bootstrap_prefetch();
         if let Some(id) = self.applying_plan.take()
             && let Some(p) = self.queue.plans.get_mut(&id)
         {
@@ -668,6 +691,53 @@ impl Control {
             &request,
         )
     }
+    fn retire_bootstrap_prefetch(&mut self) {
+        let committed = self.status.bootstrap_cursor.unwrap_or(0);
+        let future = self
+            .flights
+            .iter()
+            .filter_map(|(id, flight)| match flight {
+                Flight::Delta(r) if r.bootstrap && r.after > committed => Some(id.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for id in future {
+            self.flights.remove(&id);
+            self.events.push(Event::CancelEffect { effect_id: id });
+        }
+        self.refresh_waiters.retain(
+            |flight| !matches!(flight, Flight::Delta(r) if r.bootstrap && r.after > committed),
+        );
+        self.queue.plans.retain(|_, p| {
+            p.header.owner.is_some()
+                || !p.header.bootstrap
+                || p.header.after.is_none_or(|after| after <= committed)
+        });
+    }
+    fn bootstrap_prefetch_after(&self, committed: u64, through: u64) -> Option<u64> {
+        if !self.bootstrap_prefetch {
+            return None;
+        }
+        let mut pages = self.queue.plans.values().filter(|p| {
+            p.header.owner.is_none()
+                && p.header.bootstrap
+                && p.header.context == self.context
+                && p.header.through.is_some_and(|end| end > committed)
+        });
+        let current = pages.next()?;
+        if pages.next().is_some()
+            || current.blocked
+            || current.header.after.is_none_or(|after| after > committed)
+            || (current.next..current.header.units.len() as u64)
+                .any(|index| !current.complete(index))
+        {
+            return None;
+        }
+        current
+            .header
+            .through
+            .filter(|end| *end > committed && *end < through)
+    }
     fn schedule(&mut self, now: u64) -> Result<()> {
         if !self.connected || self.paused {
             return Ok(());
@@ -738,7 +808,12 @@ impl Control {
                 }
             }
         }
-        if self.flights.values().any(|f| matches!(f, Flight::Delta(_))) {
+        if self
+            .flights
+            .values()
+            .chain(self.refresh_waiters.iter())
+            .any(|f| matches!(f, Flight::Delta(_)))
+        {
             return Ok(());
         }
         if self.status.start_cursor.is_none() {
@@ -760,6 +835,15 @@ impl Control {
                 && p.header.after.is_some_and(|a| a <= after)
                 && p.header.through.is_some_and(|end| end >= after)
         }) {
+            if bootstrap && let Some(after) = self.bootstrap_prefetch_after(after, through) {
+                let request = v05::DeltaRequest {
+                    context: self.context.clone(),
+                    after,
+                    through,
+                    bootstrap: true,
+                };
+                self.http(Flight::Delta(request.clone()), HttpRoute::Pull, &request)?;
+            }
             return Ok(());
         }
         if bootstrap || after < through {

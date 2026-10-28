@@ -67,6 +67,7 @@ const settings=(await admin.query("SELECT name,setting,unit FROM pg_settings WHE
 const result={schemaVersion:1,completed:false,createdAt:new Date().toISOString(),commit:command('git',['rev-parse','HEAD']),
   dirty:command('git',['status','--porcelain']).length>0,build:built,
   implementation:{publicationFence:'removed; Serializable and Store/record/Stream guards retained',
+    bootstrapPrefetch:process.env.AXTON_EXPERIMENTAL_BOOTSTRAP_PREFETCH==='1'?'one-page opt-in':'off',
     storeBindingReads:'snapshot inspection; atomic claim for missing Store or unfinished Bootstrap',
     storeProgressLock:'FOR NO KEY UPDATE; competing uploads serialized',
     deliveryStorage:'none; complete current-state cursor pages, no server payload tables',

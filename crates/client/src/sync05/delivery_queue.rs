@@ -183,6 +183,28 @@ impl DeliveryQueue {
         active: &v05::RequestContext,
         now: u64,
     ) -> Result<()> {
+        self.receive_bounded(header, parts, active, now, false)
+            .map(|_| ())
+    }
+    /// Speculative admission never evicts retained work or turns capacity
+    /// pressure into a connection failure. Invalid offers still fail normally.
+    pub(crate) fn receive_prefetched(
+        &mut self,
+        header: &v05::DeliveryHeader,
+        parts: &[v05::DeliveryPart],
+        active: &v05::RequestContext,
+        now: u64,
+    ) -> Result<bool> {
+        self.receive_bounded(header, parts, active, now, true)
+    }
+    fn receive_bounded(
+        &mut self,
+        header: &v05::DeliveryHeader,
+        parts: &[v05::DeliveryPart],
+        active: &v05::RequestContext,
+        now: u64,
+        speculative: bool,
+    ) -> Result<bool> {
         Self::validate_offer(header, parts, active, now)?;
         let existing = self.plans.get(&header.plan_id);
         let metadata_bytes = match existing {
@@ -202,6 +224,9 @@ impl DeliveryQueue {
                 .min();
             let repair = header.after.is_some_and(|a| earliest.is_none_or(|e| a < e));
             if self.plans.len() >= self.slots || (!repair && self.plans.len() >= self.slots - 1) {
+                if speculative {
+                    return Ok(false);
+                }
                 return Err(invalid("delivery queue overflow"));
             }
         }
@@ -244,6 +269,14 @@ impl DeliveryQueue {
                     .sum::<usize>(),
             )
         };
+        if speculative {
+            let (metadata, total) = totals(&self.plans);
+            if metadata.saturating_add(metadata_new) > self.capacity
+                || total.saturating_add(extra) > self.payload_limit
+            {
+                return Ok(false);
+            }
+        }
         for (_, id) in candidates {
             let (metadata, total) = totals(&self.plans);
             if metadata.saturating_add(metadata_new) <= self.capacity
@@ -321,7 +354,7 @@ impl DeliveryQueue {
         for (key, part) in staged {
             plan.parts.insert(key, part);
         }
-        Ok(())
+        Ok(true)
     }
     /// Validate a live offer even when only its head will be retained. A hint
     /// grants no coverage and must not hide malformed or foreign payloads.
@@ -421,5 +454,93 @@ impl DeliveryQueue {
     }
     pub fn is_empty(&self) -> bool {
         self.plans.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod prefetch_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn offer(id: &str, after: u64) -> v05::FrozenDelivery {
+        let context = v05::RequestContext {
+            protocol: 5,
+            store_id: "store".into(),
+            stream: "User:u".into(),
+            materialization: "0".repeat(64),
+        };
+        v05::freeze_delivery(
+            context,
+            id.into(),
+            v05::DeliveryPurpose::Bootstrap,
+            after,
+            after + 1,
+            3,
+            10000,
+            vec![v05::DeliveryUnit {
+                index: 0,
+                through: Some(after + 1),
+                changes: vec![v05::AuthorityChange::Record {
+                    key: v05::RecordKey {
+                        model: "Entry".into(),
+                        identity: json!({"id":id}),
+                    },
+                    cursor: after + 1,
+                    state: json!({"text":"x".repeat(100)}),
+                }],
+            }],
+            500,
+        )
+        .unwrap()
+    }
+    #[test]
+    fn speculative_capacity_decline_preserves_current_page() {
+        let first = offer("a", 0);
+        let next = offer("b", 1);
+        let bytes = serde_json::to_vec(&first.parts[0]).unwrap().len();
+        let mut queue = DeliveryQueue::with_limits(1024 * 1024, 4, bytes * 2 - 1);
+        queue
+            .receive(&first.header, &first.parts, &first.header.context, 1)
+            .unwrap();
+        assert!(
+            !queue
+                .receive_prefetched(&next.header, &next.parts, &next.header.context, 1)
+                .unwrap()
+        );
+        assert_eq!(queue.len(), 1);
+        assert!(queue.plans["a"].unit(0).unwrap().is_some());
+    }
+    #[test]
+    fn speculative_admission_preserves_the_reserved_repair_slot() {
+        let first = offer("a", 0);
+        let next = offer("b", 1);
+        let mut queue = DeliveryQueue::new(1024 * 1024, 2);
+        queue
+            .receive(&first.header, &first.parts, &first.header.context, 1)
+            .unwrap();
+        assert!(
+            !queue
+                .receive_prefetched(&next.header, &next.parts, &next.header.context, 1)
+                .unwrap()
+        );
+        assert_eq!(queue.len(), 1);
+    }
+    #[test]
+    fn malformed_prefetch_is_rejected_before_capacity_fallback() {
+        let first = offer("a", 0);
+        let mut next = offer("b", 1);
+        let mut queue = DeliveryQueue::new(1024 * 1024, 2);
+        queue
+            .receive(&first.header, &first.parts, &first.header.context, 1)
+            .unwrap();
+        if let v05::AuthorityChange::Record { state, .. } = &mut next.parts[0].changes[0] {
+            *state = json!({"text":"tampered"});
+        }
+        assert!(
+            queue
+                .receive_prefetched(&next.header, &next.parts, &next.header.context, 1)
+                .is_err()
+        );
+        assert_eq!(queue.len(), 1);
     }
 }

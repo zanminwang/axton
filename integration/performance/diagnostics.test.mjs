@@ -28,3 +28,16 @@ test('concurrent async spans retain their own parents and backend isolation',asy
   }
   assert.equal(b.length,1);assert.notEqual(a[0].clockDomain,b[0].clockDomain);
 });
+
+test('synchronous diagnostic spans retain parentage, results and original errors', async () => {
+  const records=[];
+  const d=new Diagnostics({record:r=>records.push(r)});
+  const error=new Error('encode refused');
+  await d.span('parent',{},async()=>{
+    assert.equal(d.syncSpan('convert',{},()=>42),42);
+    assert.throws(()=>d.syncSpan('bad',{},()=>{throw error;}),e=>e===error);
+  });
+  const parent=records.find(r=>r.name==='parent');
+  assert.equal(records.find(r=>r.name==='convert').parentSpanId,parent.spanId);
+  assert.equal(records.find(r=>r.name==='bad').attributes.outcome,'error');
+});

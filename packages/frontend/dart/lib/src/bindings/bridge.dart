@@ -270,8 +270,23 @@ class _Abi implements Carrier {
   }
 
   @override
-  List<dynamic> drain(int runtime) =>
-      jsonDecode(_take(_drain(runtime))) as List<dynamic>;
+  List<dynamic> drain(int runtime) => drainTraced(runtime, null);
+
+  List<dynamic> drainTraced(int runtime, TraceEmitter? tracing) {
+    final native = tracing?.start('bridge.nativeDrain');
+    late final String text;
+    try {
+      text = _take(_drain(runtime));
+    } finally {
+      native?.end();
+    }
+    final decode = tracing?.start('bridge.decode');
+    try {
+      return jsonDecode(text) as List<dynamic>;
+    } finally {
+      decode?.end();
+    }
+  }
 
   @override
   void detach(int runtime) => _detach(runtime);
@@ -732,7 +747,10 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
     try {
       while (!_detached) {
         final span = tracing?.start('bridge.drain');
-        final batch = _carrier.drain(runtimeId);
+        final carrier = _carrier;
+        final batch = carrier is _Abi
+            ? carrier.drainTraced(runtimeId, tracing)
+            : carrier.drain(runtimeId);
         if (batch.isNotEmpty) span?.end({'events': batch.length});
         if (batch.isEmpty) return;
         for (final event in batch) {

@@ -204,7 +204,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             } => self.client.bootstrap_state05(stream, *subscription_id),
             _ => Err(crate::invalid("invalid Bootstrap command")),
         };
-        self.committed_since(generation);
+        self.committed_since(generation, "observers");
         let state = match answered {
             Ok(state) => state,
             Err(e) => return Some(Err(e.to_string())),
@@ -404,18 +404,32 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                     continue;
                 };
                 let _span = tracing::info_span!(target: "axton::client", "watch.query", observerId = id, model = %watch.model).entered();
-                let rows = self
-                    .client
-                    .query(&watch.model, &watch.filter)
-                    .map_err(|e| e.to_string())
-                    .and_then(|rows| serde_json::to_value(rows).map_err(|e| e.to_string()));
+                let rows = {
+                    let _read =
+                        tracing::info_span!(target: "axton::client", "watch.read").entered();
+                    self.client
+                        .query(&watch.model, &watch.filter)
+                        .map_err(|e| e.to_string())
+                }
+                .and_then(|rows| {
+                    let _convert =
+                        tracing::info_span!(target: "axton::client", "watch.convert").entered();
+                    serde_json::to_value(rows).map_err(|e| e.to_string())
+                });
                 match rows {
                     Ok(rows) => {
-                        if let Some(watch) = self.observers.watches.get_mut(&id)
-                            && watch.rows != rows
-                        {
-                            watch.rows = rows;
-                            watch.published = false;
+                        if let Some(watch) = self.observers.watches.get_mut(&id) {
+                            let changed = {
+                                let compare = tracing::info_span!(target: "axton::client", "watch.compare", changed = tracing::field::Empty);
+                                let _compare = compare.enter();
+                                let changed = watch.rows != rows;
+                                compare.record("changed", changed);
+                                changed
+                            };
+                            if changed {
+                                watch.rows = rows;
+                                watch.published = false;
+                            }
                         }
                     }
                     Err(error) => self.error(error),
@@ -428,9 +442,13 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         for (id, watch) in &mut self.observers.watches {
             if !watch.published {
                 watch.published = true;
+                let snapshot = {
+                    let _snapshot = tracing::info_span!(target: "axton::client", "watch.snapshot", observerId = id).entered();
+                    json!({"kind": "watch", "rows": watch.rows})
+                };
                 snapshots.push(Event::ObserverChanged {
                     observer_id: id.to_string(),
-                    snapshot: json!({"kind": "watch", "rows": watch.rows}),
+                    snapshot,
                 });
             }
         }

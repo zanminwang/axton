@@ -132,19 +132,14 @@ HTTP-wait liveness boundary; current code admits a live response that can advanc
 the committed prefix even while HTTP waits. That archive predates this refinement
 and is not a speed claim for it.
 The [final live-prefix measurements](baselines/2026-10-27-live-coalescing-v2/README.md)
-passed 45/45, with full Linux/macOS Verify at the measured runtime. At N=10,000,
-B saw all 100 new Entries in a 5.61 s median [5.13–6.38 s]. The report separates
-observed timing changes from causal claims and records the final artifact's
-pending raw archival/audit. Subsequent metadata inspection confirmed different
-CPU models across runs; the [bottleneck audit](baselines/2026-10-27-live-coalescing-v2/bottlenecks.md)
-records that mismatch and the repeated layout checks/Model-watch work.
+passed 45/45, with full Linux/macOS Verify at the measured runtime. Its recovered
+raw samples are now archived and audited. The [startup-layout measurements](baselines/2026-10-27-startup-layout/README.md)
+passed another 45/45: the 10k burst completed on B in 3.47 s [3.31–3.59 s].
+The immediate prior 5.61 s run used a different CPU, so that pair is descriptive.
+A strict compatible comparison with the earlier 6.61 s baseline passed, covering
+both the live-prefix refinement and startup layout validation. Model-watch
+invalidation remains unchanged; its internal costs are the next investigation.
 
-Current backends validate known legacy database layouts during readiness, before
-opening the listener, and reuse successful adapter validation during ordinary
-host dispatch. Direct/headless calls retain first-use checks. The archived
-measurements above predate this startup change; no new latency improvement is
-claimed from the catalog-query reduction alone. Model-watch invalidation remains
-the next independent investigation.
 
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,

@@ -128,30 +128,14 @@ loopback on a shared Actions runner, not a cold hardware cache or WAN/phone
 measurement. No performance threshold is introduced. Five repetitions do not
 support a run-level p95 claim.
 
-The execution environment initially disconnected before final artifact download.
-It briefly recovered for download and metadata inspection, then disconnected
-again before full profiling/audit and archival. Consequently this directory preserves the completed
-summary and artifact/evidence index, **not a local copy of final raw samples**.
-The uploaded JSON contains samples, traces, failures/timeouts, source/dirty state,
-artifact fingerprints and environment versions. The GitHub-reported archive
-digest is `sha256:5fd7c63232e37e1e695cc4fc99ddd5b2239cd3455f5d3a0640fea1f96bf2546c`; it has not been independently rehashed here.
-The artifact expires on **2027-01-26**. The first coalescing run's compressed raw
-JSON is already archived permanently in the adjacent directory.
+The raw artifact was subsequently recovered and archived losslessly as
+[results.json.gz](results.json.gz). Its uncompressed SHA-256 is
+`e85f54cc7641619480223fb790de64eee73e94e6ac792c0ef9e4945a7952631d`.
+The archive audit confirmed all 45 passing/server-verified samples, 1,515 accepted
+writes and correlated server transactions, accepted-report criteria, and zero
+backend/connection/trace-loss/cleanup/admin errors. Earlier execution-environment
+interruptions no longer prevent raw archival.
 
-When an execution environment is available, download and archive the final JSON
-before expiry, then use the existing strict comparison without relaxing its
-compatibility checks:
-
-```sh
-gh run download 40611658011 --repo zanminwang/axton \
-  --name sync-performance --dir artifacts/performance/live-coalescing-v2
-node integration/performance/report.mjs artifacts/performance/live-coalescing-v2/results.json
-node integration/performance/report.mjs compare \
-  integration/performance/baselines/2026-10-27-live-coalescing/results.json.gz \
-  artifacts/performance/live-coalescing-v2/results.json
-```
-
-The inspected CPU metadata already differs, so strict comparison must refuse
-these runs. The complete comparison command did not finish during this audit;
-no compatible-result comparison is claimed. Re-measure on matched conditions
-rather than overriding the mismatch.
+Strict comparison with the first coalescing archive refused different CPU
+metadata. The [startup-layout report](../2026-10-27-startup-layout/README.md)
+contains the subsequent measurements and both admitted/refused comparisons.

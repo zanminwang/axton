@@ -67,7 +67,7 @@ const result={schemaVersion:1,completed:false,createdAt:new Date().toISOString()
     storeBindingReads:'snapshot inspection; atomic claim for missing Store or unfinished Bootstrap',
     storeProgressLock:'FOR NO KEY UPDATE; competing uploads serialized',
     deliveryStorage:'none; complete current-state cursor pages, no server payload tables',
-    liveOffers:'idle direct admission; busy validated head hints, repair from committed cursor'},
+    liveOffers:'idle direct admission even during HTTP wait; staged payloads coalesce to head hints, repair from committed cursor'},
   machine:{platform:platform(),release:release(),arch:arch(),cpu:cpus()[0]?.model,cpus:cpus().length,memoryBytes:totalmem(),
     node:process.version,dart:command(process.env.AXTON_DART??'dart',['--version']),rustc:command('rustc',['--version']),
     cargo:command('cargo',['--version']),typescript:command(process.execPath,['node_modules/typescript/bin/tsc','--version']),

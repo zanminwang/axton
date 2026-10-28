@@ -302,7 +302,10 @@ fn commit_control_delivery(
         })
         .expect("a complete response must be dispatched");
     assert_eq!(queue.len(), 1);
-    let report = c.apply_next_delivery05(&mut queue, now).unwrap().unwrap();
+    let report = c
+        .apply_next_delivery05(&mut queue, now)
+        .unwrap()
+        .unwrap_or_default();
     assert_eq!(queue.len(), 0, "test response has one complete atomic unit");
     control
         .report(
@@ -401,7 +404,8 @@ fn stalled_receiver_coalesces_bursts_and_repairs_latest_data_from_committed_curs
         (1, 100),
         "hints cannot advance the committed cursor"
     );
-    // A newer offer during HTTP repair is also coalesced, then fetched next.
+    // A future offer cannot fill the held HTTP repair's gap, so retain its head
+    // rather than queueing another payload that is not yet applicable.
     socket_offer(&mut control, &socket, &offer(101)).unwrap();
     let mut changes = (2..=100)
         .map(|index| change(&format!("e{index}"), index))
@@ -497,6 +501,89 @@ fn admitted_socket_fragments_finish_atomically_while_new_offers_are_coalesced() 
     assert_eq!(c.query("Entry", &serde_json::json!({})).unwrap().len(), 2);
     let (_, request) = cursor_pull(&mut control);
     assert_eq!((request.after, request.through), (2, 3));
+}
+#[test]
+fn held_http_repair_does_not_block_live_prefix_and_late_reply_cannot_undo_it() {
+    use axton_client::runtime::EffectOutcome;
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = client(&dir.path().join("db"));
+    let (mut control, socket) = connected_control(&mut c);
+    let context = c.request_context05().unwrap();
+    let ack = v05::HandshakeResponse {
+        protocol: 5,
+        store_id: context.store_id.clone(),
+        stream: context.stream.clone(),
+        head: 1,
+    };
+    control.receive(&socket,EffectOutcome {ok:true,value:Some(serde_json::json!({"event":"message","body":serde_json::to_string(&ack).unwrap()})),error:None},1).unwrap();
+    let (pull, request) = cursor_pull(&mut control);
+    assert_eq!((request.after, request.through), (0, 1));
+    let live = v05::freeze_delivery(
+        context.clone(),
+        "live-before-http".into(),
+        v05::DeliveryPurpose::Sync,
+        0,
+        1,
+        1,
+        10000,
+        vec![v05::DeliveryUnit {
+            index: 0,
+            through: Some(1),
+            changes: vec![change("a", 1)],
+        }],
+        500,
+    )
+    .unwrap();
+    socket_offer(&mut control, &socket, &live).unwrap();
+    commit_control_delivery(&mut c, &mut control);
+    assert_eq!(
+        c.store_status05().unwrap().cursor,
+        Some(1),
+        "live authority commits while HTTP has not answered"
+    );
+    let mut stale = change("a", 1);
+    if let v05::AuthorityChange::Record { state, .. } = &mut stale {
+        state["text"] = serde_json::json!("stale HTTP");
+    }
+    let late = v05::freeze_delivery(
+        context,
+        "late-http".into(),
+        v05::DeliveryPurpose::Sync,
+        0,
+        1,
+        1,
+        10000,
+        vec![v05::DeliveryUnit {
+            index: 0,
+            through: Some(1),
+            changes: vec![stale],
+        }],
+        500,
+    )
+    .unwrap();
+    control
+        .receive(
+            &pull,
+            EffectOutcome {
+                ok: true,
+                value: Some(serde_json::Value::String(
+                    serde_json::to_string(&v05::DeliveryResponse {
+                        header: late.header,
+                        parts: late.parts,
+                    })
+                    .unwrap(),
+                )),
+                error: None,
+            },
+            1,
+        )
+        .unwrap();
+    commit_control_delivery(&mut c, &mut control);
+    assert_eq!(
+        c.query("Entry", &serde_json::json!({})).unwrap()[0]["text"],
+        "a"
+    );
+    assert_eq!(c.store_status05().unwrap().cursor, Some(1));
 }
 #[test]
 fn cursor_pages_resume_after_reopen_and_later_sync_installs_current_state_and_deletion() {

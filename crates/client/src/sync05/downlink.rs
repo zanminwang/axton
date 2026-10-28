@@ -305,13 +305,22 @@ impl Control {
                         return Ok(());
                     }
                     // An idle receiver can apply a live offer immediately. While
-                    // ordinary delivery is queued or in flight, coalesce new
+                    // ordinary delivery is queued, coalesce new
                     // offers into the latest head instead of buffering a response
                     // per commit. Fresh HTTP repair starts at committed B/C.
+                    // An HTTP wait alone must not block an eligible live offer.
                     // Fragments of an already admitted response still complete it.
+                    let cursor = self.status.cursor.unwrap_or(0);
+                    let advances_prefix =
+                        response.header.after.is_some_and(|after| after <= cursor)
+                            && response
+                                .header
+                                .through
+                                .is_some_and(|through| through > cursor);
                     if !self.queue.plans.contains_key(&response.header.plan_id)
                         && (self.queue.plans.values().any(|p| p.header.owner.is_none())
-                            || self.flights.values().any(|f| matches!(f, Flight::Delta(_))))
+                            || (!advances_prefix
+                                && self.flights.values().any(|f| matches!(f, Flight::Delta(_)))))
                     {
                         DeliveryQueue::validate_offer(
                             &response.header,

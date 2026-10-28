@@ -123,10 +123,14 @@ burst failures from B's bounded delivery queue. Initial-only comparison passes;
 the full failed matrix remains diagnostic evidence.
 
 Current clients coalesce newly observed live responses into validated head hints
-while ordinary delivery is staged or a cursor pull is outstanding. Admitted
-fragments finish, then fresh repair reads from committed progress. The queue
+while ordinary delivery is staged. An HTTP wait alone does not block an eligible
+live response. Admitted fragments finish, then fresh repair reads from committed progress. The queue
 limits and watch workload are unchanged. `delivery.coalesce` spans count these
-offers; the fourth matrix predates this change and is not evidence of its speed.
+offers. The [initial coalescing experiment](baselines/2026-10-27-live-coalescing/README.md)
+passed 45/45 cases and removed the previous queue errors. It also exposed an
+HTTP-wait liveness boundary; current code admits a live response that can advance
+the committed prefix even while HTTP waits. That archive predates this refinement
+and is not a speed claim for it.
 
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,

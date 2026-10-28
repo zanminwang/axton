@@ -304,9 +304,29 @@ impl Control {
                         self.schedule(now)?;
                         return Ok(());
                     }
-                    self.head = self.head.max(response.header.observed_head);
+                    // An idle receiver can apply a live offer immediately. While
+                    // ordinary delivery is queued or in flight, coalesce new
+                    // offers into the latest head instead of buffering a response
+                    // per commit. Fresh HTTP repair starts at committed B/C.
+                    // Fragments of an already admitted response still complete it.
+                    if !self.queue.plans.contains_key(&response.header.plan_id)
+                        && (self.queue.plans.values().any(|p| p.header.owner.is_none())
+                            || self.flights.values().any(|f| matches!(f, Flight::Delta(_))))
+                    {
+                        DeliveryQueue::validate_offer(
+                            &response.header,
+                            &response.parts,
+                            &self.context,
+                            now,
+                        )?;
+                        let _span = tracing::info_span!(target: "axton::client", "delivery.coalesce", observedHead = response.header.observed_head, committedCursor = self.status.cursor.unwrap_or(0)).entered();
+                        self.head = self.head.max(response.header.observed_head);
+                        self.schedule(now)?;
+                        return Ok(());
+                    }
                     self.queue
                         .receive(&response.header, &response.parts, &self.context, now)?;
+                    self.head = self.head.max(response.header.observed_head);
                     self.schedule(now)?;
                 }
             }

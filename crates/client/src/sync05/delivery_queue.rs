@@ -183,12 +183,7 @@ impl DeliveryQueue {
         active: &v05::RequestContext,
         now: u64,
     ) -> Result<()> {
-        if header.context.store_id != active.store_id || header.context.stream != active.stream {
-            return Err(invalid("foreign Store delivery"));
-        }
-        if now >= header.expires_at {
-            return Err(invalid("delivery.expired"));
-        }
+        Self::validate_offer(header, parts, active, now)?;
         let existing = self.plans.get(&header.plan_id);
         let metadata_bytes = match existing {
             Some(plan) => plan.metadata_bytes,
@@ -199,7 +194,6 @@ impl DeliveryQueue {
                 return Err(invalid("changed immutable plan"));
             }
         } else {
-            header.admit(active)?;
             let earliest = self
                 .plans
                 .values()
@@ -211,28 +205,12 @@ impl DeliveryQueue {
                 return Err(invalid("delivery queue overflow"));
             }
         }
-        let mut extra = 0;
-        for part in parts {
-            part.validate()?;
-            if part.plan_id != header.plan_id
-                || part.plan_digest != header.digest
-                || header
-                    .units
-                    .get(part.unit as usize)
-                    .and_then(|u| u.parts.get(part.part as usize))
-                    != Some(&v05::part_digest(part)?)
-            {
-                return Err(invalid("fragment correlation mismatch"));
-            }
-            if part.changes.iter().any(|c| {
-                c.cursor() > header.observed_head || header.after.is_some_and(|a| c.cursor() <= a)
-            }) {
-                return Err(invalid("fragment outside plan"));
-            }
-            if existing.is_none_or(|p| !p.parts.contains_key(&(part.unit, part.part))) {
-                extra += serde_json::to_vec(part)?.len();
-            }
-        }
+        let extra = parts
+            .iter()
+            .filter(|part| existing.is_none_or(|p| !p.parts.contains_key(&(part.unit, part.part))))
+            .try_fold(0, |bytes, part| -> Result<usize> {
+                Ok(bytes + serde_json::to_vec(part)?.len())
+            })?;
         let metadata_new = if existing.is_none() {
             metadata_bytes
         } else {
@@ -342,6 +320,41 @@ impl DeliveryQueue {
             });
         for (key, part) in staged {
             plan.parts.insert(key, part);
+        }
+        Ok(())
+    }
+    /// Validate a live offer even when only its head will be retained. A hint
+    /// grants no coverage and must not hide malformed or foreign payloads.
+    pub(crate) fn validate_offer(
+        header: &v05::DeliveryHeader,
+        parts: &[v05::DeliveryPart],
+        active: &v05::RequestContext,
+        now: u64,
+    ) -> Result<()> {
+        if header.context.store_id != active.store_id || header.context.stream != active.stream {
+            return Err(invalid("foreign Store delivery"));
+        }
+        header.admit(active)?;
+        if now >= header.expires_at {
+            return Err(invalid("delivery.expired"));
+        }
+        for part in parts {
+            part.validate()?;
+            if part.plan_id != header.plan_id
+                || part.plan_digest != header.digest
+                || header
+                    .units
+                    .get(part.unit as usize)
+                    .and_then(|u| u.parts.get(part.part as usize))
+                    != Some(&v05::part_digest(part)?)
+            {
+                return Err(invalid("fragment correlation mismatch"));
+            }
+            if part.changes.iter().any(|c| {
+                c.cursor() > header.observed_head || header.after.is_some_and(|a| c.cursor() <= a)
+            }) {
+                return Err(invalid("fragment outside plan"));
+            }
         }
         Ok(())
     }

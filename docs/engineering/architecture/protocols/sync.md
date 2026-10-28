@@ -58,7 +58,11 @@ There is no persisted server payload, old-response continuation or server expiry
 cleanup. Clients commit data and cursor atomically, then request the next page
 from committed progress. Loss/reopen recomputes from B/C; it does not retrieve an
 old JSON response. Socket loss immediately retires incomplete ordinary responses
-so they cannot block fresh cursor repair until expiry. Owned materialization returns its complete owner proof in one
+so they cannot block fresh cursor repair until expiry. A busy client validates
+new live offers but retains only their highest head while ordinary delivery is
+pending. It completes admitted fragments and repairs from committed B/C, rather
+than accumulating a payload per server commit. Coalesced hints advance no
+coverage and cannot retire an owned obligation. Owned materialization returns its complete owner proof in one
 response and retries from current owner obligations. Response manifests/digests
 still validate fragments, and the five-minute lifetime bounds incomplete local
 staging only. Limits are 100,000 candidate identities and 256 MiB per response;

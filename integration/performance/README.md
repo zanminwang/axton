@@ -122,6 +122,12 @@ retain the fourth matrix: 40/45 passing, zero backend errors, and five N=10,000
 burst failures from B's bounded delivery queue. Initial-only comparison passes;
 the full failed matrix remains diagnostic evidence.
 
+Current clients coalesce newly observed live responses into validated head hints
+while ordinary delivery is staged or a cursor pull is outstanding. Admitted
+fragments finish, then fresh repair reads from committed progress. The queue
+limits and watch workload are unchanged. `delivery.coalesce` spans count these
+offers; the fourth matrix predates this change and is not evidence of its speed.
+
 JSON retains raw samples, partial progress, failures, timeouts and traces, plus
 commit/dirty state, source/artifact hashes, tool versions, machine information,
 PostgreSQL settings and scenario parameters. It checkpoints after each sample,

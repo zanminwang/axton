@@ -301,19 +301,18 @@ test("bound reconnect uses durable prefix; ACK cannot replace it; gaps recover t
   }
 });
 
-test("duplicate units cannot undo authority; a complete overlapping unit applies atomically and a real gap repairs", async () => {
+test("duplicate units and coalesced overlapping offers preserve authority; a real gap repairs", async () => {
   const f = await openClient(),
     errors = [],
     n = await syncFixture({
       onPull: (b, r) =>
         r.end(
           JSON.stringify(
-            page(
-              b,
-              b.after,
-              n.state.head,
-              n.state.head === 2 ? "second" : "fourth",
-            ),
+            n.state.head === 2
+              ? delivery05(b, [
+                  {kind:"record",cursor:2,key:{model:"Entry",identity:{id:"next"}},state:{text:"second"}},
+                ])
+              : page(b, b.after, n.state.head, "fourth"),
           ),
         ),
     });
@@ -342,7 +341,14 @@ test("duplicate units cannot undo authority; a complete overlapping unit applies
     stop();
     assert.equal((await f.client.read("Entry", { id: "live" })).text, "first");
     assert.equal((await f.client.read("Entry", { id: "next" })).text, "second");
-    assert.equal(deltas(n).length,0,"complete overlapping unit needs no range repair");
+    // If the duplicate is still being processed, the overlapping offer can be
+    // coalesced. HTTP must describe the same current state as the socket: only
+    // `next` changed at cursor 2; `live` is still the already admitted version 1.
+    assert.ok(deltas(n).length<=1,"overlap permits at most one current-state repair");
+    for(const {body} of deltas(n)) {
+      assert.equal(body.after,1,"coalescing repairs from committed progress");
+      assert.equal(body.through,2);
+    }
     assert.deepEqual(errors, []);
     n.state.head = 4;
     send(page(ctx, 3, 4, "fourth"));

@@ -1,5 +1,8 @@
 use axton_client::{Client, Schema, sync05::DeliveryQueue, v05};
 use axton_sqlite::SqliteStore;
+#[path = "protocol05_downlink/receipts.rs"]
+mod receipts;
+
 fn client(path: &std::path::Path) -> Client<SqliteStore> {
     Client::open05(
         SqliteStore::open(path).unwrap(),

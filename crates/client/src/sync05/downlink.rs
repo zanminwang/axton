@@ -29,7 +29,8 @@ pub struct Control {
     paused: bool,
     live: bool,
     network_state: Option<(bool, bool)>,
-    head: u64,
+    /// Highest handshake/delivery head. Receipt cursors belong to settlement.
+    delivery_head: u64,
     events: Vec<Event>,
     jobs: VecDeque<StoreCommand>,
     applying: bool,
@@ -47,7 +48,7 @@ impl Control {
     pub fn new(status: StoreStatus05) -> Self {
         Self {
             context: status.context.clone(),
-            head: status.cursor.unwrap_or(0),
+            delivery_head: status.cursor.unwrap_or(0),
             status,
             queue: DeliveryQueue::new(16 * 1024 * 1024, 32),
             flights: BTreeMap::new(),
@@ -287,7 +288,7 @@ impl Control {
                             store_id: self.context.store_id.clone(),
                             stream: self.context.stream.clone(),
                         })?;
-                        self.head = self.head.max(ack.head);
+                        self.delivery_head = self.delivery_head.max(ack.head);
                         self.schedule(now)?;
                         return Ok(());
                     }
@@ -300,7 +301,7 @@ impl Control {
                     response.header.context.admit_store(&self.context)?;
                     if response.header.context.materialization != self.context.materialization {
                         v05::Validate::validate(&response.header)?;
-                        self.head = self.head.max(response.header.observed_head);
+                        self.delivery_head = self.delivery_head.max(response.header.observed_head);
                         self.schedule(now)?;
                         return Ok(());
                     }
@@ -329,13 +330,13 @@ impl Control {
                             now,
                         )?;
                         let _span = tracing::info_span!(target: "axton::client", "delivery.coalesce", observedHead = response.header.observed_head, committedCursor = self.status.cursor.unwrap_or(0)).entered();
-                        self.head = self.head.max(response.header.observed_head);
+                        self.delivery_head = self.delivery_head.max(response.header.observed_head);
                         self.schedule(now)?;
                         return Ok(());
                     }
                     self.queue
                         .receive(&response.header, &response.parts, &self.context, now)?;
-                    self.head = self.head.max(response.header.observed_head);
+                    self.delivery_head = self.delivery_head.max(response.header.observed_head);
                     self.schedule(now)?;
                 }
             }
@@ -354,7 +355,7 @@ impl Control {
             Flight::Handshake(request) => {
                 let response = v05::decode::<v05::HandshakeResponse>(body.as_bytes())?;
                 response.admit(&request)?;
-                self.head = self.head.max(response.head);
+                self.delivery_head = self.delivery_head.max(response.head);
                 self.failures = 0;
                 self.jobs.push_back(StoreCommand::Initialize(response.head));
                 // Socket reception is live immediately, before Store SQL runs.
@@ -369,7 +370,7 @@ impl Control {
                 let response: v05::DeliveryResponse = serde_json::from_str(&body)?;
                 response.admit(&request, &self.context)?;
                 response.require_complete()?;
-                self.head = self.head.max(response.header.observed_head);
+                self.delivery_head = self.delivery_head.max(response.header.observed_head);
                 self.queue
                     .receive(&response.header, &response.parts, &self.context, now)?;
                 self.schedule(now)?;
@@ -388,11 +389,6 @@ impl Control {
                     || receipt.digest != request.digest
                 {
                     return Err(invalid("Batch acknowledgement correlation mismatch"));
-                }
-                for result in &receipt.results {
-                    if let v05::MutationOutcome::Accepted { sync_cursor, .. } = result.outcome {
-                        self.head = self.head.max(sync_cursor);
-                    }
                 }
                 self.jobs.push_back(StoreCommand::Acknowledge(receipt));
             }
@@ -474,7 +470,7 @@ impl Control {
                     self.queue = DeliveryQueue::new(16 * 1024 * 1024, 32);
                     self.applying = false;
                     self.applying_plan = None;
-                    self.head = status.cursor.unwrap_or(0);
+                    self.delivery_head = status.cursor.unwrap_or(0);
                     self.context = status.context.clone();
                     if reconnect {
                         self.connect()?;
@@ -691,7 +687,10 @@ impl Control {
                 },
             );
         }
-        let state = (self.live, self.status.cursor.is_none_or(|c| c < self.head));
+        let state = (
+            self.live,
+            self.status.cursor.is_none_or(|c| c < self.delivery_head),
+        );
         if self.network_state != Some(state) {
             self.network_state = Some(state);
             self.jobs.push_back(StoreCommand::NetworkState {
@@ -754,7 +753,7 @@ impl Control {
         let through = if bootstrap {
             self.status.start_cursor.unwrap()
         } else {
-            self.head
+            self.delivery_head
         };
         if self.queue.plans.values().any(|p| {
             p.header.bootstrap == bootstrap

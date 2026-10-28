@@ -72,7 +72,7 @@ const result={schemaVersion:1,completed:false,createdAt:new Date().toISOString()
     node:process.version,dart:command(process.env.AXTON_DART??'dart',['--version']),rustc:command('rustc',['--version']),
     cargo:command('cargo',['--version']),typescript:command(process.execPath,['node_modules/typescript/bin/tsc','--version']),
     postgres:(await admin.query('SELECT version() AS version')).rows[0].version,settings},
-  compatibility:{schemaVersion:1,boundaries:'sync-performance-v2',fixtureSchemaSha256:hash(await readFile('integration/performance/fixture/generated/schema.json')),
+  compatibility:{schemaVersion:1,stageInstrumentation:2,boundaries:'sync-performance-v2',fixtureSchemaSha256:hash(await readFile('integration/performance/fixture/generated/schema.json')),
     textBytes,fixtureBatchSize,sdk:'dart',nativeProfile:'release',dartMode:'aot',diagnostics:options.diagnostics,
     watch:'full Entry model snapshots; first expected nonempty snapshot',
     initialCondition:'fresh process and SQLite files per sample; timed interval starts before open, process startup excluded',

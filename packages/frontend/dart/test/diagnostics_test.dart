@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:axton/axton.dart';
@@ -97,6 +98,7 @@ void main() {
               as Map<String, dynamic>;
       final records = <AxtonTraceRecord>[];
       Client? a, b;
+      StreamSubscription<List<Map<String, dynamic>>>? watch;
       try {
         final applicationData =
             Platform.environment['AXTON_TEST_APPLICATION_DATA'];
@@ -127,7 +129,30 @@ void main() {
           'identity': {'id': 'e'},
           'values': {'text': 'kept', 'note': null},
         };
+        final first = Completer<void>(), changed = Completer<void>();
+        watch = a.watch('Entry').listen((rows) {
+          if (!first.isCompleted) first.complete();
+          if (rows.any((r) => r['id'] == 'e') && !changed.isCompleted)
+            changed.complete();
+        });
+        await first.future;
         await a.transaction((tx) => tx.direct(operation));
+        await changed.future;
+        for (final name in [
+          'watch.read',
+          'watch.convert',
+          'watch.compare',
+          'watch.snapshot',
+          'bridge.nativeDrain',
+          'bridge.decode',
+        ]) {
+          expect(
+            records.any((r) => r.name == name && r.durationUs != null),
+            true,
+            reason: name,
+          );
+        }
+        expect(records.any((r) => r.name == 'watch.invalidate'), true);
         await b.transaction((tx) => tx.direct(operation));
         expect((await a.read('Entry', {'id': 'e'}))?['text'], 'kept');
         expect((await b.read('Entry', {'id': 'e'}))?['text'], 'kept');
@@ -141,6 +166,7 @@ void main() {
           hasLength(1),
         );
       } finally {
+        await watch?.cancel();
         await b?.close();
         await a?.close();
         await dir.delete(recursive: true);

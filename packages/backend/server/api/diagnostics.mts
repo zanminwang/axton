@@ -68,6 +68,37 @@ export class Diagnostics {
         attributes: Object.freeze({ records: dropped, operationId }),
       });
   }
+  syncSpan<T>(
+    name: string,
+    attributes: Record<string, unknown>,
+    body: () => T,
+  ): T {
+    if (!this.receiver) return body();
+    const parent = this.context.getStore();
+    const spanId = String(++this.next),
+      operationId = parent?.operationId ?? `${this.clockDomain}:${spanId}`;
+    const start = process.hrtime.bigint();
+    let outcome = "success";
+    try {
+      return this.context.run({ spanId, operationId }, body);
+    } catch (error) {
+      outcome = "error";
+      throw error;
+    } finally {
+      this.record({
+        schemaVersion: 1,
+        kind: "span",
+        name,
+        source: "node",
+        clockDomain: this.clockDomain,
+        spanId,
+        ...(parent ? { parentSpanId: parent.spanId } : {}),
+        startUs: Number((start - this.origin) / 1000n),
+        durationUs: Number((process.hrtime.bigint() - start) / 1000n),
+        attributes: Object.freeze({ ...attributes, operationId, outcome }),
+      });
+    }
+  }
   span<T>(
     name: string,
     attributes: Record<string, unknown>,

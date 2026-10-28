@@ -609,7 +609,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 if committed.is_ok() {
                     self.announce_resolved(resolved);
                 }
-                self.committed_since(generation);
+                self.committed_since(generation, "transactions");
                 // What the callback queued or subscribed is the lanes' work
                 // now, as after any other commit.
                 if self.client.generation() != generation {

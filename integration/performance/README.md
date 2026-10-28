@@ -233,3 +233,34 @@ Scenario files own sequencing/assertions; `support/recorder.dart` collects recor
 `fixture/` owns the shared contract/backend; `run.mjs` owns experiments/metadata;
 `report.mjs` owns statistics. Historical [Channel evidence](channel-removal/README.md)
 is unchanged. The old Scope removal runner called retired APIs and was removed.
+
+### Detailed phase diagnostics
+
+Stage instrumentation version 2 separates `handler.invoke`, framework
+`postgres.query`, pg pool acquisition, BEGIN/COMMIT/ROLLBACK and transaction-body
+work. Node host JSON encode/decode and Rust callback encode/wait/decode remain in
+separate source clock domains. `host.await` includes Node scheduling, handler/SQL
+execution and response waiting; it is not a measured queue-only delay. Framework
+SQL spans record statement kind, not SQL text or parameter values. Application
+SQL inside handlers is included in `handler.invoke` but is not separately traced
+by the framework. Prisma/Drizzle own their commit internals: only the pg adapter
+reports isolated transaction commands; no residual is labeled ORM COMMIT time.
+
+Ordinary Model-watch reruns contain `watch.read` (SQL plus native row assembly),
+`watch.convert` (JSON Value conversion), `watch.compare` (equality) and
+`watch.snapshot` (snapshot construction/copy). `bridge.nativeDrain` includes the
+FFI drain, native serialization, copying and freeing; `bridge.decode` isolates
+Dart JSON parsing. Existing `watch.enqueue` measures listener dispatch/enqueue,
+not later asynchronous UI work or generated Model-object conversion.
+
+`watch.invalidate` records the runtime cause, generations and last commit's
+written tables. A generation jump greater than one can contain several commits:
+`lastCommitTables` is not their cumulative written set. It must not be used alone
+to skip watches across that jump. These records investigate metadata-only
+refreshes without changing invalidation, transaction or notification semantics.
+SQL-watch internals are not split by these Model-watch spans.
+
+The raw compatibility contract records the instrumentation version. New detailed
+runs are deliberately incompatible with earlier instrumented timings; retain a
+separate disabled-diagnostics control when estimating instrumentation overhead.
+Summed stages overlap and cannot be added into an end-to-end latency breakdown.

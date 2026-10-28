@@ -127,6 +127,19 @@ export function printSummary(result) {
       .map(name=>group.stages[name]?.summedDurationMs.median.toFixed(3)??'—');
     console.log(`| ${group.key} | ${values.join(' | ')} |`);
   }
+  console.log('\nDetailed measured stages: summed ms per run; overlapping, not additive.');
+  console.log('| Case | SQL calls | Pool acquire | COMMIT | Rust callback wait | Handler |');
+  console.log('|---|---:|---:|---:|---:|---:|');
+  for (const g of groups) {
+    const v=['node/postgres.query','node/postgres.acquire','node/postgres.commit','rust/host.await','node/handler.invoke'].map(k=>g.stages[k]?.summedDurationMs.median.toFixed(3)??'—');
+    console.log(`| ${g.key} | ${v.join(' | ')} |`);
+  }
+  console.log('\n| Case | Watch read | Convert | Compare | Snapshot | Dart JSON decode |');
+  console.log('|---|---:|---:|---:|---:|---:|');
+  for (const g of groups) {
+    const v=['rust/watch.read','rust/watch.convert','rust/watch.compare','rust/watch.snapshot','dart/bridge.decode'].map(k=>g.stages[k]?.summedDurationMs.median.toFixed(3)??'—');
+    console.log(`| ${g.key} | ${v.join(' | ')} |`);
+  }
 }
 export function compare(before,after,{scenario}={}) {
   assert.ok(scenario===undefined||['initial-sync','live-sync'].includes(scenario),'unknown comparison scenario');

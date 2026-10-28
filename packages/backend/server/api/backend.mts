@@ -55,6 +55,7 @@ export type LiveAction =
 export interface Persistence {
   call(request: Record<string, any>): Promise<unknown>;
 }
+export type DatabaseDiagnostics = Pick<Diagnostics, "span">;
 export interface Database<T> {
   /** Validate the configured namespace before serving work. An optional retained
    * transaction avoids acquiring a second connection for caller-owned publish. */
@@ -65,8 +66,11 @@ export interface Database<T> {
    * of any non-serial outcome), roll back rejected callbacks and retry
    * serialization failures by running the whole body again.
    */
-  transaction: <R>(body: (tx: T) => Promise<R>) => Promise<R>;
-  persistence: (tx: T) => Persistence;
+  transaction: <R>(
+    body: (tx: T) => Promise<R>,
+    diagnostics?: DatabaseDiagnostics,
+  ) => Promise<R>;
+  persistence: (tx: T, diagnostics?: DatabaseDiagnostics) => Persistence;
 }
 export type Authenticate = (
   request: IncomingMessage,
@@ -604,13 +608,16 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     await ready();
     let committed: string[] = [];
     const result = await diagnostics.span("server.transaction", {}, () =>
-      options.database.transaction(async (tx) => {
-        const { result, published } = await bound(tx, (session) =>
-          operation(tx, session),
-        );
-        committed = published;
-        return result;
-      }),
+      options.database.transaction(
+        async (tx) => {
+          const { result, published } = await bound(tx, (session) =>
+            operation(tx, session),
+          );
+          committed = published;
+          return result;
+        },
+        options.diagnostics ? diagnostics : undefined,
+      ),
     );
     wakes.notify(committed);
     return result;

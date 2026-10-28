@@ -26,21 +26,31 @@ export function pgDriver(
   options: DriverOptions = {},
 ): PostgresDriver<PgClient> {
   return {
-    transaction: (body) =>
+    transaction: (body, diagnostics) =>
       withRetries(
         async () => {
-          const client = await pool.connect();
+          const client = await (diagnostics
+            ? diagnostics.span("postgres.acquire", {}, () => pool.connect())
+            : pool.connect());
+          const command = (sql: string) =>
+            diagnostics
+              ? diagnostics.span(
+                  `postgres.${sql.split(" ", 1)[0]!.toLowerCase()}`,
+                  { command: sql.split(" ", 1)[0] },
+                  () => client.query(sql),
+                )
+              : client.query(sql);
           // A connection whose ROLLBACK failed is in an unknown state: hand
           // the error to `release` so the pool discards it instead of reusing it.
           let broken: Error | undefined;
           try {
-            await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+            await command("BEGIN ISOLATION LEVEL SERIALIZABLE");
             try {
               const result = await body(client);
-              await client.query("COMMIT");
+              await command("COMMIT");
               return result;
             } catch (error) {
-              await client.query("ROLLBACK").catch((rollback: unknown) => {
+              await command("ROLLBACK").catch((rollback: unknown) => {
                 broken =
                   rollback instanceof Error
                     ? rollback

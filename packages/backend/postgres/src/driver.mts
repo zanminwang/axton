@@ -1,3 +1,4 @@
+import type { DatabaseDiagnostics } from "@axtonjs/server";
 /**
  * What AXTON needs from a PostgreSQL access tool: one transaction runner and
  * one statement runner inside that transaction. Every AXTON statement lives in
@@ -13,7 +14,10 @@ export interface PostgresDriver<Tx> {
    * therefore run more than once; the last failure is thrown when the retries
    * run out.
    */
-  transaction<R>(body: (tx: Tx) => Promise<R>): Promise<R>;
+  transaction<R>(
+    body: (tx: Tx) => Promise<R>,
+    diagnostics?: DatabaseDiagnostics,
+  ): Promise<R>;
   /**
    * Run one statement inside `tx`. `sql` uses `$1…$n` placeholders; `params`
    * may contain strings, numbers, bigints and JSON-serialisable objects. Rows

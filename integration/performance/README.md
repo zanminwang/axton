@@ -139,6 +139,14 @@ silently discarded; summaries/comparisons show report counts alongside timings.
 
 ## Results
 
+The [receipt-cursor scheduling rerun](baselines/2026-10-28-receipt-cursor/README.md)
+adds 45 passing instrumentation-3 samples against the matching 45-sample
+Model-watch delivery control. Receipt-driven ordinary Pulls disappear in all
+single-write cases, reducing backend transactions from 5 to 4 and framework SQL
+from 47 to 41. It does not establish a general latency speedup: at N = 10,000,
+single-write B visibility measured 28.644 → 29.607 ms. The archive retains the
+full matrix, ranges, operation counts and aligned traces.
+
 The [incremental Model-watch delivery comparison](baselines/2026-10-27-model-watch-delivery/README.md)
 retains 27 before and 45 after instrumentation-3 samples, all passing, with
 clock-correlated traces. At N = 10,000 a single-write B-visible median fell from

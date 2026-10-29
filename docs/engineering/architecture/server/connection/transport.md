@@ -6,7 +6,24 @@ The Node HTTP/WebSocket host authenticates requests, applies application admissi
 
 ## 5. Building Block View
 
-[Implementation](../../../../../packages/backend/server/index.mts) owns this component. [Protocol 5](../../protocols/sync.md) owns shared context, delivery and settlement rules.
+[Connection modules](../../../../../packages/backend/server/connection) own this component. [Protocol 5](../../protocols/sync.md) owns shared context, delivery and settlement rules.
+
+The [backend composition](../../../../../packages/backend/server/api/backend.mts)
+supplies readiness, transaction-bound backend methods and error reporting to the
+listener. [Admission](../../../../../packages/backend/server/connection/admission.mts)
+normalizes authentication and applies the same application admission hook to
+HTTP and WebSocket requests. Stream authorization remains inside the backend
+transaction. [HTTP](../../../../../packages/backend/server/connection/http.mts)
+owns route/body validation and response status mapping;
+[live transport](../../../../../packages/backend/server/connection/live.mts)
+executes the Rust subscription controller's actions.
+
+[Listener lifecycle](../../../../../packages/backend/server/connection/listener.mts)
+owns the HTTP server, admitted requests and shutdown. It stops admitting work,
+drains HTTP work and live negotiation/pulls, then releases the server. Connection
+modules depend on narrow backend method interfaces; they do not create database
+transactions or own publication Sessions. The package entry point continues to
+export the same public API and connection types.
 
 The host sends a WebSocket control Ping every 30 seconds. A peer that does not
 answer before the next heartbeat is terminated through the normal socket-close

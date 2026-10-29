@@ -7,5 +7,5 @@
 
 | Part | Code location |
 |---|---|
-| Transport | HTTP and WebSocket in [server/index.mts](../../../../../packages/backend/server/index.mts) |
-| Controller | [server/live.rs](../../../../../crates/server/src/live.rs) (`Subscriptions`); executor `serveLive` in [server/index.mts](../../../../../packages/backend/server/index.mts) |
+| Transport | [HTTP routing](../../../../../packages/backend/server/connection/http.mts), [WebSocket transport](../../../../../packages/backend/server/connection/live.mts), [shared admission](../../../../../packages/backend/server/connection/admission.mts) and [listener lifecycle](../../../../../packages/backend/server/connection/listener.mts) |
+| Controller | [server/live.rs](../../../../../crates/server/src/live.rs) (`Subscriptions`); executor `serveLive` in [connection/live.mts](../../../../../packages/backend/server/connection/live.mts) |

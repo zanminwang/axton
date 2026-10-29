@@ -13,3 +13,9 @@ Batch assignment and acknowledgement use the same immediate transaction boundary
 Authoritative base and historical evidence are distinct from current protection. Direct writes and deletes release current protection, including tombstones, while keeping historical Stream evidence. Pending optimism keeps protection. Historical evidence prevents stale delivery or old private fallback from restoring authority that a newer statement retired. Production replay and watch filtering use canonical tables directly. No `axton_client`, `axton_mutation` or `axton_mutation_operation` compatibility views, divergence bridge trigger or provisional same-format ALTER upgrade is installed. A missing required layout is refused rather than patched into another format.
 
 The protocol 5 SQLite integration tests cover reopen, faulted commits, abrupt process exit, exact request restoration, unsupported-file admission, accepted/rejected replay, current-marker release and explicit desired-context transaction completion. Server execution deduplication and complete delivery transfer proofs belong to their protocol owners.
+
+Delivery apply exposes coarse timing spans for identity bookkeeping, authority
+pre-clear/install, settlement reconciliation and held projection rebuild. Its
+SQLite commit remains inside the atomic apply boundary. The
+[client encoding experiment](../../../../../integration/performance/baselines/2026-10-28-client-encoding/README.md)
+records a client-only rebuild comparison and the measured phase boundaries.

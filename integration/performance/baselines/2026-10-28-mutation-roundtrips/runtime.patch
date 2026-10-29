@@ -1,0 +1,102 @@
+diff --git a/integration/performance/fixture/server.mjs b/integration/performance/fixture/server.mjs
+index 7c1b78b..96b300f 100644
+--- a/integration/performance/fixture/server.mjs
++++ b/integration/performance/fixture/server.mjs
+@@ -14,7 +14,7 @@ const identity = (prefix, i) => `${prefix}-${String(i).padStart(8, '0')}`;
+ 
+ // Same generated SDK, backend, PostgreSQL adapter and native host as v05-sdk.
+ // A new database per sample keeps fixture work outside all timing intervals.
+-export async function startFixture(connectionString, count, diagnostics) {
++export async function startFixture(connectionString, count, diagnostics, databaseFactory = pg) {
+   const pool = new Pool({connectionString});
+   const executions = new Map(), errors = [];
+   const recordError=error=>errors.push({name:error?.name,message:String(error?.message??error),code:error?.code,stack:error?.stack});
+@@ -26,7 +26,7 @@ export async function startFixture(connectionString, count, diagnostics) {
+     await pool.query("INSERT INTO performance_entry SELECT 'seed-' || lpad(i::text,8,'0'), $2 FROM generate_series(0,$1::int-1) i", [count, text]);
+     const backend = createBackend({
+       native: createRequire(import.meta.url)('../../../bindings/node/axton-node.node'),
+-      database: pg(pool), authenticate: devAuth(), diagnostics,
++      database: databaseFactory(pool), authenticate: devAuth(), diagnostics,
+       protocol5: {authorizeStream: (principal, name) => principal === 'benchmark' && name === stream},
+       mutations: {createEntry: async ({ctx,args}) => {
+         executions.set(args.entry.id, (executions.get(args.entry.id) ?? 0) + 1);
+diff --git a/packages/backend/postgres/src/persistence.mts b/packages/backend/postgres/src/persistence.mts
+index 5521f2e..750f335 100644
+--- a/packages/backend/postgres/src/persistence.mts
++++ b/packages/backend/postgres/src/persistence.mts
+@@ -203,8 +203,13 @@ async function answer05(
+       return row ? { principal: row.principal, stream: row.stream } : null;
+     }
+     case "claimStore": {
+-      await q(SQL.V05_STORE_INSERT, r.storeId, r.principal, r.stream);
+-      const [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
++      let [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
++      if (!row) {
++        // First claims still race through the unique Store identity. A stale
++        // Serializable snapshot retries the whole transaction as before.
++        await q(SQL.V05_STORE_INSERT, r.storeId, r.principal, r.stream);
++        [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
++      }
+       if (!row) throw new Error("Store missing");
+       return {
+         principal: row.principal,
+@@ -227,7 +232,6 @@ async function answer05(
+         r.count,
+       );
+       if (rows.length !== 1) throw new Error("Batch admission state changed");
+-      await q(SQL.V05_BATCH_PRUNE, r.storeId, r.batchId);
+       return null;
+     }
+     case "readResult": {
+@@ -245,20 +249,14 @@ async function answer05(
+       );
+     case "saveResult": {
+       const result = r.result as { mutationId: number };
+-      await q(
+-        SQL.V05_RESULT_SAVE,
+-        r.storeId,
+-        r.batchId,
+-        result.mutationId,
+-        r.ordinal,
+-        JSON.stringify(result),
+-      );
+       const rows = await q(
+-        SQL.V05_PROGRESS_SAVE,
++        SQL.V05_RESULT_SAVE,
+         r.storeId,
+         r.batchId,
+         r.ordinal,
+         r.count,
++        result.mutationId,
++        JSON.stringify(result),
+       );
+       if (rows.length !== 1) throw new Error("Batch progress state changed");
+       return null;
+diff --git a/packages/backend/postgres/src/sql.mts b/packages/backend/postgres/src/sql.mts
+index 2cf8628..cdd4f06 100644
+--- a/packages/backend/postgres/src/sql.mts
++++ b/packages/backend/postgres/src/sql.mts
+@@ -37,17 +37,17 @@ export const V05_STORE_LOCK =
+   // foreign-key checks may hold KEY SHARE on the immutable Store identity.
+   "SELECT principal,stream,last_processed_batch_id,progress,current_digest,current_count,last_digest,last_count FROM axton_store WHERE id=$1 FOR NO KEY UPDATE";
+ export const V05_BATCH_BEGIN =
+-  "UPDATE axton_store SET current_digest=$3,current_count=$4 WHERE id=$1 AND last_processed_batch_id=$2-1 AND current_digest IS NULL AND progress=0 RETURNING id";
+-export const V05_BATCH_PRUNE =
+-  "DELETE FROM axton_mutation_result WHERE store_id=$1 AND batch_id<$2";
++  "WITH admitted AS (UPDATE axton_store SET current_digest=$3,current_count=$4 WHERE id=$1 AND last_processed_batch_id=$2-1 AND current_digest IS NULL AND progress=0 RETURNING id), " +
++  "pruned AS (DELETE FROM axton_mutation_result result USING admitted WHERE result.store_id=admitted.id AND result.batch_id<$2) " +
++  "SELECT id FROM admitted";
+ export const V05_RESULT_READ =
+   "SELECT result FROM axton_mutation_result WHERE store_id=$1 AND batch_id=$2 AND ordinal=$3";
+ export const V05_RESULTS_READ =
+   "SELECT result FROM axton_mutation_result WHERE store_id=$1 AND batch_id=$2 ORDER BY ordinal";
++/** Progress and its immutable result either both change or neither does. */
+ export const V05_RESULT_SAVE =
+-  "INSERT INTO axton_mutation_result(store_id,batch_id,mutation_id,ordinal,result) VALUES($1,$2,$3,$4,$5::jsonb)";
+-export const V05_PROGRESS_SAVE =
+-  "UPDATE axton_store SET progress=CASE WHEN $3+1=$4 THEN 0 ELSE $3+1 END,last_processed_batch_id=CASE WHEN $3+1=$4 THEN $2 ELSE last_processed_batch_id END,last_digest=CASE WHEN $3+1=$4 THEN current_digest ELSE last_digest END,last_count=CASE WHEN $3+1=$4 THEN current_count ELSE last_count END,current_digest=CASE WHEN $3+1=$4 THEN NULL ELSE current_digest END,current_count=CASE WHEN $3+1=$4 THEN NULL ELSE current_count END WHERE id=$1 AND last_processed_batch_id=$2-1 AND progress=$3 AND current_count=$4 RETURNING id";
++  "WITH advanced AS (UPDATE axton_store SET progress=CASE WHEN $3+1=$4 THEN 0 ELSE $3+1 END,last_processed_batch_id=CASE WHEN $3+1=$4 THEN $2 ELSE last_processed_batch_id END,last_digest=CASE WHEN $3+1=$4 THEN current_digest ELSE last_digest END,last_count=CASE WHEN $3+1=$4 THEN current_count ELSE last_count END,current_digest=CASE WHEN $3+1=$4 THEN NULL ELSE current_digest END,current_count=CASE WHEN $3+1=$4 THEN NULL ELSE current_count END WHERE id=$1 AND last_processed_batch_id=$2-1 AND progress=$3 AND current_count=$4 RETURNING id) " +
++  "INSERT INTO axton_mutation_result(store_id,batch_id,mutation_id,ordinal,result) SELECT id,$2,$5,$3,$6::jsonb FROM advanced RETURNING store_id";
+ /** Relation identity separates namespaces; reservations follow SQL savepoints and COMMIT. */
+ export const V05_PUBLICATION_CURSORS =
+   "CREATE TEMP TABLE IF NOT EXISTS pg_temp.axton_publication_cursor (relation oid NOT NULL,stream text NOT NULL,cursor bigint NOT NULL,PRIMARY KEY(relation,stream)) ON COMMIT DELETE ROWS";

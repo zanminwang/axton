@@ -650,3 +650,57 @@ fn handler_selected_model_outputs_are_eligible_for_materialization() {
         .collect();
     assert_eq!(eligible, ["mainTodo", "suggestions"]);
 }
+
+#[test]
+fn canonical_buffer_matches_recursive_encoding_for_nested_wire_values() {
+    // Frozen previous implementation: wire bytes bind persisted protocol digests.
+    fn previous(value: &Value) -> String {
+        match value {
+            Value::Object(map) => {
+                let mut keys: Vec<_> = map.keys().collect();
+                keys.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+                format!(
+                    "{{{}}}",
+                    keys.into_iter()
+                        .map(|key| format!(
+                            "{}:{}",
+                            serde_json::to_string(key).unwrap(),
+                            previous(&map[key])
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            }
+            Value::Array(values) => format!(
+                "[{}]",
+                values.iter().map(previous).collect::<Vec<_>>().join(",")
+            ),
+            _ => serde_jcs::to_string(value).unwrap(),
+        }
+    }
+    let leaves = vec![
+        Value::Null,
+        json!(true),
+        json!(false),
+        json!(0),
+        json!(-0.0),
+        json!(1.0),
+        json!(1e-7),
+        json!(1e21),
+        json!(-123.456),
+        json!(u64::MAX),
+        json!(i64::MIN),
+        json!(""),
+        json!("\"\\\n\r\t\u{0000} / 😀"),
+        json!([]),
+        json!({}),
+    ];
+    for (index, value) in leaves.iter().enumerate() {
+        assert_eq!(canonical_json(value).unwrap(), previous(value));
+        for other in &leaves {
+            let nested = json!({"\u{e000}": other, "😀": value, "a": [value, other,
+                {"nested": [other, value], "index": index}], "control\n": "é"});
+            assert_eq!(canonical_json(&nested).unwrap(), previous(&nested));
+        }
+    }
+}

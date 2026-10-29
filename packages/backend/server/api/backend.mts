@@ -57,6 +57,10 @@ export interface Persistence {
 }
 export type DatabaseDiagnostics = Pick<Diagnostics, "span">;
 export interface Database<T> {
+  /** Adapter honors per-Mutation publication scopes inside commit groups. */
+  mutationCommitGroups?: boolean;
+  /** Adapter persists one contiguous commit-group outcome suffix atomically. */
+  mutationResultGroups?: boolean;
   /** Validate the configured namespace before serving work. An optional retained
    * transaction avoids acquiring a second connection for caller-owned publish. */
   initialize?: (tx?: T) => Promise<void>;
@@ -251,6 +255,8 @@ export interface BackendOptions<T> {
   /** Opt-in performance records. Default: no collection or native tracing. */
   diagnostics?: AxtonDiagnostics;
   protocol5?: {
+    /** Experimental: members per transaction (1..32). Database failure rolls back the whole group. Default 8 when native/adapter support groups, otherwise 1. */
+    experimentalMutationGroupSize?: number;
     projectionGeneration?: string;
     materializations?: Record<
       string,
@@ -342,6 +348,21 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
   options: BackendOptions<T>,
 ) {
   const native = loadNative(options.native);
+  const mutationGroupSize =
+    options.protocol5?.experimentalMutationGroupSize ??
+    (native.processBatchGroup && options.database.mutationCommitGroups ? 8 : 1);
+  if (
+    !Number.isSafeInteger(mutationGroupSize) ||
+    mutationGroupSize < 1 ||
+    mutationGroupSize > 32
+  )
+    throw new Error(
+      "experimentalMutationGroupSize must be an integer from 1 to 32",
+    );
+  if (mutationGroupSize > 1 && !native.processBatchGroup)
+    throw new Error("native Mutation commit groups unavailable");
+  if (mutationGroupSize > 1 && !options.database.mutationCommitGroups)
+    throw new Error("database adapter does not support Mutation commit groups");
   const diagnostics = new Diagnostics(options.diagnostics);
   if (options.diagnostics) {
     // This backend's wrappers only; never mutate the caller's native object.
@@ -352,6 +373,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
       "processLive05",
       "processRead05",
       "processBatchMember",
+      "processBatchGroup",
     ] as const) {
       const operation = native[name];
       if (operation)
@@ -543,6 +565,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     return { error: error instanceof Error ? error.message : String(error) };
   };
   const hostDependencies: HostDependencies<T> = {
+    mutationGroupSize,
     diagnostics,
     options,
     native,
@@ -705,7 +728,30 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
         const frozen = native.validateMutationBatch(config, wire);
         const count = (JSON.parse(frozen).mutations as unknown[]).length;
         const results: string[] = [];
-        for (let ordinal = 0; ordinal < count; ordinal++)
+        for (let ordinal = 0; ordinal < count; ordinal += mutationGroupSize) {
+          if (mutationGroupSize > 1) {
+            const length = Math.min(mutationGroupSize, count - ordinal);
+            const group = JSON.parse(
+              await run((tx, session) =>
+                native.processBatchGroup!(
+                  config,
+                  owner,
+                  frozen,
+                  ordinal,
+                  length,
+                  host(tx, session),
+                ),
+              ),
+            ) as string[];
+            if (
+              !Array.isArray(group) ||
+              group.length !== length ||
+              group.some((result) => typeof result !== "string")
+            )
+              throw new Error("invalid native Mutation group results");
+            results.push(...group);
+            continue;
+          }
           results.push(
             await run((tx, session) =>
               native.processBatchMember!(
@@ -717,6 +763,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
               ),
             ),
           );
+        }
         return native.encodeBatchAcknowledgement(frozen, results);
       }
     },

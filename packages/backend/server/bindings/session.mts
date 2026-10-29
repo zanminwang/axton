@@ -1,4 +1,6 @@
 export class Session {
+  /** Inherited by recursive Loader host callbacks inside a commit group. */
+  publicationScope: string | undefined;
   failed: unknown;
   closed = false;
   pending = new Set<Promise<unknown>>();

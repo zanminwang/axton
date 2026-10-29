@@ -101,10 +101,19 @@ export type Protocol05Operation =
       count: number;
       result: JsonValue;
     }
+  | {
+      op: "saveResults";
+      storeId: string;
+      batchId: number;
+      ordinal: number;
+      count: number;
+      digest: string;
+      results: JsonValue[];
+    }
   | ReadTrackingRequest
   | GuardRecordsRequest
   | { op: "targetPositions"; stream: string; records: MemberKey[] }
-  | ApplyStreamMembersRequest;
+  | (ApplyStreamMembersRequest & { publicationScope?: string });
 export type Protocol05Request = {
   op: "protocol05";
   request: Protocol05Operation;

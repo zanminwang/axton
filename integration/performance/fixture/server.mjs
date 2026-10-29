@@ -14,7 +14,7 @@ const identity = (prefix, i) => `${prefix}-${String(i).padStart(8, '0')}`;
 
 // Same generated SDK, backend, PostgreSQL adapter and native host as v05-sdk.
 // A new database per sample keeps fixture work outside all timing intervals.
-export async function startFixture(connectionString, count, diagnostics) {
+export async function startFixture(connectionString, count, diagnostics, databaseFactory = pg) {
   const pool = new Pool({connectionString});
   const executions = new Map(), errors = [];
   const recordError=error=>errors.push({name:error?.name,message:String(error?.message??error),code:error?.code,stack:error?.stack});
@@ -26,8 +26,8 @@ export async function startFixture(connectionString, count, diagnostics) {
     await pool.query("INSERT INTO performance_entry SELECT 'seed-' || lpad(i::text,8,'0'), $2 FROM generate_series(0,$1::int-1) i", [count, text]);
     const backend = createBackend({
       native: createRequire(import.meta.url)('../../../bindings/node/axton-node.node'),
-      database: pg(pool), authenticate: devAuth(), diagnostics,
-      protocol5: {authorizeStream: (principal, name) => principal === 'benchmark' && name === stream},
+      database: databaseFactory(pool), authenticate: devAuth(), diagnostics,
+      protocol5: {experimentalMutationGroupSize:process.env.AXTON_EXPERIMENTAL_MUTATION_GROUP_SIZE===undefined?undefined:Number(process.env.AXTON_EXPERIMENTAL_MUTATION_GROUP_SIZE),authorizeStream: (principal, name) => principal === 'benchmark' && name === stream},
       mutations: {createEntry: async ({ctx,args}) => {
         executions.set(args.entry.id, (executions.get(args.entry.id) ?? 0) + 1);
         assert.equal(ctx.userId, 'benchmark');

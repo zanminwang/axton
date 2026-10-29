@@ -115,8 +115,12 @@ impl<S: ClientStore> Client<S> {
             let mut held=Held::new();
             let changes=owned.as_ref().map(|units|units.iter().flat_map(|u|u.changes.clone()).collect::<Vec<_>>()).unwrap_or_else(||unit.changes.clone());
             e.exec("axton_delivery_key","CREATE TABLE IF NOT EXISTS axton_delivery_key(plan_id TEXT NOT NULL,identity TEXT NOT NULL,PRIMARY KEY(plan_id,identity))",&[])?;
+            let keys_span=tracing::info_span!(target: "axton::client", "delivery.apply.keys").entered();
             for change in &changes {e.exec("axton_delivery_key","INSERT INTO axton_delivery_key(plan_id,identity) VALUES(?,?)",&[json!(id),json!(change.key().encoded()?)])?;}
+            drop(keys_span);
+            let authority_span=tracing::info_span!(target: "axton::client", "delivery.apply.authority").entered();
             let applied=if header.owner.is_some(){e.stage_materialization05(&header.context,&changes,&mut held)?}else{e.stage_authority05(&header.context,&changes,&mut held)?};
+            drop(authority_span);
             let final_unit=owned.is_some() || unit.index+1==header.units.len() as u64;
             if header.bootstrap {
                 let start=e.scalar("SELECT start_cursor FROM axton_store",&[])?.ok_or_else(||invalid("handshake required"))?;
@@ -140,8 +144,8 @@ impl<S: ClientStore> Client<S> {
                 if pending.authority_keys.iter().any(|k|k.encoded().is_ok_and(|k|!keys.contains(&k))) {return Err(invalid("schema transfer missing newly held identity"))}
                 e.enable_schema05(&pending.previous_context,&pending.desired_context)?;
             }
-            let completions=e.reconcile_ready05(&mut held)?;
-            let reports=e.rebuild_held(&held)?;
+            let completions=tracing::info_span!(target: "axton::client", "delivery.apply.reconcile").in_scope(|| e.reconcile_ready05(&mut held))?;
+            let reports=tracing::info_span!(target: "axton::client", "delivery.apply.rebuild").in_scope(|| e.rebuild_held(&held))?;
             let next=if owned.is_some(){header.units.len() as u64}else{unit.index+1};
             if final_unit {
                 e.exec("axton_delivery_key","DELETE FROM axton_delivery_key WHERE plan_id=?",&[json!(id)])?;

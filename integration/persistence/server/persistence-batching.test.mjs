@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
 import { answer } from "../../../packages/backend/postgres/src/persistence.mts";
+import * as SQL from "../../../packages/backend/postgres/src/sql.mts";
 import { pgDriver } from "../../../packages/backend/postgres/src/pg.mts";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const base = pgDriver(pool);
@@ -95,6 +96,16 @@ test("2055 identities settle and read in bounded SQL batches", () =>
       records,
     });
     assert.deepEqual(targets.result, applied.result);
+    assert.deepEqual(
+      (
+        await measure("targetPositions", {
+          stream: "User:a",
+          records: records.slice(0, 1001),
+        })
+      ).result,
+      applied.result.slice(0, 1001),
+      "singleton final batch keeps position cardinality and order",
+    );
     assert.equal(
       (await tx.query("SELECT head FROM axton_stream")).rows[0].head,
       "1",
@@ -470,3 +481,195 @@ for (const mode of ["ensure", "lock"])
         writer.release();
       }
     }));
+
+test("single-Stream publish reserves and writes in one statement after temp-table setup", () =>
+  fixture(async ({ call, measure, tx }) => {
+    const records = keys(3);
+    await call("guardRecords", {
+      records: records.map((k) => ({ ...k, mode: "ensure" })),
+    });
+    const first = await measure("applyStreamMembers", {
+      deltas: records.map((k) => delta(k)),
+      publicationScope: "member:a",
+    });
+    assert.equal(
+      first.queries,
+      3,
+      "standalone layout check plus temp setup plus combined publication",
+    );
+    assert.ok(first.result.every((p) => p.cursor === 1));
+    assert.deepEqual(
+      await call("applyStreamMembers", {
+        deltas: records.map((k) => delta(k)),
+        publicationScope: "member:a",
+      }),
+      first.result,
+    );
+    const next = await call("applyStreamMembers", {
+      deltas: [delta(records[1])],
+      publicationScope: "member:b",
+    });
+    assert.equal(next[0].cursor, 2);
+    assert.equal(
+      (await tx.query("SELECT head FROM axton_stream WHERE stream='User:a'"))
+        .rows[0].head,
+      "2",
+    );
+  }));
+test("combined publication does not write members when its cursor is exhausted", () =>
+  fixture(async ({ call, tx }) => {
+    const k = key("overflow");
+    await call("guardRecords", { records: [{ ...k, mode: "ensure" }] });
+    await tx.query("INSERT INTO axton_stream VALUES($1,$2)", [
+      "User:a",
+      "9007199254740991",
+    ]);
+    await assert.rejects(
+      call("applyStreamMembers", {
+        deltas: [delta(k)],
+        publicationScope: "overflow",
+      }),
+      /head counter overflow/,
+    );
+    assert.equal(
+      (await tx.query("SELECT count(*) n FROM axton_stream_record")).rows[0].n,
+      "0",
+    );
+    assert.equal(
+      (await tx.query("SELECT head FROM axton_stream WHERE stream='User:a'"))
+        .rows[0].head,
+      "9007199254740991",
+    );
+  }));
+
+test("singleton and general tracking return the same live holders, missing keys and deduplicated unions", () =>
+  fixture(async ({ call, measure, tx }) => {
+    const [a, b, untracked] = keys(3),
+      missing = key("missing");
+    await call("guardRecords", {
+      records: [a, b, untracked].map((k) => ({ ...k, mode: "ensure" })),
+    });
+    await call("applyStreamMembers", {
+      deltas: [delta(a), delta(a, "User:b"), delta(b), delta(b, "User:b")],
+    });
+    await tx.query(
+      "UPDATE axton_stream_record SET kind='remove' WHERE stream='User:a' AND record_id=(SELECT id FROM axton_record WHERE model=$1 AND identity_key=$2)",
+      [b.model, b.identityKey],
+    );
+    const normalize = (rows) =>
+      rows
+        .map((r) => JSON.stringify([r.stream, r.model, r.identityKey]))
+        .sort();
+    const requests = [
+      ...[a, b, untracked, missing].flatMap((k) => [
+        { records: [k], pairs: [] },
+        { records: [], pairs: [{ ...k, stream: "User:a" }] },
+        { records: [], pairs: [{ ...k, stream: "User:b" }] },
+      ]),
+      {
+        records: [a, a],
+        pairs: [
+          { ...a, stream: "User:a" },
+          { ...b, stream: "User:b" },
+          { ...b, stream: "User:b" },
+        ],
+      },
+      {
+        records: [],
+        pairs: [
+          { ...a, stream: "User:a" },
+          { ...a, stream: "User:a" },
+        ],
+      },
+    ];
+    for (const request of requests) {
+      const reference = (
+        await tx.query(SQL.READ_TRACKING, [
+          JSON.stringify(request.records),
+          JSON.stringify(request.pairs),
+        ])
+      ).rows.map((r) => ({
+        stream: r.stream,
+        model: r.model,
+        identityKey: r.identity_key,
+      }));
+      assert.deepEqual(
+        normalize(await call("readTracking", request)),
+        normalize(reference),
+      );
+    }
+    const empty = await measure("readTracking", { records: [], pairs: [] });
+    assert.deepEqual(empty.result, []);
+    assert.equal(
+      empty.queries,
+      1,
+      "only standalone layout readiness, no tracking SQL",
+    );
+  }));
+test("tracking rechecks execute fresh after locks and reflect same-transaction membership changes", () =>
+  fixture(async ({ call, tx }) => {
+    const k = key("rechecked"),
+      request = { records: [], pairs: [{ ...k, stream: "User:a" }] };
+    assert.deepEqual(await call("readTracking", request), []);
+    await tx.query(SQL.LOCK_STREAMS, [JSON.stringify(["User:a"])]);
+    await call("guardRecords", { records: [{ ...k, mode: "ensure" }] });
+    await call("applyStreamMembers", { deltas: [delta(k)] });
+    assert.deepEqual(await call("readTracking", request), [
+      { ...k, stream: "User:a" },
+    ]);
+    await tx.query(
+      "UPDATE axton_stream_record SET kind='remove' WHERE stream='User:a'",
+    );
+    assert.deepEqual(await call("readTracking", request), []);
+  }));
+
+test("singleton positions preserve live/removal cursors, absent metadata and untracked nulls", () =>
+  fixture(async ({ call, tx }) => {
+    const [live, removed, untracked, missing] = keys(4);
+    await call("guardRecords", {
+      records: [live, removed, untracked].map((k) => ({
+        ...k,
+        mode: "ensure",
+      })),
+    });
+    await call("applyStreamMembers", { deltas: [delta(live), delta(removed)] });
+    await tx.query(
+      "UPDATE axton_stream_record SET kind='remove' WHERE stream='User:a' AND record_id=(SELECT id FROM axton_record WHERE model=$1 AND identity_key=$2)",
+      [removed.model, removed.identityKey],
+    );
+    const records = [live, removed, untracked, missing];
+    const reference = await call("targetPositions", {
+      stream: "User:a",
+      records,
+    });
+    assert.equal(reference[0].kind, "upsert");
+    assert.equal(reference[1].kind, "remove");
+    assert.deepEqual(reference.slice(2), [null, null]);
+    for (const [i, key] of records.entries()) {
+      assert.deepEqual(
+        await call("targetPositions", { stream: "User:a", records: [key] }),
+        [reference[i]],
+      );
+      if (reference[i] === null)
+        await assert.rejects(
+          call("readPositions", { stream: "User:a", records: [key] }),
+          /missing Stream position/,
+        );
+      else
+        assert.deepEqual(
+          await call("readPositions", { stream: "User:a", records: [key] }),
+          [reference[i]],
+        );
+    }
+    assert.deepEqual(
+      await call("targetPositions", { stream: "User:other", records: [live] }),
+      [null],
+    );
+    assert.deepEqual(
+      await call("targetPositions", {
+        stream: "User:a",
+        records: [live, live],
+      }),
+      [reference[0], reference[0]],
+    );
+  }));

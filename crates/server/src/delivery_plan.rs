@@ -15,6 +15,7 @@ use axton_protocols::sync::{self as v05, Validate};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+#[tracing::instrument(target = "axton::server", name = "delivery.encode", skip_all)]
 fn encode<T: serde::Serialize + Validate>(v: &T) -> Result<String> {
     String::from_utf8(v05::encode(v).map_err(internal)?).map_err(internal)
 }
@@ -391,6 +392,7 @@ fn components(
     }
     v05::plan_units(changes, &unique, &dependencies, after, through, head).map_err(internal)
 }
+#[tracing::instrument(target = "axton::server", name = "delivery.units", skip_all)]
 fn units(
     schema: &axton_core::Schema,
     changes: &[v05::AuthorityChange],
@@ -403,6 +405,7 @@ fn units(
 /// Select complete dependency components before canonical loading. The page
 /// covers only the prefix before its first omitted component. Components may
 /// include ahead-of-boundary companions, but independent future work is deferred.
+#[tracing::instrument(target = "axton::server", name = "delivery.page", skip_all)]
 fn page_positions(
     schema: &axton_core::Schema,
     positions: Vec<Position>,
@@ -482,6 +485,7 @@ pub(crate) fn verify_indexed_part(
 }
 /// All fragments of the selected page travel in this response. Large atomic
 /// components may exceed the normal page target but are never split across reads.
+#[tracing::instrument(target = "axton::server", name = "delivery.response", skip_all)]
 fn response(frozen: v05::FrozenDelivery) -> Result<v05::DeliveryResponse> {
     let response = v05::DeliveryResponse {
         header: frozen.header,
@@ -553,22 +557,25 @@ pub async fn process_delivery05(
         head,
     )?;
     let now: u64 = call(&host, json!({"op":"deliveryNow"})).await?;
-    let frozen = v05::freeze_delivery(
-        r.context.clone(),
-        uuid::Uuid::new_v4().to_string(),
-        if r.bootstrap {
-            v05::DeliveryPurpose::Bootstrap
-        } else {
-            v05::DeliveryPurpose::Sync
-        },
-        r.after,
-        through,
-        head,
-        now + 300000,
-        units,
-        500,
-    )
-    .map_err(internal)?;
+    let frozen = tracing::info_span!(target: "axton::server", "delivery.freeze")
+        .in_scope(|| {
+            v05::freeze_delivery(
+                r.context.clone(),
+                uuid::Uuid::new_v4().to_string(),
+                if r.bootstrap {
+                    v05::DeliveryPurpose::Bootstrap
+                } else {
+                    v05::DeliveryPurpose::Sync
+                },
+                r.after,
+                through,
+                head,
+                now + 300000,
+                units,
+                500,
+            )
+        })
+        .map_err(internal)?;
     encode(&response(frozen)?)
 }
 #[tracing::instrument(target = "axton::server", name = "delivery.materialize", skip_all)]

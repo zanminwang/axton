@@ -1,0 +1,415 @@
+diff --git a/integration/persistence/server/persistence-batching.test.mjs b/integration/persistence/server/persistence-batching.test.mjs
+index 6dc7b59..506e1fa 100644
+--- a/integration/persistence/server/persistence-batching.test.mjs
++++ b/integration/persistence/server/persistence-batching.test.mjs
+@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
+ import { readFile } from "node:fs/promises";
+ import { Pool } from "pg";
+ import { answer } from "../../../packages/backend/postgres/src/persistence.mts";
++import * as SQL from "../../../packages/backend/postgres/src/sql.mts";
+ import { pgDriver } from "../../../packages/backend/postgres/src/pg.mts";
+ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+ const base = pgDriver(pool);
+@@ -470,3 +471,144 @@ for (const mode of ["ensure", "lock"])
+         writer.release();
+       }
+     }));
++
++test("single-Stream publish reserves and writes in one statement after temp-table setup", () =>
++  fixture(async ({ call, measure, tx }) => {
++    const records = keys(3);
++    await call("guardRecords", {
++      records: records.map((k) => ({ ...k, mode: "ensure" })),
++    });
++    const first = await measure("applyStreamMembers", {
++      deltas: records.map((k) => delta(k)),
++      publicationScope: "member:a",
++    });
++    assert.equal(
++      first.queries,
++      3,
++      "standalone layout check plus temp setup plus combined publication",
++    );
++    assert.ok(first.result.every((p) => p.cursor === 1));
++    assert.deepEqual(
++      await call("applyStreamMembers", {
++        deltas: records.map((k) => delta(k)),
++        publicationScope: "member:a",
++      }),
++      first.result,
++    );
++    const next = await call("applyStreamMembers", {
++      deltas: [delta(records[1])],
++      publicationScope: "member:b",
++    });
++    assert.equal(next[0].cursor, 2);
++    assert.equal(
++      (await tx.query("SELECT head FROM axton_stream WHERE stream='User:a'"))
++        .rows[0].head,
++      "2",
++    );
++  }));
++test("combined publication does not write members when its cursor is exhausted", () =>
++  fixture(async ({ call, tx }) => {
++    const k = key("overflow");
++    await call("guardRecords", { records: [{ ...k, mode: "ensure" }] });
++    await tx.query("INSERT INTO axton_stream VALUES($1,$2)", [
++      "User:a",
++      "9007199254740991",
++    ]);
++    await assert.rejects(
++      call("applyStreamMembers", {
++        deltas: [delta(k)],
++        publicationScope: "overflow",
++      }),
++      /head counter overflow/,
++    );
++    assert.equal(
++      (await tx.query("SELECT count(*) n FROM axton_stream_record")).rows[0].n,
++      "0",
++    );
++    assert.equal(
++      (await tx.query("SELECT head FROM axton_stream WHERE stream='User:a'"))
++        .rows[0].head,
++      "9007199254740991",
++    );
++  }));
++
++test("singleton and general tracking return the same live holders, missing keys and deduplicated unions", () =>
++  fixture(async ({ call, measure, tx }) => {
++    const [a, b, untracked] = keys(3),
++      missing = key("missing");
++    await call("guardRecords", {
++      records: [a, b, untracked].map((k) => ({ ...k, mode: "ensure" })),
++    });
++    await call("applyStreamMembers", {
++      deltas: [delta(a), delta(a, "User:b"), delta(b), delta(b, "User:b")],
++    });
++    await tx.query(
++      "UPDATE axton_stream_record SET kind='remove' WHERE stream='User:a' AND record_id=(SELECT id FROM axton_record WHERE model=$1 AND identity_key=$2)",
++      [b.model, b.identityKey],
++    );
++    const normalize = (rows) =>
++      rows
++        .map((r) => JSON.stringify([r.stream, r.model, r.identityKey]))
++        .sort();
++    const requests = [
++      ...[a, b, untracked, missing].flatMap((k) => [
++        { records: [k], pairs: [] },
++        { records: [], pairs: [{ ...k, stream: "User:a" }] },
++        { records: [], pairs: [{ ...k, stream: "User:b" }] },
++      ]),
++      {
++        records: [a, a],
++        pairs: [
++          { ...a, stream: "User:a" },
++          { ...b, stream: "User:b" },
++          { ...b, stream: "User:b" },
++        ],
++      },
++      {
++        records: [],
++        pairs: [
++          { ...a, stream: "User:a" },
++          { ...a, stream: "User:a" },
++        ],
++      },
++    ];
++    for (const request of requests) {
++      const reference = (
++        await tx.query(SQL.READ_TRACKING, [
++          JSON.stringify(request.records),
++          JSON.stringify(request.pairs),
++        ])
++      ).rows.map((r) => ({
++        stream: r.stream,
++        model: r.model,
++        identityKey: r.identity_key,
++      }));
++      assert.deepEqual(
++        normalize(await call("readTracking", request)),
++        normalize(reference),
++      );
++    }
++    const empty = await measure("readTracking", { records: [], pairs: [] });
++    assert.deepEqual(empty.result, []);
++    assert.equal(
++      empty.queries,
++      1,
++      "only standalone layout readiness, no tracking SQL",
++    );
++  }));
++test("tracking rechecks execute fresh after locks and reflect same-transaction membership changes", () =>
++  fixture(async ({ call, tx }) => {
++    const k = key("rechecked"),
++      request = { records: [], pairs: [{ ...k, stream: "User:a" }] };
++    assert.deepEqual(await call("readTracking", request), []);
++    await tx.query(SQL.LOCK_STREAMS, [JSON.stringify(["User:a"])]);
++    await call("guardRecords", { records: [{ ...k, mode: "ensure" }] });
++    await call("applyStreamMembers", { deltas: [delta(k)] });
++    assert.deepEqual(await call("readTracking", request), [
++      { ...k, stream: "User:a" },
++    ]);
++    await tx.query(
++      "UPDATE axton_stream_record SET kind='remove' WHERE stream='User:a'",
++    );
++    assert.deepEqual(await call("readTracking", request), []);
++  }));
+diff --git a/packages/backend/postgres/src/persistence.mts b/packages/backend/postgres/src/persistence.mts
+index 5521f2e..17607f9 100644
+--- a/packages/backend/postgres/src/persistence.mts
++++ b/packages/backend/postgres/src/persistence.mts
+@@ -203,8 +203,13 @@ async function answer05(
+       return row ? { principal: row.principal, stream: row.stream } : null;
+     }
+     case "claimStore": {
+-      await q(SQL.V05_STORE_INSERT, r.storeId, r.principal, r.stream);
+-      const [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
++      let [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
++      if (!row) {
++        // First claims still race through the unique Store identity. A stale
++        // Serializable snapshot retries the whole transaction as before.
++        await q(SQL.V05_STORE_INSERT, r.storeId, r.principal, r.stream);
++        [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
++      }
+       if (!row) throw new Error("Store missing");
+       return {
+         principal: row.principal,
+@@ -227,7 +232,6 @@ async function answer05(
+         r.count,
+       );
+       if (rows.length !== 1) throw new Error("Batch admission state changed");
+-      await q(SQL.V05_BATCH_PRUNE, r.storeId, r.batchId);
+       return null;
+     }
+     case "readResult": {
+@@ -245,30 +249,67 @@ async function answer05(
+       );
+     case "saveResult": {
+       const result = r.result as { mutationId: number };
+-      await q(
++      const rows = await q(
+         SQL.V05_RESULT_SAVE,
+         r.storeId,
+         r.batchId,
+-        result.mutationId,
+         r.ordinal,
++        r.count,
++        result.mutationId,
+         JSON.stringify(result),
+       );
++      if (rows.length !== 1) throw new Error("Batch progress state changed");
++      return null;
++    }
++    case "saveResults": {
++      const results = arrayOf(r.results, "group results");
++      if (results.length === 0 || results.length > 32)
++        throw new Error("Invalid result group size");
++      const ordinal = safe(r.ordinal),
++        count = positiveCounter(r.count);
++      if (ordinal + results.length > count)
++        throw new Error("Invalid result group range");
+       const rows = await q(
+-        SQL.V05_PROGRESS_SAVE,
++        SQL.V05_RESULTS_SAVE,
+         r.storeId,
+         r.batchId,
+-        r.ordinal,
+-        r.count,
++        ordinal,
++        count,
++        results.length,
++        r.digest,
++        JSON.stringify(results),
+       );
+-      if (rows.length !== 1) throw new Error("Batch progress state changed");
++      if (rows.length !== results.length)
++        throw new Error("Batch progress state changed");
+       return null;
+     }
+     case "readTracking": {
+-      const rows = await q(
+-        SQL.READ_TRACKING,
+-        JSON.stringify(r.records),
+-        JSON.stringify(r.pairs),
+-      );
++      const records = arrayOf(r.records, "tracking records");
++      const pairs = arrayOf(r.pairs, "tracking pairs");
++      if (records.length === 0 && pairs.length === 0) return [];
++      let rows: Record<string, unknown>[];
++      if (records.length === 0 && pairs.length === 1) {
++        const pair = keyOf(pairs[0], ["stream"]);
++        rows = await q(
++          SQL.READ_TRACKING_PAIR,
++          pair.model,
++          pair.identityKey,
++          streamName(pair.stream),
++        );
++      } else if (pairs.length === 0 && records.length === 1) {
++        const record = keyOf(records[0]);
++        rows = await q(
++          SQL.READ_TRACKING_RECORD,
++          record.model,
++          record.identityKey,
++        );
++      } else {
++        rows = await q(
++          SQL.READ_TRACKING,
++          JSON.stringify(records),
++          JSON.stringify(pairs),
++        );
++      }
+       return rows.map((row) => ({
+         stream: row.stream,
+         model: row.model,
+@@ -373,9 +414,46 @@ async function answer05(
+       // roll back with caller savepoints, and COMMIT clears connection-local rows.
+       // Repeated preparation/publication in this transaction reuses one cursor.
+       if (streams.length) await q(SQL.V05_PUBLICATION_CURSORS);
++      // A single bounded publish-only run can carry its new cursor through
++      // RETURNING into the membership write in the same statement. Mixed and
++      // multi-Stream runs retain their existing canonical reservation order.
++      if (
++        streams.length === 1 &&
++        deltas.length <= SQL.STREAM_BATCH &&
++        deltas.every((d) => d.publish === true)
++      ) {
++        const rows = await q(
++          SQL.V05_RESERVE_APPLY_MEMBERS,
++          streams[0],
++          r.publicationScope ?? "",
++          JSON.stringify(deltas),
++        );
++        if (rows.length !== deltas.length)
++          throw new Error("member cardinality mismatch");
++        return rows.map((row, index) => {
++          if (row.overflow)
++            throw new Error(`Stream ${streams[0]} head counter overflow`);
++          if (!row.represented)
++            throw new Error("missing canonical record metadata");
++          if (row.kind !== "upsert")
++            throw new Error("unpublished pair has no live position");
++          const d = deltas[index]!;
++          return {
++            stream: d.stream,
++            model: d.model,
++            identityKey: d.identityKey,
++            cursor: positiveCounter(row.cursor),
++            kind: "upsert",
++          };
++        });
++      }
+       const cursors = new Map<string, number>();
+       for (const stream of streams) {
+-        const [row] = await q(SQL.V05_RESERVE_CURSOR, stream);
++        const [row] = await q(
++          SQL.V05_RESERVE_CURSOR,
++          stream,
++          r.publicationScope ?? "",
++        );
+         if (!row) throw new Error(`Stream ${stream} head counter overflow`);
+         cursors.set(stream, positiveCounter(row.cursor));
+       }
+@@ -507,6 +585,8 @@ export function persistence<Tx>(driver: PostgresDriver<Tx>): Database<Tx> & {
+   };
+   return {
+     driver,
++    mutationCommitGroups: true,
++    mutationResultGroups: true,
+     initialize,
+     transaction: (body, diagnostics) =>
+       driver.transaction(
+diff --git a/packages/backend/postgres/src/sql.mts b/packages/backend/postgres/src/sql.mts
+index 2cf8628..08d3b83 100644
+--- a/packages/backend/postgres/src/sql.mts
++++ b/packages/backend/postgres/src/sql.mts
+@@ -24,6 +24,11 @@ selected AS (
+  UNION
+  SELECT m.stream,r.model,r.identity_key FROM pairs w JOIN axton_record r USING(model,identity_key) JOIN axton_stream_record m ON m.record_id=r.id AND m.kind='upsert' AND m.stream=w.stream)
+ SELECT * FROM selected`;
++/** Singleton predicates let PostgreSQL use exact record/pair index lookups. */
++export const READ_TRACKING_PAIR =
++  "SELECT m.stream,r.model,r.identity_key FROM axton_record r JOIN axton_stream_record m ON m.record_id=r.id WHERE r.model=$1 AND r.identity_key=$2 AND m.stream=$3 AND m.kind='upsert'";
++export const READ_TRACKING_RECORD =
++  "SELECT m.stream,r.model,r.identity_key FROM axton_record r JOIN axton_stream_record m ON m.record_id=r.id WHERE r.model=$1 AND r.identity_key=$2 AND m.kind='upsert'";
+ export const savepointName = (ordinal: number): string =>
+   `axton_mutation_${ordinal}`;
+ 
+@@ -37,27 +42,31 @@ export const V05_STORE_LOCK =
+   // foreign-key checks may hold KEY SHARE on the immutable Store identity.
+   "SELECT principal,stream,last_processed_batch_id,progress,current_digest,current_count,last_digest,last_count FROM axton_store WHERE id=$1 FOR NO KEY UPDATE";
+ export const V05_BATCH_BEGIN =
+-  "UPDATE axton_store SET current_digest=$3,current_count=$4 WHERE id=$1 AND last_processed_batch_id=$2-1 AND current_digest IS NULL AND progress=0 RETURNING id";
+-export const V05_BATCH_PRUNE =
+-  "DELETE FROM axton_mutation_result WHERE store_id=$1 AND batch_id<$2";
++  "WITH admitted AS (UPDATE axton_store SET current_digest=$3,current_count=$4 WHERE id=$1 AND last_processed_batch_id=$2-1 AND current_digest IS NULL AND progress=0 RETURNING id), " +
++  "pruned AS (DELETE FROM axton_mutation_result result USING admitted WHERE result.store_id=admitted.id AND result.batch_id<$2) " +
++  "SELECT id FROM admitted";
+ export const V05_RESULT_READ =
+   "SELECT result FROM axton_mutation_result WHERE store_id=$1 AND batch_id=$2 AND ordinal=$3";
+ export const V05_RESULTS_READ =
+   "SELECT result FROM axton_mutation_result WHERE store_id=$1 AND batch_id=$2 ORDER BY ordinal";
++/** Progress and its immutable result either both change or neither does. */
+ export const V05_RESULT_SAVE =
+-  "INSERT INTO axton_mutation_result(store_id,batch_id,mutation_id,ordinal,result) VALUES($1,$2,$3,$4,$5::jsonb)";
+-export const V05_PROGRESS_SAVE =
+-  "UPDATE axton_store SET progress=CASE WHEN $3+1=$4 THEN 0 ELSE $3+1 END,last_processed_batch_id=CASE WHEN $3+1=$4 THEN $2 ELSE last_processed_batch_id END,last_digest=CASE WHEN $3+1=$4 THEN current_digest ELSE last_digest END,last_count=CASE WHEN $3+1=$4 THEN current_count ELSE last_count END,current_digest=CASE WHEN $3+1=$4 THEN NULL ELSE current_digest END,current_count=CASE WHEN $3+1=$4 THEN NULL ELSE current_count END WHERE id=$1 AND last_processed_batch_id=$2-1 AND progress=$3 AND current_count=$4 RETURNING id";
++  "WITH advanced AS (UPDATE axton_store SET progress=CASE WHEN $3+1=$4 THEN 0 ELSE $3+1 END,last_processed_batch_id=CASE WHEN $3+1=$4 THEN $2 ELSE last_processed_batch_id END,last_digest=CASE WHEN $3+1=$4 THEN current_digest ELSE last_digest END,last_count=CASE WHEN $3+1=$4 THEN current_count ELSE last_count END,current_digest=CASE WHEN $3+1=$4 THEN NULL ELSE current_digest END,current_count=CASE WHEN $3+1=$4 THEN NULL ELSE current_count END WHERE id=$1 AND last_processed_batch_id=$2-1 AND progress=$3 AND current_count=$4 RETURNING id) " +
++  "INSERT INTO axton_mutation_result(store_id,batch_id,mutation_id,ordinal,result) SELECT id,$2,$5,$3,$6::jsonb FROM advanced RETURNING store_id";
++/** A contiguous result suffix and its progress are one guarded atomic write. */
++export const V05_RESULTS_SAVE =
++  "WITH advanced AS (UPDATE axton_store SET progress=CASE WHEN $3::bigint+$5::bigint=$4 THEN 0 ELSE $3::bigint+$5::bigint END,last_processed_batch_id=CASE WHEN $3::bigint+$5::bigint=$4 THEN $2 ELSE last_processed_batch_id END,last_digest=CASE WHEN $3::bigint+$5::bigint=$4 THEN current_digest ELSE last_digest END,last_count=CASE WHEN $3::bigint+$5::bigint=$4 THEN current_count ELSE last_count END,current_digest=CASE WHEN $3::bigint+$5::bigint=$4 THEN NULL ELSE current_digest END,current_count=CASE WHEN $3::bigint+$5::bigint=$4 THEN NULL ELSE current_count END WHERE id=$1 AND last_processed_batch_id=$2-1 AND progress=$3 AND current_count=$4 AND current_digest=$6 AND $5>0 AND $3::bigint+$5::bigint<=$4 RETURNING id) " +
++  "INSERT INTO axton_mutation_result(store_id,batch_id,mutation_id,ordinal,result) SELECT id,$2,(v->>'mutationId')::bigint,$3+ord-1,v FROM advanced CROSS JOIN jsonb_array_elements($7::jsonb) WITH ORDINALITY w(v,ord) RETURNING store_id";
+ /** Relation identity separates namespaces; reservations follow SQL savepoints and COMMIT. */
+ export const V05_PUBLICATION_CURSORS =
+-  "CREATE TEMP TABLE IF NOT EXISTS pg_temp.axton_publication_cursor (relation oid NOT NULL,stream text NOT NULL,cursor bigint NOT NULL,PRIMARY KEY(relation,stream)) ON COMMIT DELETE ROWS";
+-/** Reserve only once per transaction; a rolled-back reservation is free again. */
++  "CREATE TEMP TABLE IF NOT EXISTS pg_temp.axton_publication_cursor (relation oid NOT NULL,stream text NOT NULL,scope text NOT NULL,cursor bigint NOT NULL,PRIMARY KEY(relation,stream,scope)) ON COMMIT DELETE ROWS";
++/** Reserve once per publication scope; rollback frees the reservation again. */
+ export const V05_RESERVE_CURSOR =
+   "WITH reserved AS (INSERT INTO axton_stream(stream,head) " +
+-  "SELECT $1::text,1 WHERE NOT EXISTS (SELECT 1 FROM pg_temp.axton_publication_cursor WHERE relation='axton_stream'::regclass::oid AND stream=$1) " +
++  "SELECT $1::text,1 WHERE NOT EXISTS (SELECT 1 FROM pg_temp.axton_publication_cursor WHERE relation='axton_stream'::regclass::oid AND stream=$1 AND scope=$2) " +
+   "ON CONFLICT(stream) DO UPDATE SET head=axton_stream.head+1 WHERE axton_stream.head<9007199254740991 RETURNING head), " +
+-  "saved AS (INSERT INTO pg_temp.axton_publication_cursor(relation,stream,cursor) SELECT 'axton_stream'::regclass::oid,$1,head FROM reserved RETURNING cursor) " +
+-  "SELECT cursor FROM saved UNION ALL SELECT cursor FROM pg_temp.axton_publication_cursor WHERE relation='axton_stream'::regclass::oid AND stream=$1";
++  "saved AS (INSERT INTO pg_temp.axton_publication_cursor(relation,stream,scope,cursor) SELECT 'axton_stream'::regclass::oid,$1,$2,head FROM reserved RETURNING cursor) " +
++  "SELECT cursor FROM saved UNION ALL SELECT cursor FROM pg_temp.axton_publication_cursor WHERE relation='axton_stream'::regclass::oid AND stream=$1 AND scope=$2";
+ /** Ensure and lock identities with a real MVCC write, without a content stamp. */
+ export const ENSURE_IDENTITY =
+   "INSERT INTO axton_record(model,identity_key) VALUES($1,$2) ON CONFLICT(model,identity_key) DO UPDATE SET identity_key=axton_record.identity_key RETURNING id";
+@@ -99,5 +108,34 @@ SELECT r.ord,r.id IS NOT NULL AS represented,
+  CASE WHEN r.publish THEN p.kind ELSE s.kind END kind
+ FROM records r LEFT JOIN written p ON p.stream=r.stream AND p.record_id=r.id
+ LEFT JOIN axton_stream_record s ON s.stream=r.stream AND s.record_id=r.id ORDER BY r.ord`;
++/** One Stream, bounded publish-only run: reserve and apply through RETURNING. */
++export const V05_RESERVE_APPLY_MEMBERS = `
++WITH reserved AS (
++ INSERT INTO axton_stream(stream,head)
++ SELECT $1::text,1 WHERE NOT EXISTS (
++  SELECT 1 FROM pg_temp.axton_publication_cursor
++  WHERE relation='axton_stream'::regclass::oid AND stream=$1 AND scope=$2)
++ ON CONFLICT(stream) DO UPDATE SET head=axton_stream.head+1
++ WHERE axton_stream.head<9007199254740991 RETURNING head),
++saved AS (
++ INSERT INTO pg_temp.axton_publication_cursor(relation,stream,scope,cursor)
++ SELECT 'axton_stream'::regclass::oid,$1,$2,head FROM reserved RETURNING cursor),
++cursors AS (
++ SELECT cursor FROM saved UNION ALL
++ SELECT cursor FROM pg_temp.axton_publication_cursor
++ WHERE relation='axton_stream'::regclass::oid AND stream=$1 AND scope=$2),
++wanted AS (
++ SELECT v->>'model' model,v->>'identityKey' identity_key,ord
++ FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY w(v,ord)),
++records AS (SELECT w.*,r.id FROM wanted w LEFT JOIN axton_record r USING(model,identity_key)),
++written AS (
++ INSERT INTO axton_stream_record(stream,record_id,cursor,kind)
++ SELECT $1,r.id,c.cursor,'upsert' FROM records r CROSS JOIN cursors c
++ WHERE r.id IS NOT NULL ORDER BY r.ord
++ ON CONFLICT(stream,record_id) DO UPDATE SET cursor=EXCLUDED.cursor,kind='upsert'
++ RETURNING record_id,cursor,kind)
++SELECT r.ord,r.id IS NOT NULL AS represented,p.cursor,p.kind,
++ NOT EXISTS(SELECT 1 FROM cursors) AS overflow
++FROM records r LEFT JOIN written p ON p.record_id=r.id ORDER BY r.ord`;
+ export const CHECK_LAYOUT =
+   "SELECT EXISTS (SELECT 1 FROM pg_class WHERE relnamespace=current_schema()::regnamespace AND relname=ANY(ARRAY['axton_client','axton_call','axton_stream_member','axton_stream_log','axton_publication_group','axton_bootstrap_manifest','axton_channel','axton_scope','axton_bootstrap_identity','axton_bootstrap_range','axton_channel_member','axton_channel_log','axton_channel_tag','axton_scope_member','axton_scope_log','axton_scope_tag','axton_membership','axton_invalidation']) AND relkind='r') OR EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND ((table_name='axton_record' AND column_name='stamp') OR (table_name='axton_publication_fence' AND column_name='held'))) AS legacy";

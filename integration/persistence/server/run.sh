@@ -15,9 +15,9 @@ initdb -D "$cluster/data" -A trust --no-locale -E UTF8 >/dev/null
 pg_ctl -D "$cluster/data" -l "$cluster/log" -o "-p $port -h 127.0.0.1 -k $cluster" start >/dev/null
 export DATABASE_URL="postgresql://$(id -un)@127.0.0.1:$port/postgres"
 # Pure declaration, host codec, startup and retry gates need no database.
-node --test "$root/integration/persistence/server/effects.test.mjs" "$root/integration/persistence/server/host-contract.test.mjs" "$root/integration/persistence/server/driver-runtime.test.mjs" "$root/integration/persistence/server/startup.test.mjs" "$root/integration/persistence/server/database-startup.test.mjs"
+node --test "$root/integration/persistence/server/effects.test.mjs" "$root/integration/persistence/server/host-contract.test.mjs" "$root/integration/persistence/server/driver-runtime.test.mjs" "$root/integration/persistence/server/startup.test.mjs" "$root/integration/persistence/server/mutation-defaults.test.mjs" "$root/integration/persistence/server/database-startup.test.mjs"
 # Each file owns its fixtures; serialize files sharing the fresh namespace.
 test=(node --test --test-timeout=300000 --test-force-exit)
-for file in namespace-and-locks persistence-batching publication-savepoint publication-semantics retained-fetch read-liveness live-heartbeat live-shutdown protocol-v05-batch protocol-v05-drivers protocol-v05-delivery; do
+for file in namespace-and-locks persistence-batching mutation-roundtrips publication-savepoint publication-semantics retained-fetch read-liveness live-heartbeat live-shutdown protocol-v05-batch protocol-v05-drivers protocol-v05-delivery; do
  "${test[@]}" "$root/integration/persistence/server/$file.test.mjs"
 done

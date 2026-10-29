@@ -24,6 +24,11 @@ selected AS (
  UNION
  SELECT m.stream,r.model,r.identity_key FROM pairs w JOIN axton_record r USING(model,identity_key) JOIN axton_stream_record m ON m.record_id=r.id AND m.kind='upsert' AND m.stream=w.stream)
 SELECT * FROM selected`;
+/** Singleton predicates let PostgreSQL use exact record/pair index lookups. */
+export const READ_TRACKING_PAIR =
+  "SELECT m.stream,r.model,r.identity_key FROM axton_record r JOIN axton_stream_record m ON m.record_id=r.id WHERE r.model=$1 AND r.identity_key=$2 AND m.stream=$3 AND m.kind='upsert'";
+export const READ_TRACKING_RECORD =
+  "SELECT m.stream,r.model,r.identity_key FROM axton_record r JOIN axton_stream_record m ON m.record_id=r.id WHERE r.model=$1 AND r.identity_key=$2 AND m.kind='upsert'";
 export const savepointName = (ordinal: number): string =>
   `axton_mutation_${ordinal}`;
 
@@ -37,27 +42,31 @@ export const V05_STORE_LOCK =
   // foreign-key checks may hold KEY SHARE on the immutable Store identity.
   "SELECT principal,stream,last_processed_batch_id,progress,current_digest,current_count,last_digest,last_count FROM axton_store WHERE id=$1 FOR NO KEY UPDATE";
 export const V05_BATCH_BEGIN =
-  "UPDATE axton_store SET current_digest=$3,current_count=$4 WHERE id=$1 AND last_processed_batch_id=$2-1 AND current_digest IS NULL AND progress=0 RETURNING id";
-export const V05_BATCH_PRUNE =
-  "DELETE FROM axton_mutation_result WHERE store_id=$1 AND batch_id<$2";
+  "WITH admitted AS (UPDATE axton_store SET current_digest=$3,current_count=$4 WHERE id=$1 AND last_processed_batch_id=$2-1 AND current_digest IS NULL AND progress=0 RETURNING id), " +
+  "pruned AS (DELETE FROM axton_mutation_result result USING admitted WHERE result.store_id=admitted.id AND result.batch_id<$2) " +
+  "SELECT id FROM admitted";
 export const V05_RESULT_READ =
   "SELECT result FROM axton_mutation_result WHERE store_id=$1 AND batch_id=$2 AND ordinal=$3";
 export const V05_RESULTS_READ =
   "SELECT result FROM axton_mutation_result WHERE store_id=$1 AND batch_id=$2 ORDER BY ordinal";
+/** Progress and its immutable result either both change or neither does. */
 export const V05_RESULT_SAVE =
-  "INSERT INTO axton_mutation_result(store_id,batch_id,mutation_id,ordinal,result) VALUES($1,$2,$3,$4,$5::jsonb)";
-export const V05_PROGRESS_SAVE =
-  "UPDATE axton_store SET progress=CASE WHEN $3+1=$4 THEN 0 ELSE $3+1 END,last_processed_batch_id=CASE WHEN $3+1=$4 THEN $2 ELSE last_processed_batch_id END,last_digest=CASE WHEN $3+1=$4 THEN current_digest ELSE last_digest END,last_count=CASE WHEN $3+1=$4 THEN current_count ELSE last_count END,current_digest=CASE WHEN $3+1=$4 THEN NULL ELSE current_digest END,current_count=CASE WHEN $3+1=$4 THEN NULL ELSE current_count END WHERE id=$1 AND last_processed_batch_id=$2-1 AND progress=$3 AND current_count=$4 RETURNING id";
+  "WITH advanced AS (UPDATE axton_store SET progress=CASE WHEN $3+1=$4 THEN 0 ELSE $3+1 END,last_processed_batch_id=CASE WHEN $3+1=$4 THEN $2 ELSE last_processed_batch_id END,last_digest=CASE WHEN $3+1=$4 THEN current_digest ELSE last_digest END,last_count=CASE WHEN $3+1=$4 THEN current_count ELSE last_count END,current_digest=CASE WHEN $3+1=$4 THEN NULL ELSE current_digest END,current_count=CASE WHEN $3+1=$4 THEN NULL ELSE current_count END WHERE id=$1 AND last_processed_batch_id=$2-1 AND progress=$3 AND current_count=$4 RETURNING id) " +
+  "INSERT INTO axton_mutation_result(store_id,batch_id,mutation_id,ordinal,result) SELECT id,$2,$5,$3,$6::jsonb FROM advanced RETURNING store_id";
+/** A contiguous result suffix and its progress are one guarded atomic write. */
+export const V05_RESULTS_SAVE =
+  "WITH advanced AS (UPDATE axton_store SET progress=CASE WHEN $3::bigint+$5::bigint=$4 THEN 0 ELSE $3::bigint+$5::bigint END,last_processed_batch_id=CASE WHEN $3::bigint+$5::bigint=$4 THEN $2 ELSE last_processed_batch_id END,last_digest=CASE WHEN $3::bigint+$5::bigint=$4 THEN current_digest ELSE last_digest END,last_count=CASE WHEN $3::bigint+$5::bigint=$4 THEN current_count ELSE last_count END,current_digest=CASE WHEN $3::bigint+$5::bigint=$4 THEN NULL ELSE current_digest END,current_count=CASE WHEN $3::bigint+$5::bigint=$4 THEN NULL ELSE current_count END WHERE id=$1 AND last_processed_batch_id=$2-1 AND progress=$3 AND current_count=$4 AND current_digest=$6 AND $5>0 AND $3::bigint+$5::bigint<=$4 RETURNING id) " +
+  "INSERT INTO axton_mutation_result(store_id,batch_id,mutation_id,ordinal,result) SELECT id,$2,(v->>'mutationId')::bigint,$3+ord-1,v FROM advanced CROSS JOIN jsonb_array_elements($7::jsonb) WITH ORDINALITY w(v,ord) RETURNING store_id";
 /** Relation identity separates namespaces; reservations follow SQL savepoints and COMMIT. */
 export const V05_PUBLICATION_CURSORS =
-  "CREATE TEMP TABLE IF NOT EXISTS pg_temp.axton_publication_cursor (relation oid NOT NULL,stream text NOT NULL,cursor bigint NOT NULL,PRIMARY KEY(relation,stream)) ON COMMIT DELETE ROWS";
-/** Reserve only once per transaction; a rolled-back reservation is free again. */
+  "CREATE TEMP TABLE IF NOT EXISTS pg_temp.axton_publication_cursor (relation oid NOT NULL,stream text NOT NULL,scope text NOT NULL,cursor bigint NOT NULL,PRIMARY KEY(relation,stream,scope)) ON COMMIT DELETE ROWS";
+/** Reserve once per publication scope; rollback frees the reservation again. */
 export const V05_RESERVE_CURSOR =
   "WITH reserved AS (INSERT INTO axton_stream(stream,head) " +
-  "SELECT $1::text,1 WHERE NOT EXISTS (SELECT 1 FROM pg_temp.axton_publication_cursor WHERE relation='axton_stream'::regclass::oid AND stream=$1) " +
+  "SELECT $1::text,1 WHERE NOT EXISTS (SELECT 1 FROM pg_temp.axton_publication_cursor WHERE relation='axton_stream'::regclass::oid AND stream=$1 AND scope=$2) " +
   "ON CONFLICT(stream) DO UPDATE SET head=axton_stream.head+1 WHERE axton_stream.head<9007199254740991 RETURNING head), " +
-  "saved AS (INSERT INTO pg_temp.axton_publication_cursor(relation,stream,cursor) SELECT 'axton_stream'::regclass::oid,$1,head FROM reserved RETURNING cursor) " +
-  "SELECT cursor FROM saved UNION ALL SELECT cursor FROM pg_temp.axton_publication_cursor WHERE relation='axton_stream'::regclass::oid AND stream=$1";
+  "saved AS (INSERT INTO pg_temp.axton_publication_cursor(relation,stream,scope,cursor) SELECT 'axton_stream'::regclass::oid,$1,$2,head FROM reserved RETURNING cursor) " +
+  "SELECT cursor FROM saved UNION ALL SELECT cursor FROM pg_temp.axton_publication_cursor WHERE relation='axton_stream'::regclass::oid AND stream=$1 AND scope=$2";
 /** Ensure and lock identities with a real MVCC write, without a content stamp. */
 export const ENSURE_IDENTITY =
   "INSERT INTO axton_record(model,identity_key) VALUES($1,$2) ON CONFLICT(model,identity_key) DO UPDATE SET identity_key=axton_record.identity_key RETURNING id";
@@ -82,6 +91,9 @@ export const V05_POSITIONS_READ_BATCH = `
 SELECT w.ord,s.cursor,s.kind FROM jsonb_array_elements($2::jsonb) WITH ORDINALITY w(v,ord)
 LEFT JOIN axton_record r ON r.model=v->>'model' AND r.identity_key=v->>'identityKey'
 LEFT JOIN axton_stream_record s ON s.record_id=r.id AND s.stream=$1 ORDER BY w.ord`;
+/** A singleton keeps one nullable position while exposing exact index predicates. */
+export const V05_POSITION_READ =
+  "SELECT 1::bigint AS ord,s.cursor,s.kind FROM (SELECT 1) input LEFT JOIN axton_record r ON r.model=$2 AND r.identity_key=$3 LEFT JOIN axton_stream_record s ON s.record_id=r.id AND s.stream=$1";
 /** Published rows use RETURNING; ordinary reads cannot see this statement's new rows. */
 export const V05_APPLY_MEMBERS_BATCH = `
 WITH wanted AS (
@@ -99,5 +111,34 @@ SELECT r.ord,r.id IS NOT NULL AS represented,
  CASE WHEN r.publish THEN p.kind ELSE s.kind END kind
 FROM records r LEFT JOIN written p ON p.stream=r.stream AND p.record_id=r.id
 LEFT JOIN axton_stream_record s ON s.stream=r.stream AND s.record_id=r.id ORDER BY r.ord`;
+/** One Stream, bounded publish-only run: reserve and apply through RETURNING. */
+export const V05_RESERVE_APPLY_MEMBERS = `
+WITH reserved AS (
+ INSERT INTO axton_stream(stream,head)
+ SELECT $1::text,1 WHERE NOT EXISTS (
+  SELECT 1 FROM pg_temp.axton_publication_cursor
+  WHERE relation='axton_stream'::regclass::oid AND stream=$1 AND scope=$2)
+ ON CONFLICT(stream) DO UPDATE SET head=axton_stream.head+1
+ WHERE axton_stream.head<9007199254740991 RETURNING head),
+saved AS (
+ INSERT INTO pg_temp.axton_publication_cursor(relation,stream,scope,cursor)
+ SELECT 'axton_stream'::regclass::oid,$1,$2,head FROM reserved RETURNING cursor),
+cursors AS (
+ SELECT cursor FROM saved UNION ALL
+ SELECT cursor FROM pg_temp.axton_publication_cursor
+ WHERE relation='axton_stream'::regclass::oid AND stream=$1 AND scope=$2),
+wanted AS (
+ SELECT v->>'model' model,v->>'identityKey' identity_key,ord
+ FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY w(v,ord)),
+records AS (SELECT w.*,r.id FROM wanted w LEFT JOIN axton_record r USING(model,identity_key)),
+written AS (
+ INSERT INTO axton_stream_record(stream,record_id,cursor,kind)
+ SELECT $1,r.id,c.cursor,'upsert' FROM records r CROSS JOIN cursors c
+ WHERE r.id IS NOT NULL ORDER BY r.ord
+ ON CONFLICT(stream,record_id) DO UPDATE SET cursor=EXCLUDED.cursor,kind='upsert'
+ RETURNING record_id,cursor,kind)
+SELECT r.ord,r.id IS NOT NULL AS represented,p.cursor,p.kind,
+ NOT EXISTS(SELECT 1 FROM cursors) AS overflow
+FROM records r LEFT JOIN written p ON p.record_id=r.id ORDER BY r.ord`;
 export const CHECK_LAYOUT =
   "SELECT EXISTS (SELECT 1 FROM pg_class WHERE relnamespace=current_schema()::regnamespace AND relname=ANY(ARRAY['axton_client','axton_call','axton_stream_member','axton_stream_log','axton_publication_group','axton_bootstrap_manifest','axton_channel','axton_scope','axton_bootstrap_identity','axton_bootstrap_range','axton_channel_member','axton_channel_log','axton_channel_tag','axton_scope_member','axton_scope_log','axton_scope_tag','axton_membership','axton_invalidation']) AND relkind='r') OR EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND ((table_name='axton_record' AND column_name='stamp') OR (table_name='axton_publication_fence' AND column_name='held'))) AS legacy";

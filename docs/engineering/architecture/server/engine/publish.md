@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-Explicit track creates interest with a real discoverable position; repeat live tracking retains its position. Global invalidation reaches current holders and targeted invalidation reaches selected existing holders, without enrolling new ones. The persisted fence and canonical Stream locks keep content and position consistent; one transaction reserves at most one cursor per affected Stream. Wakes occur after commit.
+Explicit track creates interest with a real discoverable position; repeat live tracking retains its position. Global invalidation reaches current holders and targeted invalidation reaches selected existing holders, without enrolling new ones. Record guards and canonical Stream locks keep content and position consistent. Each publication scope reserves at most one cursor per affected Stream; grouped Mutations use separate scopes inside their shared transaction. Wakes occur after commit. See [commit groups](../protocol5.md#sequential-commit-groups).
 
 ## 5. Building Block View
 

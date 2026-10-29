@@ -174,6 +174,37 @@ pub fn encode_batch_acknowledgement(request_json: String, results: Vec<String>) 
     axton_server::encode_batch_acknowledgement(request_json.as_bytes(), &results).map_err(reason)
 }
 #[napi]
+pub async fn process_batch_group(
+    config_json: String,
+    owner: String,
+    request_json: String,
+    start: u32,
+    count: u32,
+    callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
+    diagnostics: Option<bool>,
+) -> Result<String> {
+    let host = CallbackHost(callback);
+    observe(
+        "native.mutationGroup",
+        diagnostics.unwrap_or(false),
+        &host,
+        async {
+            let results = axton_server::process_batch_group(
+                &config(&config_json)?,
+                &owner,
+                request_json.as_bytes(),
+                start as u64,
+                count as u64,
+                &host,
+            )
+            .await
+            .map_err(reason)?;
+            serde_json::to_string(&results).map_err(internal)
+        },
+    )
+    .await
+}
+#[napi]
 pub async fn settle_external05(
     config_json: String,
     settlement_json: String,

@@ -108,6 +108,7 @@ test("only actual5 native entrypoints are exported; startup preserves device-onl
     "processMaterialization05",
     "processLive05",
     "processBatchMember",
+    "processBatchGroup",
     "validateMutationBatch",
     "encodeBatchAcknowledgement",
     "settleExternal05",

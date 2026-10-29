@@ -4,9 +4,17 @@ The requirements for protocol 5. A passing component test does not establish eve
 
 Each client owns one physical SQLite file, one Store and one Stream. Different files may follow the same Stream. Authentication and publication of every change affecting Loader content or visibility are application responsibilities.
 
+The backend defaults to [sequential commit groups](architecture/server/protocol5.md#sequential-commit-groups)
+of up to eight members when its native addon and database adapter support them;
+otherwise omitted configuration retains size 1. `protocol5.experimentalMutationGroupSize: 1`
+explicitly selects per-Mutation commits. Business refusals retain per-Mutation
+savepoints and outcomes. Infrastructure failure rolls back the current uncommitted
+group; earlier committed groups retain their saved outcomes and replay safely.
+Successful but uncommitted handlers may run again on retry.
+
 ## Failure isolation
 
-Independent calls have independent outcomes. A local transaction, declared dependency or required authority group defines a shared atomic boundary. Failure rolls back that boundary, never unrelated calls. A network page can contain several units: earlier committed units survive a later failure, but progress cannot cross the failed unit. A fresh smaller request may recover an independent prefix; required groups are never split.
+Independent calls have independent outcomes. A local transaction, backend commit group, declared dependency or required authority group defines a shared atomic boundary. Failure rolls back that boundary, never unrelated calls. A network page can contain several units: earlier committed units survive a later failure, but progress cannot cross the failed unit. A fresh smaller request may recover an independent prefix; required groups are never split.
 
 The bound API has no custom `onStore` callbacks. Local transactions, Mutation companions, observers and declared relations remain.
 
@@ -27,11 +35,11 @@ Pending optimism changes the projection without clearing base protection. Ordina
 | ID | Required behavior |
 | --- | --- |
 | P1 | Frozen-request retry returns its saved backend outcome without rerunning handlers, preparation, tracking or publication. |
-| P2 | Authenticated Store context, Mutation identity and exact frozen intent reject foreign or conflicting replay before business work. Each immutable Batch contains named Mutations with independently committed backend outcomes. |
+| P2 | Authenticated Store context, Mutation identity and exact frozen intent reject foreign or conflicting replay before business work. Each immutable Batch contains named Mutations with individually saved outcomes; members in one commit group become durable together. |
 | P3 | Unready prerequisites block dependent calls; lifecycle and sequence dependencies retain their declared meaning. Independent ready work can proceed. |
 | P4 | Frozen intent, call identity and original descriptor survive retries, reopen and supported retained-schema reconciliation unchanged. |
 | P5 | Rejection removes only that Mutation's optimism and companions, rejects lifecycle dependents and retains a readable refusal. Other pending work replays. |
-| P6 | A Mutation-level refusal rolls back its savepoint and effects, preserving successful independent calls. Infrastructure failure rolls back the enclosing delivery/receipt and stays retryable. |
+| P6 | A Mutation-level refusal rolls back its savepoint and effects, preserving successful independent calls. Infrastructure failure rolls back the current uncommitted backend group or enclosing local delivery/receipt and stays retryable. |
 | P7 | Unsupported Mutation versions are per-call refusals. Backend acceptance followed by local failure remains accepted-awaiting-settlement; it never becomes business rejection. |
 
 Dropping an unsent call is an explicit local decision. Dismissal, retry and drop within a transaction share its rollback scope. Frozen accepted work is never silently discarded.

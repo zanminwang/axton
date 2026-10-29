@@ -1,0 +1,4247 @@
+{
+  "commit": "294f3563dc42ce5c0d875cbf141d425b65399f52",
+  "dirty": true,
+  "build": {
+    "sourceSha256": "202d315cca6af0ee8f57da2fe3ee993cb0f1ef692047617fca32fe7bd573dd96",
+    "artifacts": {
+      "bindings/node/axton-node.node": "335c998354866601ed3ea6d4c413deee755ec8aac6bbc9fb1d7c983154ad061e",
+      "target/release/libaxton_dart.dylib": "075b6a82a202b6f77035d98bb99f8f1f34282924b843ed326637d704c15f0609",
+      "artifacts/performance/initial-sync": "05a3aa121a8c43fa9d4e25980165cf2c8bb6f064dcf2b562af37af76438b7fe4",
+      "artifacts/performance/live-sync": "084c8f13cc8a0c56e7f01d2e3f86bfc7df9d9a2945cfb25312c1121738d01d5a"
+    }
+  },
+  "machine": {
+    "platform": "darwin",
+    "release": "25.4.0",
+    "arch": "arm64",
+    "cpu": "Apple M5 Max",
+    "cpus": 18,
+    "memoryBytes": 68719476736,
+    "node": "v24.19.0",
+    "dart": "Dart SDK version: 3.12.1 (stable) (Tue May 26 01:02:21 2026 -0700) on \"macos_arm64\"",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "typescript": "Version 5.8.3",
+    "postgres": "PostgreSQL 16.14 on x86_64-apple-darwin24.6.0, compiled by Apple clang version 17.0.0 (clang-1700.6.3.2), 64-bit",
+    "settings": [
+      {
+        "name": "fsync",
+        "setting": "on",
+        "unit": null
+      },
+      {
+        "name": "full_page_writes",
+        "setting": "on",
+        "unit": null
+      },
+      {
+        "name": "shared_buffers",
+        "setting": "16384",
+        "unit": "8kB"
+      },
+      {
+        "name": "synchronous_commit",
+        "setting": "on",
+        "unit": null
+      },
+      {
+        "name": "wal_level",
+        "setting": "replica",
+        "unit": null
+      }
+    ]
+  },
+  "compatibility": {
+    "schemaVersion": 1,
+    "stageInstrumentation": 3,
+    "clockCorrelation": "bounded-monotonic-v1",
+    "boundaries": "sync-performance-v2",
+    "fixtureSchemaSha256": "1a43ae379aabf5e5219fef6c9ca0294d4bad2f0d76b8e5945d969bc1c0cd8320",
+    "textBytes": 512,
+    "fixtureBatchSize": 100,
+    "sdk": "dart",
+    "nativeProfile": "release",
+    "dartMode": "aot",
+    "diagnostics": true,
+    "watch": "full Entry model snapshots; first expected nonempty snapshot",
+    "initialCondition": "fresh process and SQLite files per sample; native library prepared and clock calibration before timing; application configuration/open/connect/bootstrap timed; process startup excluded",
+    "cacheCondition": "new PostgreSQL database per sample; fixture just written; OS/PostgreSQL caches are not flushed",
+    "liveCondition": "two initialized Stores in one process; await each local commit, do not await settlement before next write"
+  },
+  "parameters": {
+    "output": "artifacts/performance/current-summary.json",
+    "samples": 2,
+    "sizes": [
+      10000
+    ],
+    "writes": 100,
+    "timeout": 60000,
+    "diagnostics": true,
+    "failFast": true
+  },
+  "runnerSha256": "b3ebd6b33b09896ef6c4766c196c31690202faeea6450ebb42e3cff5d78d0a7e",
+  "runs": [
+    {
+      "mutationFrameworkQueries": 0,
+      "mutationFrameworkQueryMs": 0,
+      "scenario": "initial-sync",
+      "writes": 0,
+      "repetition": 1,
+      "frameworkQueries": 138,
+      "frameworkQueryMs": 37.536999999999985,
+      "mutationGroups": 0,
+      "maxPlacementUncertaintyUs": 20,
+      "successorsOverlappingPreviousApply": 19,
+      "responseToApplyGapMs": [
+        10.3495,
+        9.4825,
+        9.3015,
+        9.7735,
+        9.1115,
+        9.0805,
+        9.1445,
+        9.3075,
+        9.6115,
+        9.5135,
+        9.7105,
+        9.9715,
+        9.3605,
+        10.8625,
+        9.6675,
+        9.2725,
+        9.8395,
+        9.4955,
+        9.6505,
+        9.4385
+      ]
+    },
+    {
+      "mutationFrameworkQueries": 0,
+      "mutationFrameworkQueryMs": 0,
+      "scenario": "initial-sync",
+      "writes": 0,
+      "repetition": 2,
+      "frameworkQueries": 138,
+      "frameworkQueryMs": 35.03200000000001,
+      "mutationGroups": 0,
+      "maxPlacementUncertaintyUs": 21,
+      "successorsOverlappingPreviousApply": 19,
+      "responseToApplyGapMs": [
+        9.9805,
+        8.9775,
+        9.3835,
+        9.7215,
+        9.1455,
+        9.1085,
+        9.3335,
+        9.3645,
+        9.2655,
+        9.3605,
+        9.5435,
+        9.1895,
+        9.5275,
+        10.0255,
+        10.2695,
+        9.1365,
+        9.4855,
+        9.2405,
+        9.6115,
+        9.7735
+      ]
+    },
+    {
+      "mutationFrameworkQueries": 14,
+      "mutationFrameworkQueryMs": 6.778,
+      "scenario": "live-sync",
+      "writes": 1,
+      "repetition": 1,
+      "frameworkQueries": 38,
+      "frameworkQueryMs": 15.490000000000004,
+      "mutationGroups": 1,
+      "maxPlacementUncertaintyUs": 25
+    },
+    {
+      "mutationFrameworkQueries": 14,
+      "mutationFrameworkQueryMs": 4.909,
+      "scenario": "live-sync",
+      "writes": 1,
+      "repetition": 2,
+      "frameworkQueries": 38,
+      "frameworkQueryMs": 12.827999999999998,
+      "mutationGroups": 1,
+      "maxPlacementUncertaintyUs": 26
+    },
+    {
+      "mutationFrameworkQueries": 1303,
+      "mutationFrameworkQueryMs": 382.38599999999985,
+      "scenario": "live-sync",
+      "writes": 100,
+      "repetition": 1,
+      "frameworkQueries": 1543,
+      "frameworkQueryMs": 415.65899999999976,
+      "mutationGroups": 14,
+      "maxPlacementUncertaintyUs": 23
+    },
+    {
+      "mutationFrameworkQueries": 1303,
+      "mutationFrameworkQueryMs": 380.65399999999977,
+      "scenario": "live-sync",
+      "writes": 100,
+      "repetition": 2,
+      "frameworkQueries": 1543,
+      "frameworkQueryMs": 414.82499999999953,
+      "mutationGroups": 14,
+      "maxPlacementUncertaintyUs": 26
+    }
+  ],
+  "summary": [
+    {
+      "key": "initial-sync/10000/0",
+      "runs": 2,
+      "passed": 2,
+      "failed": 0,
+      "recordReports": 0,
+      "failedRecordReports": 0,
+      "metrics": {
+        "storeOpenMs": {
+          "n": 2,
+          "median": 2.2110000000000003,
+          "min": 2.182,
+          "max": 2.24
+        },
+        "firstVisibleMs": {
+          "n": 2,
+          "median": 43.423500000000004,
+          "min": 42.274,
+          "max": 44.573
+        },
+        "allVisibleMs": {
+          "n": 2,
+          "median": 449.7375,
+          "min": 445.351,
+          "max": 454.124
+        },
+        "bootstrapMs": {
+          "n": 2,
+          "median": 449.719,
+          "min": 445.334,
+          "max": 454.104
+        }
+      },
+      "stages": {
+        "dart/bridge.nativeDrain": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 13.272999999999993,
+            "min": 13.075999999999993,
+            "max": 13.46999999999999
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.6515,
+            "min": 0.634,
+            "max": 0.669
+          },
+          "count": {
+            "n": 2,
+            "median": 172,
+            "min": 172,
+            "max": 172
+          }
+        },
+        "dart/bridge.decode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 8.697499999999998,
+            "min": 8.590999999999998,
+            "max": 8.803999999999997
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.518,
+            "min": 0.513,
+            "max": 0.523
+          },
+          "count": {
+            "n": 2,
+            "median": 172,
+            "min": 172,
+            "max": 172
+          }
+        },
+        "dart/bridge.drain": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 22.262500000000014,
+            "min": 21.959000000000007,
+            "max": 22.56600000000002
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.108,
+            "min": 1.098,
+            "max": 1.118
+          },
+          "count": {
+            "n": 2,
+            "median": 172,
+            "min": 172,
+            "max": 172
+          }
+        },
+        "rust/sqlite.commit": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 30.976,
+            "min": 30.817000000000007,
+            "max": 31.13499999999999
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 4.699,
+            "min": 4.623,
+            "max": 4.775
+          },
+          "count": {
+            "n": 2,
+            "median": 67,
+            "min": 67,
+            "max": 67
+          }
+        },
+        "rust/store.open": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.6575,
+            "min": 1.634,
+            "max": 1.681
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.6575,
+            "min": 1.634,
+            "max": 1.681
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "rust/watch.snapshot": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.4945000000000004,
+            "min": 2.4830000000000005,
+            "max": 2.5060000000000002
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.144,
+            "min": 0.141,
+            "max": 0.147
+          },
+          "count": {
+            "n": 2,
+            "median": 21,
+            "min": 21,
+            "max": 21
+          }
+        },
+        "rust/watch.publish": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 24.581000000000003,
+            "min": 24.460000000000004,
+            "max": 24.702
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.3319999999999999,
+            "min": 1.327,
+            "max": 1.337
+          },
+          "count": {
+            "n": 2,
+            "median": 69,
+            "min": 69,
+            "max": 69
+          }
+        },
+        "dart/watch.enqueue": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.208,
+            "min": 2.188,
+            "max": 2.2279999999999998
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.261,
+            "min": 0.258,
+            "max": 0.264
+          },
+          "count": {
+            "n": 2,
+            "median": 24,
+            "min": 24,
+            "max": 24
+          }
+        },
+        "dart/http.request": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 291.3765,
+            "min": 287.89,
+            "max": 294.86300000000006
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 17.0095,
+            "min": 16.415,
+            "max": 17.604
+          },
+          "count": {
+            "n": 2,
+            "median": 21,
+            "min": 21,
+            "max": 21
+          }
+        },
+        "dart/socket.frame": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.036000000000000004,
+            "min": 0.035,
+            "max": 0.037
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0235,
+            "min": 0.023,
+            "max": 0.024
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "rust/delivery.coalesce": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.0015,
+            "min": 0.001,
+            "max": 0.002
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0015,
+            "min": 0.001,
+            "max": 0.002
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "rust/delivery.apply.keys": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 10.595500000000001,
+            "min": 10.468,
+            "max": 10.723000000000003
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.589,
+            "min": 0.571,
+            "max": 0.607
+          },
+          "count": {
+            "n": 2,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          }
+        },
+        "rust/delivery.apply.authority.clear": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 18.076,
+            "min": 17.826,
+            "max": 18.326000000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.963,
+            "min": 0.947,
+            "max": 0.979
+          },
+          "count": {
+            "n": 2,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          }
+        },
+        "rust/delivery.apply.authority.install": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 79.2235,
+            "min": 78.491,
+            "max": 79.95599999999999
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 4.247,
+            "min": 4.198,
+            "max": 4.296
+          },
+          "count": {
+            "n": 2,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          }
+        },
+        "rust/delivery.apply.authority": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 97.359,
+            "min": 96.37799999999997,
+            "max": 98.34000000000002
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 5.1925,
+            "min": 5.165,
+            "max": 5.22
+          },
+          "count": {
+            "n": 2,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          }
+        },
+        "rust/delivery.apply.reconcile": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.22500000000000006,
+            "min": 0.22100000000000006,
+            "max": 0.22900000000000006
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0135,
+            "min": 0.013,
+            "max": 0.014
+          },
+          "count": {
+            "n": 2,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          }
+        },
+        "rust/delivery.apply.rebuild": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.22650000000000006,
+            "min": 0.22500000000000006,
+            "max": 0.22800000000000006
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.016,
+            "min": 0.013,
+            "max": 0.019
+          },
+          "count": {
+            "n": 2,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          }
+        },
+        "rust/delivery.apply": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 144.17149999999998,
+            "min": 142.78599999999997,
+            "max": 145.55700000000002
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 10.524000000000001,
+            "min": 10.368,
+            "max": 10.68
+          },
+          "count": {
+            "n": 2,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          }
+        },
+        "rust/watch.read": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 6.538,
+            "min": 6.53,
+            "max": 6.546
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.5745,
+            "min": 0.572,
+            "max": 0.577
+          },
+          "count": {
+            "n": 2,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          }
+        },
+        "rust/watch.convert": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 4.917,
+            "min": 4.864,
+            "max": 4.970000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.2655,
+            "min": 0.265,
+            "max": 0.266
+          },
+          "count": {
+            "n": 2,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          }
+        },
+        "rust/watch.update": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 6.768000000000001,
+            "min": 6.755000000000001,
+            "max": 6.781000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.4235,
+            "min": 0.423,
+            "max": 0.424
+          },
+          "count": {
+            "n": 2,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          }
+        },
+        "rust/watch.compare": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 8.827,
+            "min": 8.808,
+            "max": 8.846
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.555,
+            "min": 0.552,
+            "max": 0.558
+          },
+          "count": {
+            "n": 2,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          }
+        },
+        "rust/watch.query": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 20.338,
+            "min": 20.258,
+            "max": 20.418000000000003
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.12,
+            "min": 1.119,
+            "max": 1.121
+          },
+          "count": {
+            "n": 2,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          }
+        },
+        "node/postgres.acquire": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.8329999999999993,
+            "min": 1.7789999999999995,
+            "max": 1.8869999999999991
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.625,
+            "min": 1.58,
+            "max": 1.67
+          },
+          "count": {
+            "n": 2,
+            "median": 23,
+            "min": 23,
+            "max": 23
+          }
+        },
+        "node/postgres.begin": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.3525,
+            "min": 2.21,
+            "max": 2.4950000000000006
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.42100000000000004,
+            "min": 0.282,
+            "max": 0.56
+          },
+          "count": {
+            "n": 2,
+            "median": 23,
+            "min": 23,
+            "max": 23
+          }
+        },
+        "node/host.decode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.8769999999999958,
+            "min": 1.837999999999996,
+            "max": 1.9159999999999957
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.034,
+            "min": 0.034,
+            "max": 0.034
+          },
+          "count": {
+            "n": 2,
+            "median": 242,
+            "min": 242,
+            "max": 242
+          }
+        },
+        "node/postgres.query": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 36.284499999999994,
+            "min": 35.03200000000001,
+            "max": 37.536999999999985
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.0979999999999999,
+            "min": 1.004,
+            "max": 1.192
+          },
+          "count": {
+            "n": 2,
+            "median": 138,
+            "min": 138,
+            "max": 138
+          }
+        },
+        "node/host.encode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 7.729000000000005,
+            "min": 7.600000000000005,
+            "max": 7.858000000000006
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.1865,
+            "min": 0.181,
+            "max": 0.192
+          },
+          "count": {
+            "n": 2,
+            "median": 220,
+            "min": 220,
+            "max": 220
+          }
+        },
+        "node/host.inspectStore": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 3.9124999999999988,
+            "min": 3.8559999999999994,
+            "max": 3.9689999999999985
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.39,
+            "min": 0.378,
+            "max": 0.402
+          },
+          "count": {
+            "n": 2,
+            "median": 24,
+            "min": 24,
+            "max": 24
+          }
+        },
+        "node/host.admit": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.19450000000000006,
+            "min": 0.19200000000000006,
+            "max": 0.1970000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0205,
+            "min": 0.02,
+            "max": 0.021
+          },
+          "count": {
+            "n": 2,
+            "median": 24,
+            "min": 24,
+            "max": 24
+          }
+        },
+        "node/host.claimStore": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.56,
+            "min": 0.524,
+            "max": 0.596
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.45999999999999996,
+            "min": 0.427,
+            "max": 0.493
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "node/host.bootstrapState": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.5380000000000003,
+            "min": 2.5030000000000006,
+            "max": 2.573
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.1385,
+            "min": 0.137,
+            "max": 0.14
+          },
+          "count": {
+            "n": 2,
+            "median": 23,
+            "min": 23,
+            "max": 23
+          }
+        },
+        "node/host.handleBootstrap05": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.0575,
+            "min": 0.02,
+            "max": 0.095
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0575,
+            "min": 0.02,
+            "max": 0.095
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/host.finishBootstrap": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.2245,
+            "min": 0.223,
+            "max": 0.226
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.2245,
+            "min": 0.223,
+            "max": 0.226
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/host.deliveryHead": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.713000000000001,
+            "min": 2.680000000000001,
+            "max": 2.7460000000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.17149999999999999,
+            "min": 0.171,
+            "max": 0.172
+          },
+          "count": {
+            "n": 2,
+            "median": 24,
+            "min": 24,
+            "max": 24
+          }
+        },
+        "rust/host.encode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.0215000000000005,
+            "min": 1.0130000000000006,
+            "max": 1.0300000000000005
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0275,
+            "min": 0.022,
+            "max": 0.033
+          },
+          "count": {
+            "n": 2,
+            "median": 216,
+            "min": 216,
+            "max": 216
+          }
+        },
+        "rust/host.await": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 68.2725,
+            "min": 65.552,
+            "max": 70.99299999999998
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.5145,
+            "min": 1.407,
+            "max": 1.622
+          },
+          "count": {
+            "n": 2,
+            "median": 216,
+            "min": 216,
+            "max": 216
+          }
+        },
+        "rust/host.decode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 6.378499999999999,
+            "min": 6.362999999999998,
+            "max": 6.394000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.1365,
+            "min": 0.136,
+            "max": 0.137
+          },
+          "count": {
+            "n": 2,
+            "median": 216,
+            "min": 216,
+            "max": 216
+          }
+        },
+        "rust/bootstrap.prepare": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 3.385,
+            "min": 3.288,
+            "max": 3.4819999999999993
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.5880000000000001,
+            "min": 0.536,
+            "max": 0.64
+          },
+          "count": {
+            "n": 2,
+            "median": 22,
+            "min": 22,
+            "max": 22
+          }
+        },
+        "rust/delivery.encode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 32.541,
+            "min": 32.408,
+            "max": 32.674
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.746,
+            "min": 1.738,
+            "max": 1.754
+          },
+          "count": {
+            "n": 2,
+            "median": 22,
+            "min": 22,
+            "max": 22
+          }
+        },
+        "rust/native.request": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 257.038,
+            "min": 254.13400000000001,
+            "max": 259.942
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 14.302,
+            "min": 13.315,
+            "max": 15.289
+          },
+          "count": {
+            "n": 2,
+            "median": 22,
+            "min": 22,
+            "max": 22
+          }
+        },
+        "node/server.handshake05": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.9035,
+            "min": 1.803,
+            "max": 2.004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.9035,
+            "min": 1.803,
+            "max": 2.004
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/postgres.transaction.body": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 262.43600000000004,
+            "min": 259.405,
+            "max": 265.46700000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 14.5275,
+            "min": 13.525,
+            "max": 15.53
+          },
+          "count": {
+            "n": 2,
+            "median": 23,
+            "min": 23,
+            "max": 23
+          }
+        },
+        "node/postgres.commit": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.5330000000000004,
+            "min": 2.5050000000000003,
+            "max": 2.5610000000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.14400000000000002,
+            "min": 0.137,
+            "max": 0.151
+          },
+          "count": {
+            "n": 2,
+            "median": 23,
+            "min": 23,
+            "max": 23
+          }
+        },
+        "node/server.transaction": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 269.57500000000005,
+            "min": 266.308,
+            "max": 272.84200000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 15.5415,
+            "min": 15.314,
+            "max": 15.769
+          },
+          "count": {
+            "n": 2,
+            "median": 23,
+            "min": 23,
+            "max": 23
+          }
+        },
+        "node/host.deliveryCandidates": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 30.060999999999996,
+            "min": 28.838,
+            "max": 31.283999999999992
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.2525,
+            "min": 1.151,
+            "max": 1.354
+          },
+          "count": {
+            "n": 2,
+            "median": 41,
+            "min": 41,
+            "max": 41
+          }
+        },
+        "node/host.deliveryNow": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.6640000000000006,
+            "min": 2.644,
+            "max": 2.6840000000000006
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.22949999999999998,
+            "min": 0.22,
+            "max": 0.239
+          },
+          "count": {
+            "n": 2,
+            "median": 21,
+            "min": 21,
+            "max": 21
+          }
+        },
+        "rust/delivery.prepare": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 47.467,
+            "min": 45.311,
+            "max": 49.62299999999999
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 3.4579999999999997,
+            "min": 2.784,
+            "max": 4.132
+          },
+          "count": {
+            "n": 2,
+            "median": 21,
+            "min": 21,
+            "max": 21
+          }
+        },
+        "rust/delivery.page": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 28.094,
+            "min": 28.074,
+            "max": 28.114
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.5325,
+            "min": 1.523,
+            "max": 1.542
+          },
+          "count": {
+            "n": 2,
+            "median": 21,
+            "min": 21,
+            "max": 21
+          }
+        },
+        "rust/delivery.load": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 33.271,
+            "min": 33.062999999999995,
+            "max": 33.479
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 2.2045,
+            "min": 2.106,
+            "max": 2.303
+          },
+          "count": {
+            "n": 2,
+            "median": 21,
+            "min": 21,
+            "max": 21
+          }
+        },
+        "rust/delivery.units": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 20.041,
+            "min": 19.932000000000002,
+            "max": 20.15
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.076,
+            "min": 1.067,
+            "max": 1.085
+          },
+          "count": {
+            "n": 2,
+            "median": 21,
+            "min": 21,
+            "max": 21
+          }
+        },
+        "rust/delivery.freeze": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 74.20250000000001,
+            "min": 74.15500000000002,
+            "max": 74.25
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 3.886,
+            "min": 3.875,
+            "max": 3.897
+          },
+          "count": {
+            "n": 2,
+            "median": 21,
+            "min": 21,
+            "max": 21
+          }
+        },
+        "rust/delivery.response": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.627,
+            "min": 2.617,
+            "max": 2.6369999999999996
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.1645,
+            "min": 0.159,
+            "max": 0.17
+          },
+          "count": {
+            "n": 2,
+            "median": 21,
+            "min": 21,
+            "max": 21
+          }
+        },
+        "rust/delivery.plan": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 254.0475,
+            "min": 251.28,
+            "max": 256.815
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 14.265,
+            "min": 13.291,
+            "max": 15.239
+          },
+          "count": {
+            "n": 2,
+            "median": 21,
+            "min": 21,
+            "max": 21
+          }
+        },
+        "node/server.processLive05": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.576,
+            "min": 1.449,
+            "max": 1.703
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.576,
+            "min": 1.449,
+            "max": 1.703
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/host.load": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 18.874499999999994,
+            "min": 18.598999999999993,
+            "max": 19.149999999999995
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.4264999999999999,
+            "min": 1.315,
+            "max": 1.538
+          },
+          "count": {
+            "n": 2,
+            "median": 59,
+            "min": 59,
+            "max": 59
+          }
+        },
+        "node/server.processDelivery05": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 258.041,
+            "min": 255.39200000000002,
+            "max": 260.69
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 14.518,
+            "min": 13.515,
+            "max": 15.521
+          },
+          "count": {
+            "n": 2,
+            "median": 20,
+            "min": 20,
+            "max": 20
+          }
+        }
+      }
+    },
+    {
+      "key": "live-sync/10000/1",
+      "runs": 2,
+      "passed": 2,
+      "failed": 0,
+      "recordReports": 0,
+      "failedRecordReports": 0,
+      "metrics": {
+        "localCommitMs": {
+          "n": 2,
+          "median": 0.5435,
+          "min": 0.517,
+          "max": 0.57
+        },
+        "serverTransactionMs": {
+          "n": 2,
+          "median": 8.001000000000001,
+          "min": 6.942,
+          "max": 9.06
+        },
+        "settlementMs": {
+          "n": 2,
+          "median": 14.679499999999999,
+          "min": 12.796,
+          "max": 16.563
+        },
+        "bVisibleMs": {
+          "n": 2,
+          "median": 14.08,
+          "min": 12.203,
+          "max": 15.957
+        },
+        "allVisibleMs": {
+          "n": 2,
+          "median": 14.0825,
+          "min": 12.206,
+          "max": 15.959
+        },
+        "allSettledMs": {
+          "n": 2,
+          "median": 14.686,
+          "min": 12.803,
+          "max": 16.569
+        },
+        "entriesPerSecond": {
+          "n": 2,
+          "median": 72.2937444455226,
+          "min": 62.6605677047434,
+          "max": 81.92692118630183
+        }
+      },
+      "stages": {
+        "dart/bridge.nativeDrain": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.191,
+            "min": 0.184,
+            "max": 0.198
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0365,
+            "min": 0.036,
+            "max": 0.037
+          },
+          "count": {
+            "n": 2,
+            "median": 24.5,
+            "min": 24,
+            "max": 25
+          }
+        },
+        "dart/bridge.decode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.10550000000000001,
+            "min": 0.10500000000000002,
+            "max": 0.10600000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0205,
+            "min": 0.02,
+            "max": 0.021
+          },
+          "count": {
+            "n": 2,
+            "median": 24.5,
+            "min": 24,
+            "max": 25
+          }
+        },
+        "dart/bridge.drain": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.32700000000000007,
+            "min": 0.32100000000000006,
+            "max": 0.3330000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.058,
+            "min": 0.058,
+            "max": 0.058
+          },
+          "count": {
+            "n": 2,
+            "median": 24.5,
+            "min": 24,
+            "max": 25
+          }
+        },
+        "rust/watch.publish": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.08050000000000002,
+            "min": 0.07,
+            "max": 0.09100000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.051500000000000004,
+            "min": 0.041,
+            "max": 0.062
+          },
+          "count": {
+            "n": 2,
+            "median": 22,
+            "min": 22,
+            "max": 22
+          }
+        },
+        "rust/sqlite.commit": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.7515000000000003,
+            "min": 0.7280000000000002,
+            "max": 0.7750000000000002
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0935,
+            "min": 0.093,
+            "max": 0.094
+          },
+          "count": {
+            "n": 2,
+            "median": 18,
+            "min": 18,
+            "max": 18
+          }
+        },
+        "dart/http.request": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 8.823,
+            "min": 7.625,
+            "max": 10.021
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 8.823,
+            "min": 7.625,
+            "max": 10.021
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "rust/batch.acknowledge": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.267,
+            "min": 0.243,
+            "max": 0.291
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.267,
+            "min": 0.243,
+            "max": 0.291
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "dart/socket.frame": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.0475,
+            "min": 0.045,
+            "max": 0.05
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0275,
+            "min": 0.027,
+            "max": 0.028
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "rust/delivery.apply.keys": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.0675,
+            "min": 0.063,
+            "max": 0.072
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.038,
+            "min": 0.033,
+            "max": 0.043
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "rust/delivery.apply.authority.clear": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.10049999999999999,
+            "min": 0.09,
+            "max": 0.11099999999999999
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.064,
+            "min": 0.057,
+            "max": 0.071
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "rust/delivery.apply.authority.install": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.3805,
+            "min": 0.353,
+            "max": 0.40800000000000003
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.225,
+            "min": 0.192,
+            "max": 0.258
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "rust/delivery.apply.authority": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.4895,
+            "min": 0.471,
+            "max": 0.508
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.278,
+            "min": 0.236,
+            "max": 0.32
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "rust/delivery.apply.reconcile": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.23300000000000004,
+            "min": 0.156,
+            "max": 0.31000000000000005
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.2005,
+            "min": 0.121,
+            "max": 0.28
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "rust/delivery.apply.rebuild": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.136,
+            "min": 0.10800000000000001,
+            "max": 0.164
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.10250000000000001,
+            "min": 0.07,
+            "max": 0.135
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "rust/delivery.apply": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.7265,
+            "min": 1.657,
+            "max": 1.7959999999999998
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.961,
+            "min": 0.942,
+            "max": 0.98
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "rust/watch.read": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.026000000000000002,
+            "min": 0.017,
+            "max": 0.035
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.026000000000000002,
+            "min": 0.017,
+            "max": 0.035
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "rust/watch.convert": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.0025,
+            "min": 0.002,
+            "max": 0.003
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0025,
+            "min": 0.002,
+            "max": 0.003
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "rust/watch.update": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.007,
+            "min": 0.007,
+            "max": 0.007
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.007,
+            "min": 0.007,
+            "max": 0.007
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "rust/watch.compare": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.013000000000000001,
+            "min": 0.012,
+            "max": 0.014
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.013000000000000001,
+            "min": 0.012,
+            "max": 0.014
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "rust/watch.query": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.0445,
+            "min": 0.034,
+            "max": 0.055
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0445,
+            "min": 0.034,
+            "max": 0.055
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "rust/watch.snapshot": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.0015,
+            "min": 0.001,
+            "max": 0.002
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0015,
+            "min": 0.001,
+            "max": 0.002
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "dart/watch.enqueue": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.10250000000000001,
+            "min": 0.1,
+            "max": 0.105
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.10250000000000001,
+            "min": 0.1,
+            "max": 0.105
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/postgres.acquire": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.849,
+            "min": 1.805,
+            "max": 1.893
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.74,
+            "min": 1.702,
+            "max": 1.778
+          },
+          "count": {
+            "n": 2,
+            "median": 4,
+            "min": 4,
+            "max": 4
+          }
+        },
+        "node/postgres.begin": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.426,
+            "min": 0.395,
+            "max": 0.45699999999999996
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.123,
+            "min": 0.11,
+            "max": 0.136
+          },
+          "count": {
+            "n": 2,
+            "median": 4,
+            "min": 4,
+            "max": 4
+          }
+        },
+        "node/host.decode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.21800000000000003,
+            "min": 0.21100000000000005,
+            "max": 0.22500000000000003
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0245,
+            "min": 0.024,
+            "max": 0.025
+          },
+          "count": {
+            "n": 2,
+            "median": 54,
+            "min": 54,
+            "max": 54
+          }
+        },
+        "node/postgres.query": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 14.159,
+            "min": 12.827999999999998,
+            "max": 15.490000000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.605,
+            "min": 1.6,
+            "max": 1.61
+          },
+          "count": {
+            "n": 2,
+            "median": 38,
+            "min": 38,
+            "max": 38
+          }
+        },
+        "node/host.encode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.06200000000000003,
+            "min": 0.05800000000000003,
+            "max": 0.06600000000000002
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.008,
+            "min": 0.005,
+            "max": 0.011
+          },
+          "count": {
+            "n": 2,
+            "median": 50,
+            "min": 50,
+            "max": 50
+          }
+        },
+        "node/host.claimStore": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.22749999999999998,
+            "min": 0.219,
+            "max": 0.236
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.22749999999999998,
+            "min": 0.219,
+            "max": 0.236
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/host.admit": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.0435,
+            "min": 0.039,
+            "max": 0.047999999999999994
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0135,
+            "min": 0.008,
+            "max": 0.019
+          },
+          "count": {
+            "n": 2,
+            "median": 6,
+            "min": 6,
+            "max": 6
+          }
+        },
+        "node/host.beginBatch": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.7575000000000001,
+            "min": 0.409,
+            "max": 1.106
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.7575000000000001,
+            "min": 0.409,
+            "max": 1.106
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/host.savepoint": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.108,
+            "min": 0.097,
+            "max": 0.119
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.108,
+            "min": 0.097,
+            "max": 0.119
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/handler.invoke": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.23099999999999998,
+            "min": 0.21,
+            "max": 0.252
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.23099999999999998,
+            "min": 0.21,
+            "max": 0.252
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/host.handleAction": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.29600000000000004,
+            "min": 0.253,
+            "max": 0.339
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.29600000000000004,
+            "min": 0.253,
+            "max": 0.339
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/host.readTracking": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.501,
+            "min": 1.47,
+            "max": 1.532
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.8145,
+            "min": 0.778,
+            "max": 0.851
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "node/host.lockStreams": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.192,
+            "min": 0.175,
+            "max": 0.209
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.192,
+            "min": 0.175,
+            "max": 0.209
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/host.guardRecords": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.20650000000000002,
+            "min": 0.161,
+            "max": 0.252
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.20650000000000002,
+            "min": 0.161,
+            "max": 0.252
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/host.applyStreamMembers": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.9235000000000002,
+            "min": 1.485,
+            "max": 2.362
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.9235000000000002,
+            "min": 1.485,
+            "max": 2.362
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/host.load": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.683,
+            "min": 0.643,
+            "max": 0.7230000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.1915,
+            "min": 0.191,
+            "max": 0.192
+          },
+          "count": {
+            "n": 2,
+            "median": 9,
+            "min": 9,
+            "max": 9
+          }
+        },
+        "node/host.targetPositions": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.63,
+            "min": 0.611,
+            "max": 0.649
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.63,
+            "min": 0.611,
+            "max": 0.649
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/host.head": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.10650000000000001,
+            "min": 0.098,
+            "max": 0.115
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.10650000000000001,
+            "min": 0.098,
+            "max": 0.115
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/host.release": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.096,
+            "min": 0.084,
+            "max": 0.108
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.096,
+            "min": 0.084,
+            "max": 0.108
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/host.saveResult": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.33099999999999996,
+            "min": 0.299,
+            "max": 0.363
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.33099999999999996,
+            "min": 0.299,
+            "max": 0.363
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "rust/host.encode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.056000000000000036,
+            "min": 0.054000000000000034,
+            "max": 0.05800000000000003
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.004,
+            "min": 0.004,
+            "max": 0.004
+          },
+          "count": {
+            "n": 2,
+            "median": 50,
+            "min": 50,
+            "max": 50
+          }
+        },
+        "rust/host.await": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 17.921999999999997,
+            "min": 15.735,
+            "max": 20.108999999999995
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 2.7485,
+            "min": 2.747,
+            "max": 2.75
+          },
+          "count": {
+            "n": 2,
+            "median": 50,
+            "min": 50,
+            "max": 50
+          }
+        },
+        "rust/host.decode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.03250000000000001,
+            "min": 0.031000000000000003,
+            "max": 0.034000000000000016
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.003,
+            "min": 0.003,
+            "max": 0.003
+          },
+          "count": {
+            "n": 2,
+            "median": 50,
+            "min": 50,
+            "max": 50
+          }
+        },
+        "rust/mutation.execute": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 7.184,
+            "min": 6.164,
+            "max": 8.204
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 7.184,
+            "min": 6.164,
+            "max": 8.204
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "rust/native.request": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 19.105,
+            "min": 16.78,
+            "max": 21.43
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 7.48,
+            "min": 6.694,
+            "max": 8.266
+          },
+          "count": {
+            "n": 2,
+            "median": 4,
+            "min": 4,
+            "max": 4
+          }
+        },
+        "node/server.processBatchGroup": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 7.417,
+            "min": 6.392,
+            "max": 8.442
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 7.417,
+            "min": 6.392,
+            "max": 8.442
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/postgres.transaction.body": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 19.8745,
+            "min": 17.46,
+            "max": 22.289
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 7.654,
+            "min": 6.843,
+            "max": 8.465
+          },
+          "count": {
+            "n": 2,
+            "median": 4,
+            "min": 4,
+            "max": 4
+          }
+        },
+        "node/postgres.commit": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.7404999999999999,
+            "min": 0.711,
+            "max": 0.7699999999999999
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.4195,
+            "min": 0.396,
+            "max": 0.443
+          },
+          "count": {
+            "n": 2,
+            "median": 4,
+            "min": 4,
+            "max": 4
+          }
+        },
+        "node/server.transaction": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 22.967000000000002,
+            "min": 20.447000000000003,
+            "max": 25.487000000000002
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 8.9045,
+            "min": 8.749,
+            "max": 9.06
+          },
+          "count": {
+            "n": 2,
+            "median": 4,
+            "min": 4,
+            "max": 4
+          }
+        },
+        "node/host.inspectStore": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.217,
+            "min": 0.835,
+            "max": 1.5990000000000002
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.48250000000000004,
+            "min": 0.423,
+            "max": 0.542
+          },
+          "count": {
+            "n": 2,
+            "median": 5,
+            "min": 5,
+            "max": 5
+          }
+        },
+        "node/host.deliveryHead": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.7165,
+            "min": 0.681,
+            "max": 0.752
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.243,
+            "min": 0.238,
+            "max": 0.248
+          },
+          "count": {
+            "n": 2,
+            "median": 5,
+            "min": 5,
+            "max": 5
+          }
+        },
+        "node/host.bootstrapState": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.2255,
+            "min": 0.202,
+            "max": 0.249
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.118,
+            "min": 0.11,
+            "max": 0.126
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "node/host.deliveryCandidates": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 5.699,
+            "min": 5.676,
+            "max": 5.7219999999999995
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 2.7215,
+            "min": 2.715,
+            "max": 2.728
+          },
+          "count": {
+            "n": 2,
+            "median": 6,
+            "min": 6,
+            "max": 6
+          }
+        },
+        "node/host.deliveryNow": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.4385,
+            "min": 0.43800000000000006,
+            "max": 0.439
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.2365,
+            "min": 0.232,
+            "max": 0.241
+          },
+          "count": {
+            "n": 2,
+            "median": 3,
+            "min": 3,
+            "max": 3
+          }
+        },
+        "rust/bootstrap.prepare": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.2905,
+            "min": 0.277,
+            "max": 0.304
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.1495,
+            "min": 0.141,
+            "max": 0.158
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "rust/delivery.prepare": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 6.2345,
+            "min": 6.093999999999999,
+            "max": 6.375
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 4.987,
+            "min": 4.983,
+            "max": 4.991
+          },
+          "count": {
+            "n": 2,
+            "median": 3,
+            "min": 3,
+            "max": 3
+          }
+        },
+        "rust/delivery.page": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.014499999999999999,
+            "min": 0.013999999999999999,
+            "max": 0.015
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.009999999999999998,
+            "min": 0.009,
+            "max": 0.011
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "rust/delivery.load": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.5589999999999999,
+            "min": 0.519,
+            "max": 0.599
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.237,
+            "min": 0.235,
+            "max": 0.239
+          },
+          "count": {
+            "n": 2,
+            "median": 3,
+            "min": 3,
+            "max": 3
+          }
+        },
+        "rust/delivery.units": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.0175,
+            "min": 0.015,
+            "max": 0.02
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.008,
+            "min": 0.007,
+            "max": 0.009
+          },
+          "count": {
+            "n": 2,
+            "median": 3,
+            "min": 3,
+            "max": 3
+          }
+        },
+        "rust/delivery.freeze": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.0955,
+            "min": 0.082,
+            "max": 0.109
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.049,
+            "min": 0.042,
+            "max": 0.056
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "rust/delivery.response": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.0125,
+            "min": 0.011,
+            "max": 0.014
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0045000000000000005,
+            "min": 0.004,
+            "max": 0.005
+          },
+          "count": {
+            "n": 2,
+            "median": 3,
+            "min": 3,
+            "max": 3
+          }
+        },
+        "rust/delivery.encode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.07800000000000001,
+            "min": 0.07100000000000001,
+            "max": 0.085
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0315,
+            "min": 0.028,
+            "max": 0.035
+          },
+          "count": {
+            "n": 2,
+            "median": 3,
+            "min": 3,
+            "max": 3
+          }
+        },
+        "rust/delivery.plan": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.9305000000000003,
+            "min": 2.8040000000000003,
+            "max": 3.057
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.4765000000000001,
+            "min": 1.409,
+            "max": 1.544
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "node/server.processLive05": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 5.619,
+            "min": 4.1899999999999995,
+            "max": 7.048
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 2.816,
+            "min": 2.104,
+            "max": 3.528
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "node/host.readResults": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.297,
+            "min": 0.29,
+            "max": 0.304
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.297,
+            "min": 0.29,
+            "max": 0.304
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "rust/delivery.materialize": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 6.6065000000000005,
+            "min": 6.561,
+            "max": 6.652
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 6.6065000000000005,
+            "min": 6.561,
+            "max": 6.652
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        },
+        "node/server.processMaterialization05": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 6.7855,
+            "min": 6.741,
+            "max": 6.83
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 6.7855,
+            "min": 6.741,
+            "max": 6.83
+          },
+          "count": {
+            "n": 2,
+            "median": 1,
+            "min": 1,
+            "max": 1
+          }
+        }
+      }
+    },
+    {
+      "key": "live-sync/10000/100",
+      "runs": 2,
+      "passed": 2,
+      "failed": 0,
+      "recordReports": 176,
+      "failedRecordReports": 0,
+      "metrics": {
+        "localCommitMs": {
+          "n": 200,
+          "median": 0.6205,
+          "min": 0.37,
+          "max": 3.01,
+          "p95": 0.864
+        },
+        "serverTransactionMs": {
+          "n": 200,
+          "median": 37.581,
+          "min": 12.712,
+          "max": 45.107,
+          "p95": 44.783
+        },
+        "settlementMs": {
+          "n": 200,
+          "median": 458.20050000000003,
+          "min": 20.825,
+          "max": 494.639,
+          "p95": 489.38
+        },
+        "bVisibleMs": {
+          "n": 200,
+          "median": 267.6945,
+          "min": 17.849,
+          "max": 451.118,
+          "p95": 444.841
+        },
+        "allVisibleMs": {
+          "n": 2,
+          "median": 513.0070000000001,
+          "min": 510.884,
+          "max": 515.13
+        },
+        "allSettledMs": {
+          "n": 2,
+          "median": 516.654,
+          "min": 515.092,
+          "max": 518.216
+        },
+        "entriesPerSecond": {
+          "n": 2,
+          "median": 194.93245242138843,
+          "min": 194.12575466387128,
+          "max": 195.7391501789056
+        }
+      },
+      "stages": {
+        "dart/bridge.nativeDrain": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 6.499000000000001,
+            "min": 6.493000000000006,
+            "max": 6.504999999999997
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.0455,
+            "min": 1.042,
+            "max": 1.049
+          },
+          "count": {
+            "n": 2,
+            "median": 943,
+            "min": 938,
+            "max": 948
+          }
+        },
+        "dart/bridge.decode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.649999999999988,
+            "min": 2.5749999999999877,
+            "max": 2.724999999999988
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.16899999999999998,
+            "min": 0.166,
+            "max": 0.172
+          },
+          "count": {
+            "n": 2,
+            "median": 943,
+            "min": 938,
+            "max": 948
+          }
+        },
+        "dart/bridge.drain": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 10.169000000000022,
+            "min": 10.065000000000024,
+            "max": 10.273000000000017
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.0545,
+            "min": 1.052,
+            "max": 1.057
+          },
+          "count": {
+            "n": 2,
+            "median": 943,
+            "min": 938,
+            "max": 948
+          }
+        },
+        "rust/watch.publish": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.347499999999996,
+            "min": 2.313999999999996,
+            "max": 2.3809999999999962
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.134,
+            "min": 0.133,
+            "max": 0.135
+          },
+          "count": {
+            "n": 2,
+            "median": 748,
+            "min": 748,
+            "max": 748
+          }
+        },
+        "rust/sqlite.commit": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 19.9775,
+            "min": 19.928999999999977,
+            "max": 20.026000000000018
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 2.5324999999999998,
+            "min": 2.471,
+            "max": 2.594
+          },
+          "count": {
+            "n": 2,
+            "median": 348,
+            "min": 348,
+            "max": 348
+          }
+        },
+        "dart/http.request": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 498.927,
+            "min": 496.94,
+            "max": 500.914
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 290.852,
+            "min": 290.064,
+            "max": 291.64
+          },
+          "count": {
+            "n": 2,
+            "median": 5,
+            "min": 5,
+            "max": 5
+          }
+        },
+        "rust/batch.acknowledge": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 5.63,
+            "min": 5.599,
+            "max": 5.661
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 3.011,
+            "min": 2.92,
+            "max": 3.102
+          },
+          "count": {
+            "n": 2,
+            "median": 3,
+            "min": 3,
+            "max": 3
+          }
+        },
+        "dart/socket.frame": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.392,
+            "min": 1.3910000000000002,
+            "max": 1.3929999999999998
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.08549999999999999,
+            "min": 0.074,
+            "max": 0.097
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "rust/delivery.apply.keys": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.9535000000000002,
+            "min": 0.9280000000000003,
+            "max": 0.9790000000000003
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.063,
+            "min": 0.056,
+            "max": 0.07
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "rust/delivery.apply.authority.clear": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.8825000000000003,
+            "min": 1.663,
+            "max": 2.1020000000000003
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.10300000000000001,
+            "min": 0.083,
+            "max": 0.123
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "rust/delivery.apply.authority.install": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 7.8555,
+            "min": 7.339,
+            "max": 8.372
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.368,
+            "min": 0.343,
+            "max": 0.393
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "rust/delivery.apply.authority": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 9.831,
+            "min": 9.098999999999998,
+            "max": 10.563000000000002
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.46499999999999997,
+            "min": 0.43,
+            "max": 0.5
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "rust/delivery.apply.reconcile": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.3305,
+            "min": 2.2819999999999996,
+            "max": 2.3789999999999996
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.899,
+            "min": 0.889,
+            "max": 0.909
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "rust/delivery.apply.rebuild": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 7.852,
+            "min": 7.634999999999999,
+            "max": 8.069
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.704,
+            "min": 0.696,
+            "max": 0.712
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "rust/delivery.apply": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 32.36449999999999,
+            "min": 31.378999999999998,
+            "max": 33.349999999999994
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 2.8085,
+            "min": 2.797,
+            "max": 2.82
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "rust/watch.read": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.45050000000000007,
+            "min": 0.39900000000000013,
+            "max": 0.502
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0475,
+            "min": 0.036,
+            "max": 0.059
+          },
+          "count": {
+            "n": 2,
+            "median": 14,
+            "min": 14,
+            "max": 14
+          }
+        },
+        "rust/watch.convert": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.10850000000000001,
+            "min": 0.09800000000000002,
+            "max": 0.11900000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0115,
+            "min": 0.009,
+            "max": 0.014
+          },
+          "count": {
+            "n": 2,
+            "median": 14,
+            "min": 14,
+            "max": 14
+          }
+        },
+        "rust/watch.update": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.6420000000000001,
+            "min": 0.6400000000000001,
+            "max": 0.6440000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0545,
+            "min": 0.054,
+            "max": 0.055
+          },
+          "count": {
+            "n": 2,
+            "median": 14,
+            "min": 14,
+            "max": 14
+          }
+        },
+        "rust/watch.compare": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.7435,
+            "min": 0.7420000000000001,
+            "max": 0.7450000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.063,
+            "min": 0.063,
+            "max": 0.063
+          },
+          "count": {
+            "n": 2,
+            "median": 14,
+            "min": 14,
+            "max": 14
+          }
+        },
+        "rust/watch.query": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.344,
+            "min": 1.302,
+            "max": 1.3860000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.1195,
+            "min": 0.114,
+            "max": 0.125
+          },
+          "count": {
+            "n": 2,
+            "median": 14,
+            "min": 14,
+            "max": 14
+          }
+        },
+        "rust/watch.snapshot": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.07650000000000001,
+            "min": 0.06600000000000002,
+            "max": 0.08700000000000002
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0085,
+            "min": 0.008,
+            "max": 0.009
+          },
+          "count": {
+            "n": 2,
+            "median": 14,
+            "min": 14,
+            "max": 14
+          }
+        },
+        "dart/watch.enqueue": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 3.0340000000000003,
+            "min": 2.963,
+            "max": 3.1050000000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.2515,
+            "min": 0.24,
+            "max": 0.263
+          },
+          "count": {
+            "n": 2,
+            "median": 14,
+            "min": 14,
+            "max": 14
+          }
+        },
+        "node/postgres.acquire": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.7529999999999992,
+            "min": 2.3899999999999997,
+            "max": 3.1159999999999988
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.7395,
+            "min": 1.636,
+            "max": 1.843
+          },
+          "count": {
+            "n": 2,
+            "median": 44,
+            "min": 44,
+            "max": 44
+          }
+        },
+        "node/postgres.begin": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 3.6595000000000004,
+            "min": 3.596,
+            "max": 3.723000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.1265,
+            "min": 0.119,
+            "max": 0.134
+          },
+          "count": {
+            "n": 2,
+            "median": 44,
+            "min": 44,
+            "max": 44
+          }
+        },
+        "node/host.decode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 5.474499999999956,
+            "min": 5.380999999999946,
+            "max": 5.567999999999967
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.1245,
+            "min": 0.122,
+            "max": 0.127
+          },
+          "count": {
+            "n": 2,
+            "median": 2001,
+            "min": 2001,
+            "max": 2001
+          }
+        },
+        "node/postgres.query": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 415.2419999999996,
+            "min": 414.82499999999953,
+            "max": 415.65899999999976
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.534,
+            "min": 1.487,
+            "max": 1.581
+          },
+          "count": {
+            "n": 2,
+            "median": 1543,
+            "min": 1543,
+            "max": 1543
+          }
+        },
+        "node/host.encode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.4024999999999714,
+            "min": 1.2959999999999787,
+            "max": 1.508999999999964
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0125,
+            "min": 0.012,
+            "max": 0.013
+          },
+          "count": {
+            "n": 2,
+            "median": 1957,
+            "min": 1957,
+            "max": 1957
+          }
+        },
+        "node/host.claimStore": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 11.060500000000005,
+            "min": 11.022000000000004,
+            "max": 11.099000000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.43,
+            "min": 0.427,
+            "max": 0.433
+          },
+          "count": {
+            "n": 2,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          }
+        },
+        "node/host.admit": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.8995000000000006,
+            "min": 0.8950000000000007,
+            "max": 0.9040000000000007
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.023,
+            "min": 0.017,
+            "max": 0.029
+          },
+          "count": {
+            "n": 2,
+            "median": 158,
+            "min": 158,
+            "max": 158
+          }
+        },
+        "node/host.beginBatch": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.3755000000000002,
+            "min": 0.943,
+            "max": 1.8080000000000003
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.783,
+            "min": 0.486,
+            "max": 1.08
+          },
+          "count": {
+            "n": 2,
+            "median": 3,
+            "min": 3,
+            "max": 3
+          }
+        },
+        "node/host.savepoint": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 6.839499999999998,
+            "min": 6.704999999999999,
+            "max": 6.9739999999999975
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0975,
+            "min": 0.093,
+            "max": 0.102
+          },
+          "count": {
+            "n": 2,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          }
+        },
+        "node/handler.invoke": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 9.749500000000003,
+            "min": 9.696000000000002,
+            "max": 9.803000000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.1995,
+            "min": 0.194,
+            "max": 0.205
+          },
+          "count": {
+            "n": 2,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          }
+        },
+        "node/host.handleAction": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 11.132000000000001,
+            "min": 11.030999999999999,
+            "max": 11.233000000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.22849999999999998,
+            "min": 0.217,
+            "max": 0.24
+          },
+          "count": {
+            "n": 2,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          }
+        },
+        "node/host.readTracking": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 127.66249999999997,
+            "min": 126.8159999999999,
+            "max": 128.50900000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.161,
+            "min": 1.137,
+            "max": 1.185
+          },
+          "count": {
+            "n": 2,
+            "median": 200,
+            "min": 200,
+            "max": 200
+          }
+        },
+        "node/host.lockStreams": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 14.556500000000003,
+            "min": 14.47700000000001,
+            "max": 14.636
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.29100000000000004,
+            "min": 0.273,
+            "max": 0.309
+          },
+          "count": {
+            "n": 2,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          }
+        },
+        "node/host.guardRecords": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 12.871000000000002,
+            "min": 12.719000000000003,
+            "max": 13.023000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.281,
+            "min": 0.275,
+            "max": 0.287
+          },
+          "count": {
+            "n": 2,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          }
+        },
+        "node/host.applyStreamMembers": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 127.70150000000001,
+            "min": 126.75500000000001,
+            "max": 128.648
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 2.7135,
+            "min": 2.596,
+            "max": 2.831
+          },
+          "count": {
+            "n": 2,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          }
+        },
+        "node/host.load": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 22.518500000000014,
+            "min": 22.498000000000015,
+            "max": 22.539000000000012
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.1825,
+            "min": 0.182,
+            "max": 0.183
+          },
+          "count": {
+            "n": 2,
+            "median": 360,
+            "min": 360,
+            "max": 360
+          }
+        },
+        "node/host.targetPositions": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 55.974000000000004,
+            "min": 55.863,
+            "max": 56.08500000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.7045,
+            "min": 0.668,
+            "max": 0.741
+          },
+          "count": {
+            "n": 2,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          }
+        },
+        "node/host.head": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 8.886000000000003,
+            "min": 8.848000000000003,
+            "max": 8.924000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.122,
+            "min": 0.108,
+            "max": 0.136
+          },
+          "count": {
+            "n": 2,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          }
+        },
+        "node/host.release": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 6.7490000000000006,
+            "min": 6.712000000000001,
+            "max": 6.7860000000000005
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0875,
+            "min": 0.086,
+            "max": 0.089
+          },
+          "count": {
+            "n": 2,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          }
+        },
+        "node/host.saveResult": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 19.0225,
+            "min": 19.006,
+            "max": 19.039
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.8614999999999999,
+            "min": 0.848,
+            "max": 0.875
+          },
+          "count": {
+            "n": 2,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          }
+        },
+        "rust/host.encode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.9009999999999336,
+            "min": 1.869999999999937,
+            "max": 1.9319999999999304
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.013,
+            "min": 0.008,
+            "max": 0.018
+          },
+          "count": {
+            "n": 2,
+            "median": 1957,
+            "min": 1957,
+            "max": 1957
+          }
+        },
+        "rust/host.await": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 494.956999999999,
+            "min": 494.7019999999991,
+            "max": 495.21199999999897
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 3.0495,
+            "min": 2.861,
+            "max": 3.238
+          },
+          "count": {
+            "n": 2,
+            "median": 1957,
+            "min": 1957,
+            "max": 1957
+          }
+        },
+        "rust/host.decode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.9750000000000005,
+            "min": 0.9440000000000007,
+            "max": 1.0060000000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.010499999999999999,
+            "min": 0.006,
+            "max": 0.015
+          },
+          "count": {
+            "n": 2,
+            "median": 1957,
+            "min": 1957,
+            "max": 1957
+          }
+        },
+        "rust/mutation.execute": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 462.66400000000004,
+            "min": 461.09099999999995,
+            "max": 464.23700000000014
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 8.427,
+            "min": 8.408,
+            "max": 8.446
+          },
+          "count": {
+            "n": 2,
+            "median": 100,
+            "min": 100,
+            "max": 100
+          }
+        },
+        "rust/native.request": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 528.992,
+            "min": 527.937,
+            "max": 530.047
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 41.9955,
+            "min": 41.716,
+            "max": 42.275
+          },
+          "count": {
+            "n": 2,
+            "median": 44,
+            "min": 44,
+            "max": 44
+          }
+        },
+        "node/server.processBatchGroup": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 476.37499999999994,
+            "min": 474.6909999999999,
+            "max": 478.05899999999997
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 42.6425,
+            "min": 42.354,
+            "max": 42.931
+          },
+          "count": {
+            "n": 2,
+            "median": 14,
+            "min": 14,
+            "max": 14
+          }
+        },
+        "node/postgres.transaction.body": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 543.2100000000002,
+            "min": 543.1730000000002,
+            "max": 543.2470000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 42.652,
+            "min": 42.365,
+            "max": 42.939
+          },
+          "count": {
+            "n": 2,
+            "median": 44,
+            "min": 44,
+            "max": 44
+          }
+        },
+        "node/postgres.commit": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 10.0255,
+            "min": 9.478000000000002,
+            "max": 10.572999999999997
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.1815,
+            "min": 0.654,
+            "max": 1.709
+          },
+          "count": {
+            "n": 2,
+            "median": 44,
+            "min": 44,
+            "max": 44
+          }
+        },
+        "node/server.transaction": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 560.5034999999999,
+            "min": 560.384,
+            "max": 560.6229999999998
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 44.945,
+            "min": 44.783,
+            "max": 45.107
+          },
+          "count": {
+            "n": 2,
+            "median": 44,
+            "min": 44,
+            "max": 44
+          }
+        },
+        "node/host.inspectStore": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 5.546000000000003,
+            "min": 5.4090000000000025,
+            "max": 5.6830000000000025
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.1745,
+            "min": 0.129,
+            "max": 0.22
+          },
+          "count": {
+            "n": 2,
+            "median": 58,
+            "min": 58,
+            "max": 58
+          }
+        },
+        "node/host.deliveryHead": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 5.34,
+            "min": 5.331,
+            "max": 5.349
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.1315,
+            "min": 0.127,
+            "max": 0.136
+          },
+          "count": {
+            "n": 2,
+            "median": 58,
+            "min": 58,
+            "max": 58
+          }
+        },
+        "node/host.bootstrapState": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.4924999999999997,
+            "min": 2.3309999999999995,
+            "max": 2.6539999999999995
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.159,
+            "min": 0.128,
+            "max": 0.19
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "node/host.deliveryCandidates": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 19.4495,
+            "min": 19.374,
+            "max": 19.525000000000006
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 2.2685000000000004,
+            "min": 2.176,
+            "max": 2.361
+          },
+          "count": {
+            "n": 2,
+            "median": 60,
+            "min": 60,
+            "max": 60
+          }
+        },
+        "node/host.deliveryNow": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.7395,
+            "min": 2.6959999999999997,
+            "max": 2.7830000000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.22599999999999998,
+            "min": 0.216,
+            "max": 0.236
+          },
+          "count": {
+            "n": 2,
+            "median": 30,
+            "min": 30,
+            "max": 30
+          }
+        },
+        "rust/bootstrap.prepare": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 3.2480000000000007,
+            "min": 3.1090000000000004,
+            "max": 3.387000000000001
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.193,
+            "min": 0.162,
+            "max": 0.224
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "rust/delivery.prepare": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 23.025000000000006,
+            "min": 22.881000000000004,
+            "max": 23.169000000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 4.407,
+            "min": 4.368,
+            "max": 4.446
+          },
+          "count": {
+            "n": 2,
+            "median": 30,
+            "min": 30,
+            "max": 30
+          }
+        },
+        "rust/delivery.page": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.2734999999999999,
+            "min": 1.2109999999999999,
+            "max": 1.336
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0695,
+            "min": 0.068,
+            "max": 0.071
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "rust/delivery.load": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 4.8965,
+            "min": 4.868,
+            "max": 4.924999999999998
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.23049999999999998,
+            "min": 0.226,
+            "max": 0.235
+          },
+          "count": {
+            "n": 2,
+            "median": 30,
+            "min": 30,
+            "max": 30
+          }
+        },
+        "rust/delivery.units": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.9185000000000004,
+            "min": 0.8580000000000004,
+            "max": 0.9790000000000004
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.0555,
+            "min": 0.045,
+            "max": 0.066
+          },
+          "count": {
+            "n": 2,
+            "median": 30,
+            "min": 30,
+            "max": 30
+          }
+        },
+        "rust/delivery.freeze": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 2.8034999999999997,
+            "min": 2.728,
+            "max": 2.8789999999999996
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.15300000000000002,
+            "min": 0.137,
+            "max": 0.169
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "rust/delivery.response": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.15950000000000006,
+            "min": 0.15500000000000005,
+            "max": 0.16400000000000006
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.008,
+            "min": 0.008,
+            "max": 0.008
+          },
+          "count": {
+            "n": 2,
+            "median": 30,
+            "min": 30,
+            "max": 30
+          }
+        },
+        "rust/delivery.encode": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 1.4760000000000002,
+            "min": 1.4160000000000004,
+            "max": 1.536
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.07400000000000001,
+            "min": 0.068,
+            "max": 0.08
+          },
+          "count": {
+            "n": 2,
+            "median": 30,
+            "min": 30,
+            "max": 30
+          }
+        },
+        "rust/delivery.plan": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 39.72149999999999,
+            "min": 39.587999999999994,
+            "max": 39.85499999999999
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 1.821,
+            "min": 1.605,
+            "max": 2.037
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "node/server.processLive05": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 55.14249999999999,
+            "min": 54.214000000000006,
+            "max": 56.07099999999998
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 3.2735000000000003,
+            "min": 2.318,
+            "max": 4.229
+          },
+          "count": {
+            "n": 2,
+            "median": 28,
+            "min": 28,
+            "max": 28
+          }
+        },
+        "node/host.readResults": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 0.356,
+            "min": 0.354,
+            "max": 0.358
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 0.2245,
+            "min": 0.222,
+            "max": 0.227
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "rust/delivery.materialize": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 10.728,
+            "min": 10.353,
+            "max": 11.103
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 5.6325,
+            "min": 5.204,
+            "max": 6.061
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        },
+        "node/server.processMaterialization05": {
+          "summedDurationMs": {
+            "n": 2,
+            "median": 11.4405,
+            "min": 10.703,
+            "max": 12.178
+          },
+          "maxDurationMs": {
+            "n": 2,
+            "median": 5.7995,
+            "min": 5.388,
+            "max": 6.211
+          },
+          "count": {
+            "n": 2,
+            "median": 2,
+            "min": 2,
+            "max": 2
+          }
+        }
+      }
+    }
+  ]
+}

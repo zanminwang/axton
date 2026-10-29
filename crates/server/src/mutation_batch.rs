@@ -1,5 +1,5 @@
-//! One member transaction. Store lock, business savepoint and saved progress
-//! are deliberately independent of the transport's complete Batch loop.
+//! Per-member execution with a business savepoint. A commit group may share its
+//! Store lock and persist a contiguous outcome suffix in the outer transaction.
 use crate::{
     Config, Error, Host, Result,
     backend_interface::HostExt,
@@ -18,7 +18,7 @@ use serde_json::json;
 use std::collections::BTreeMap;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Store {
+pub(crate) struct Store {
     principal: String,
     stream: String,
     last_processed_batch_id: u64,
@@ -28,7 +28,42 @@ struct Store {
     last_digest: Option<String>,
     last_count: Option<u64>,
 }
-#[tracing::instrument(target = "axton::server", name = "mutation.execute", skip_all)]
+impl Store {
+    pub(crate) async fn claim(
+        owner: &str,
+        request: &v05::MutationRequest,
+        host: &impl Host,
+    ) -> Result<Self> {
+        if owner.trim().is_empty() {
+            return Err(Error::code(crate::code::PRINCIPAL_INVALID));
+        }
+        protocol_v05::call(host,json!({"op":"claimStore","storeId":request.context.store_id,"principal":owner,"stream":request.context.stream})).await
+    }
+    pub(crate) fn saved(&self, request: &v05::MutationRequest, ordinal: u64) -> bool {
+        request.batch_id == self.last_processed_batch_id || ordinal < self.progress
+    }
+    async fn save(
+        &mut self,
+        request: &v05::MutationRequest,
+        ordinal: u64,
+        result: &v05::MutationResult,
+        persist: bool,
+        host: &impl Host,
+    ) -> Result<()> {
+        let count = request.mutations.len() as u64;
+        if persist {
+            let _:Acknowledged=protocol_v05::call(host,json!({"op":"saveResult","storeId":request.context.store_id,"batchId":request.batch_id,"ordinal":ordinal,"count":count,"result":result})).await?;
+        }
+        self.progress = ordinal + 1;
+        if self.progress == count {
+            self.last_processed_batch_id = request.batch_id;
+            self.last_digest = self.current_digest.take();
+            self.last_count = self.current_count.take();
+            self.progress = 0;
+        }
+        Ok(())
+    }
+}
 pub(crate) async fn execute(
     config: &Config,
     owner: &str,
@@ -36,14 +71,26 @@ pub(crate) async fn execute(
     ordinal: u64,
     raw_host: &impl Host,
 ) -> Result<v05::MutationResult> {
-    if owner.trim().is_empty() {
-        return Err(Error::code(crate::code::PRINCIPAL_INVALID));
+    if ordinal >= request.mutations.len() as u64 {
+        return Err(request_invalid("member ordinal out of range"));
     }
+    let mut store = Store::claim(owner, request, raw_host).await?;
+    execute_claimed(config, owner, request, ordinal, raw_host, &mut store, true).await
+}
+#[tracing::instrument(target = "axton::server", name = "mutation.execute", skip_all)]
+pub(crate) async fn execute_claimed(
+    config: &Config,
+    owner: &str,
+    request: &v05::MutationRequest,
+    ordinal: u64,
+    raw_host: &impl Host,
+    store: &mut Store,
+    persist: bool,
+) -> Result<v05::MutationResult> {
     let member = request
         .mutations
         .get(usize::try_from(ordinal).map_err(request_invalid)?)
         .ok_or_else(|| request_invalid("member ordinal out of range"))?;
-    let store:Store=protocol_v05::call(raw_host,json!({"op":"claimStore","storeId":request.context.store_id,"principal":owner,"stream":request.context.stream})).await?;
     if store.principal != owner || store.stream != request.context.stream {
         return Err(Error::code("store.binding"));
     }
@@ -89,6 +136,8 @@ pub(crate) async fn execute(
     }
     if store.current_digest.is_none() {
         let _:Acknowledged=protocol_v05::call(raw_host,json!({"op":"beginBatch","storeId":request.context.store_id,"batchId":request.batch_id,"digest":request.digest,"count":count})).await?;
+        store.current_digest = Some(request.digest.clone());
+        store.current_count = Some(count);
     }
     let args = match protocol_v05::validate_member(config, member)? {
         protocol_v05::MutationInput::Supported(args) => args,
@@ -100,15 +149,9 @@ pub(crate) async fn execute(
                     message: None,
                 },
             };
-            let _: Acknowledged = protocol_v05::call(
-                raw_host,
-                json!({
-                    "op":"saveResult", "storeId":request.context.store_id,
-                    "batchId":request.batch_id, "ordinal":ordinal, "count":count,
-                    "result":result,
-                }),
-            )
-            .await?;
+            store
+                .save(request, ordinal, &result, persist, raw_host)
+                .await?;
             return Ok(result);
         }
     };
@@ -269,7 +312,9 @@ pub(crate) async fn execute(
         mutation_id: member.id,
         outcome,
     };
-    let _:Acknowledged=protocol_v05::call(raw_host,json!({"op":"saveResult","storeId":request.context.store_id,"batchId":request.batch_id,"ordinal":ordinal,"count":count,"result":result})).await?;
+    store
+        .save(request, ordinal, &result, persist, raw_host)
+        .await?;
     Ok(result)
 }
 pub(crate) fn models(

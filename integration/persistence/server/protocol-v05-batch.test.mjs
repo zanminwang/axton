@@ -133,12 +133,20 @@ let calls = 0,
   prepares = 0;
 let fault = "";
 let injectedError;
-function app(cfg = config, materializations = {}) {
+function app(
+  cfg = config,
+  materializations = {},
+  groupSize = 1,
+  db = database,
+) {
   const options = {
     config: cfg,
     native,
-    database,
+    database: db,
     protocol5: {
+      ...(groupSize === "default"
+        ? {}
+        : { experimentalMutationGroupSize: groupSize }),
       materializations,
       authorizeStream: (principal, stream) => stream === `User:${principal}`,
     },
@@ -676,7 +684,7 @@ test("process exit after committed member leaves durable prefix and rolls back d
   const s = store(),
     r = batch(s, ["ok", "exit", "ok"]);
   const prior = await streamHeads();
-  const script = `import {createRequire} from 'node:module';import {Pool} from 'pg';import {createBackend} from ${JSON.stringify(new URL("../../../packages/backend/server/index.mts", import.meta.url).href)};import {pg} from ${JSON.stringify(new URL("../../../packages/backend/postgres/index.mts", import.meta.url).href)};const cfg=JSON.parse(process.env.TASK3_CONFIG),r=JSON.parse(process.env.TASK3_REQUEST);const pool=new Pool({connectionString:process.env.DATABASE_URL});const native=createRequire(${JSON.stringify(import.meta.url)})('../../../bindings/node/axton-node.node');const a=createBackend({config:cfg,native,database:pg(pool),protocol5:{authorizeStream:()=>true},authenticate:()=> 'alice',loaders:{todo:async({tx,ids})=>Promise.all(ids.map(async({id})=>(await tx.query('SELECT id,title FROM v05_business WHERE id=$1',[id])).rows[0]??null))},mutations:{write:async({ctx,args})=>{await ctx.tx.query('INSERT INTO v05_business VALUES($1,$2)',[args.todo.id,args.todo.title]);if(args.mode==='exit')process.exit(77);ctx.stream('User:alice').track.todo({id:args.todo.id});return {};}}});await a.push('alice',JSON.stringify(r));`;
+  const script = `import {createRequire} from 'node:module';import {Pool} from 'pg';import {createBackend} from ${JSON.stringify(new URL("../../../packages/backend/server/index.mts", import.meta.url).href)};import {pg} from ${JSON.stringify(new URL("../../../packages/backend/postgres/index.mts", import.meta.url).href)};const cfg=JSON.parse(process.env.TASK3_CONFIG),r=JSON.parse(process.env.TASK3_REQUEST);const pool=new Pool({connectionString:process.env.DATABASE_URL});const native=createRequire(${JSON.stringify(import.meta.url)})('../../../bindings/node/axton-node.node');const a=createBackend({config:cfg,native,database:pg(pool),protocol5:{experimentalMutationGroupSize:1,authorizeStream:()=>true},authenticate:()=> 'alice',loaders:{todo:async({tx,ids})=>Promise.all(ids.map(async({id})=>(await tx.query('SELECT id,title FROM v05_business WHERE id=$1',[id])).rows[0]??null))},mutations:{write:async({ctx,args})=>{await ctx.tx.query('INSERT INTO v05_business VALUES($1,$2)',[args.todo.id,args.todo.title]);if(args.mode==='exit')process.exit(77);ctx.stream('User:alice').track.todo({id:args.todo.id});return {};}}});await a.push('alice',JSON.stringify(r));`;
   const child = spawnSync(
     process.execPath,
     ["--input-type=module", "-e", script],
@@ -1005,6 +1013,155 @@ test("reused caller-owned PoolClient restores reservations after full ROLLBACK",
   }
 });
 
+test("default commit groups roll back the current eight members and preserve committed prefixes", async () => {
+  const s = store();
+  const r = batch(s, [...Array(9).fill("ok"), "transient"]);
+  const prior = await streamHeads();
+  const backend = app(config, {}, "default");
+  fault = "handler";
+  await assert.rejects(
+    backend.push("alice", JSON.stringify(r)),
+    /temporary handler crash/,
+  );
+  assert.equal((await state(s)).progress, "8");
+  assert.equal((await results(s)).length, 8);
+  await assertPrefixPositions(s, prior, 8, ["User:alice", "User:other"]);
+  const ack = JSON.parse(await backend.push("alice", JSON.stringify(r)));
+  assert.equal(ack.results.length, 10);
+  await assertPrefixPositions(s, prior, 10, ["User:alice", "User:other"]);
+});
+
+test("commit groups retain member order, separate cursors, a short final group and exact replay", async () => {
+  const s = store(),
+    r = batch(s, ["ok", "ok", "ok", "ok", "ok"]);
+  const prior = await streamHeads();
+  const backend = app(config, {}, 2);
+  const ack = JSON.parse(await backend.push("alice", JSON.stringify(r)));
+  assert.deepEqual(
+    ack.results.map((x) => x.mutationId),
+    [1, 2, 3, 4, 5],
+  );
+  await assertPrefixPositions(s, prior, 5, ["User:alice", "User:other"]);
+  const beforeReplay = [calls, loads, prepares];
+  assert.deepEqual(
+    JSON.parse(await backend.push("alice", JSON.stringify(r))),
+    ack,
+  );
+  assert.deepEqual([calls, loads, prepares], beforeReplay);
+});
+test("commit group business refusal rolls back only that member's publications", async () => {
+  const s = store(),
+    r = batch(s, ["ok", "refuse", "ok"]);
+  const prior = await streamHeads();
+  const ack = JSON.parse(
+    await app(config, {}, 8).push("alice", JSON.stringify(r)),
+  );
+  assert.deepEqual(
+    ack.results.map((x) => x.outcome.kind),
+    ["accepted", "rejected", "accepted"],
+  );
+  assert.deepEqual(
+    (
+      await q("SELECT id FROM v05_business WHERE id LIKE $1 ORDER BY id", [
+        s + "-%",
+      ])
+    ).map((x) => x.id),
+    [`${s}-1-0`, `${s}-1-2`],
+  );
+  const heads = await streamHeads();
+  for (const stream of ["User:alice", "User:other"])
+    assert.equal(heads.get(stream), (prior.get(stream) ?? 0) + 2);
+});
+test("infrastructure failure rolls back its entire group and retry preserves earlier committed groups", async () => {
+  const s = store(),
+    r = batch(s, ["ok", "ok", "ok", "transient", "ok"]);
+  const prior = await streamHeads();
+  fault = "handler";
+  const backend = app(config, {}, 2);
+  await assert.rejects(
+    backend.push("alice", JSON.stringify(r)),
+    /temporary handler crash/,
+  );
+  assert.equal((await state(s)).progress, "2");
+  assert.equal((await results(s)).length, 2);
+  await assertPrefixPositions(s, prior, 2, ["User:alice", "User:other"]);
+  const ack = JSON.parse(await backend.push("alice", JSON.stringify(r)));
+  assert.equal(ack.results.length, 5);
+  await assertPrefixPositions(s, prior, 5, ["User:alice", "User:other"]);
+});
+test("failed first commit group leaves no business rows, saved outcomes or claimed Store", async () => {
+  const s = store(),
+    r = batch(s, ["ok", "transient", "ok"]);
+  fault = "handler";
+  await assert.rejects(
+    app(config, {}, 8).push("alice", JSON.stringify(r)),
+    /temporary handler crash/,
+  );
+  assert.equal(await state(s), undefined);
+  assert.deepEqual(await results(s), []);
+  assert.deepEqual(
+    await q("SELECT id FROM v05_business WHERE id LIKE $1", [s + "-%"]),
+    [],
+  );
+});
+test("concurrent duplicate grouped pushes commit every logical member once", async () => {
+  const s = store(),
+    r = batch(s, ["ok", "ok", "ok"]);
+  const backend = app(config, {}, 2),
+    wire = JSON.stringify(r);
+  const [a, b] = await Promise.all([
+    backend.push("alice", wire),
+    backend.push("alice", wire),
+  ]);
+  assert.deepEqual(JSON.parse(a), JSON.parse(b));
+  assert.equal((await results(s)).length, 3);
+  assert.equal(
+    (await q("SELECT id FROM v05_business WHERE id LIKE $1", [s + "-%"]))
+      .length,
+    3,
+  );
+});
+test("group retry can mix a saved prefix with new outcomes after changing group size", async () => {
+  const s = store(),
+    r = batch(s, ["ok", "ok", "ok", "transient", "ok"]),
+    prior = await streamHeads();
+  fault = "handler";
+  await assert.rejects(
+    app(config, {}, 2).push("alice", JSON.stringify(r)),
+    /temporary handler crash/,
+  );
+  assert.equal((await state(s)).progress, "2");
+  const before = calls;
+  const ack = JSON.parse(
+    await app(config, {}, 8).push("alice", JSON.stringify(r)),
+  );
+  assert.equal(ack.results.length, 5);
+  assert.equal(calls - before, 3, "saved prefix does not rerun");
+  await assertPrefixPositions(s, prior, 5, ["User:alice", "User:other"]);
+});
+test("adapters without bulk result support retain compatible sequential result persistence", async () => {
+  const s = store(),
+    r = batch(s, ["ok", "refuse", "ok"]),
+    prior = await streamHeads();
+  const backend = app(config, {}, 8, {
+    ...database,
+    mutationResultGroups: false,
+  });
+  const ack = JSON.parse(await backend.push("alice", JSON.stringify(r)));
+  assert.deepEqual(
+    ack.results.map((x) => x.outcome.kind),
+    ["accepted", "rejected", "accepted"],
+  );
+  assert.equal((await results(s)).length, 3);
+  assert.equal((await state(s)).last_processed_batch_id, "1");
+  assert.deepEqual(
+    JSON.parse(await backend.push("alice", JSON.stringify(r))),
+    ack,
+  );
+  const heads = await streamHeads();
+  for (const stream of ["User:alice", "User:other"])
+    assert.equal(heads.get(stream), (prior.get(stream) ?? 0) + 2);
+});
 test("safe head overflow aborts business/result/progress atomically", async () => {
   const s = store(),
     r = batch(s);

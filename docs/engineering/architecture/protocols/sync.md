@@ -86,3 +86,11 @@ Finite bounds do not imply short writer or transaction occupancy. Large uniquene
 ## Protocol definitions
 
 [Sync contracts](../../../../crates/protocols/src/sync.rs) and their [delivery](../../../../crates/protocols/src/sync/delivery.rs) / [mutation](../../../../crates/protocols/src/sync/mutation.rs) helpers encode, validate and calculate pure protocol results. They use shared schema normalization and counters from core. Client/Server engines own persistence, scheduling, authority application and business execution.
+
+Canonical wire bytes and digest inputs use core's
+[canonical encoder](../../../../crates/core/src/lib.rs). It writes into a shared
+buffer while retaining UTF-16 key ordering and JCS scalar encoding. The
+[differential encoding regression](../../../../crates/core/tests/contracts.rs)
+compares nested values with the previous encoder; the
+[response-generation experiment](../../../../integration/performance/baselines/2026-10-28-page-response/README.md)
+records the isolated backend measurement.

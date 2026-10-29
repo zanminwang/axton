@@ -141,6 +141,75 @@ pub async fn process_batch_member(
     let result = crate::mutation_batch::execute(config, owner, &request, ordinal, host).await?;
     axton_core::canonical_json(&serde_json::to_value(result).map_err(internal)?).map_err(internal)
 }
+/// Experimental bounded commit group. The caller owns one outer transaction.
+/// Every member retains its own savepoint, outcome and publication cursor scope.
+pub async fn process_batch_group(
+    config: &Config,
+    owner: &str,
+    bytes: &[u8],
+    start: u64,
+    count: u64,
+    host: &impl Host,
+) -> Result<Vec<String>> {
+    let request: v05::MutationRequest = v05::decode(bytes).map_err(request_invalid)?;
+    let end = start
+        .checked_add(count)
+        .ok_or_else(|| request_invalid("group overflow"))?;
+    if count == 0 || count > 32 || end > request.mutations.len() as u64 {
+        return Err(request_invalid("invalid Mutation group range"));
+    }
+    for mutation in &request.mutations {
+        validate_member(config, mutation)?;
+    }
+    let mut store = crate::mutation_batch::Store::claim(owner, &request, host).await?;
+    let mut results = Vec::new();
+    let mut pending = Vec::new();
+    let mut first = None;
+    for ordinal in start..end {
+        let fresh = !store.saved(&request, ordinal);
+        let scope = format!(
+            "{}:{}:{}",
+            request.context.store_id, request.batch_id, request.mutations[ordinal as usize].id
+        );
+        let scoped = MemberHost { host, scope };
+        let result = crate::mutation_batch::execute_claimed(
+            config, owner, &request, ordinal, &scoped, &mut store, false,
+        )
+        .await?;
+        results.push(
+            axton_core::canonical_json(&serde_json::to_value(&result).map_err(internal)?)
+                .map_err(internal)?,
+        );
+        if fresh {
+            first.get_or_insert(ordinal);
+            pending.push(result);
+        }
+    }
+    if let Some(ordinal) = first {
+        let _: axton_protocols::server_bridge::Acknowledged = call(host, json!({
+            "op":"saveResults", "storeId":request.context.store_id, "batchId":request.batch_id,
+            "ordinal":ordinal, "count":request.mutations.len(), "digest":request.digest, "results":pending,
+        })).await?;
+    }
+    Ok(results)
+}
+struct MemberHost<'a, H: Host> {
+    host: &'a H,
+    scope: String,
+}
+impl<H: Host> Host for MemberHost<'_, H> {
+    fn call(
+        &self,
+        mut request: Value,
+    ) -> Pin<Box<dyn Future<Output = HostResult<Value>> + Send + '_>> {
+        Box::pin(async move {
+            if request["op"] == "protocol05" && request["request"]["op"] == "applyStreamMembers" {
+                request["request"]["publicationScope"] = json!(self.scope);
+            }
+            self.host.call(request).await
+        })
+    }
+}
 pub fn encode_batch_acknowledgement(bytes: &[u8], results: &[String]) -> Result<String> {
     let request: v05::MutationRequest = v05::decode(bytes).map_err(request_invalid)?;
     let ack = v05::BatchAcknowledgement {

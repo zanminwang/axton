@@ -1,0 +1,841 @@
+{
+  "order": [
+    "before-1",
+    "after-1",
+    "after-2",
+    "before-2"
+  ],
+  "runnerSha256": "9be154db91dc1ba869ae36e91d36f16562e1d81aa9db36ae42f7fe60a39e354a",
+  "runs": [
+    {
+      "name": "before-1",
+      "build": {
+        "sourceSha256": "f31db711da46a61354672765f9e7b70dff3509d9ec6baa5a4835dda0e80870d8",
+        "artifacts": {
+          "bindings/node/axton-node.node": "aa9c9aa583a692846592d4fd3ef6f4b8fe24e345aa64f488c9f0095594e17bfb",
+          "target/release/libaxton_dart.dylib": "2b615dd1c18bd6e180163399d73a3d44bc6596606f84bbc4660c36e5f5eb95c4",
+          "artifacts/performance/initial-sync": "05a3aa121a8c43fa9d4e25980165cf2c8bb6f064dcf2b562af37af76438b7fe4",
+          "artifacts/performance/live-sync": "084c8f13cc8a0c56e7f01d2e3f86bfc7df9d9a2945cfb25312c1121738d01d5a"
+        }
+      },
+      "metrics": {
+        "storeOpenMs": [
+          6.648
+        ],
+        "firstVisibleMs": [
+          71.32
+        ],
+        "allVisibleMs": [
+          489.26
+        ],
+        "bootstrapMs": [
+          489.239
+        ]
+      },
+      "stages": {
+        "rust/delivery.encode": {
+          "count": 22,
+          "ms": 34.183
+        },
+        "rust/delivery.prepare": {
+          "count": 21,
+          "ms": 50.823
+        },
+        "rust/delivery.page": {
+          "count": 21,
+          "ms": 29.03
+        },
+        "rust/delivery.load": {
+          "count": 21,
+          "ms": 34.208
+        },
+        "rust/delivery.units": {
+          "count": 21,
+          "ms": 20.616
+        },
+        "rust/delivery.freeze": {
+          "count": 21,
+          "ms": 75.595
+        },
+        "rust/delivery.response": {
+          "count": 21,
+          "ms": 2.4510000000000005
+        },
+        "rust/delivery.plan": {
+          "count": 21,
+          "ms": 264.11999999999995
+        },
+        "rust/sqlite.commit": {
+          "count": 67,
+          "ms": 31.257999999999996
+        },
+        "rust/delivery.coalesce": {
+          "count": 1,
+          "ms": 0.003
+        },
+        "rust/delivery.apply.keys": {
+          "count": 20,
+          "ms": 15.038999999999998
+        },
+        "rust/delivery.apply.authority.clear": {
+          "count": 20,
+          "ms": 28.569000000000006
+        },
+        "rust/delivery.apply.authority.install": {
+          "count": 20,
+          "ms": 149.37800000000004
+        },
+        "rust/delivery.apply.authority": {
+          "count": 20,
+          "ms": 178.04399999999995
+        },
+        "rust/delivery.apply.reconcile": {
+          "count": 20,
+          "ms": 0.18000000000000005
+        },
+        "rust/delivery.apply.rebuild": {
+          "count": 20,
+          "ms": 0.14600000000000005
+        },
+        "rust/delivery.apply": {
+          "count": 20,
+          "ms": 228.16099999999997
+        },
+        "rust/watch.query": {
+          "count": 20,
+          "ms": 31.154
+        },
+        "rust/delivery.apply.commit": {
+          "count": 20,
+          "ms": 28.461999999999996
+        }
+      },
+      "overlap": 19,
+      "responseToApplyGapMs": [
+        12.368,
+        10.344,
+        9.667,
+        9.427,
+        10.249,
+        9.215,
+        9.327,
+        9.289,
+        9.605,
+        10.864,
+        9.571,
+        9.675,
+        9.661,
+        10.769,
+        9.39,
+        9.648,
+        9.952,
+        10.365,
+        9.872,
+        9.67
+      ],
+      "httpOverlappingApplyMs": 210.21399999999997,
+      "maxPlacementUncertaintyUs": 23.5
+    },
+    {
+      "name": "after-1",
+      "build": {
+        "sourceSha256": "f31db711da46a61354672765f9e7b70dff3509d9ec6baa5a4835dda0e80870d8",
+        "artifacts": {
+          "bindings/node/axton-node.node": "aa9c9aa583a692846592d4fd3ef6f4b8fe24e345aa64f488c9f0095594e17bfb",
+          "target/release/libaxton_dart.dylib": "347cc6089979f56977dd0aac1e77f9937a704e1ef2fe7ad82b557dc3c56c92cd",
+          "artifacts/performance/initial-sync": "05a3aa121a8c43fa9d4e25980165cf2c8bb6f064dcf2b562af37af76438b7fe4",
+          "artifacts/performance/live-sync": "084c8f13cc8a0c56e7f01d2e3f86bfc7df9d9a2945cfb25312c1121738d01d5a"
+        }
+      },
+      "metrics": {
+        "storeOpenMs": [
+          7.654
+        ],
+        "firstVisibleMs": [
+          67.781
+        ],
+        "allVisibleMs": [
+          483.273
+        ],
+        "bootstrapMs": [
+          483.257
+        ]
+      },
+      "stages": {
+        "rust/delivery.encode": {
+          "count": 22,
+          "ms": 33.611
+        },
+        "rust/delivery.prepare": {
+          "count": 21,
+          "ms": 54.083999999999996
+        },
+        "rust/delivery.page": {
+          "count": 21,
+          "ms": 28.788
+        },
+        "rust/delivery.load": {
+          "count": 21,
+          "ms": 34.217999999999996
+        },
+        "rust/delivery.units": {
+          "count": 21,
+          "ms": 20.437
+        },
+        "rust/delivery.freeze": {
+          "count": 21,
+          "ms": 76.26400000000001
+        },
+        "rust/delivery.response": {
+          "count": 21,
+          "ms": 2.7430000000000003
+        },
+        "rust/delivery.plan": {
+          "count": 21,
+          "ms": 266.992
+        },
+        "rust/sqlite.commit": {
+          "count": 67,
+          "ms": 31.204
+        },
+        "rust/delivery.coalesce": {
+          "count": 1,
+          "ms": 0.003
+        },
+        "rust/delivery.apply.keys": {
+          "count": 20,
+          "ms": 10.817
+        },
+        "rust/delivery.apply.authority.clear": {
+          "count": 20,
+          "ms": 18.264999999999997
+        },
+        "rust/delivery.apply.authority.install": {
+          "count": 20,
+          "ms": 80.22300000000001
+        },
+        "rust/delivery.apply.authority": {
+          "count": 20,
+          "ms": 98.546
+        },
+        "rust/delivery.apply.reconcile": {
+          "count": 20,
+          "ms": 0.23700000000000007
+        },
+        "rust/delivery.apply.rebuild": {
+          "count": 20,
+          "ms": 0.22800000000000006
+        },
+        "rust/delivery.apply": {
+          "count": 20,
+          "ms": 145.44999999999996
+        },
+        "rust/watch.query": {
+          "count": 20,
+          "ms": 21.048999999999996
+        },
+        "rust/delivery.apply.commit": {
+          "count": 20,
+          "ms": 28.614999999999995
+        }
+      },
+      "overlap": 19,
+      "responseToApplyGapMs": [
+        12.4215,
+        10.2865,
+        9.7305,
+        9.9235,
+        9.4535,
+        9.2095,
+        9.4075,
+        9.3875,
+        9.4075,
+        9.8635,
+        9.4105,
+        9.9405,
+        9.5395,
+        9.7555,
+        9.9345,
+        9.4675,
+        9.9745,
+        9.9915,
+        9.8025,
+        9.1825
+      ],
+      "httpOverlappingApplyMs": 139.27999999999997,
+      "maxPlacementUncertaintyUs": 24
+    },
+    {
+      "name": "after-2",
+      "build": {
+        "sourceSha256": "f31db711da46a61354672765f9e7b70dff3509d9ec6baa5a4835dda0e80870d8",
+        "artifacts": {
+          "bindings/node/axton-node.node": "aa9c9aa583a692846592d4fd3ef6f4b8fe24e345aa64f488c9f0095594e17bfb",
+          "target/release/libaxton_dart.dylib": "347cc6089979f56977dd0aac1e77f9937a704e1ef2fe7ad82b557dc3c56c92cd",
+          "artifacts/performance/initial-sync": "05a3aa121a8c43fa9d4e25980165cf2c8bb6f064dcf2b562af37af76438b7fe4",
+          "artifacts/performance/live-sync": "084c8f13cc8a0c56e7f01d2e3f86bfc7df9d9a2945cfb25312c1121738d01d5a"
+        }
+      },
+      "metrics": {
+        "storeOpenMs": [
+          6.331
+        ],
+        "firstVisibleMs": [
+          63.06
+        ],
+        "allVisibleMs": [
+          477.819
+        ],
+        "bootstrapMs": [
+          477.8
+        ]
+      },
+      "stages": {
+        "rust/delivery.encode": {
+          "count": 22,
+          "ms": 33.28
+        },
+        "rust/delivery.prepare": {
+          "count": 21,
+          "ms": 53.77599999999999
+        },
+        "rust/delivery.page": {
+          "count": 21,
+          "ms": 29.587
+        },
+        "rust/delivery.load": {
+          "count": 21,
+          "ms": 34.684
+        },
+        "rust/delivery.units": {
+          "count": 21,
+          "ms": 20.739999999999995
+        },
+        "rust/delivery.freeze": {
+          "count": 21,
+          "ms": 75.517
+        },
+        "rust/delivery.response": {
+          "count": 21,
+          "ms": 2.7399999999999998
+        },
+        "rust/delivery.plan": {
+          "count": 21,
+          "ms": 268.988
+        },
+        "rust/sqlite.commit": {
+          "count": 67,
+          "ms": 31.24
+        },
+        "rust/delivery.coalesce": {
+          "count": 1,
+          "ms": 0.004
+        },
+        "rust/delivery.apply.keys": {
+          "count": 20,
+          "ms": 10.618999999999998
+        },
+        "rust/delivery.apply.authority.clear": {
+          "count": 20,
+          "ms": 17.747
+        },
+        "rust/delivery.apply.authority.install": {
+          "count": 20,
+          "ms": 78.23800000000001
+        },
+        "rust/delivery.apply.authority": {
+          "count": 20,
+          "ms": 96.047
+        },
+        "rust/delivery.apply.reconcile": {
+          "count": 20,
+          "ms": 0.23700000000000007
+        },
+        "rust/delivery.apply.rebuild": {
+          "count": 20,
+          "ms": 0.23300000000000007
+        },
+        "rust/delivery.apply": {
+          "count": 20,
+          "ms": 142.77800000000002
+        },
+        "rust/watch.query": {
+          "count": 20,
+          "ms": 20.409999999999997
+        },
+        "rust/delivery.apply.commit": {
+          "count": 20,
+          "ms": 28.776
+        }
+      },
+      "overlap": 19,
+      "responseToApplyGapMs": [
+        12.1445,
+        10.0835,
+        9.3385,
+        9.6075,
+        8.9705,
+        9.1665,
+        9.0685,
+        9.0985,
+        10.0865,
+        9.6245,
+        9.6335,
+        9.3865,
+        9.6865,
+        9.2605,
+        9.4995,
+        9.1385,
+        9.4525,
+        9.6705,
+        9.1885,
+        9.2225
+      ],
+      "httpOverlappingApplyMs": 136.67200000000003,
+      "maxPlacementUncertaintyUs": 25
+    },
+    {
+      "name": "before-2",
+      "build": {
+        "sourceSha256": "f31db711da46a61354672765f9e7b70dff3509d9ec6baa5a4835dda0e80870d8",
+        "artifacts": {
+          "bindings/node/axton-node.node": "aa9c9aa583a692846592d4fd3ef6f4b8fe24e345aa64f488c9f0095594e17bfb",
+          "target/release/libaxton_dart.dylib": "2b615dd1c18bd6e180163399d73a3d44bc6596606f84bbc4660c36e5f5eb95c4",
+          "artifacts/performance/initial-sync": "05a3aa121a8c43fa9d4e25980165cf2c8bb6f064dcf2b562af37af76438b7fe4",
+          "artifacts/performance/live-sync": "084c8f13cc8a0c56e7f01d2e3f86bfc7df9d9a2945cfb25312c1121738d01d5a"
+        }
+      },
+      "metrics": {
+        "storeOpenMs": [
+          8.188
+        ],
+        "firstVisibleMs": [
+          74.331
+        ],
+        "allVisibleMs": [
+          497.359
+        ],
+        "bootstrapMs": [
+          497.339
+        ]
+      },
+      "stages": {
+        "rust/delivery.encode": {
+          "count": 22,
+          "ms": 33.861000000000004
+        },
+        "rust/delivery.prepare": {
+          "count": 21,
+          "ms": 57.08500000000001
+        },
+        "rust/delivery.page": {
+          "count": 21,
+          "ms": 29.383
+        },
+        "rust/delivery.load": {
+          "count": 21,
+          "ms": 35.315000000000005
+        },
+        "rust/delivery.units": {
+          "count": 21,
+          "ms": 20.962
+        },
+        "rust/delivery.freeze": {
+          "count": 21,
+          "ms": 75.635
+        },
+        "rust/delivery.response": {
+          "count": 21,
+          "ms": 2.4930000000000003
+        },
+        "rust/delivery.plan": {
+          "count": 21,
+          "ms": 272.479
+        },
+        "rust/sqlite.commit": {
+          "count": 67,
+          "ms": 31.952
+        },
+        "rust/delivery.coalesce": {
+          "count": 1,
+          "ms": 0.003
+        },
+        "rust/delivery.apply.keys": {
+          "count": 20,
+          "ms": 15.083000000000002
+        },
+        "rust/delivery.apply.authority.clear": {
+          "count": 20,
+          "ms": 28.432
+        },
+        "rust/delivery.apply.authority.install": {
+          "count": 20,
+          "ms": 150.43200000000002
+        },
+        "rust/delivery.apply.authority": {
+          "count": 20,
+          "ms": 178.964
+        },
+        "rust/delivery.apply.reconcile": {
+          "count": 20,
+          "ms": 0.17900000000000005
+        },
+        "rust/delivery.apply.rebuild": {
+          "count": 20,
+          "ms": 0.14600000000000007
+        },
+        "rust/delivery.apply": {
+          "count": 20,
+          "ms": 229.682
+        },
+        "rust/watch.query": {
+          "count": 20,
+          "ms": 30.661000000000005
+        },
+        "rust/delivery.apply.commit": {
+          "count": 20,
+          "ms": 29.042
+        }
+      },
+      "overlap": 19,
+      "responseToApplyGapMs": [
+        12.4675,
+        10.2045,
+        9.4915,
+        9.4185,
+        10.5125,
+        9.6435,
+        9.2835,
+        9.5715,
+        9.5925,
+        10.4385,
+        9.9695,
+        9.9585,
+        10.0315,
+        11.1345,
+        9.5325,
+        10.1515,
+        9.3695,
+        9.6915,
+        10.1425,
+        9.3205
+      ],
+      "httpOverlappingApplyMs": 214.40649999999997,
+      "maxPlacementUncertaintyUs": 24
+    }
+  ],
+  "summary": {
+    "before": {
+      "responseToApplyGapMs": {
+        "n": 40,
+        "median": 9.6725,
+        "min": 9.215,
+        "max": 12.4675
+      },
+      "httpOverlappingApplyMs": {
+        "n": 2,
+        "median": 212.31024999999997,
+        "min": 210.21399999999997,
+        "max": 214.40649999999997
+      },
+      "metrics": {
+        "storeOpenMs": {
+          "n": 2,
+          "median": 7.418,
+          "min": 6.648,
+          "max": 8.188
+        },
+        "firstVisibleMs": {
+          "n": 2,
+          "median": 72.8255,
+          "min": 71.32,
+          "max": 74.331
+        },
+        "allVisibleMs": {
+          "n": 2,
+          "median": 493.30949999999996,
+          "min": 489.26,
+          "max": 497.359
+        },
+        "bootstrapMs": {
+          "n": 2,
+          "median": 493.289,
+          "min": 489.239,
+          "max": 497.339
+        }
+      },
+      "stages": {
+        "rust/delivery.encode": {
+          "n": 2,
+          "median": 34.022000000000006,
+          "min": 33.861000000000004,
+          "max": 34.183
+        },
+        "rust/delivery.prepare": {
+          "n": 2,
+          "median": 53.95400000000001,
+          "min": 50.823,
+          "max": 57.08500000000001
+        },
+        "rust/delivery.page": {
+          "n": 2,
+          "median": 29.2065,
+          "min": 29.03,
+          "max": 29.383
+        },
+        "rust/delivery.load": {
+          "n": 2,
+          "median": 34.7615,
+          "min": 34.208,
+          "max": 35.315000000000005
+        },
+        "rust/delivery.units": {
+          "n": 2,
+          "median": 20.789,
+          "min": 20.616,
+          "max": 20.962
+        },
+        "rust/delivery.freeze": {
+          "n": 2,
+          "median": 75.61500000000001,
+          "min": 75.595,
+          "max": 75.635
+        },
+        "rust/delivery.response": {
+          "n": 2,
+          "median": 2.4720000000000004,
+          "min": 2.4510000000000005,
+          "max": 2.4930000000000003
+        },
+        "rust/delivery.plan": {
+          "n": 2,
+          "median": 268.29949999999997,
+          "min": 264.11999999999995,
+          "max": 272.479
+        },
+        "rust/sqlite.commit": {
+          "n": 2,
+          "median": 31.604999999999997,
+          "min": 31.257999999999996,
+          "max": 31.952
+        },
+        "rust/delivery.coalesce": {
+          "n": 2,
+          "median": 0.003,
+          "min": 0.003,
+          "max": 0.003
+        },
+        "rust/delivery.apply.keys": {
+          "n": 2,
+          "median": 15.061,
+          "min": 15.038999999999998,
+          "max": 15.083000000000002
+        },
+        "rust/delivery.apply.authority.clear": {
+          "n": 2,
+          "median": 28.500500000000002,
+          "min": 28.432,
+          "max": 28.569000000000006
+        },
+        "rust/delivery.apply.authority.install": {
+          "n": 2,
+          "median": 149.90500000000003,
+          "min": 149.37800000000004,
+          "max": 150.43200000000002
+        },
+        "rust/delivery.apply.authority": {
+          "n": 2,
+          "median": 178.50399999999996,
+          "min": 178.04399999999995,
+          "max": 178.964
+        },
+        "rust/delivery.apply.reconcile": {
+          "n": 2,
+          "median": 0.17950000000000005,
+          "min": 0.17900000000000005,
+          "max": 0.18000000000000005
+        },
+        "rust/delivery.apply.rebuild": {
+          "n": 2,
+          "median": 0.14600000000000007,
+          "min": 0.14600000000000005,
+          "max": 0.14600000000000007
+        },
+        "rust/delivery.apply": {
+          "n": 2,
+          "median": 228.92149999999998,
+          "min": 228.16099999999997,
+          "max": 229.682
+        },
+        "rust/watch.query": {
+          "n": 2,
+          "median": 30.907500000000002,
+          "min": 30.661000000000005,
+          "max": 31.154
+        },
+        "rust/delivery.apply.commit": {
+          "n": 2,
+          "median": 28.752,
+          "min": 28.461999999999996,
+          "max": 29.042
+        }
+      }
+    },
+    "after": {
+      "responseToApplyGapMs": {
+        "n": 40,
+        "median": 9.5195,
+        "min": 8.9705,
+        "max": 12.4215
+      },
+      "httpOverlappingApplyMs": {
+        "n": 2,
+        "median": 137.976,
+        "min": 136.67200000000003,
+        "max": 139.27999999999997
+      },
+      "metrics": {
+        "storeOpenMs": {
+          "n": 2,
+          "median": 6.9925,
+          "min": 6.331,
+          "max": 7.654
+        },
+        "firstVisibleMs": {
+          "n": 2,
+          "median": 65.4205,
+          "min": 63.06,
+          "max": 67.781
+        },
+        "allVisibleMs": {
+          "n": 2,
+          "median": 480.54600000000005,
+          "min": 477.819,
+          "max": 483.273
+        },
+        "bootstrapMs": {
+          "n": 2,
+          "median": 480.5285,
+          "min": 477.8,
+          "max": 483.257
+        }
+      },
+      "stages": {
+        "rust/delivery.encode": {
+          "n": 2,
+          "median": 33.445499999999996,
+          "min": 33.28,
+          "max": 33.611
+        },
+        "rust/delivery.prepare": {
+          "n": 2,
+          "median": 53.92999999999999,
+          "min": 53.77599999999999,
+          "max": 54.083999999999996
+        },
+        "rust/delivery.page": {
+          "n": 2,
+          "median": 29.1875,
+          "min": 28.788,
+          "max": 29.587
+        },
+        "rust/delivery.load": {
+          "n": 2,
+          "median": 34.45099999999999,
+          "min": 34.217999999999996,
+          "max": 34.684
+        },
+        "rust/delivery.units": {
+          "n": 2,
+          "median": 20.588499999999996,
+          "min": 20.437,
+          "max": 20.739999999999995
+        },
+        "rust/delivery.freeze": {
+          "n": 2,
+          "median": 75.8905,
+          "min": 75.517,
+          "max": 76.26400000000001
+        },
+        "rust/delivery.response": {
+          "n": 2,
+          "median": 2.7415000000000003,
+          "min": 2.7399999999999998,
+          "max": 2.7430000000000003
+        },
+        "rust/delivery.plan": {
+          "n": 2,
+          "median": 267.99,
+          "min": 266.992,
+          "max": 268.988
+        },
+        "rust/sqlite.commit": {
+          "n": 2,
+          "median": 31.222,
+          "min": 31.204,
+          "max": 31.24
+        },
+        "rust/delivery.coalesce": {
+          "n": 2,
+          "median": 0.0035,
+          "min": 0.003,
+          "max": 0.004
+        },
+        "rust/delivery.apply.keys": {
+          "n": 2,
+          "median": 10.718,
+          "min": 10.618999999999998,
+          "max": 10.817
+        },
+        "rust/delivery.apply.authority.clear": {
+          "n": 2,
+          "median": 18.006,
+          "min": 17.747,
+          "max": 18.264999999999997
+        },
+        "rust/delivery.apply.authority.install": {
+          "n": 2,
+          "median": 79.2305,
+          "min": 78.23800000000001,
+          "max": 80.22300000000001
+        },
+        "rust/delivery.apply.authority": {
+          "n": 2,
+          "median": 97.29650000000001,
+          "min": 96.047,
+          "max": 98.546
+        },
+        "rust/delivery.apply.reconcile": {
+          "n": 2,
+          "median": 0.23700000000000007,
+          "min": 0.23700000000000007,
+          "max": 0.23700000000000007
+        },
+        "rust/delivery.apply.rebuild": {
+          "n": 2,
+          "median": 0.23050000000000007,
+          "min": 0.22800000000000006,
+          "max": 0.23300000000000007
+        },
+        "rust/delivery.apply": {
+          "n": 2,
+          "median": 144.11399999999998,
+          "min": 142.77800000000002,
+          "max": 145.44999999999996
+        },
+        "rust/watch.query": {
+          "n": 2,
+          "median": 20.729499999999994,
+          "min": 20.409999999999997,
+          "max": 21.048999999999996
+        },
+        "rust/delivery.apply.commit": {
+          "n": 2,
+          "median": 28.695499999999996,
+          "min": 28.614999999999995,
+          "max": 28.776
+        }
+      }
+    }
+  }
+}

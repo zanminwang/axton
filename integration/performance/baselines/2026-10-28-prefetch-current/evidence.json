@@ -1,0 +1,202 @@
+{
+  "commit": "294f3563dc42ce5c0d875cbf141d425b65399f52",
+  "dirty": true,
+  "build": {
+    "sourceSha256": "c8feacb0ee1306a58fe0dfc0dd0e11733655608f9a1e8b0812b00892fdc968a6",
+    "artifacts": {
+      "bindings/node/axton-node.node": "54f16e52eb05a122a1844ed18c14be5c845d67df317bb84f9826c8c3bc7e6424",
+      "target/release/libaxton_dart.dylib": "c8b621164c9c45f5709a720f55b270cd663d23dc53e9cab0021d770e65a3d67e",
+      "artifacts/performance/initial-sync": "05a3aa121a8c43fa9d4e25980165cf2c8bb6f064dcf2b562af37af76438b7fe4",
+      "artifacts/performance/live-sync": "084c8f13cc8a0c56e7f01d2e3f86bfc7df9d9a2945cfb25312c1121738d01d5a"
+    }
+  },
+  "machine": {
+    "platform": "darwin",
+    "release": "25.4.0",
+    "arch": "arm64",
+    "cpu": "Apple M5 Max",
+    "cpus": 18,
+    "memoryBytes": 68719476736,
+    "node": "v24.19.0",
+    "dart": "Dart SDK version: 3.12.1 (stable) (Tue May 26 01:02:21 2026 -0700) on \"macos_arm64\"",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "typescript": "Version 5.8.3",
+    "postgres": "PostgreSQL 16.14 on x86_64-apple-darwin24.6.0, compiled by Apple clang version 17.0.0 (clang-1700.6.3.2), 64-bit",
+    "settings": [
+      {
+        "name": "fsync",
+        "setting": "on",
+        "unit": null
+      },
+      {
+        "name": "full_page_writes",
+        "setting": "on",
+        "unit": null
+      },
+      {
+        "name": "shared_buffers",
+        "setting": "16384",
+        "unit": "8kB"
+      },
+      {
+        "name": "synchronous_commit",
+        "setting": "on",
+        "unit": null
+      },
+      {
+        "name": "wal_level",
+        "setting": "replica",
+        "unit": null
+      }
+    ]
+  },
+  "compatibility": {
+    "schemaVersion": 1,
+    "stageInstrumentation": 3,
+    "clockCorrelation": "bounded-monotonic-v1",
+    "boundaries": "sync-performance-v2",
+    "fixtureSchemaSha256": "1a43ae379aabf5e5219fef6c9ca0294d4bad2f0d76b8e5945d969bc1c0cd8320",
+    "textBytes": 512,
+    "fixtureBatchSize": 100,
+    "sdk": "dart",
+    "nativeProfile": "release",
+    "dartMode": "aot",
+    "diagnostics": true,
+    "watch": "full Entry model snapshots; first expected nonempty snapshot",
+    "initialCondition": "fresh process and SQLite files per sample; native library prepared and clock calibration before timing; application configuration/open/connect/bootstrap timed; process startup excluded",
+    "cacheCondition": "new PostgreSQL database per sample; fixture just written; OS/PostgreSQL caches are not flushed",
+    "liveCondition": "two initialized Stores in one process; await each local commit, do not await settlement before next write"
+  },
+  "experiment": {
+    "purpose": "Short current-build Bootstrap prefetch comparison",
+    "sequence": [
+      false,
+      true,
+      true,
+      false
+    ],
+    "runnerSha256": "bcba90ee7cc4420b58a3118a37b23575ff61810f4674234fd3d1fa359e92ece4",
+    "selection": "Two fresh initial-sync samples per condition, off/on and on/off; same source and release artifacts"
+  },
+  "runs": [
+    {
+      "enabled": false,
+      "repetition": 1,
+      "metrics": {
+        "storeOpenMs": [
+          2.016
+        ],
+        "firstVisibleMs": [
+          60.983
+        ],
+        "allVisibleMs": [
+          1019.6
+        ],
+        "bootstrapMs": [
+          1019.578
+        ]
+      },
+      "successorsOverlappingPreviousApply": 0,
+      "maxPlacementUncertaintyUs": 33.5
+    },
+    {
+      "enabled": true,
+      "repetition": 1,
+      "metrics": {
+        "storeOpenMs": [
+          2.059
+        ],
+        "firstVisibleMs": [
+          57.215
+        ],
+        "allVisibleMs": [
+          659.317
+        ],
+        "bootstrapMs": [
+          659.301
+        ]
+      },
+      "successorsOverlappingPreviousApply": 19,
+      "maxPlacementUncertaintyUs": 19
+    },
+    {
+      "enabled": true,
+      "repetition": 2,
+      "metrics": {
+        "storeOpenMs": [
+          2.118
+        ],
+        "firstVisibleMs": [
+          56.131
+        ],
+        "allVisibleMs": [
+          663.554
+        ],
+        "bootstrapMs": [
+          663.532
+        ]
+      },
+      "successorsOverlappingPreviousApply": 19,
+      "maxPlacementUncertaintyUs": 21
+    },
+    {
+      "enabled": false,
+      "repetition": 2,
+      "metrics": {
+        "storeOpenMs": [
+          2.154
+        ],
+        "firstVisibleMs": [
+          55.949
+        ],
+        "allVisibleMs": [
+          1007.905
+        ],
+        "bootstrapMs": [
+          1007.886
+        ]
+      },
+      "successorsOverlappingPreviousApply": 0,
+      "maxPlacementUncertaintyUs": 22
+    }
+  ],
+  "comparison": [
+    {
+      "case": "initial-sync/10000/0",
+      "metric": "storeOpenMs",
+      "before": 2.085,
+      "after": 2.0885,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": 0.16786570743403395
+    },
+    {
+      "case": "initial-sync/10000/0",
+      "metric": "firstVisibleMs",
+      "before": 58.465999999999994,
+      "after": 56.673,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -3.0667396435535066
+    },
+    {
+      "case": "initial-sync/10000/0",
+      "metric": "allVisibleMs",
+      "before": 1013.7525,
+      "after": 661.4355,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -34.75374906597024
+    },
+    {
+      "case": "initial-sync/10000/0",
+      "metric": "bootstrapMs",
+      "before": 1013.732,
+      "after": 661.4165,
+      "beforeRecordReports": 0,
+      "afterRecordReports": 0,
+      "changePercent": -34.75430389886084
+    }
+  ]
+}

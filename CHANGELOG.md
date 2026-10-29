@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0](https://github.com/zanminwang/axton/compare/v0.5.7...v0.6.0) (2026-10-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* capable native/PostgreSQL backends default to eight sequential Mutations per transaction. Infrastructure failure rolls back the current group; set protocol5.experimentalMutationGroupSize to 1 for per-member durability.
+
+### Performance Improvements
+
+* batch sequential mutations and optimize sync hot paths ([#281](https://github.com/zanminwang/axton/issues/281)) ([76e6a8d](https://github.com/zanminwang/axton/commit/76e6a8df4d19c554578c06de5825439425d5c466))
+
 ## [0.5.7](https://github.com/zanminwang/axton/compare/v0.5.6...v0.5.7) (2026-10-28)
 
 

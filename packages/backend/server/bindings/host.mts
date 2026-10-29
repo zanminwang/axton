@@ -18,6 +18,7 @@ import type { Native } from "./native.mts";
 import { Session } from "./session.mts";
 import { isRetryableTransactionError } from "./retryable.mts";
 export interface HostDependencies<T> {
+  mutationGroupSize: number;
   diagnostics: Diagnostics;
   options: BackendOptions<T>;
   native: Native;
@@ -96,6 +97,7 @@ export function createHost<T>(
   session: Session,
 ): (request: string) => Promise<string> {
   const {
+    mutationGroupSize,
     options,
     diagnostics,
     native,
@@ -158,6 +160,7 @@ export function createHost<T>(
           effects.close();
         }
       } else if (req.op === "handleAction") {
+        if (mutationGroupSize > 1) session.publicationScope = req.callId;
         const action = actionTable.get(`${req.name}:${req.version}`);
         const handler = actionHandlers.get(`${req.name}:${req.version}`);
         if (!action || !handler)
@@ -343,7 +346,41 @@ export function createHost<T>(
             void unreachable;
           }
         }
-        result = await storage.call(req);
+        const stored =
+          req.op === "protocol05" &&
+          req.request.op === "applyStreamMembers" &&
+          session.publicationScope
+            ? {
+                ...req,
+                request: {
+                  ...req.request,
+                  publicationScope: session.publicationScope,
+                },
+              }
+            : req;
+        if (
+          stored.op === "protocol05" &&
+          stored.request.op === "saveResults" &&
+          !options.database.mutationResultGroups
+        ) {
+          const group = stored.request;
+          for (const [index, outcome] of group.results.entries()) {
+            await storage.call({
+              op: "protocol05",
+              request: {
+                op: "saveResult",
+                storeId: group.storeId,
+                batchId: group.batchId,
+                ordinal: group.ordinal + index,
+                count: group.count,
+                result: outcome,
+              },
+            });
+          }
+          result = null;
+        } else {
+          result = await storage.call(stored);
+        }
         // Every position that survives its savepoint wakes the stream's
         // subscribers after commit; `rollback` restores the set it snapshot.
         const publication =

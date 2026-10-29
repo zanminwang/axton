@@ -452,6 +452,9 @@ impl<S: ClientStore> Engine<'_, S> {
         // than a changed row conflicting with another row's superseded value.
         // The enclosing Store transaction rolls this transient removal back on
         // any admission, constraint or commit failure.
+        let clear_span =
+            tracing::info_span!(target: "axton::client", "delivery.apply.authority.clear")
+                .entered();
         for change in changes {
             change.validate()?;
             let k = change.key();
@@ -468,6 +471,10 @@ impl<S: ClientStore> Engine<'_, S> {
                 self.main_set(&key, None)?;
             }
         }
+        drop(clear_span);
+        let install_span =
+            tracing::info_span!(target: "axton::client", "delivery.apply.authority.install")
+                .entered();
         let mut applied = 0;
         let mut ordered: Vec<_> = changes.iter().collect();
         ordered.sort_by_key(|c| {
@@ -538,6 +545,7 @@ impl<S: ClientStore> Engine<'_, S> {
                 }
             }
         }
+        drop(install_span);
         Ok(applied)
     }
     pub fn stage_cache05(

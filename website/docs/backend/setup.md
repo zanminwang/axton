@@ -72,6 +72,24 @@ See [background writes](api.md#background-writes).
 
 The outer transaction belongs to the application. Persistence, Handler, and Loader callbacks all receive that same transaction. The runner must provide serializable isolation, roll back on rejected promises, and retry serialization conflicts by running the whole body again. Every shim of [`@axtonjs/postgres`](database.md) supplies this contract.
 
+### Mutation commit groups
+
+With the current native addon and PostgreSQL adapters, uploaded Mutations run
+sequentially in groups of up to eight per transaction. Groups partition an
+existing request; the backend does not wait for more calls. Each member keeps
+its own authorization, savepoint, outcome and publication cursor. A business
+refusal rolls back that member's savepoint and allows the group to continue.
+An infrastructure failure rolls back the whole current group; earlier committed
+groups survive retry. Successful but uncommitted Handlers can run again, so
+irreversible side effects belong in an application outbox.
+
+Set `protocol5.experimentalMutationGroupSize` on `createBackend` to an integer
+from 1 to 32; use 1 for per-Mutation commits. The option retains its experimental
+name although capable backends default to 8. Omitted configuration falls back to
+1 when the native addon or custom adapter lacks group support; an explicit size
+above 1 fails startup without both capabilities. Groups have a count bound,
+so slow Handlers can still hold locks for a long time.
+
 ## Call results
 
 A successful Handler returns the explicit outputs declared by its Mutation or Query; an operation with no explicit outputs may return nothing. AXTON resolves Model outputs through the versioned Loader at that invocation. The invocation result can differ from later Stream authority. `CallRejected` or a registered `translateRejection` code rolls back that call's savepoint; ordinary Handler/Loader exceptions become `handler.failed` / `loader.failed` and reach `onError`. Retryable database errors retry the transaction, and persistence faults abort it. Durable calls expose final outcomes through `Call.wait()`; direct calls return a final result or throw `CallError`. See [handlers](api.md#handlers) and [client Mutations and Queries](../frontend/client-api.md#mutations-and-queries).

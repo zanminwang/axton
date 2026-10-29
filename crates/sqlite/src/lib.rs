@@ -50,15 +50,10 @@ fn parameter(value: &Value) -> Result<SqlValue> {
 }
 
 fn rows(connection: &Connection, sql: &str, parameters: &[Value]) -> Result<SqlRows> {
-    let mut statement = connection.prepare(sql).map_err(db)?;
+    let mut statement = connection.prepare_cached(sql).map_err(db)?;
     if !statement.readonly() || statement.column_count() == 0 {
         return Err(invalid("SQL write statements are forbidden"));
     }
-    let columns = statement
-        .column_names()
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
     let values = parameters
         .iter()
         .map(parameter)
@@ -66,8 +61,9 @@ fn rows(connection: &Connection, sql: &str, parameters: &[Value]) -> Result<SqlR
     let mut cursor = statement.query(params_from_iter(values)).map_err(db)?;
     let mut output = vec![];
     while let Some(row) = cursor.next().map_err(db)? {
-        let mut record = Vec::with_capacity(columns.len());
-        for index in 0..columns.len() {
+        let column_count = row.as_ref().column_count();
+        let mut record = Vec::with_capacity(column_count);
+        for index in 0..column_count {
             record.push(match row.get_ref(index).map_err(db)? {
                 ValueRef::Null => Value::Null,
                 ValueRef::Integer(v) => Value::from(v),
@@ -82,6 +78,14 @@ fn rows(connection: &Connection, sql: &str, parameters: &[Value]) -> Result<SqlR
         }
         output.push(record);
     }
+    drop(cursor);
+    // A cached statement may reprepare at its first step after a schema change.
+    // Read column metadata afterward, including when the query returned no rows.
+    let columns = statement
+        .column_names()
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
     Ok(SqlRows {
         columns,
         rows: output,
@@ -369,7 +373,9 @@ impl ClientStore for SqliteStore {
             .map(parameter)
             .collect::<Result<Vec<_>>>()?;
         self.writer
-            .execute(sql, params_from_iter(values))
+            .prepare_cached(sql)
+            .map_err(db)?
+            .execute(params_from_iter(values))
             .map_err(db)
     }
     fn execute_batch(&mut self, sql: &str) -> Result<()> {

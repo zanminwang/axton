@@ -11,7 +11,8 @@ mod materialization;
 pub use materialization::RetainedMaterialization;
 mod protocol_v05;
 pub use protocol_v05::{
-    encode_batch_acknowledgement, process_batch_member, settle_external05, validate_mutation_batch,
+    encode_batch_acknowledgement, process_batch_group, process_batch_member, settle_external05,
+    validate_mutation_batch,
 };
 mod mutation_batch;
 mod settlement;

@@ -22,9 +22,9 @@ impl Harness {
         let context = client.request_context05().unwrap();
         let status = client.store_status05().unwrap();
         let mut control = if enabled {
-            Control::with_bootstrap_prefetch(status.clone(), true)
-        } else {
             Control::new(status.clone())
+        } else {
+            Control::with_bootstrap_prefetch(status.clone(), false)
         };
         control.connect().unwrap();
         let handshake = control

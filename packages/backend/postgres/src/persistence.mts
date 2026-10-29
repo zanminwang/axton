@@ -203,8 +203,13 @@ async function answer05(
       return row ? { principal: row.principal, stream: row.stream } : null;
     }
     case "claimStore": {
-      await q(SQL.V05_STORE_INSERT, r.storeId, r.principal, r.stream);
-      const [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
+      let [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
+      if (!row) {
+        // First claims still race through the unique Store identity. A stale
+        // Serializable snapshot retries the whole transaction as before.
+        await q(SQL.V05_STORE_INSERT, r.storeId, r.principal, r.stream);
+        [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
+      }
       if (!row) throw new Error("Store missing");
       return {
         principal: row.principal,
@@ -227,7 +232,6 @@ async function answer05(
         r.count,
       );
       if (rows.length !== 1) throw new Error("Batch admission state changed");
-      await q(SQL.V05_BATCH_PRUNE, r.storeId, r.batchId);
       return null;
     }
     case "readResult": {
@@ -245,30 +249,67 @@ async function answer05(
       );
     case "saveResult": {
       const result = r.result as { mutationId: number };
-      await q(
-        SQL.V05_RESULT_SAVE,
-        r.storeId,
-        r.batchId,
-        result.mutationId,
-        r.ordinal,
-        JSON.stringify(result),
-      );
       const rows = await q(
-        SQL.V05_PROGRESS_SAVE,
+        SQL.V05_RESULT_SAVE,
         r.storeId,
         r.batchId,
         r.ordinal,
         r.count,
+        result.mutationId,
+        JSON.stringify(result),
       );
       if (rows.length !== 1) throw new Error("Batch progress state changed");
       return null;
     }
-    case "readTracking": {
+    case "saveResults": {
+      const results = arrayOf(r.results, "group results");
+      if (results.length === 0 || results.length > 32)
+        throw new Error("Invalid result group size");
+      const ordinal = safe(r.ordinal),
+        count = positiveCounter(r.count);
+      if (ordinal + results.length > count)
+        throw new Error("Invalid result group range");
       const rows = await q(
-        SQL.READ_TRACKING,
-        JSON.stringify(r.records),
-        JSON.stringify(r.pairs),
+        SQL.V05_RESULTS_SAVE,
+        r.storeId,
+        r.batchId,
+        ordinal,
+        count,
+        results.length,
+        r.digest,
+        JSON.stringify(results),
       );
+      if (rows.length !== results.length)
+        throw new Error("Batch progress state changed");
+      return null;
+    }
+    case "readTracking": {
+      const records = arrayOf(r.records, "tracking records");
+      const pairs = arrayOf(r.pairs, "tracking pairs");
+      if (records.length === 0 && pairs.length === 0) return [];
+      let rows: Record<string, unknown>[];
+      if (records.length === 0 && pairs.length === 1) {
+        const pair = keyOf(pairs[0], ["stream"]);
+        rows = await q(
+          SQL.READ_TRACKING_PAIR,
+          pair.model,
+          pair.identityKey,
+          streamName(pair.stream),
+        );
+      } else if (pairs.length === 0 && records.length === 1) {
+        const record = keyOf(records[0]);
+        rows = await q(
+          SQL.READ_TRACKING_RECORD,
+          record.model,
+          record.identityKey,
+        );
+      } else {
+        rows = await q(
+          SQL.READ_TRACKING,
+          JSON.stringify(records),
+          JSON.stringify(pairs),
+        );
+      }
       return rows.map((row) => ({
         stream: row.stream,
         model: row.model,
@@ -330,11 +371,19 @@ async function answer05(
       );
       const positions = [];
       for (const group of batches(records)) {
-        const rows = await q(
-          SQL.V05_POSITIONS_READ_BATCH,
-          r.stream,
-          JSON.stringify(group),
-        );
+        const rows =
+          group.length === 1
+            ? await q(
+                SQL.V05_POSITION_READ,
+                r.stream,
+                group[0]!.model,
+                group[0]!.identityKey,
+              )
+            : await q(
+                SQL.V05_POSITIONS_READ_BATCH,
+                r.stream,
+                JSON.stringify(group),
+              );
         if (rows.length !== group.length)
           throw new Error("position cardinality mismatch");
         for (let i = 0; i < group.length; i++) {
@@ -373,9 +422,46 @@ async function answer05(
       // roll back with caller savepoints, and COMMIT clears connection-local rows.
       // Repeated preparation/publication in this transaction reuses one cursor.
       if (streams.length) await q(SQL.V05_PUBLICATION_CURSORS);
+      // A single bounded publish-only run can carry its new cursor through
+      // RETURNING into the membership write in the same statement. Mixed and
+      // multi-Stream runs retain their existing canonical reservation order.
+      if (
+        streams.length === 1 &&
+        deltas.length <= SQL.STREAM_BATCH &&
+        deltas.every((d) => d.publish === true)
+      ) {
+        const rows = await q(
+          SQL.V05_RESERVE_APPLY_MEMBERS,
+          streams[0],
+          r.publicationScope ?? "",
+          JSON.stringify(deltas),
+        );
+        if (rows.length !== deltas.length)
+          throw new Error("member cardinality mismatch");
+        return rows.map((row, index) => {
+          if (row.overflow)
+            throw new Error(`Stream ${streams[0]} head counter overflow`);
+          if (!row.represented)
+            throw new Error("missing canonical record metadata");
+          if (row.kind !== "upsert")
+            throw new Error("unpublished pair has no live position");
+          const d = deltas[index]!;
+          return {
+            stream: d.stream,
+            model: d.model,
+            identityKey: d.identityKey,
+            cursor: positiveCounter(row.cursor),
+            kind: "upsert",
+          };
+        });
+      }
       const cursors = new Map<string, number>();
       for (const stream of streams) {
-        const [row] = await q(SQL.V05_RESERVE_CURSOR, stream);
+        const [row] = await q(
+          SQL.V05_RESERVE_CURSOR,
+          stream,
+          r.publicationScope ?? "",
+        );
         if (!row) throw new Error(`Stream ${stream} head counter overflow`);
         cursors.set(stream, positiveCounter(row.cursor));
       }
@@ -507,6 +593,8 @@ export function persistence<Tx>(driver: PostgresDriver<Tx>): Database<Tx> & {
   };
   return {
     driver,
+    mutationCommitGroups: true,
+    mutationResultGroups: true,
     initialize,
     transaction: (body, diagnostics) =>
       driver.transaction(

@@ -4,6 +4,9 @@ Manual Performance E2E through generated Dart, release native artifacts, the rea
 backend, HTTP/WebSocket, PostgreSQL and SQLite. It verifies state as well as time.
 It is separate from simulation and has no performance threshold.
 
+The [2026-10-28 optimization review](baselines/2026-10-28-review/README.md)
+summarizes the controlled comparisons, changed defaults and remaining design debt.
+
 ## Run
 
 From the repository root with Rust, Node, Dart and PostgreSQL tools on PATH:
@@ -336,3 +339,13 @@ The raw compatibility contract records the instrumentation version. New detailed
 runs are deliberately incompatible with earlier instrumented timings; retain a
 separate disabled-diagnostics control when estimating instrumentation overhead.
 Summed stages overlap and cannot be added into an end-to-end latency breakdown.
+
+## Default scheduling
+
+Current native clients enable one-page Bootstrap prefetch. Set
+`AXTON_EXPERIMENTAL_BOOTSTRAP_PREFETCH=0` before opening clients to measure serial
+loading. The PostgreSQL fixture uses the backend's capability-aware default of
+8 sequential Mutations per transaction. Set
+`AXTON_EXPERIMENTAL_MUTATION_GROUP_SIZE=1` to measure per-Mutation commits.
+Explicit environment settings override these defaults; historical archived
+comparisons retain the settings used at their collection time.

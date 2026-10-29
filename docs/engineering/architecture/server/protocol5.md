@@ -2,13 +2,13 @@
 
 ## 1. Introduction and Goals
 
-The Batch path commits each named Mutation independently and resumes a fixed request after a crash. Protocol 5 separates execution acknowledgment from locally committed settlement and uses finite authoritative delivery. [Adoption](../../protocol5-adoption.md) remains a separate release gate.
+The Batch path runs bounded sequential commit groups and resumes a fixed request after a crash. Current native/PostgreSQL backends default to eight members per transaction; explicit size 1 retains per-Mutation commits. Protocol 5 separates execution acknowledgment from locally committed settlement and uses finite authoritative delivery. [Adoption](../../protocol5-adoption.md) remains a separate release gate.
 
 ## 3. Context and Scope
 
 `BackendOptions.protocol5` supplies known current/retained read schemas, projection generation and `authorizeStream(principal, stream, tx)`. The server derives the read context through core's protocol-5 materialization helper. Authentication identifies the principal. Mutation admission/replay and finite authority planning authorize under their Serializable transaction. Ordinary Query/Fetch validate the immutable Store binding and authorize without holding Store progress across arbitrary Handler/Loader awaits. Explicit Query tracking writes membership in its Serializable read transaction and may force a complete retry.
 
-The SDK carries one validated immutable request through sequential `processBatchMember` native calls. Each call opens its own Serializable transaction. Rust validates the complete request, selects the trusted Mutation by name/version and normalizes its input. The caller's descriptor fingerprint is immutable intent bound by the Batch digest; it is not an equality gate against today's artifact. Compatible input widening or field reordering therefore does not refuse frozen work.
+The SDK carries one validated immutable request through sequential `processBatchGroup` native calls, each in one Serializable transaction. Size 1 uses `processBatchMember` instead. Rust validates the complete request, selects the trusted Mutation by name/version and normalizes its input. The caller's descriptor fingerprint is immutable intent bound by the Batch digest; it is not an equality gate against today's artifact. Compatible input widening or field reordering therefore does not refuse frozen work.
 
 ## 5. Building Block View
 
@@ -31,7 +31,41 @@ and real same-Store liveness tests.
 
 Fresh work authorizes and performs business work in the same Serializable transaction. No namespace-wide publication lock is acquired. The business savepoint isolates an explicit typed refusal. A handler or Loader business refusal rolls back its effects, then saves rejection/progress outside that savepoint. Infrastructure, malformed Loader output or database failure aborts the outer transaction and leaves progress unchanged. The final saved member promotes current metadata to the last completed Batch.
 
-Explicit tracking and invalidation use the retained discovery/recheck and canonical Stream locks. New/live pairs always have a non-null discoverable position. Each actual transaction reserves at most one cursor per affected Stream, reused by every preparation publication. Reservation state is checked against `pg_current_xact_id()` so a reused caller-owned connection cannot carry it across COMMIT. Existing live tracking retains its cursor; invalidation reaches existing holders without enrolling others.
+### Sequential commit groups
+
+`protocol5.experimentalMutationGroupSize` sets bounded groups of 1–32 members
+per Serializable transaction. The legacy option name is retained. If the native
+addon exports `processBatchGroup` and the adapter declares `mutationCommitGroups`,
+the default is 8; otherwise omitted configuration retains size 1. Explicit size
+above 1 requires both capabilities and fails startup if either is missing. Set
+size 1 to retain per-Mutation durability. HTTP Batch membership and digest stay
+fixed, and the server partitions the existing request without waiting for more
+work. Each group runs members sequentially, parses/validates the request once,
+and retains per-member authorization, savepoints, outcomes and cursors. A group
+claims/locks its Store once and carries validated progress in memory while its
+members execute. Newly executed outcomes form one contiguous suffix, persisted
+with progress in one guarded `saveResults` statement before the outer COMMIT.
+Saved replay prefixes are read without rerunning handlers or rewriting outcomes.
+Adapters advertising `mutationResultGroups` support the bulk write; other group-
+capable adapters use sequential `saveResult` calls inside the same transaction.
+Explicit size 1 retains its direct per-member persistence path.
+
+A typed business refusal rolls back that member's savepoint and the group
+continues. An infrastructure failure rolls back the whole uncommitted group;
+earlier committed groups survive, and retry of the same frozen request reuses
+their outcomes. Successful but uncommitted handlers may run again. Default grouped execution
+makes successful members durable together at the group COMMIT. Responses and
+subscriber wakes follow the outer COMMIT. Groups are count-bounded only: slow
+handlers can still hold their transaction/locks for a long time.
+
+The publication reservation scope includes the Mutation identity. Recursive
+Loader-preparation callbacks inherit that scope through the transaction Session,
+so repeated publications by one member reuse its cursor while distinct members
+retain distinct cursors. [Grouped Batch regressions](../../../../integration/persistence/server/protocol-v05-batch.test.mjs)
+cover ordering, short final groups, nested preparation, refusal, whole-group
+rollback, retained committed prefixes and concurrent duplicate replay.
+
+Explicit tracking and invalidation use the retained discovery/recheck and canonical Stream locks. New/live pairs always have a non-null discoverable position. Each publication scope reserves at most one cursor per affected Stream, reused by that scope's preparation publications. Ordinary transactions use one scope; grouped Mutations have separate scopes. Temporary SQL reservations roll back with savepoints and clear on COMMIT. Existing live tracking retains its cursor; invalidation reaches existing holders without enrolling others.
 
 Input targets are read in the same transaction snapshot after preparation. A tracked initiating-Stream target records its position and a call-owned null-cursor fallback. Other targets stay private. Returning an identity or snapshot never tracks it. Business rows, final positions, target evidence, result and progress commit together; subscriber wakes follow commit.
 

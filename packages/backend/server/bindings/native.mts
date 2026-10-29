@@ -43,6 +43,14 @@ export type Native = {
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
   encodeBatchAcknowledgement?(request: string, results: string[]): string;
+  processBatchGroup?(
+    config: string,
+    owner: string,
+    request: string,
+    start: number,
+    count: number,
+    callback: (request: string) => Promise<string>,
+  ): Promise<string>;
   settleExternal05?(
     config: string,
     settlement: string,
@@ -141,6 +149,7 @@ function typedNative(native: Native): Native {
         "processRead05",
         "handshake05",
         "processLive05",
+        "processBatchGroup",
       ]
         .filter((key) => typeof (native as any)[key] === "function")
         .map((key) => [

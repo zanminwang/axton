@@ -1,0 +1,577 @@
+diff --git a/crates/protocols/src/server_bridge/mod.rs b/crates/protocols/src/server_bridge/mod.rs
+index 82c831b..910c56e 100644
+--- a/crates/protocols/src/server_bridge/mod.rs
++++ b/crates/protocols/src/server_bridge/mod.rs
+@@ -174,6 +174,17 @@ pub enum Protocol05Operation {
+         count: u64,
+         result: crate::sync::MutationResult,
+     },
++    SaveResults {
++        store_id: String,
++        #[serde(with = "cursor")]
++        batch_id: u64,
++        #[serde(with = "counter")]
++        ordinal: u64,
++        #[serde(with = "cursor")]
++        count: u64,
++        digest: String,
++        results: Vec<crate::sync::MutationResult>,
++    },
+     ReadTracking {
+         records: Vec<MemberKey>,
+         pairs: Vec<TrackingPair>,
+@@ -192,6 +203,8 @@ pub enum Protocol05Operation {
+     },
+     ApplyStreamMembers {
+         deltas: Vec<MemberDelta>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        publication_scope: Option<String>,
+     },
+ }
+ 
+diff --git a/crates/server/src/mutation_batch.rs b/crates/server/src/mutation_batch.rs
+index 36522c0..5965d43 100644
+--- a/crates/server/src/mutation_batch.rs
++++ b/crates/server/src/mutation_batch.rs
+@@ -18,7 +18,7 @@ use serde_json::json;
+ use std::collections::BTreeMap;
+ #[derive(Deserialize)]
+ #[serde(rename_all = "camelCase", deny_unknown_fields)]
+-struct Store {
++pub(crate) struct Store {
+     principal: String,
+     stream: String,
+     last_processed_batch_id: u64,
+@@ -28,7 +28,42 @@ struct Store {
+     last_digest: Option<String>,
+     last_count: Option<u64>,
+ }
+-#[tracing::instrument(target = "axton::server", name = "mutation.execute", skip_all)]
++impl Store {
++    pub(crate) async fn claim(
++        owner: &str,
++        request: &v05::MutationRequest,
++        host: &impl Host,
++    ) -> Result<Self> {
++        if owner.trim().is_empty() {
++            return Err(Error::code(crate::code::PRINCIPAL_INVALID));
++        }
++        protocol_v05::call(host,json!({"op":"claimStore","storeId":request.context.store_id,"principal":owner,"stream":request.context.stream})).await
++    }
++    pub(crate) fn saved(&self, request: &v05::MutationRequest, ordinal: u64) -> bool {
++        request.batch_id == self.last_processed_batch_id || ordinal < self.progress
++    }
++    async fn save(
++        &mut self,
++        request: &v05::MutationRequest,
++        ordinal: u64,
++        result: &v05::MutationResult,
++        persist: bool,
++        host: &impl Host,
++    ) -> Result<()> {
++        let count = request.mutations.len() as u64;
++        if persist {
++            let _:Acknowledged=protocol_v05::call(host,json!({"op":"saveResult","storeId":request.context.store_id,"batchId":request.batch_id,"ordinal":ordinal,"count":count,"result":result})).await?;
++        }
++        self.progress = ordinal + 1;
++        if self.progress == count {
++            self.last_processed_batch_id = request.batch_id;
++            self.last_digest = self.current_digest.take();
++            self.last_count = self.current_count.take();
++            self.progress = 0;
++        }
++        Ok(())
++    }
++}
+ pub(crate) async fn execute(
+     config: &Config,
+     owner: &str,
+@@ -36,14 +71,26 @@ pub(crate) async fn execute(
+     ordinal: u64,
+     raw_host: &impl Host,
+ ) -> Result<v05::MutationResult> {
+-    if owner.trim().is_empty() {
+-        return Err(Error::code(crate::code::PRINCIPAL_INVALID));
++    if ordinal >= request.mutations.len() as u64 {
++        return Err(request_invalid("member ordinal out of range"));
+     }
++    let mut store = Store::claim(owner, request, raw_host).await?;
++    execute_claimed(config, owner, request, ordinal, raw_host, &mut store, true).await
++}
++#[tracing::instrument(target = "axton::server", name = "mutation.execute", skip_all)]
++pub(crate) async fn execute_claimed(
++    config: &Config,
++    owner: &str,
++    request: &v05::MutationRequest,
++    ordinal: u64,
++    raw_host: &impl Host,
++    store: &mut Store,
++    persist: bool,
++) -> Result<v05::MutationResult> {
+     let member = request
+         .mutations
+         .get(usize::try_from(ordinal).map_err(request_invalid)?)
+         .ok_or_else(|| request_invalid("member ordinal out of range"))?;
+-    let store:Store=protocol_v05::call(raw_host,json!({"op":"claimStore","storeId":request.context.store_id,"principal":owner,"stream":request.context.stream})).await?;
+     if store.principal != owner || store.stream != request.context.stream {
+         return Err(Error::code("store.binding"));
+     }
+@@ -89,6 +136,8 @@ pub(crate) async fn execute(
+     }
+     if store.current_digest.is_none() {
+         let _:Acknowledged=protocol_v05::call(raw_host,json!({"op":"beginBatch","storeId":request.context.store_id,"batchId":request.batch_id,"digest":request.digest,"count":count})).await?;
++        store.current_digest = Some(request.digest.clone());
++        store.current_count = Some(count);
+     }
+     let args = match protocol_v05::validate_member(config, member)? {
+         protocol_v05::MutationInput::Supported(args) => args,
+@@ -100,15 +149,9 @@ pub(crate) async fn execute(
+                     message: None,
+                 },
+             };
+-            let _: Acknowledged = protocol_v05::call(
+-                raw_host,
+-                json!({
+-                    "op":"saveResult", "storeId":request.context.store_id,
+-                    "batchId":request.batch_id, "ordinal":ordinal, "count":count,
+-                    "result":result,
+-                }),
+-            )
+-            .await?;
++            store
++                .save(request, ordinal, &result, persist, raw_host)
++                .await?;
+             return Ok(result);
+         }
+     };
+@@ -269,7 +312,9 @@ pub(crate) async fn execute(
+         mutation_id: member.id,
+         outcome,
+     };
+-    let _:Acknowledged=protocol_v05::call(raw_host,json!({"op":"saveResult","storeId":request.context.store_id,"batchId":request.batch_id,"ordinal":ordinal,"count":count,"result":result})).await?;
++    store
++        .save(request, ordinal, &result, persist, raw_host)
++        .await?;
+     Ok(result)
+ }
+ pub(crate) fn models(
+diff --git a/crates/server/src/protocol_v05.rs b/crates/server/src/protocol_v05.rs
+index 26f8102..aff41e7 100644
+--- a/crates/server/src/protocol_v05.rs
++++ b/crates/server/src/protocol_v05.rs
+@@ -141,6 +141,75 @@ pub async fn process_batch_member(
+     let result = crate::mutation_batch::execute(config, owner, &request, ordinal, host).await?;
+     axton_core::canonical_json(&serde_json::to_value(result).map_err(internal)?).map_err(internal)
+ }
++/// Experimental bounded commit group. The caller owns one outer transaction.
++/// Every member retains its own savepoint, outcome and publication cursor scope.
++pub async fn process_batch_group(
++    config: &Config,
++    owner: &str,
++    bytes: &[u8],
++    start: u64,
++    count: u64,
++    host: &impl Host,
++) -> Result<Vec<String>> {
++    let request: v05::MutationRequest = v05::decode(bytes).map_err(request_invalid)?;
++    let end = start
++        .checked_add(count)
++        .ok_or_else(|| request_invalid("group overflow"))?;
++    if count == 0 || count > 32 || end > request.mutations.len() as u64 {
++        return Err(request_invalid("invalid Mutation group range"));
++    }
++    for mutation in &request.mutations {
++        validate_member(config, mutation)?;
++    }
++    let mut store = crate::mutation_batch::Store::claim(owner, &request, host).await?;
++    let mut results = Vec::new();
++    let mut pending = Vec::new();
++    let mut first = None;
++    for ordinal in start..end {
++        let fresh = !store.saved(&request, ordinal);
++        let scope = format!(
++            "{}:{}:{}",
++            request.context.store_id, request.batch_id, request.mutations[ordinal as usize].id
++        );
++        let scoped = MemberHost { host, scope };
++        let result = crate::mutation_batch::execute_claimed(
++            config, owner, &request, ordinal, &scoped, &mut store, false,
++        )
++        .await?;
++        results.push(
++            axton_core::canonical_json(&serde_json::to_value(&result).map_err(internal)?)
++                .map_err(internal)?,
++        );
++        if fresh {
++            first.get_or_insert(ordinal);
++            pending.push(result);
++        }
++    }
++    if let Some(ordinal) = first {
++        let _: axton_protocols::server_bridge::Acknowledged = call(host, json!({
++            "op":"saveResults", "storeId":request.context.store_id, "batchId":request.batch_id,
++            "ordinal":ordinal, "count":request.mutations.len(), "digest":request.digest, "results":pending,
++        })).await?;
++    }
++    Ok(results)
++}
++struct MemberHost<'a, H: Host> {
++    host: &'a H,
++    scope: String,
++}
++impl<H: Host> Host for MemberHost<'_, H> {
++    fn call(
++        &self,
++        mut request: Value,
++    ) -> Pin<Box<dyn Future<Output = HostResult<Value>> + Send + '_>> {
++        Box::pin(async move {
++            if request["op"] == "protocol05" && request["request"]["op"] == "applyStreamMembers" {
++                request["request"]["publicationScope"] = json!(self.scope);
++            }
++            self.host.call(request).await
++        })
++    }
++}
+ pub fn encode_batch_acknowledgement(bytes: &[u8], results: &[String]) -> Result<String> {
+     let request: v05::MutationRequest = v05::decode(bytes).map_err(request_invalid)?;
+     let ack = v05::BatchAcknowledgement {
+diff --git a/packages/backend/postgres/src/persistence.mts b/packages/backend/postgres/src/persistence.mts
+index 5521f2e..50fa625 100644
+--- a/packages/backend/postgres/src/persistence.mts
++++ b/packages/backend/postgres/src/persistence.mts
+@@ -203,8 +203,13 @@ async function answer05(
+       return row ? { principal: row.principal, stream: row.stream } : null;
+     }
+     case "claimStore": {
+-      await q(SQL.V05_STORE_INSERT, r.storeId, r.principal, r.stream);
+-      const [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
++      let [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
++      if (!row) {
++        // First claims still race through the unique Store identity. A stale
++        // Serializable snapshot retries the whole transaction as before.
++        await q(SQL.V05_STORE_INSERT, r.storeId, r.principal, r.stream);
++        [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
++      }
+       if (!row) throw new Error("Store missing");
+       return {
+         principal: row.principal,
+@@ -227,7 +232,6 @@ async function answer05(
+         r.count,
+       );
+       if (rows.length !== 1) throw new Error("Batch admission state changed");
+-      await q(SQL.V05_BATCH_PRUNE, r.storeId, r.batchId);
+       return null;
+     }
+     case "readResult": {
+@@ -245,22 +249,38 @@ async function answer05(
+       );
+     case "saveResult": {
+       const result = r.result as { mutationId: number };
+-      await q(
++      const rows = await q(
+         SQL.V05_RESULT_SAVE,
+         r.storeId,
+         r.batchId,
+-        result.mutationId,
+         r.ordinal,
++        r.count,
++        result.mutationId,
+         JSON.stringify(result),
+       );
++      if (rows.length !== 1) throw new Error("Batch progress state changed");
++      return null;
++    }
++    case "saveResults": {
++      const results = arrayOf(r.results, "group results");
++      if (results.length === 0 || results.length > 32)
++        throw new Error("Invalid result group size");
++      const ordinal = safe(r.ordinal),
++        count = positiveCounter(r.count);
++      if (ordinal + results.length > count)
++        throw new Error("Invalid result group range");
+       const rows = await q(
+-        SQL.V05_PROGRESS_SAVE,
++        SQL.V05_RESULTS_SAVE,
+         r.storeId,
+         r.batchId,
+-        r.ordinal,
+-        r.count,
++        ordinal,
++        count,
++        results.length,
++        r.digest,
++        JSON.stringify(results),
+       );
+-      if (rows.length !== 1) throw new Error("Batch progress state changed");
++      if (rows.length !== results.length)
++        throw new Error("Batch progress state changed");
+       return null;
+     }
+     case "readTracking": {
+@@ -375,7 +395,11 @@ async function answer05(
+       if (streams.length) await q(SQL.V05_PUBLICATION_CURSORS);
+       const cursors = new Map<string, number>();
+       for (const stream of streams) {
+-        const [row] = await q(SQL.V05_RESERVE_CURSOR, stream);
++        const [row] = await q(
++          SQL.V05_RESERVE_CURSOR,
++          stream,
++          r.publicationScope ?? "",
++        );
+         if (!row) throw new Error(`Stream ${stream} head counter overflow`);
+         cursors.set(stream, positiveCounter(row.cursor));
+       }
+@@ -507,6 +531,8 @@ export function persistence<Tx>(driver: PostgresDriver<Tx>): Database<Tx> & {
+   };
+   return {
+     driver,
++    mutationCommitGroups: true,
++    mutationResultGroups: true,
+     initialize,
+     transaction: (body, diagnostics) =>
+       driver.transaction(
+diff --git a/packages/backend/postgres/src/sql.mts b/packages/backend/postgres/src/sql.mts
+index 2cf8628..1f2b4ae 100644
+--- a/packages/backend/postgres/src/sql.mts
++++ b/packages/backend/postgres/src/sql.mts
+@@ -37,27 +37,31 @@ export const V05_STORE_LOCK =
+   // foreign-key checks may hold KEY SHARE on the immutable Store identity.
+   "SELECT principal,stream,last_processed_batch_id,progress,current_digest,current_count,last_digest,last_count FROM axton_store WHERE id=$1 FOR NO KEY UPDATE";
+ export const V05_BATCH_BEGIN =
+-  "UPDATE axton_store SET current_digest=$3,current_count=$4 WHERE id=$1 AND last_processed_batch_id=$2-1 AND current_digest IS NULL AND progress=0 RETURNING id";
+-export const V05_BATCH_PRUNE =
+-  "DELETE FROM axton_mutation_result WHERE store_id=$1 AND batch_id<$2";
++  "WITH admitted AS (UPDATE axton_store SET current_digest=$3,current_count=$4 WHERE id=$1 AND last_processed_batch_id=$2-1 AND current_digest IS NULL AND progress=0 RETURNING id), " +
++  "pruned AS (DELETE FROM axton_mutation_result result USING admitted WHERE result.store_id=admitted.id AND result.batch_id<$2) " +
++  "SELECT id FROM admitted";
+ export const V05_RESULT_READ =
+   "SELECT result FROM axton_mutation_result WHERE store_id=$1 AND batch_id=$2 AND ordinal=$3";
+ export const V05_RESULTS_READ =
+   "SELECT result FROM axton_mutation_result WHERE store_id=$1 AND batch_id=$2 ORDER BY ordinal";
++/** Progress and its immutable result either both change or neither does. */
+ export const V05_RESULT_SAVE =
+-  "INSERT INTO axton_mutation_result(store_id,batch_id,mutation_id,ordinal,result) VALUES($1,$2,$3,$4,$5::jsonb)";
+-export const V05_PROGRESS_SAVE =
+-  "UPDATE axton_store SET progress=CASE WHEN $3+1=$4 THEN 0 ELSE $3+1 END,last_processed_batch_id=CASE WHEN $3+1=$4 THEN $2 ELSE last_processed_batch_id END,last_digest=CASE WHEN $3+1=$4 THEN current_digest ELSE last_digest END,last_count=CASE WHEN $3+1=$4 THEN current_count ELSE last_count END,current_digest=CASE WHEN $3+1=$4 THEN NULL ELSE current_digest END,current_count=CASE WHEN $3+1=$4 THEN NULL ELSE current_count END WHERE id=$1 AND last_processed_batch_id=$2-1 AND progress=$3 AND current_count=$4 RETURNING id";
++  "WITH advanced AS (UPDATE axton_store SET progress=CASE WHEN $3+1=$4 THEN 0 ELSE $3+1 END,last_processed_batch_id=CASE WHEN $3+1=$4 THEN $2 ELSE last_processed_batch_id END,last_digest=CASE WHEN $3+1=$4 THEN current_digest ELSE last_digest END,last_count=CASE WHEN $3+1=$4 THEN current_count ELSE last_count END,current_digest=CASE WHEN $3+1=$4 THEN NULL ELSE current_digest END,current_count=CASE WHEN $3+1=$4 THEN NULL ELSE current_count END WHERE id=$1 AND last_processed_batch_id=$2-1 AND progress=$3 AND current_count=$4 RETURNING id) " +
++  "INSERT INTO axton_mutation_result(store_id,batch_id,mutation_id,ordinal,result) SELECT id,$2,$5,$3,$6::jsonb FROM advanced RETURNING store_id";
++/** A contiguous result suffix and its progress are one guarded atomic write. */
++export const V05_RESULTS_SAVE =
++  "WITH advanced AS (UPDATE axton_store SET progress=CASE WHEN $3::bigint+$5::bigint=$4 THEN 0 ELSE $3::bigint+$5::bigint END,last_processed_batch_id=CASE WHEN $3::bigint+$5::bigint=$4 THEN $2 ELSE last_processed_batch_id END,last_digest=CASE WHEN $3::bigint+$5::bigint=$4 THEN current_digest ELSE last_digest END,last_count=CASE WHEN $3::bigint+$5::bigint=$4 THEN current_count ELSE last_count END,current_digest=CASE WHEN $3::bigint+$5::bigint=$4 THEN NULL ELSE current_digest END,current_count=CASE WHEN $3::bigint+$5::bigint=$4 THEN NULL ELSE current_count END WHERE id=$1 AND last_processed_batch_id=$2-1 AND progress=$3 AND current_count=$4 AND current_digest=$6 AND $5>0 AND $3::bigint+$5::bigint<=$4 RETURNING id) " +
++  "INSERT INTO axton_mutation_result(store_id,batch_id,mutation_id,ordinal,result) SELECT id,$2,(v->>'mutationId')::bigint,$3+ord-1,v FROM advanced CROSS JOIN jsonb_array_elements($7::jsonb) WITH ORDINALITY w(v,ord) RETURNING store_id";
+ /** Relation identity separates namespaces; reservations follow SQL savepoints and COMMIT. */
+ export const V05_PUBLICATION_CURSORS =
+-  "CREATE TEMP TABLE IF NOT EXISTS pg_temp.axton_publication_cursor (relation oid NOT NULL,stream text NOT NULL,cursor bigint NOT NULL,PRIMARY KEY(relation,stream)) ON COMMIT DELETE ROWS";
+-/** Reserve only once per transaction; a rolled-back reservation is free again. */
++  "CREATE TEMP TABLE IF NOT EXISTS pg_temp.axton_publication_cursor (relation oid NOT NULL,stream text NOT NULL,scope text NOT NULL,cursor bigint NOT NULL,PRIMARY KEY(relation,stream,scope)) ON COMMIT DELETE ROWS";
++/** Reserve once per publication scope; rollback frees the reservation again. */
+ export const V05_RESERVE_CURSOR =
+   "WITH reserved AS (INSERT INTO axton_stream(stream,head) " +
+-  "SELECT $1::text,1 WHERE NOT EXISTS (SELECT 1 FROM pg_temp.axton_publication_cursor WHERE relation='axton_stream'::regclass::oid AND stream=$1) " +
++  "SELECT $1::text,1 WHERE NOT EXISTS (SELECT 1 FROM pg_temp.axton_publication_cursor WHERE relation='axton_stream'::regclass::oid AND stream=$1 AND scope=$2) " +
+   "ON CONFLICT(stream) DO UPDATE SET head=axton_stream.head+1 WHERE axton_stream.head<9007199254740991 RETURNING head), " +
+-  "saved AS (INSERT INTO pg_temp.axton_publication_cursor(relation,stream,cursor) SELECT 'axton_stream'::regclass::oid,$1,head FROM reserved RETURNING cursor) " +
+-  "SELECT cursor FROM saved UNION ALL SELECT cursor FROM pg_temp.axton_publication_cursor WHERE relation='axton_stream'::regclass::oid AND stream=$1";
++  "saved AS (INSERT INTO pg_temp.axton_publication_cursor(relation,stream,scope,cursor) SELECT 'axton_stream'::regclass::oid,$1,$2,head FROM reserved RETURNING cursor) " +
++  "SELECT cursor FROM saved UNION ALL SELECT cursor FROM pg_temp.axton_publication_cursor WHERE relation='axton_stream'::regclass::oid AND stream=$1 AND scope=$2";
+ /** Ensure and lock identities with a real MVCC write, without a content stamp. */
+ export const ENSURE_IDENTITY =
+   "INSERT INTO axton_record(model,identity_key) VALUES($1,$2) ON CONFLICT(model,identity_key) DO UPDATE SET identity_key=axton_record.identity_key RETURNING id";
+diff --git a/packages/backend/server/api/backend.mts b/packages/backend/server/api/backend.mts
+index c79ce8d..385d6be 100644
+--- a/packages/backend/server/api/backend.mts
++++ b/packages/backend/server/api/backend.mts
+@@ -57,6 +57,10 @@ export interface Persistence {
+ }
+ export type DatabaseDiagnostics = Pick<Diagnostics, "span">;
+ export interface Database<T> {
++  /** Adapter honors per-Mutation publication scopes inside commit groups. */
++  mutationCommitGroups?: boolean;
++  /** Adapter persists one contiguous commit-group outcome suffix atomically. */
++  mutationResultGroups?: boolean;
+   /** Validate the configured namespace before serving work. An optional retained
+    * transaction avoids acquiring a second connection for caller-owned publish. */
+   initialize?: (tx?: T) => Promise<void>;
+@@ -251,6 +255,8 @@ export interface BackendOptions<T> {
+   /** Opt-in performance records. Default: no collection or native tracing. */
+   diagnostics?: AxtonDiagnostics;
+   protocol5?: {
++    /** Experimental: members per transaction (1..32). Database failure rolls back the whole group. Default 8 when native/adapter support groups, otherwise 1. */
++    experimentalMutationGroupSize?: number;
+     projectionGeneration?: string;
+     materializations?: Record<
+       string,
+@@ -342,6 +348,21 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
+   options: BackendOptions<T>,
+ ) {
+   const native = loadNative(options.native);
++  const mutationGroupSize =
++    options.protocol5?.experimentalMutationGroupSize ??
++    (native.processBatchGroup && options.database.mutationCommitGroups ? 8 : 1);
++  if (
++    !Number.isSafeInteger(mutationGroupSize) ||
++    mutationGroupSize < 1 ||
++    mutationGroupSize > 32
++  )
++    throw new Error(
++      "experimentalMutationGroupSize must be an integer from 1 to 32",
++    );
++  if (mutationGroupSize > 1 && !native.processBatchGroup)
++    throw new Error("native Mutation commit groups unavailable");
++  if (mutationGroupSize > 1 && !options.database.mutationCommitGroups)
++    throw new Error("database adapter does not support Mutation commit groups");
+   const diagnostics = new Diagnostics(options.diagnostics);
+   if (options.diagnostics) {
+     // This backend's wrappers only; never mutate the caller's native object.
+@@ -352,6 +373,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
+       "processLive05",
+       "processRead05",
+       "processBatchMember",
++      "processBatchGroup",
+     ] as const) {
+       const operation = native[name];
+       if (operation)
+@@ -543,6 +565,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
+     return { error: error instanceof Error ? error.message : String(error) };
+   };
+   const hostDependencies: HostDependencies<T> = {
++    mutationGroupSize,
+     diagnostics,
+     options,
+     native,
+@@ -705,7 +728,30 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
+         const frozen = native.validateMutationBatch(config, wire);
+         const count = (JSON.parse(frozen).mutations as unknown[]).length;
+         const results: string[] = [];
+-        for (let ordinal = 0; ordinal < count; ordinal++)
++        for (let ordinal = 0; ordinal < count; ordinal += mutationGroupSize) {
++          if (mutationGroupSize > 1) {
++            const length = Math.min(mutationGroupSize, count - ordinal);
++            const group = JSON.parse(
++              await run((tx, session) =>
++                native.processBatchGroup!(
++                  config,
++                  owner,
++                  frozen,
++                  ordinal,
++                  length,
++                  host(tx, session),
++                ),
++              ),
++            ) as string[];
++            if (
++              !Array.isArray(group) ||
++              group.length !== length ||
++              group.some((result) => typeof result !== "string")
++            )
++              throw new Error("invalid native Mutation group results");
++            results.push(...group);
++            continue;
++          }
+           results.push(
+             await run((tx, session) =>
+               native.processBatchMember!(
+@@ -717,6 +763,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
+               ),
+             ),
+           );
++        }
+         return native.encodeBatchAcknowledgement(frozen, results);
+       }
+     },
+diff --git a/packages/backend/server/bindings/host-contract.mts b/packages/backend/server/bindings/host-contract.mts
+index b09cb85..14a36ff 100644
+--- a/packages/backend/server/bindings/host-contract.mts
++++ b/packages/backend/server/bindings/host-contract.mts
+@@ -101,10 +101,19 @@ export type Protocol05Operation =
+       count: number;
+       result: JsonValue;
+     }
++  | {
++      op: "saveResults";
++      storeId: string;
++      batchId: number;
++      ordinal: number;
++      count: number;
++      digest: string;
++      results: JsonValue[];
++    }
+   | ReadTrackingRequest
+   | GuardRecordsRequest
+   | { op: "targetPositions"; stream: string; records: MemberKey[] }
+-  | ApplyStreamMembersRequest;
++  | (ApplyStreamMembersRequest & { publicationScope?: string });
+ export type Protocol05Request = {
+   op: "protocol05";
+   request: Protocol05Operation;
+diff --git a/packages/backend/server/bindings/host.mts b/packages/backend/server/bindings/host.mts
+index 4acbcb7..692f3f8 100644
+--- a/packages/backend/server/bindings/host.mts
++++ b/packages/backend/server/bindings/host.mts
+@@ -18,6 +18,7 @@ import type { Native } from "./native.mts";
+ import { Session } from "./session.mts";
+ import { isRetryableTransactionError } from "./retryable.mts";
+ export interface HostDependencies<T> {
++  mutationGroupSize: number;
+   diagnostics: Diagnostics;
+   options: BackendOptions<T>;
+   native: Native;
+@@ -96,6 +97,7 @@ export function createHost<T>(
+   session: Session,
+ ): (request: string) => Promise<string> {
+   const {
++    mutationGroupSize,
+     options,
+     diagnostics,
+     native,
+@@ -158,6 +160,7 @@ export function createHost<T>(
+           effects.close();
+         }
+       } else if (req.op === "handleAction") {
++        if (mutationGroupSize > 1) session.publicationScope = req.callId;
+         const action = actionTable.get(`${req.name}:${req.version}`);
+         const handler = actionHandlers.get(`${req.name}:${req.version}`);
+         if (!action || !handler)
+@@ -343,7 +346,41 @@ export function createHost<T>(
+             void unreachable;
+           }
+         }
+-        result = await storage.call(req);
++        const stored =
++          req.op === "protocol05" &&
++          req.request.op === "applyStreamMembers" &&
++          session.publicationScope
++            ? {
++                ...req,
++                request: {
++                  ...req.request,
++                  publicationScope: session.publicationScope,
++                },
++              }
++            : req;
++        if (
++          stored.op === "protocol05" &&
++          stored.request.op === "saveResults" &&
++          !options.database.mutationResultGroups
++        ) {
++          const group = stored.request;
++          for (const [index, outcome] of group.results.entries()) {
++            await storage.call({
++              op: "protocol05",
++              request: {
++                op: "saveResult",
++                storeId: group.storeId,
++                batchId: group.batchId,
++                ordinal: group.ordinal + index,
++                count: group.count,
++                result: outcome,
++              },
++            });
++          }
++          result = null;
++        } else {
++          result = await storage.call(stored);
++        }
+         // Every position that survives its savepoint wakes the stream's
+         // subscribers after commit; `rollback` restores the set it snapshot.
+         const publication =

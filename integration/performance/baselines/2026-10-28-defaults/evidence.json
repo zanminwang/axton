@@ -1,0 +1,17 @@
+{
+  "purpose": "Default configuration smoke; prefetch and group-size environment overrides unset",
+  "build": {
+    "sourceSha256": "bbc7ab8af5ebb9f352f824d679c0fe50ee155539d30aedcdad7793714b8913d7",
+    "artifacts": {
+      "bindings/node/axton-node.node": "335c998354866601ed3ea6d4c413deee755ec8aac6bbc9fb1d7c983154ad061e",
+      "target/release/libaxton_dart.dylib": "075b6a82a202b6f77035d98bb99f8f1f34282924b843ed326637d704c15f0609",
+      "artifacts/performance/initial-sync": "05a3aa121a8c43fa9d4e25980165cf2c8bb6f064dcf2b562af37af76438b7fe4",
+      "artifacts/performance/live-sync": "084c8f13cc8a0c56e7f01d2e3f86bfc7df9d9a2945cfb25312c1121738d01d5a"
+    }
+  },
+  "serverVerified": true,
+  "rows": 10000,
+  "pageApplies": 20,
+  "successorsOverlappingPreviousApply": 19,
+  "maxPlacementUncertaintyUs": 27.5
+}

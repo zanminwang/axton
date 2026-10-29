@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import {readFile,writeFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {dirname,resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {readResult} from '../../report.mjs';
+import {timeline} from '../../timeline.mjs';
+const dir=dirname(fileURLToPath(import.meta.url));
+const r=await readResult(resolve(dir,'results.json.gz'));
+assert.equal(r.completed,true);assert.equal(r.samples.length,1);
+const runner=await readFile(resolve(dir,'runner.mjs'));
+assert.equal(r.experiment.runnerSha256,createHash('sha256').update(runner).digest('hex'));
+assert.ok(runner.toString().includes('delete process.env.AXTON_EXPERIMENTAL_BOOTSTRAP_PREFETCH;'));
+assert.ok(runner.toString().includes('delete process.env.AXTON_EXPERIMENTAL_MUTATION_GROUP_SIZE;'));
+const s=r.samples[0];
+assert.equal(s.status,'passed');assert.equal(s.serverVerified,true);
+assert.equal(s.result.verifiedRows,10000);assert.equal(s.serverVerification.rows,10000);
+assert.deepEqual(s.backendErrors,[]);assert.equal(s.serverDiagnosticsDropped,0);
+assert.equal(s.cleanupError,undefined);assert.equal(s.databaseCleanupError,undefined);
+assert.deepEqual(s.result.snapshots.map(x=>x.rows),Array.from({length:21},(_,i)=>i*500));
+const t=timeline(s),spans=t.traceEvents.filter(x=>x.ph==='X');
+const http=spans.filter(x=>x.name==='http.request'),apply=spans.filter(x=>x.name==='delivery.apply');
+assert.equal(http.length,21);assert.equal(apply.length,20);
+const overlap=http.slice(2).filter((h,i)=>h.ts<apply[i].ts+apply[i].dur).length;
+assert.equal(overlap,19);
+const evidence={purpose:r.experiment.purpose,build:r.build,serverVerified:s.serverVerified,
+ rows:s.result.verifiedRows,pageApplies:apply.length,successorsOverlappingPreviousApply:overlap,
+ maxPlacementUncertaintyUs:t.clockAlignment.maxPlacementUncertaintyUs};
+await writeFile(resolve(dir,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');
+console.log(JSON.stringify(evidence,null,2));

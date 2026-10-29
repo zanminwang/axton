@@ -1,0 +1,417 @@
+{
+  "order": [
+    "before-1",
+    "after-1",
+    "after-2",
+    "before-2"
+  ],
+  "runnerSha256": "e30848e8736527639dace91eed667163e3bcd5e65e8700960bfd9b99c6e842d2",
+  "runs": [
+    {
+      "name": "before-1",
+      "build": {
+        "sourceSha256": "ae0e4824d4926a4fbaea2cd9b915f4eb4a071a7236a950644a2632276052002f",
+        "artifacts": {
+          "bindings/node/axton-node.node": "c7809f22642ea99fa9c0812caf53ef1de0546355bae76e7208ca68ddbb6cc23b",
+          "target/release/libaxton_dart.dylib": "c8b621164c9c45f5709a720f55b270cd663d23dc53e9cab0021d770e65a3d67e",
+          "artifacts/performance/initial-sync": "05a3aa121a8c43fa9d4e25980165cf2c8bb6f064dcf2b562af37af76438b7fe4",
+          "artifacts/performance/live-sync": "084c8f13cc8a0c56e7f01d2e3f86bfc7df9d9a2945cfb25312c1121738d01d5a"
+        }
+      },
+      "metrics": {
+        "storeOpenMs": [
+          2.026
+        ],
+        "firstVisibleMs": [
+          61.865
+        ],
+        "allVisibleMs": [
+          662.271
+        ],
+        "bootstrapMs": [
+          662.251
+        ]
+      },
+      "stages": {
+        "delivery.encode": {
+          "count": 22,
+          "ms": 66.71000000000001
+        },
+        "delivery.prepare": {
+          "count": 21,
+          "ms": 53.93300000000001
+        },
+        "delivery.page": {
+          "count": 21,
+          "ms": 50.976000000000006
+        },
+        "delivery.load": {
+          "count": 21,
+          "ms": 33.32299999999999
+        },
+        "delivery.units": {
+          "count": 21,
+          "ms": 37.746
+        },
+        "delivery.freeze": {
+          "count": 21,
+          "ms": 128.89499999999998
+        },
+        "delivery.response": {
+          "count": 21,
+          "ms": 2.6579999999999995
+        },
+        "delivery.plan": {
+          "count": 21,
+          "ms": 390.856
+        }
+      },
+      "overlap": 19,
+      "maxPlacementUncertaintyUs": 25
+    },
+    {
+      "name": "after-1",
+      "build": {
+        "sourceSha256": "ede35ab0ea2a2b8aec3bfca862af0ac3f70124c614359c9a7bf086e055aada9b",
+        "artifacts": {
+          "bindings/node/axton-node.node": "aa9c9aa583a692846592d4fd3ef6f4b8fe24e345aa64f488c9f0095594e17bfb",
+          "target/release/libaxton_dart.dylib": "c8b621164c9c45f5709a720f55b270cd663d23dc53e9cab0021d770e65a3d67e",
+          "artifacts/performance/initial-sync": "05a3aa121a8c43fa9d4e25980165cf2c8bb6f064dcf2b562af37af76438b7fe4",
+          "artifacts/performance/live-sync": "084c8f13cc8a0c56e7f01d2e3f86bfc7df9d9a2945cfb25312c1121738d01d5a"
+        }
+      },
+      "metrics": {
+        "storeOpenMs": [
+          2.094
+        ],
+        "firstVisibleMs": [
+          63.881
+        ],
+        "allVisibleMs": [
+          584.214
+        ],
+        "bootstrapMs": [
+          584.194
+        ]
+      },
+      "stages": {
+        "delivery.encode": {
+          "count": 22,
+          "ms": 34.016999999999996
+        },
+        "delivery.prepare": {
+          "count": 21,
+          "ms": 49.03699999999999
+        },
+        "delivery.page": {
+          "count": 21,
+          "ms": 30.494000000000003
+        },
+        "delivery.load": {
+          "count": 21,
+          "ms": 34.20099999999999
+        },
+        "delivery.units": {
+          "count": 21,
+          "ms": 20.945000000000004
+        },
+        "delivery.freeze": {
+          "count": 21,
+          "ms": 75.63900000000001
+        },
+        "delivery.response": {
+          "count": 21,
+          "ms": 2.4240000000000004
+        },
+        "delivery.plan": {
+          "count": 21,
+          "ms": 264.287
+        }
+      },
+      "overlap": 19,
+      "maxPlacementUncertaintyUs": 24
+    },
+    {
+      "name": "after-2",
+      "build": {
+        "sourceSha256": "ede35ab0ea2a2b8aec3bfca862af0ac3f70124c614359c9a7bf086e055aada9b",
+        "artifacts": {
+          "bindings/node/axton-node.node": "aa9c9aa583a692846592d4fd3ef6f4b8fe24e345aa64f488c9f0095594e17bfb",
+          "target/release/libaxton_dart.dylib": "c8b621164c9c45f5709a720f55b270cd663d23dc53e9cab0021d770e65a3d67e",
+          "artifacts/performance/initial-sync": "05a3aa121a8c43fa9d4e25980165cf2c8bb6f064dcf2b562af37af76438b7fe4",
+          "artifacts/performance/live-sync": "084c8f13cc8a0c56e7f01d2e3f86bfc7df9d9a2945cfb25312c1121738d01d5a"
+        }
+      },
+      "metrics": {
+        "storeOpenMs": [
+          2.167
+        ],
+        "firstVisibleMs": [
+          62.862
+        ],
+        "allVisibleMs": [
+          582.505
+        ],
+        "bootstrapMs": [
+          582.487
+        ]
+      },
+      "stages": {
+        "delivery.encode": {
+          "count": 22,
+          "ms": 33.306
+        },
+        "delivery.prepare": {
+          "count": 21,
+          "ms": 54.68399999999999
+        },
+        "delivery.page": {
+          "count": 21,
+          "ms": 28.884
+        },
+        "delivery.load": {
+          "count": 21,
+          "ms": 33.602
+        },
+        "delivery.units": {
+          "count": 21,
+          "ms": 20.325000000000003
+        },
+        "delivery.freeze": {
+          "count": 21,
+          "ms": 73.988
+        },
+        "delivery.response": {
+          "count": 21,
+          "ms": 2.4160000000000004
+        },
+        "delivery.plan": {
+          "count": 21,
+          "ms": 263.50300000000004
+        }
+      },
+      "overlap": 19,
+      "maxPlacementUncertaintyUs": 24
+    },
+    {
+      "name": "before-2",
+      "build": {
+        "sourceSha256": "ede35ab0ea2a2b8aec3bfca862af0ac3f70124c614359c9a7bf086e055aada9b",
+        "artifacts": {
+          "bindings/node/axton-node.node": "c7809f22642ea99fa9c0812caf53ef1de0546355bae76e7208ca68ddbb6cc23b",
+          "target/release/libaxton_dart.dylib": "c8b621164c9c45f5709a720f55b270cd663d23dc53e9cab0021d770e65a3d67e",
+          "artifacts/performance/initial-sync": "05a3aa121a8c43fa9d4e25980165cf2c8bb6f064dcf2b562af37af76438b7fe4",
+          "artifacts/performance/live-sync": "084c8f13cc8a0c56e7f01d2e3f86bfc7df9d9a2945cfb25312c1121738d01d5a"
+        }
+      },
+      "metrics": {
+        "storeOpenMs": [
+          2.154
+        ],
+        "firstVisibleMs": [
+          63.983
+        ],
+        "allVisibleMs": [
+          679.902
+        ],
+        "bootstrapMs": [
+          679.885
+        ]
+      },
+      "stages": {
+        "delivery.encode": {
+          "count": 22,
+          "ms": 67.528
+        },
+        "delivery.prepare": {
+          "count": 21,
+          "ms": 55.17500000000002
+        },
+        "delivery.page": {
+          "count": 21,
+          "ms": 52.55499999999999
+        },
+        "delivery.load": {
+          "count": 21,
+          "ms": 35.318999999999996
+        },
+        "delivery.units": {
+          "count": 21,
+          "ms": 38.48800000000001
+        },
+        "delivery.freeze": {
+          "count": 21,
+          "ms": 130.382
+        },
+        "delivery.response": {
+          "count": 21,
+          "ms": 2.5810000000000004
+        },
+        "delivery.plan": {
+          "count": 21,
+          "ms": 400.429
+        }
+      },
+      "overlap": 19,
+      "maxPlacementUncertaintyUs": 23
+    }
+  ],
+  "summary": {
+    "before": {
+      "metrics": {
+        "storeOpenMs": {
+          "n": 2,
+          "median": 2.09,
+          "min": 2.026,
+          "max": 2.154
+        },
+        "firstVisibleMs": {
+          "n": 2,
+          "median": 62.924,
+          "min": 61.865,
+          "max": 63.983
+        },
+        "allVisibleMs": {
+          "n": 2,
+          "median": 671.0865,
+          "min": 662.271,
+          "max": 679.902
+        },
+        "bootstrapMs": {
+          "n": 2,
+          "median": 671.068,
+          "min": 662.251,
+          "max": 679.885
+        }
+      },
+      "stages": {
+        "delivery.encode": {
+          "n": 2,
+          "median": 67.119,
+          "min": 66.71000000000001,
+          "max": 67.528
+        },
+        "delivery.prepare": {
+          "n": 2,
+          "median": 54.554000000000016,
+          "min": 53.93300000000001,
+          "max": 55.17500000000002
+        },
+        "delivery.page": {
+          "n": 2,
+          "median": 51.7655,
+          "min": 50.976000000000006,
+          "max": 52.55499999999999
+        },
+        "delivery.load": {
+          "n": 2,
+          "median": 34.321,
+          "min": 33.32299999999999,
+          "max": 35.318999999999996
+        },
+        "delivery.units": {
+          "n": 2,
+          "median": 38.117000000000004,
+          "min": 37.746,
+          "max": 38.48800000000001
+        },
+        "delivery.freeze": {
+          "n": 2,
+          "median": 129.6385,
+          "min": 128.89499999999998,
+          "max": 130.382
+        },
+        "delivery.response": {
+          "n": 2,
+          "median": 2.6195,
+          "min": 2.5810000000000004,
+          "max": 2.6579999999999995
+        },
+        "delivery.plan": {
+          "n": 2,
+          "median": 395.6425,
+          "min": 390.856,
+          "max": 400.429
+        }
+      }
+    },
+    "after": {
+      "metrics": {
+        "storeOpenMs": {
+          "n": 2,
+          "median": 2.1304999999999996,
+          "min": 2.094,
+          "max": 2.167
+        },
+        "firstVisibleMs": {
+          "n": 2,
+          "median": 63.3715,
+          "min": 62.862,
+          "max": 63.881
+        },
+        "allVisibleMs": {
+          "n": 2,
+          "median": 583.3595,
+          "min": 582.505,
+          "max": 584.214
+        },
+        "bootstrapMs": {
+          "n": 2,
+          "median": 583.3405,
+          "min": 582.487,
+          "max": 584.194
+        }
+      },
+      "stages": {
+        "delivery.encode": {
+          "n": 2,
+          "median": 33.6615,
+          "min": 33.306,
+          "max": 34.016999999999996
+        },
+        "delivery.prepare": {
+          "n": 2,
+          "median": 51.86049999999999,
+          "min": 49.03699999999999,
+          "max": 54.68399999999999
+        },
+        "delivery.page": {
+          "n": 2,
+          "median": 29.689,
+          "min": 28.884,
+          "max": 30.494000000000003
+        },
+        "delivery.load": {
+          "n": 2,
+          "median": 33.9015,
+          "min": 33.602,
+          "max": 34.20099999999999
+        },
+        "delivery.units": {
+          "n": 2,
+          "median": 20.635000000000005,
+          "min": 20.325000000000003,
+          "max": 20.945000000000004
+        },
+        "delivery.freeze": {
+          "n": 2,
+          "median": 74.8135,
+          "min": 73.988,
+          "max": 75.63900000000001
+        },
+        "delivery.response": {
+          "n": 2,
+          "median": 2.4200000000000004,
+          "min": 2.4160000000000004,
+          "max": 2.4240000000000004
+        },
+        "delivery.plan": {
+          "n": 2,
+          "median": 263.895,
+          "min": 263.50300000000004,
+          "max": 264.287
+        }
+      }
+    }
+  }
+}

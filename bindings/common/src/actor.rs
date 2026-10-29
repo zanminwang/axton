@@ -640,7 +640,7 @@ fn run05(
                         control = Some(axton_client::sync05::Control::with_bootstrap_prefetch(
                             status,
                             std::env::var("AXTON_EXPERIMENTAL_BOOTSTRAP_PREFETCH").as_deref()
-                                == Ok("1"),
+                                != Ok("0"),
                         ));
                         outbox.publish(vec![Event::TaskCompleted {
                             request_id: request_id.clone(),

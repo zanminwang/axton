@@ -24,7 +24,9 @@ materialization remains separately correlated and is not coalesced away.
 `delivery.coalesce` diagnostics count these normal hint-only offers. Queue,
 memory and disk limits remain unchanged; malformed hints still fail validation.
 
-The opt-in native experiment `AXTON_EXPERIMENTAL_BOOTSTRAP_PREFETCH=1` requests
+Bootstrap prefetch is enabled by default. The native process override
+`AXTON_EXPERIMENTAL_BOOTSTRAP_PREFETCH=0` disables it; `1` explicitly enables it.
+The worker requests
 one successor of a complete Bootstrap page before that page commits. At most
 the current page and one successor are retained; only the Store advances B/C.
 Future pages cannot apply across a gap or failed predecessor. Reconnect and
@@ -32,7 +34,13 @@ apply failure retire speculative work, including requests waiting for refreshed
 credentials. Those waiters still occupy the single cursor HTTP request slot.
 Capacity decline preserves existing
 queue/repair budgets and disables lookahead for that client, reverting to serial
-requests from committed B. Default construction keeps serial scheduling.
+requests from committed B. Core callers can explicitly select serial scheduling
+with `Control::with_bootstrap_prefetch(status, false)`.
+
+The local [prefetch performance entry point](../../../../../../integration/performance/prefetch-on.sh)
+sets that existing switch before starting clients. The current-build
+[short comparison](../../../../../../integration/performance/baselines/2026-10-28-prefetch-current/README.md)
+retains complete initial-sync off/on observations and measured request/apply overlap.
 
 The [prefetch regressions](../../../../../../crates/sqlite/tests/protocol05_downlink/prefetch.rs)
 cover both HTTP/apply arrival orders, multi-unit pages, auth refresh, failure,

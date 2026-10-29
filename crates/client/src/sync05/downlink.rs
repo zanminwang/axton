@@ -47,9 +47,9 @@ pub struct Control {
 }
 impl Control {
     pub fn new(status: StoreStatus05) -> Self {
-        Self::with_bootstrap_prefetch(status, false)
+        Self::with_bootstrap_prefetch(status, true)
     }
-    /// Internal opt-in experiment. Received positions never become Store progress.
+    /// Override default one-page lookahead. Received positions never become Store progress.
     pub fn with_bootstrap_prefetch(status: StoreStatus05, enabled: bool) -> Self {
         Self {
             context: status.context.clone(),

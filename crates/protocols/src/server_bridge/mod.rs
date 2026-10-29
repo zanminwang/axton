@@ -174,6 +174,17 @@ pub enum Protocol05Operation {
         count: u64,
         result: crate::sync::MutationResult,
     },
+    SaveResults {
+        store_id: String,
+        #[serde(with = "cursor")]
+        batch_id: u64,
+        #[serde(with = "counter")]
+        ordinal: u64,
+        #[serde(with = "cursor")]
+        count: u64,
+        digest: String,
+        results: Vec<crate::sync::MutationResult>,
+    },
     ReadTracking {
         records: Vec<MemberKey>,
         pairs: Vec<TrackingPair>,
@@ -192,6 +203,8 @@ pub enum Protocol05Operation {
     },
     ApplyStreamMembers {
         deltas: Vec<MemberDelta>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        publication_scope: Option<String>,
     },
 }
 

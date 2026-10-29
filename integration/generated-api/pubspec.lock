@@ -39,7 +39,7 @@ packages:
       path: "../../packages/frontend/dart"
       relative: true
     source: path
-    version: "0.5.7"
+    version: "0.6.0"
   boolean_selector:
     dependency: transitive
     description:

@@ -1548,6 +1548,55 @@ if (process.argv[2] === "enqueue-child") {
       await rm(dir, { recursive: true, force: true });
     }
   });
+  test("60 concurrent Mutations from one Store settle over push and pull alone, with under 10 serialization retries", async () => {
+    const h = await host();
+    const dir = await mkdtemp(join(tmpdir(), "axton-sdk05-concurrent-")),
+      path = join(dir, "db");
+    let client;
+    try {
+      client = await open(path, h.url, "concurrent");
+      await client.bootstrap();
+      const requests = h.requests.length,
+        transactions = h.transactions.length;
+      const calls = await Promise.all(
+        Array.from({ length: 60 }, (_, i) =>
+          publish(client, `concurrent-${i}`, ` reply ${i} `),
+        ),
+      );
+      const outcomes = await Promise.all(calls.map((call) => call.wait()));
+      assert.deepEqual(
+        outcomes.filter((outcome) => outcome.error !== null),
+        [],
+      );
+      assert.equal((await client.syncState()).pending, 0);
+      for (let i = 0; i < 60; i++)
+        assert.equal(
+          (await client.models.entry.get({ id: `concurrent-${i}` })).text,
+          `reply ${i}`,
+        );
+      const routes = new Set(h.requests.slice(requests).map((r) => r.route));
+      assert.deepEqual(
+        [...routes].filter((route) => !["/sync/mutations", "/sync/pull"].includes(route)),
+        [],
+        "settlement sends nothing beyond push and pull",
+      );
+      const observed = h.transactions.slice(transactions);
+      const retries = observed.reduce((n, tx) => n + tx.attempts - 1, 0);
+      assert.ok(retries < 10, `${retries} serialization retries`);
+      assert.equal(observed.filter((tx) => tx.outcome === "escaped").length, 0);
+      // Only the served routes exist; any other sync path is not found.
+      for (const route of ["/sync/load", "/sync/push", "/sync/unknown"])
+        assert.equal(
+          (await fetch(h.url + route, { method: "POST", body: "{}" })).status,
+          404,
+          route,
+        );
+    } finally {
+      await client?.close();
+      await h.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   test("A11/A12: generated Dart crosses HTTP/WebSocket, SQLite and PostgreSQL", async () => {
     assert.ok(process.env.AXTON_DART, "Dart must participate in the host gate");
     const h = await host();

@@ -33,7 +33,7 @@ A `watch` stream whose first query fails ends with that error. If a later re-run
 
 ## Bound Store and application directory
 
-`Client.open` requires `path`, `schema` and one `stream`; `StoreConnection` is optional. Rust owns the durable Store identity, and the backend binds it to the authenticated principal. Credentials refresh does not create a new Store. `projectionGeneration` defaults to `'1'` and must match the backend. Generated clients provide schema automatically.
+`Client.open` requires `path`, `schema` and one `stream`; `StoreConnection` is optional. Rust owns the durable Store identity, and the backend binds it to the authenticated principal. Credentials refresh does not create a new Store. The backend reports its projection generation at every handshake; a change rolls the Store over. Generated clients provide schema automatically.
 
 Android hosts must call `Client.configureApplicationData(stableApplicationSupportOrFilesPath)` once before any Store opens. Obtain the stable directory from the application platform provider. This process-wide initializer supports both the bundled ABI and `libraryPath` development ABI. Repeating the same path is safe; a different path is refused. It is not a per-client lock directory.
 

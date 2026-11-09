@@ -102,6 +102,6 @@ Optional Bootstrap preparation tracks initial records. The schema selects histor
 
 Run `integration/persistence/server/run.sh` for the disposable PostgreSQL/Prisma integration suite. Its database is created, used, and destroyed by the runner.
 
-`backend.listen({ port, host? })` starts a Node HTTP+WebSocket server that serves Handshake `/sync/handshake`, Mutations `/sync/mutations`, Query `/sync/actions`, Fetch `/sync/fetch`, owned materialization `/sync/materialize`, finite delivery `/sync/pull`, and WebSocket `/sync/live` on one port, and returns `{ url, close() }`. It resolves once the listener is bound.
+`backend.listen({ port, host? })` starts a Node HTTP+WebSocket server that serves Handshake `/sync/handshake`, Mutations `/sync/mutations`, Query `/sync/actions`, Fetch `/sync/fetch`, finite delivery `/sync/pull`, and WebSocket `/sync/live` on one port, and returns `{ url, close() }`. It resolves once the listener is bound.
 
 For every option, callback, return value and failure mode, see the [backend interface reference](api.md). For process placement, the reverse-proxy configuration and trust boundaries, see [Deploy the backend](deployment.md).

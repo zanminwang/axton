@@ -16,7 +16,6 @@ endpoint can also perform explicit tracking, Bootstrap preparation.
 | Reconnect to completed Store | Snapshot binding and Bootstrap-state reads | No Mutation progress lock. |
 | New Store / unfinished Bootstrap | Atomic claim and progress guard | Identity uniqueness and one committed Bootstrap initialization remain protected; failed transactions retry completely. |
 | HTTP/live delta and cursor resume | Snapshot binding inspection | Current-state complete pages; no persisted response, shared cleanup or old-plan continuation. Missing Stores use the claim path. |
-| Owned materialization | Snapshot binding inspection | Saved owner/target evidence is validated in the same transaction. The complete response is returned without server staging or Mutation progress updates. |
 | Mutation execution/replay | `FOR NO KEY UPDATE` on Store progress | Competing uploads remain serialized. Store identity/principal/Stream are immutable. |
 
 Progress writers remain mutually exclusive through `FOR NO KEY UPDATE`.
@@ -36,7 +35,7 @@ Owning sources:
 ## 6. Remaining read-side work
 
 Delivery no longer inserts payloads, scans shared expiry predicates or deletes
-expired plans. All initialized delta, cursor-resume and owned reads in the test
+expired plans. All initialized delta and cursor-resume reads in the test
 fixture run successfully in PostgreSQL `READ ONLY` transactions. Application
 preparation hooks can still intentionally perform writes.
 
@@ -70,7 +69,7 @@ the measured server serialization failures to it. The owning
 
 [Read liveness tests](../../../../integration/persistence/server/read-liveness.test.mjs)
 pause an actual same-Store Mutation handler, then require initialized handshake,
-HTTP delta, live delta, owned materialization and cursor resume to finish under
+HTTP delta, live delta and cursor resume to finish under
 `SET TRANSACTION READ ONLY`. Owner/Stream mismatches and denied
 admission fail before Loader execution. A concurrent duplicate upload must still
 block, then receive the same saved accepted outcome without rerunning business

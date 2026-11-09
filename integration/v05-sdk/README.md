@@ -12,7 +12,7 @@ client uses Rust/SQLite and the generated SDK; every server uses the generated
 backend with application handlers and viewer Loaders.
 
 `server.mjs` forwards real HTTP and WebSocket bytes. Named faults discard a
-completed Mutation response, hold initial handshakes and schema materializations,
+completed Mutation response, hold initial handshakes and Mutation acknowledgements,
 and delay a completed Query response. SQLite triggers independently abort local
 acknowledgement and settlement commits after the real cloud has accepted work. These controls change transport timing, not protocol authority.
 `client.mjs` also starts a process that exits immediately after a committed
@@ -34,10 +34,14 @@ later local ownership, independent Store identities, zero-cursor Bootstrap,
 fresh read snapshots, Store modes, direct-delete refill, physical file aliases,
 stale Query protection, initial-start ordering, durable completion lookup, and
 Dart's typed completion across the same actual host. The rollover fixture checks
-desired-schema ownership, preserved Bootstrap coverage, and activation of a
-newly selected held Model. A separate versioned fixture retains Model and
+that a changed schema clears Stream rows and Bootstraps a newly selected Model
+over handshake and pull alone. A separate versioned fixture retains Model and
 Mutation v1 history while serving v2; it adds a nullable field at the same
-record cursor through owned rematerialization. Query enrollment is tested both for implicit absence
+record cursor through the rollover Bootstrap. Generation cases roll a fresh file
+over to a backend's projection generation 2 at its first handshake, and an
+initialized Store over without any request in the dropped context. A concurrency
+case settles 60 Mutations from one Store over push and pull alone with fewer
+than 10 serialization retries. Query enrollment is tested both for implicit absence
 and deliberate tracking through the authenticated Stream context.
 
 The deterministic `crates/sim/src/scenario05.rs` runner complements this gate

@@ -2,9 +2,9 @@
 
 ## Protocol 5 configuration
 
-Set `protocol5` on backend options with `authorizeStream(principal, stream, tx)`. Mutation admission/replay and finite authority planning authorize inside their Serializable transaction. Ordinary Query/Fetch validate the immutable Store binding and authorize without holding Store progress across arbitrary Handler/Loader awaits. Explicit Query tracking writes membership in its Serializable read transaction and may force a complete retry. `projectionGeneration` defaults to `"1"`; configure the same generation on client and backend. A materialization identifies normalized Model read contracts, independently of credentials.
+Set `protocol5` on backend options with `authorizeStream(principal, stream, tx)`. Mutation admission/replay and finite authority planning authorize inside their Serializable transaction. Ordinary Query/Fetch validate the immutable Store binding and authorize without holding Store progress across arbitrary Handler/Loader awaits. Explicit Query tracking writes membership in its Serializable read transaction and may force a complete retry. `projectionGeneration` defaults to `"1"`; the handshake reports it to clients, which roll over when it changes. A materialization identifies normalized Model read contracts, independently of credentials.
 
-`materializations` maps supported prior materialization IDs to `{schema, projectionGeneration}` using the retained descriptor and Bootstrap selection. Preserve retained operation schemas while serving frozen Mutation retries.
+`materializations` maps supported prior materialization IDs to `{schema, projectionGeneration}` using the retained descriptor and Bootstrap selection. Keep the previous materialization after every Model contract or projection generation change until clients have drained their frozen Mutations; without it those Batches are refused with `context_mismatch`. Preserve retained operation schemas while serving frozen Mutation retries.
 
 The optional `bootstrap({ctx})` preparation and Query contexts expose explicit tracking. Returning Model identities does not track them. The initiating `ctx.stream` is supplied by authenticated engine context; the caller cannot choose it as a business argument. Track additional recipients explicitly using the generated multi-Stream declaration API.
 
@@ -319,7 +319,6 @@ Protocol refusals use a status and JSON body chosen by the engine error's `code`
 | `POST /sync/mutations` | Execute an immutable Batch of named Mutations with independent member outcomes |
 | `POST /sync/actions` | Execute a fresh named Query and return null-cursor invocation snapshots |
 | `POST /sync/fetch` | Read one record through its Model's Loader for `client.fetch` |
-| `POST /sync/materialize` | Serve settlement-owned or schema-owned finite authority plans |
 | `POST /sync/pull` | Serve finite Bootstrap and Sync plan fragments |
 | `/sync/live` (WebSocket) | Acknowledge the one bound Stream and deliver proved authoritative units |
 
@@ -376,6 +375,6 @@ wake();
 
 `loaderHooks` maps model names to `{ prepareForViewer(call): Promise<void> }`. The hook runs before that model's loader in the same request context. Its failure fails the affected read. The typed call provides `call.streams([...])` and `call.invalidate` for preparation publications; explicit preparation publications use the same transaction and cursor reservations. Use it only if viewer-specific preparation is needed; a loader already receives the user.
 
-`native?: Native` injects the native bridge when packaging it elsewhere. Its current entrypoints include `validateConfig`, `handshake05`, `validateMutationBatch`, `processBatchMember`, `encodeBatchAcknowledgement`, `processRead05`, `processDelivery05`, `processMaterialization05`, `processLive05` and `settleExternal05`; `negotiateLive`, `liveEvent` and `liveClose` manage the native socket session with the string/JSON callback contracts in the [SDK source](https://github.com/zanminwang/axton/blob/main/packages/backend/server/index.mts). The default binding comes from this repository's Node addon. This is a packaging seam; the generated Mutations, Queries and Loaders remain the application contract.
+`native?: Native` injects the native bridge when packaging it elsewhere. Its current entrypoints include `validateConfig`, `handshake05`, `validateMutationBatch`, `processBatchMember`, `encodeBatchAcknowledgement`, `processRead05`, `processDelivery05`, `processLive05` and `settleExternal05`; `negotiateLive`, `liveEvent` and `liveClose` manage the native socket session with the string/JSON callback contracts in the [SDK source](https://github.com/zanminwang/axton/blob/main/packages/backend/server/index.mts). The default binding comes from this repository's Node addon. This is a packaging seam; the generated Mutations, Queries and Loaders remain the application contract.
 
 Backend methods marked `@internal` are used by the listener and tests. They are not the supported application-facing HTTP integration surface.

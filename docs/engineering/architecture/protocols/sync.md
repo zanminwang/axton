@@ -6,7 +6,7 @@ Protocol 5 separates durable Mutation execution from authoritative delivery. Rus
 
 ## 3. Context and Scope
 
-One physical SQLite file has one Client, Store identity and Stream. Different files may follow the same Stream. Admission carriers carry `protocol: 5`, `storeId` and `stream`; contextual read, Mutation and delivery requests also carry `materialization`. The server binds the Store to its authenticated principal and Stream. A materialization identifies canonical Model read descriptors and projection generation; a retained schema artifact separately preserves queued Mutation inputs. Credentials and URLs are connection settings, not file identity.
+One physical SQLite file has one Client, Store identity and Stream. Different files may follow the same Stream. Admission carriers carry the wire version `protocol: 6`, `storeId` and `stream`; a peer on an earlier wire version is refused as `unsupported_protocol`. Contextual read, Mutation and delivery requests also carry `materialization`. The server binds the Store to its authenticated principal and Stream. A materialization identifies canonical Model read descriptors and projection generation; a retained schema artifact separately preserves queued Mutation inputs. Credentials and URLs are connection settings, not file identity.
 
 Protocol 5 requires a fresh PostgreSQL framework namespace and fresh format-5 client file. The installer refuses legacy server layouts without modifying existing data. Admission rejects another format before changing the original database, WAL or SHM. It supplies no in-place migration or automatic wipe. See [adoption](../../protocol5-adoption.md) before retiring a protocol-4 backend.
 
@@ -19,7 +19,7 @@ Protocol 5 requires a fresh PostgreSQL framework namespace and fresh format-5 cl
 | [Client sync](../../../../crates/client/src/sync05/mod.rs) | Uplink, finite downlink, bounded queue and complete-unit apply. |
 | [Client settlement](../../../../crates/client/src/settlement05.rs) | Queue-owned outcomes and accepted work's authority obligations. |
 | [Server Batch](../../../../crates/server/src/mutation_batch.rs) | Store admission, per-member transactions, replay and durable results. |
-| [Server delivery](../../../../crates/server/src/delivery_plan.rs) | Serializable current-state cursor pages, preparation closure and owned materialization. |
+| [Server delivery](../../../../crates/server/src/delivery_plan.rs) | Serializable current-state cursor pages and preparation closure. |
 | [PostgreSQL schema](../../../../packages/backend/postgres/migration.sql) | Five fresh tables: Stream, Record, Store, MutationResult and StreamRecord. Per-transaction cursor reservation is ephemeral SQL state, not another durable table. |
 
 ## 6. Runtime View
@@ -28,9 +28,11 @@ Protocol 5 requires a fresh PostgreSQL framework namespace and fresh format-5 cl
 
 Canonical wire and known-descriptor slot validation remain whole-Batch admission checks. An unretained Mutation name/version is instead saved as that member's `mutation_version_unsupported` refusal after Store and Batch admission, without a Handler or preparation call. Independent supported members continue, and exact replay returns the saved result. [The deterministic scenario](../../../../crates/sim/tests/mutation_versions05.rs) joins the server's member engine and persistence seam to a real SQLite client, including settlement, reopen and the next Batch; the [host gate](../../../../integration/v05-sdk/README.md) covers actual HTTP and PostgreSQL.
 
-The client freezes a Batch's sequence, membership and exact input before sending. Each named Mutation executes in its own Serializable server transaction. A business refusal rolls back that member's savepoint and saves rejection/progress; infrastructure failure aborts the transaction. Retrying saved members runs no Handler or preparation. Store metadata admits the current or last completed Batch; accepting the next Batch prunes the older result set transactionally. The client starts the next Batch only after every member of the acknowledged Batch has settled locally, preserving its saved ownership for delayed or retried settlement Materialize. Unassigned work with unmet prerequisites does not hold this window.
+The client freezes a Batch's sequence, membership and exact input before sending. Each named Mutation executes in its own Serializable server transaction. A business refusal rolls back that member's savepoint and saves rejection/progress; infrastructure failure aborts the transaction. Retrying saved members runs no Handler or preparation. Store metadata admits the current or last completed Batch; accepting the next Batch prunes the older result set transactionally. The client freezes no Batch before the handshake commits S, so every member executes after the handshake head read. It starts the next Batch only after every member of the acknowledged Batch has settled locally, preserving its saved ownership while settlement waits for the Stream. Unassigned work with unmet prerequisites does not hold this window.
 
-There are two completion boundaries. A committed acknowledgment proves the saved execution outcome and survives later local failure. Local settlement also requires every accepted target's Stream authority or permitted private fallback. Only the transaction that commits reconciliation retires its work and emits terminal completion. Receipt-first and Stream-first ordering therefore converge without treating receipt arrival as coverage.
+There are two completion boundaries. A committed acknowledgment proves the saved execution outcome and survives later local failure. Local settlement also requires coverage through the member's `syncCursor` and every accepted target's Stream authority or permitted receipt fallback. Only the transaction that commits reconciliation retires its work and emits terminal completion. Receipt-first and Stream-first ordering therefore converge without treating receipt arrival as coverage.
+
+Authority arrives only through the Stream, by pull or live; the client never fetches a target by key. An accepted receipt raises the delivery head to its `syncCursor`, so a Store whose socket is silent pulls `(C, syncCursor]`. A Stream target at or below S in a Model the active materialization does not Bootstrap can never be delivered to this Store; it finalizes from the receipt fallback as cache, like a Private target. Coverage alone settles nothing else: compaction can move a target past `syncCursor`, and its local layer stays until that later position lands.
 
 The Mutation queue is the lifecycle owner. It retains original argument paths and schema artifacts; local companions and derived cascades are distinct from wire input. Direct device writes remain device-only. Reconciliation retains accepted companions at their original operation order and replays later local work.
 
@@ -62,8 +64,7 @@ so they cannot block fresh cursor repair until expiry. A busy client validates
 new live offers but retains only their highest head while ordinary delivery is
 pending. It completes admitted fragments and repairs from committed B/C, rather
 than accumulating a payload per server commit. Coalesced hints advance no
-coverage and cannot retire an owned obligation. Owned materialization returns its complete owner proof in one
-response and retries from current owner obligations. Response manifests/digests
+coverage. Response manifests/digests
 still validate fragments, and the five-minute lifetime bounds incomplete local
 staging only. Limits are 100,000 candidate identities and 256 MiB per response;
 capacity failure advances no cursor.
@@ -73,7 +74,11 @@ There is no compatibility layer for old server-staged plans.
 
 Same-cursor, uniqueness and cascade dependencies remain complete atomic units. Fragments are transport pieces, never partial commit permission. The native delivery queue bounds metadata and payload, spilling large components to temporary disk staging. It validates and assembles a complete unit before one SQLite apply transaction. Earlier units may remain committed after a later failure; C never crosses unresolved coverage. An overlapping complete unit may apply unseen keys under per-key current/history guards, but partial fragments are never trimmed into invented coverage.
 
-Owned materialization proves saved settlement or compatible schema obligations. It enrolls nothing and advances no range prefix. A foreign-context live header is a repair hint: the client requests HTTP authority in its own context rather than installing the foreign payload.
+A foreign-context live header is a repair hint: the client requests HTTP authority in its own context rather than installing the foreign payload.
+
+### Materialization rollover
+
+The handshake reports the backend's projection generation; the Store derives its desired materialization from the app schema and the latest reported generation. When it differs from the active one, the Store freezes nothing new and drains frozen Batches in their frozen context. One SQLite transaction then deletes rows with Stream evidence (history or membership), keeps device, cache and receipt-finalized rows and the whole queue with its counters, strips only the evidence of keys unfrozen Mutations hold, clears delivery staging and resets S, B and C. The Store then handshakes and Bootstraps as a fresh device; when a handshake found the change with nothing frozen, the clear commits with that handshake's head instead. Stored reads park until the fresh Store is initialized. The backend must retain the previous materialization until clients have drained, or a frozen Batch is refused with `context_mismatch`.
 
 ## 10. Quality Requirements
 

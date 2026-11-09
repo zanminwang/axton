@@ -340,7 +340,7 @@ fn handshake_and_reads_correlate_store_stream_request_and_modes() {
         decode::<HandshakeRequest>(br#"{"protocol":6,"storeId":"store","stream":"User:a"}"#)
             .unwrap();
     let response = decode::<HandshakeResponse>(
-        br#"{"protocol":6,"storeId":"store","stream":"User:a","head":0}"#,
+        br#"{"protocol":6,"storeId":"store","stream":"User:a","head":0,"projectionGeneration":"1"}"#,
     )
     .unwrap();
     response.admit(&request).unwrap();
@@ -456,7 +456,7 @@ fn shared_wire_fixture_roundtrips_every_message_and_hash_domain() {
     let fixtures = json!({
         "mutationRequest":request,"batchAcknowledgement":acknowledgement,"rejectedAcknowledgement":rejected,
         "handshakeRequest":HandshakeRequest{protocol:PROTOCOL,store_id:"store".into(),stream:"User:a".into()},
-        "handshakeResponse":HandshakeResponse{protocol:PROTOCOL,store_id:"store".into(),stream:"User:a".into(),head:40},
+        "handshakeResponse":HandshakeResponse{protocol:PROTOCOL,store_id:"store".into(),stream:"User:a".into(),head:40,projection_generation:"1".into()},
         "queryRequest":query,"fetchRequest":fetch,"readSuccess":success,"readFailure":failure,
         "readRecord":snapshot,"streamTarget":SettlementTarget::Stream{key:snapshot.key.clone(),cursor:20,fallback:snapshot.clone()},
         "privateTarget":SettlementTarget::Private{record:snapshot},

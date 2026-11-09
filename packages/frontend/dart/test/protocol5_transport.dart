@@ -18,6 +18,7 @@ Map<String, Object?> emptyHandshake(Map body) => {
   'storeId': body['storeId'],
   'stream': body['stream'],
   'head': 0,
+  'projectionGeneration': '1',
 };
 Map<String, Object?> delivery05(Map body, [List<Object?> changes = const []]) {
   final unit = {'index': 0, 'through': body['through'], 'changes': changes};

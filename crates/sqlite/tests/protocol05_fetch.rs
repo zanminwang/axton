@@ -34,7 +34,7 @@ fn runtime(schema: Value) -> (tempfile::TempDir, ClientRuntime<SqliteStore>) {
         "User:a",
     )
     .unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let mut r = ClientRuntime::new(c);
     send(
         &mut r,

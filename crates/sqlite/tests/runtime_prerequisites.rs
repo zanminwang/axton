@@ -33,7 +33,7 @@ fn schema() -> Schema {
 }
 fn runtime(path: &Path, handlers: &[&str]) -> ClientRuntime<SqliteStore> {
     let mut client = Client::open05(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap();
-    client.initialize_stream05(0).unwrap();
+    client.initialize_stream05(0, "1").unwrap();
     ClientRuntime::new(client)
         .register_prerequisite_handlers(handlers.iter().map(|h| h.to_string()).collect())
         .unwrap()

@@ -65,6 +65,7 @@ void main() {
               'storeId': 'store',
               'stream': 'User:viewer',
               'head': 8,
+              'projectionGeneration': '1',
             }),
           );
         }, onDone: () => finished.complete());

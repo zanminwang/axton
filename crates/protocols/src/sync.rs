@@ -573,6 +573,8 @@ pub struct HandshakeResponse {
     pub store_id: String,
     pub stream: String,
     pub head: u64,
+    /// The backend's projection generation; the only source a client uses.
+    pub projection_generation: String,
 }
 impl Validate for HandshakeResponse {
     fn validate(&self) -> Result<()> {
@@ -583,7 +585,7 @@ impl Validate for HandshakeResponse {
         }
         .validate()?;
         counter(self.head)?;
-        Ok(())
+        text(&self.projection_generation)
     }
 }
 impl HandshakeResponse {

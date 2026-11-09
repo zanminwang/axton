@@ -290,6 +290,9 @@ impl Control {
                             stream: self.context.stream.clone(),
                         })?;
                         self.delivery_head = self.delivery_head.max(ack.head);
+                        // The socket handshake reports the generation too; one
+                        // Store path adopts it like the HTTP handshake's.
+                        self.jobs.push_back(StoreCommand::Initialize(ack));
                         self.schedule(now)?;
                         return Ok(());
                     }
@@ -354,7 +357,7 @@ impl Control {
                 response.admit(&request)?;
                 self.delivery_head = self.delivery_head.max(response.head);
                 self.failures = 0;
-                self.jobs.push_back(StoreCommand::Initialize(response.head));
+                self.jobs.push_back(StoreCommand::Initialize(response));
                 // Socket reception is live immediately, before Store SQL runs.
                 self.effect(
                     Flight::Socket,

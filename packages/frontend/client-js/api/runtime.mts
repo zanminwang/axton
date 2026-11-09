@@ -10,7 +10,6 @@ import {
 export type { Connection, ConnectionOptions } from "../bindings/connection.mts";
 /** Optional network connection for a Store. */
 export type StoreConnection = ServerOptions & {
-  projectionGeneration?: string;
   options?: ConnectionOptions;
 };
 /** A rejection retained in the local inbox until dismissed. */
@@ -345,7 +344,6 @@ export function createClient<
           path: options.path,
           schema: options.schema,
           stream: options.stream,
-          projectionGeneration: options.connection?.projectionGeneration ?? "1",
           prerequisiteHandlers: Object.keys(required),
         },
         (bridge) => {

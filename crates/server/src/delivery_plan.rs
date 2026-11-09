@@ -110,19 +110,17 @@ pub async fn handshake05(
     raw: &impl Host,
 ) -> Result<String> {
     let r: v05::HandshakeRequest = v05::decode(bytes).map_err(request_invalid)?;
+    let projection_generation = config
+        .protocol5
+        .as_ref()
+        .map_or("1", |p| p.projection_generation.as_str())
+        .to_owned();
     let context = v05::RequestContext {
         protocol: v05::PROTOCOL,
         store_id: r.store_id.clone(),
         stream: r.stream.clone(),
-        materialization: v05::materialization_id(
-            &config.schema,
-            config
-                .protocol5
-                .as_ref()
-                .map(|p| p.projection_generation.as_str())
-                .unwrap_or("1"),
-        )
-        .map_err(internal)?,
+        materialization: v05::materialization_id(&config.schema, &projection_generation)
+            .map_err(internal)?,
     };
     bind_delivery(owner, &context, raw).await?;
     let host = Publication05::new(raw);
@@ -133,6 +131,7 @@ pub async fn handshake05(
         store_id: r.store_id,
         stream: r.stream,
         head,
+        projection_generation,
     })
 }
 #[derive(Deserialize)]

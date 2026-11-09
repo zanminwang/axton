@@ -183,7 +183,7 @@ fn direct_writes_survive_refusal_but_newer_authority_retires_them_before_or_afte
             let d = tempfile::tempdir().unwrap();
             let path = d.path().join("db");
             let mut c = open(&path);
-            c.initialize_stream05(0).unwrap();
+            c.initialize_stream05(0, "1").unwrap();
             stream(&mut c, 1, Some("A"));
             if order == "before" {
                 c.transaction(|tx| tx.direct(op(OperationKind::Update, Some("direct"))))

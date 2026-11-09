@@ -49,7 +49,6 @@ class SyncServer {
 }
 
 class StoreConnection extends SyncServer {
-  final String projectionGeneration;
   final void Function(Object)? onError;
   final Future<void> Function()? refreshAuth;
   final Duration directTimeout;
@@ -57,7 +56,6 @@ class StoreConnection extends SyncServer {
     required super.url,
     required super.token,
     super.headers,
-    this.projectionGeneration = '1',
     this.onError,
     this.refreshAuth,
     this.directTimeout = const Duration(seconds: 30),

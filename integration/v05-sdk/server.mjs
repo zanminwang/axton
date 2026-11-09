@@ -16,6 +16,7 @@ export async function host({
   rollover = false,
   versioned = false,
   materializations = {},
+  projectionGeneration = "1",
   mixed = false,
   unbootstrapped = false,
   transactionFailures = [],
@@ -78,6 +79,7 @@ export async function host({
     database,
     authenticate: devAuth(),
     protocol5: {
+      projectionGeneration,
       materializations,
       authorizeStream: (owner, stream) => stream === `User:${owner}`,
     },

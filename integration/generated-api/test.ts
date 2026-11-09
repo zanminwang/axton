@@ -166,8 +166,10 @@ if(false){
  const runtime={} as typeof import('../../packages/frontend/client-js/index.mts').Client;
  // @ts-expect-error generic open also has no top-level generation
  void runtime.open({path:'s',schema:{},stream:'User:u',projectionGeneration:'2'});
- // @ts-expect-error projection generation belongs to the connection
+ // @ts-expect-error the backend reports the projection generation
  void GeneratedClient.open({path:'s',stream:'User:viewer',projectionGeneration:'2'});
+ // @ts-expect-error the backend reports the projection generation
+ void GeneratedClient.open({path:'s',stream:'User:viewer',connection:{url:'http://unused',token:'x',projectionGeneration:'2'}});
  // @ts-expect-error removed Store identity
  void GeneratedClient.open({path:'s',stream:'User:u',connection:{url:'http://unused',token:'x',identity:{backend:'b',viewer:'u',contract:'c'}}});
  // @ts-expect-error no Query invalidation facade

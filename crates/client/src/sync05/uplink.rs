@@ -21,7 +21,8 @@ pub enum StoreCommand {
         fence: WorkFence05,
         command: Box<StoreCommand>,
     },
-    Initialize(u64),
+    /// An admitted handshake: its head and the backend's projection generation.
+    Initialize(v05::HandshakeResponse),
     NetworkState {
         live: bool,
         catching_up: bool,

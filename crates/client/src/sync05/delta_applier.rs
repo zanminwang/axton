@@ -39,10 +39,12 @@ impl<S: ClientStore> Client<S> {
                 .collect())
         })
     }
-    /// Commit a handshake head. A due rollover clears in the same commit, so
-    /// the fresh Store starts at this head without another handshake.
-    pub fn initialize_stream05(&mut self, start: u64) -> Result<()> {
+    /// Commit a handshake: adopt the backend's projection generation, then
+    /// its head. A due rollover clears in the same commit, so the fresh Store
+    /// starts at this head without another handshake.
+    pub fn initialize_stream05(&mut self, start: u64, projection_generation: &str) -> Result<()> {
         self.write(|e| {
+            e.adopt_generation05(projection_generation)?;
             e.rollover05()?;
             e.initialize_stream05(start)
         })

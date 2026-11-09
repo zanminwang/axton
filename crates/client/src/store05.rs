@@ -106,26 +106,51 @@ pub fn admit05<S: ClientStore>(store: &mut S, stream: &str) -> Result<bool> {
     }
     Ok(true)
 }
-impl<S: ClientStore> Client<S> {
-    pub fn open05(store: S, schema: Schema, stream: &str) -> Result<Self> {
-        Self::open05_with_projection(store, schema, stream, "1")
-    }
-    pub fn open05_with_projection(
-        mut store: S,
-        schema: Schema,
-        stream: &str,
-        projection: &str,
-    ) -> Result<Self> {
-        schema.validate()?;
-        let existing = admit05(&mut store, stream)?;
-        let materialization = axton_protocols::sync::materialization_id(&schema, projection)?;
-        let descriptor_text = canonical_json(&serde_json::to_value(&schema)?)?;
+/// The stored descriptor of `schema` under a projection generation:
+/// its read materialization, retained-descriptor context and canonical text.
+struct Descriptor05 {
+    materialization: String,
+    context: String,
+    text: String,
+}
+impl Descriptor05 {
+    fn new(schema: &Schema, projection_generation: &str) -> Result<Self> {
+        let text = canonical_json(&serde_json::to_value(schema)?)?;
         let mut hash = Sha256::new();
         hash.update(b"axton:stored-descriptor:5\0");
-        hash.update(descriptor_text.as_bytes());
+        hash.update(text.as_bytes());
         hash.update([0]);
-        hash.update(projection.as_bytes());
-        let descriptor_context = format!("{:x}", hash.finalize());
+        hash.update(projection_generation.as_bytes());
+        Ok(Self {
+            materialization: v05::materialization_id(schema, projection_generation)?,
+            context: format!("{:x}", hash.finalize()),
+            text,
+        })
+    }
+}
+const INSERT_DESCRIPTOR: &str = "INSERT OR IGNORE INTO axton_descriptor(context,materialization,descriptor,projection_generation) VALUES(?,?,?,?)";
+/// The desired materialization follows the schema descriptor; the enabled
+/// descriptor follows only while the materialization is unchanged.
+const DESIRE_DESCRIPTOR: &str = "UPDATE axton_store SET desired_materialization=?,schema_descriptor=?,enabled_descriptor=CASE WHEN materialization=? THEN ? ELSE enabled_descriptor END";
+const SCHEMA_GENERATION: &str = "SELECT projection_generation FROM axton_descriptor WHERE context=(SELECT schema_descriptor FROM axton_store)";
+impl<S: ClientStore> Client<S> {
+    /// Open the Store. The projection generation is the one the backend last
+    /// reported (stored with the schema descriptor), so a reopen never undoes
+    /// a server-driven change; a fresh file starts at "1".
+    pub fn open05(mut store: S, schema: Schema, stream: &str) -> Result<Self> {
+        schema.validate()?;
+        let existing = admit05(&mut store, stream)?;
+        let projection = if existing {
+            store
+                .query(SCHEMA_GENERATION, &[])?
+                .rows
+                .first()
+                .and_then(|r| r[0].as_str().map(str::to_owned))
+                .ok_or_else(|| invalid("Store descriptor missing"))?
+        } else {
+            "1".into()
+        };
+        let descriptor = Descriptor05::new(&schema, &projection)?;
         if existing {
             let old=store.query("SELECT descriptor FROM axton_descriptor WHERE context=(SELECT schema_descriptor FROM axton_store)",&[])?.rows;
             let old: Schema = serde_json::from_str(
@@ -154,7 +179,7 @@ impl<S: ClientStore> Client<S> {
         let opened = (|| {
             if !existing {
                 store.execute_batch(DDL)?;
-                store.execute("INSERT INTO axton_store(singleton,format,id,stream,materialization,desired_materialization,schema_descriptor,enabled_descriptor) VALUES(1,5,?,?,?,?,?,?)",&[json!(uuid::Uuid::new_v4().to_string()),json!(stream),json!(materialization),json!(materialization),json!(descriptor_context),json!(descriptor_context)])?;
+                store.execute("INSERT INTO axton_store(singleton,format,id,stream,materialization,desired_materialization,schema_descriptor,enabled_descriptor) VALUES(1,5,?,?,?,?,?,?)",&[json!(uuid::Uuid::new_v4().to_string()),json!(stream),json!(descriptor.materialization),json!(descriptor.materialization),json!(descriptor.context),json!(descriptor.context)])?;
             }
             ddl::reconcile(&mut store, &schema)?;
             // Delivery staging is transient: network plans do not survive a
@@ -171,10 +196,23 @@ impl<S: ClientStore> Client<S> {
                     store.execute(&format!("DELETE FROM {table}"), &[])?;
                 }
             }
-            store.execute("INSERT OR IGNORE INTO axton_descriptor(context,materialization,descriptor,projection_generation) VALUES(?,?,?,?)",&[json!(descriptor_context),json!(materialization),json!(descriptor_text),json!(projection)])?;
             store.execute(
-                "UPDATE axton_store SET desired_materialization=?,schema_descriptor=?,enabled_descriptor=CASE WHEN materialization=? THEN ? ELSE enabled_descriptor END",
-                &[json!(materialization),json!(descriptor_context),json!(materialization),json!(descriptor_context)],
+                INSERT_DESCRIPTOR,
+                &[
+                    json!(descriptor.context),
+                    json!(descriptor.materialization),
+                    json!(descriptor.text),
+                    json!(projection),
+                ],
+            )?;
+            store.execute(
+                DESIRE_DESCRIPTOR,
+                &[
+                    json!(descriptor.materialization),
+                    json!(descriptor.context),
+                    json!(descriptor.materialization),
+                    json!(descriptor.context),
+                ],
             )?;
             let rows = store
                 .query("SELECT id,generation,materialization FROM axton_store", &[])?
@@ -259,6 +297,41 @@ impl<S: ClientStore> Engine<'_, S> {
     }
 }
 impl<S: ClientStore> Engine<'_, S> {
+    /// Adopt the projection generation a handshake reported. A change writes
+    /// the descriptor for the app schema under it and makes that the desired
+    /// materialization; the rollover then runs as for a schema change.
+    pub(crate) fn adopt_generation05(&mut self, projection_generation: &str) -> Result<()> {
+        if self
+            .scalar(SCHEMA_GENERATION, &[])?
+            .as_ref()
+            .and_then(|v| v.as_str())
+            == Some(projection_generation)
+        {
+            return Ok(());
+        }
+        let d = Descriptor05::new(self.schema, projection_generation)?;
+        self.exec(
+            "axton_descriptor",
+            INSERT_DESCRIPTOR,
+            &[
+                json!(d.context),
+                json!(d.materialization),
+                json!(d.text),
+                json!(projection_generation),
+            ],
+        )?;
+        self.exec(
+            "axton_store",
+            DESIRE_DESCRIPTOR,
+            &[
+                json!(d.materialization),
+                json!(d.context),
+                json!(d.materialization),
+                json!(d.context),
+            ],
+        )?;
+        Ok(())
+    }
     /// The Store's materialization differs from the one the schema and the
     /// backend's projection generation now require.
     pub fn rollover_pending05(&mut self) -> Result<bool> {

@@ -32,7 +32,7 @@ fn schema() -> Schema {
 }
 fn start(path: &std::path::Path) -> Client<SqliteStore> {
     let mut c = Client::open05(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| {
         tx.direct(common05::create("Book", "b", json!({"title":"B"})))?;
         tx.direct(common05::create("Book", "other", json!({"title":"O"})))?;

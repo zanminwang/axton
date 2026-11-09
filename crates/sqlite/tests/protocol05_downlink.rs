@@ -49,7 +49,7 @@ fn empty_bootstrap_zero_commits_only_verified_final_and_survives_reopen() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = client(&p);
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     assert_eq!(c.store_status05().unwrap().bootstrap_cursor, None);
     let context = c.request_context05().unwrap();
     let f = plan(context.clone(), "p", 0, 0, true);
@@ -67,7 +67,7 @@ fn empty_bootstrap_zero_commits_only_verified_final_and_survives_reopen() {
 fn missing_prefix_is_retained_and_repair_capacity_is_reserved() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let later = plan(context.clone(), "later", 2, 3, false);
     let early = plan(context.clone(), "early", 0, 2, false);
@@ -109,7 +109,7 @@ fn socket_loss_discards_incomplete_response_and_repairs_from_committed_cursor() 
     };
     let directory = tempfile::tempdir().unwrap();
     let mut c = client(&directory.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let empty = plan(context.clone(), "initial", 0, 0, true);
     let mut queue = DeliveryQueue::new(1000000, 4);
@@ -145,6 +145,7 @@ fn socket_loss_discards_incomplete_response_and_repairs_from_committed_cursor() 
                         store_id: context.store_id.clone(),
                         stream: context.stream.clone(),
                         head: 0,
+                        projection_generation: "1".into(),
                     })
                     .unwrap(),
                 )),
@@ -222,7 +223,7 @@ fn connected_control(c: &mut Client<SqliteStore>) -> (axton_client::sync05::Cont
         runtime::{EffectOutcome, Event, Operation},
         sync05::Control,
     };
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let empty = plan(context.clone(), "initial", 0, 0, true);
     let mut queue = DeliveryQueue::new(1000000, 4);
@@ -254,6 +255,7 @@ fn connected_control(c: &mut Client<SqliteStore>) -> (axton_client::sync05::Cont
                         store_id: context.store_id,
                         stream: context.stream,
                         head: 0,
+                        projection_generation: "1".into(),
                     })
                     .unwrap(),
                 )),
@@ -519,6 +521,7 @@ fn held_http_repair_does_not_block_live_prefix_and_late_reply_cannot_undo_it() {
         store_id: context.store_id.clone(),
         stream: context.stream.clone(),
         head: 1,
+        projection_generation: "1".into(),
     };
     control.receive(&socket,EffectOutcome {ok:true,value:Some(serde_json::json!({"event":"message","body":serde_json::to_string(&ack).unwrap()})),error:None},1).unwrap();
     let (pull, request) = cursor_pull(&mut control);
@@ -595,7 +598,7 @@ fn cursor_pages_resume_after_reopen_and_later_sync_installs_current_state_and_de
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db");
     let mut c = client(&path);
-    c.initialize_stream05(2).unwrap();
+    c.initialize_stream05(2, "1").unwrap();
     let context = c.request_context05().unwrap();
     let page = |id: &str, bootstrap, after, through, changes| {
         v05::freeze_delivery(
@@ -689,7 +692,7 @@ fn cursor_pages_resume_after_reopen_and_later_sync_installs_current_state_and_de
 fn socket_http_overlap_repeated_fragment_and_changed_payload_are_fenced() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let f = fragmented(context.clone(), false);
     let mut q = DeliveryQueue::new(1000000, 4);
@@ -716,7 +719,7 @@ fn failed_sql_apply_keeps_unit_and_progress_unchanged_until_explicit_retry() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = client(&p);
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let mut units = vec![v05::DeliveryUnit {
         index: 0,
@@ -764,7 +767,7 @@ fn failed_sql_apply_keeps_unit_and_progress_unchanged_until_explicit_retry() {
 fn late_generation_and_expired_plan_leave_progress_unchanged() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let f = plan(context.clone(), "old", 0, 1, false);
     let mut q = DeliveryQueue::new(1000000, 4);
@@ -778,7 +781,7 @@ fn late_generation_and_expired_plan_leave_progress_unchanged() {
 fn zero_bootstrap_intermediate_no_progress_does_not_mark_complete() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let f = v05::freeze_delivery(
         context.clone(),
@@ -815,7 +818,7 @@ fn zero_bootstrap_intermediate_no_progress_does_not_mark_complete() {
 fn oversized_atomic_unit_spills_to_disk_and_applies_as_one_commit() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let f = fragmented(context.clone(), false);
     let mut q = DeliveryQueue::new(1024, 4);
@@ -827,7 +830,7 @@ fn oversized_atomic_unit_spills_to_disk_and_applies_as_one_commit() {
 fn duplicate_identity_across_units_cannot_commit_later_prefix() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let mut f = v05::freeze_delivery(
         context.clone(),
@@ -936,7 +939,7 @@ fn crash_after_sql_commit_before_dequeue_child() {
         "User:u",
     )
     .unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let f = v05::freeze_delivery(
         context.clone(),
@@ -1020,7 +1023,7 @@ fn foreign_live_context_is_only_a_head_hint_for_retained_context_repair() {
     };
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let f = plan(context.clone(), "boot", 0, 0, true);
     let mut q = DeliveryQueue::new(10000, 4);
@@ -1044,7 +1047,7 @@ fn foreign_live_context_is_only_a_head_hint_for_retained_context_repair() {
             _ => None,
         })
         .unwrap();
-    control.receive(&h,EffectOutcome{ok:true,value:Some(serde_json::json!({"protocol":axton_client::v05::PROTOCOL,"storeId":context.store_id,"stream":context.stream,"head":0}).to_string().into()),error:None},1).unwrap();
+    control.receive(&h,EffectOutcome{ok:true,value:Some(serde_json::json!({"protocol":axton_client::v05::PROTOCOL,"storeId":context.store_id,"stream":context.stream,"head":0,"projectionGeneration":"1"}).to_string().into()),error:None},1).unwrap();
     let socket = control
         .events()
         .into_iter()
@@ -1095,7 +1098,7 @@ fn slow_observer_receiver_does_not_hold_apply_and_notices_only_commits() {
     use std::collections::BTreeSet;
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let observer = c.watch(BTreeSet::from(["Entry".into()]));
     let first = v05::freeze_delivery(
@@ -1146,7 +1149,7 @@ fn slow_observer_receiver_does_not_hold_apply_and_notices_only_commits() {
 fn manifest_over_capacity_is_refused_without_data_or_progress() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let before = c.store_status05().unwrap();
     let f = plan(before.context.clone(), "too-large", 0, 1, false);
     let mut q = DeliveryQueue::new(16, 4);
@@ -1229,7 +1232,7 @@ fn explicit_reset_retires_frozen_batch_and_reused_ids_have_new_store_owner() {
     let schema = Schema::from_value(s).unwrap();
     let mut c =
         Client::open05(SqliteStore::open(&path).unwrap(), schema.clone(), "User:u").unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let old = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -1283,7 +1286,7 @@ fn explicit_reset_retires_frozen_batch_and_reused_ids_have_new_store_owner() {
             )
         })
         .unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let fresh = c.freeze_batch05().unwrap().unwrap();
     assert_eq!(fresh.batch_id, batch.batch_id);
     assert_eq!(call.ordinal, old.ordinal);
@@ -1297,7 +1300,7 @@ fn explicit_reset_retires_frozen_batch_and_reused_ids_have_new_store_owner() {
 fn completed_and_expired_transfer_staging_is_cleared() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let f = fragmented(context.clone(), false);
     let mut q = DeliveryQueue::new(100000, 4);
@@ -1319,7 +1322,7 @@ fn completed_and_expired_transfer_staging_is_cleared() {
 fn earlier_missing_prefix_can_replace_near_capacity_future_manifest() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let later = plan(context.clone(), "future", 2, 3, false);
     let early = plan(context.clone(), "repair", 0, 2, false);
@@ -1378,7 +1381,7 @@ fn stopped_control_ignores_already_dispatched_freeze_report() {
 fn partial_transfer_retention_is_bounded_and_expiry_clears_keys() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     for index in 0..35 {
         let f = v05::freeze_delivery(
@@ -1438,7 +1441,7 @@ fn partial_transfer_retention_is_bounded_and_expiry_clears_keys() {
 fn earlier_missing_prefix_can_replace_near_capacity_payload() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let later = plan(context.clone(), "future", 2, 3, false);
     let early = plan(context.clone(), "repair", 0, 2, false);
@@ -1509,7 +1512,7 @@ fn process_crash_spill_reclaims_without_sweeping_other_clients() {
 fn repair_continuation_can_replace_near_capacity_future_payload() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let future = plan(context.clone(), "future", 2, 3, false);
     let repair = fragmented(context.clone(), false);
@@ -1578,7 +1581,7 @@ fn settlement_progress_wakes_uplink_once_and_waiting_needs_stays_idle() {
     use axton_client::sync05::{Control, StoreCommand, StoreReport};
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let status = c.store_status05().unwrap();
     let mut control = Control::new(status.clone());
     control.connect().unwrap();
@@ -1624,7 +1627,7 @@ fn pending_settlement_control(
         "User:u",
     )
     .unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let bootstrap = plan(context.clone(), "initial", 0, 0, true);
     let mut queue = DeliveryQueue::new(1000000, 4);

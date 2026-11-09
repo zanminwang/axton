@@ -15,29 +15,13 @@ void main() {
       );
       expect(carrier.openedRequest['protocol'], 5);
       expect(carrier.openedRequest['stream'], 'User:u');
-      expect(carrier.openedRequest['projectionGeneration'], '1');
+      expect(carrier.openedRequest.containsKey('projectionGeneration'), false);
       expect(carrier.openedRequest.containsKey('binding'), false);
       expect(carrier.commands, isEmpty);
       expect(client.connection, isNull);
       await client.close();
     },
   );
-  test('connection projection generation is forwarded internally', () async {
-    final carrier = FakeCarrier();
-    final client = await Client.open(
-      path: 'unused',
-      schema: {},
-      stream: 'User:u',
-      carrier: carrier,
-      connection: StoreConnection(
-        url: 'http://unused',
-        token: () => 'x',
-        projectionGeneration: '3',
-      ),
-    );
-    expect(carrier.openedRequest['projectionGeneration'], '3');
-    await client.close();
-  });
   test(
     'identical Query invocations independently submit store-only tasks',
     () async {

@@ -728,7 +728,7 @@ fn a_named_mutation_submitted_in_a_callback_is_provisional_until_the_commit() {
     assert_eq!(events[1], done("tx", Value::Null));
     assert_eq!(events[2]["requestId"], "barrier");
     assert_eq!(events[2]["ok"], true);
-    h.runtime.client().initialize_stream05(0).unwrap();
+    h.runtime.client().initialize_stream05(0, "1").unwrap();
     let batch = h.runtime.client().freeze_batch05().unwrap().unwrap();
     assert_eq!(batch.mutations[0].id, 1);
     assert_eq!(h.pending(), 1);
@@ -805,7 +805,7 @@ fn a_local_callback_runs_inside_its_submission_and_its_writes_are_companions() {
         h.operations(),
         ["companion Entry draft delete", "wire Entry p create"]
     );
-    h.runtime.client().initialize_stream05(0).unwrap();
+    h.runtime.client().initialize_stream05(0, "1").unwrap();
     let batch = h.runtime.client().freeze_batch05().unwrap().unwrap();
     let body = String::from_utf8(axton_protocols::sync::encode(&batch).unwrap()).unwrap();
     assert!(!body.contains("draft"), "a companion is never sent: {body}");
@@ -1376,7 +1376,7 @@ fn recovery_harness() -> (
         "User:u",
     )
     .unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let owner = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -1471,8 +1471,15 @@ fn observe_recovery<S: ClientStore + 'static>(h: &mut Harness<S>) -> Vec<String>
 fn receipt_commit_publishes_retained_unsent_and_model_observers_together() {
     use axton_client::sync05::{StoreCommand, StoreReport};
     let mut h = mutation_harness();
+    let context = h.runtime.client().request_context05().unwrap();
     h.runtime
-        .store_worker05(StoreCommand::Initialize(0))
+        .store_worker05(StoreCommand::Initialize(v05::HandshakeResponse {
+            protocol: v05::PROTOCOL,
+            store_id: context.store_id,
+            stream: context.stream,
+            head: 0,
+            projection_generation: "1".into(),
+        }))
         .unwrap();
     h.events();
     let ids = observe_recovery(&mut h);
@@ -1577,8 +1584,15 @@ fn receipt_commit_publishes_retained_unsent_and_model_observers_together() {
 fn accepted_receipt_commit_publishes_retained_pending_observer() {
     use axton_client::sync05::{StoreCommand, StoreReport};
     let mut h = mutation_harness();
+    let context = h.runtime.client().request_context05().unwrap();
     h.runtime
-        .store_worker05(StoreCommand::Initialize(0))
+        .store_worker05(StoreCommand::Initialize(v05::HandshakeResponse {
+            protocol: v05::PROTOCOL,
+            store_id: context.store_id,
+            stream: context.stream,
+            head: 0,
+            projection_generation: "1".into(),
+        }))
         .unwrap();
     h.events();
     let context = h.runtime.client().request_context05().unwrap();
@@ -2209,7 +2223,7 @@ fn a_direct_apply_that_fails_to_commit_fails_the_call_and_lets_nothing_escape() 
         "User:u",
     )
     .unwrap();
-    client.initialize_stream05(0).unwrap();
+    client.initialize_stream05(0, "1").unwrap();
     let mut h = Harness {
         runtime: ClientRuntime::new(client),
         _dir: directory,
@@ -2258,7 +2272,7 @@ fn a_direct_apply_that_fails_to_commit_fails_the_call_and_lets_nothing_escape() 
 #[test]
 fn every_commit_path_re_emits_a_watched_statement() {
     let mut h = harness();
-    h.runtime.client().initialize_stream05(0).unwrap();
+    h.runtime.client().initialize_stream05(0, "1").unwrap();
     let context = h.runtime.client().request_context05().unwrap();
     let record = |cursor, text: &str, note: Value| v05::AuthorityChange::Record {
         key: v05::RecordKey {

@@ -40,7 +40,7 @@ fn rejected_owner_preserves_later_direct_and_completion_after_reopen() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = open(&p);
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -73,7 +73,7 @@ fn accepted_private_result_waits_for_coverage_then_settles_later_direct() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = open(&p);
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -160,7 +160,7 @@ fn direct_delete_clears_current_tombstone_but_retains_stream_history() {
 fn newer_stream_supersedes_private_fallback_even_after_direct_releases_protection() {
     let d = tempfile::tempdir().unwrap();
     let mut c = open(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -204,7 +204,7 @@ fn rejected_update_preserves_later_direct_b_and_historical_evidence() {
     value["actions"][0]["inputs"][0]["operation"] = json!("update");
     s = Schema::from_value(value).unwrap();
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     install(&mut c, "e", 3, Some("base"));
     let call = c
         .transaction(|tx| {
@@ -234,7 +234,7 @@ fn private_acceptance_finalizes_at_original_position_and_retains_result_after_cl
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = open(&p);
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -355,7 +355,7 @@ fn commit_failure_rolls_back_assignment_and_acknowledgement() {
         crash_ack: false,
     };
     let mut c = Client::open05(store, schema(), "User:u").unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -391,7 +391,7 @@ fn commit_failure_rolls_back_assignment_and_acknowledgement() {
 fn partial_duplicate_or_foreign_acknowledgement_changes_nothing() {
     let d = tempfile::tempdir().unwrap();
     let mut c = open(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| {
         tx.submit_mutation05(
             "Write",
@@ -453,7 +453,7 @@ fn abrupt_process_exit_before_ack_commit_restores_exact_batch_and_later_direct()
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     c.install_authority05(
         &context,
@@ -545,7 +545,7 @@ fn pending_optimism_keeps_authoritative_base_protection() {
 fn target_moved_past_sync_cursor_keeps_local_layer_until_newer_position_lands() {
     let d = tempfile::tempdir().unwrap();
     let mut c = open(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -600,7 +600,7 @@ fn lifecycle_dependents_are_rejected_atomically_and_retained_but_not_replayed() 
         "User:u",
     )
     .unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let first = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -661,7 +661,7 @@ fn accepted_companion_keeps_original_order_and_later_authority_supersedes_it() {
         "User:u",
     )
     .unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let ctx = c.request_context05().unwrap();
     c.install_authority05(
         &ctx,
@@ -748,7 +748,7 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     let mut s = schema();
     s.models[0].unique.push(vec!["text".into()]);
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| {
         tx.direct(Operation {
             model: "Entry".into(),
@@ -831,7 +831,7 @@ fn abrupt_assignment_commit_boundaries_preserve_canonical_retry() {
         let p = d.path().join(format!("{mode}.db"));
         let evidence = d.path().join(format!("{mode}.evidence"));
         let mut c = open(&p);
-        c.initialize_stream05(0).unwrap();
+        c.initialize_stream05(0, "1").unwrap();
         c.transaction(|tx| {
             tx.submit_mutation05(
                 "Write",
@@ -977,7 +977,7 @@ fn dismissed_rejection_keeps_durable_completion_but_retires_input_after_reopen()
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db");
     let mut client = open(&path);
-    client.initialize_stream05(0).unwrap();
+    client.initialize_stream05(0, "1").unwrap();
     let call = client
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -1163,7 +1163,7 @@ fn dismiss_missing_is_noop_but_pending_and_accepted_outcomes_are_protected() {
     let schema = Schema::from_value(descriptor).unwrap();
     let mut client =
         Client::open05(SqliteStore::open(&path).unwrap(), schema.clone(), "User:u").unwrap();
-    client.initialize_stream05(0).unwrap();
+    client.initialize_stream05(0, "1").unwrap();
     client.transaction(|tx| tx.dismiss_rejection05(99)).unwrap();
     let call = client
         .transaction(|tx| tx.submit_mutation05("Ping", 1, json!({}), vec![]))
@@ -1223,7 +1223,7 @@ fn failed_reset_keeps_old_store_rows_authority_and_prefix_after_real_reopen() {
         "User:u",
     )
     .unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let old = c.request_context05().unwrap();
     c.install_authority05(
         &old,
@@ -1265,7 +1265,7 @@ fn retained_private_snapshot_never_evaluates_new_creation_defaults() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = open(&p);
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -1326,7 +1326,7 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
         let p = d.path().join("db");
         let mut c =
             Client::open05(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
-        c.initialize_stream05(0).unwrap();
+        c.initialize_stream05(0, "1").unwrap();
         let context = c.request_context05().unwrap();
         let mut q = DeliveryQueue::new(100_000, 8);
         let initial = v05::freeze_delivery(
@@ -1453,7 +1453,7 @@ fn historical_target_finalizes_from_receipt_unless_bootstrap_will_deliver_it() {
         let schema = Schema::from_value(s).unwrap();
         let mut c =
             Client::open05(SqliteStore::open(&p).unwrap(), schema.clone(), "User:u").unwrap();
-        c.initialize_stream05(80).unwrap();
+        c.initialize_stream05(80, "1").unwrap();
         let context = c.request_context05().unwrap();
         let call = c
             .transaction(|tx| {
@@ -1549,7 +1549,7 @@ fn failed_local_settlement_retains_previous_batch_window_after_reopen() {
         "User:u",
     )
     .unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let first = c
         .transaction(|tx| {
             tx.submit_mutation05(

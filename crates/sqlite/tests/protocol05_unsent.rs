@@ -125,7 +125,7 @@ fn a_replacement_in_the_transaction_that_discards_the_original_is_planned_withou
     assert!(client.refused_acts05().unwrap().is_empty());
     assert!(client.failed_acts().unwrap().is_empty());
     assert!(client.pending_tasks().unwrap().is_empty());
-    client.initialize_stream05(0).unwrap();
+    client.initialize_stream05(0, "1").unwrap();
     let batch = client.freeze_batch05().unwrap().unwrap();
     assert_eq!(batch.mutations.len(), 1);
     assert_eq!(batch.mutations[0].id, replacement.ordinal);
@@ -306,7 +306,7 @@ fn a_new_requirement_on_a_failed_task_inherits_its_failure_and_one_retry_covers_
     client.retry_tasks(&[blob("X")]).unwrap();
     assert!(client.failed_acts().unwrap().is_empty());
     client.outcome(&blob("X"), None).unwrap();
-    client.initialize_stream05(0).unwrap();
+    client.initialize_stream05(0, "1").unwrap();
     let request = client.freeze_batch05().unwrap().unwrap();
     let sent: Vec<u64> = request.mutations.iter().map(|m| m.id).collect();
     assert_eq!(
@@ -364,7 +364,7 @@ fn unassigned_prerequisite_work_does_not_hold_the_batch_ownership_window() {
             .unwrap()
     };
     let ready = enqueue(&mut client, "first-ready");
-    client.initialize_stream05(0).unwrap();
+    client.initialize_stream05(0, "1").unwrap();
     let batch = client.freeze_batch05().unwrap().unwrap();
     assert_eq!(
         batch.mutations.iter().map(|m| m.id).collect::<Vec<_>>(),

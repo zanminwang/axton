@@ -270,6 +270,7 @@
   },
   "handshakeResponse": {
     "head": 40,
+    "projectionGeneration": "1",
     "protocol": 6,
     "storeId": "store",
     "stream": "User:a"

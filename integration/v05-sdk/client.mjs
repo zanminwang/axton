@@ -1464,6 +1464,90 @@ if (process.argv[2] === "enqueue-child") {
       await rm(dir, { recursive: true, force: true });
     }
   });
+  test("A14: a fresh file's queued Mutations roll over at the first handshake to generation 2 and push in its context", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "axton-sdk05-generation-")),
+      path = join(dir, "db");
+    let client = await open(path),
+      h;
+    try {
+      await publish(client, "generation-queued", " queued ");
+      const offline = (
+        await client.readSql("SELECT materialization FROM axton_store")
+      )[0].materialization;
+      await client.close();
+      h = await host({ projectionGeneration: "2" });
+      client = await open(path, h.url);
+      await until(
+        async () => (await client.syncState()).pending === 0,
+        "queued Mutation settles after the rollover",
+      );
+      const store = (
+        await client.readSql(
+          "SELECT materialization,desired_materialization FROM axton_store",
+        )
+      )[0];
+      assert.notEqual(store.materialization, offline);
+      assert.equal(store.materialization, store.desired_materialization);
+      assert.equal(h.batches.length, 1);
+      assert.equal(JSON.parse(h.batches[0]).materialization, store.materialization);
+      assert.equal(
+        (await client.models.entry.get({ id: "generation-queued" })).text,
+        "queued",
+      );
+    } finally {
+      await client?.close();
+      await h?.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  test("A14: a backend projection change rolls an initialized Store over instead of a context_mismatch loop", async () => {
+    let h = await host();
+    const dir = await mkdtemp(join(tmpdir(), "axton-sdk05-projection-")),
+      path = join(dir, "db");
+    let client;
+    try {
+      await h.backend.transaction(async ({ tx, streams }) => {
+        await tx.query(
+          "INSERT INTO sdk05_entry VALUES('projection-entry','before','projection')",
+        );
+        streams(["User:projection"]).track.entry("projection-entry");
+      });
+      client = await open(path, h.url, "projection");
+      await client.bootstrap();
+      const before = (
+        await client.readSql("SELECT materialization FROM axton_store")
+      )[0].materialization;
+      await client.close();
+      client = undefined;
+      await h.close();
+      // The previous materialization is not retained: any request in the old
+      // context would be refused with 409 context_mismatch.
+      h = await host({ projectionGeneration: "2" });
+      client = await open(path, h.url, "projection");
+      await until(async () => {
+        const row = (
+          await client.readSql(
+            "SELECT materialization,start_cursor FROM axton_store",
+          )
+        )[0];
+        return row.materialization !== before && row.start_cursor !== null;
+      }, "handshake-reported generation rolls the Store over");
+      await client.bootstrap();
+      assert.equal(
+        (await client.models.entry.get({ id: "projection-entry" })).text,
+        "before",
+      );
+      assert.deepEqual(
+        h.responses.filter((response) => response.status === 409),
+        [],
+        "no request ran in the dropped context",
+      );
+    } finally {
+      await client?.close();
+      await h.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   test("A11/A12: generated Dart crosses HTTP/WebSocket, SQLite and PostgreSQL", async () => {
     assert.ok(process.env.AXTON_DART, "Dart must participate in the host gate");
     const h = await host();

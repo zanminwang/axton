@@ -250,10 +250,11 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 self.publish_statuses();
                 return Ok(StoreReport::Snapshot(self.client.store_status05()?));
             }
-            StoreCommand::Initialize(head) => {
+            StoreCommand::Initialize(handshake) => {
                 // A rollover with nothing frozen clears in the same commit
                 // that starts the fresh Store at this handshake's head.
-                self.client.initialize_stream05(head)?;
+                self.client
+                    .initialize_stream05(handshake.head, &handshake.projection_generation)?;
                 self.release_initial_reads05(true);
                 StoreReport::Snapshot(self.client.store_status05()?)
             }

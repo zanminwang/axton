@@ -32,7 +32,13 @@ const hash05 = (domain, value) =>
     .update(canonical(value))
     .digest("hex");
 export function emptyHandshake(body) {
-  return { protocol: 6, storeId: body.storeId, stream: body.stream, head: 0 };
+  return {
+    protocol: 6,
+    storeId: body.storeId,
+    stream: body.stream,
+    head: 0,
+    projectionGeneration: "1",
+  };
 }
 const fixtureExpiry = Date.now() + 300000;
 export function delivery05(body, changes = [], head = body.through) {

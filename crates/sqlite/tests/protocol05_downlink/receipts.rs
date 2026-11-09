@@ -289,6 +289,7 @@ fn reconnect_handshake_still_repairs_the_missing_committed_prefix() {
                         store_id: scenario.receipt.context.store_id.clone(),
                         stream: scenario.receipt.context.stream.clone(),
                         head: 2,
+                        projection_generation: "1".into(),
                     })
                     .unwrap()
                 )),

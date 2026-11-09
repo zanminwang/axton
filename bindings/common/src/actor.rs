@@ -247,7 +247,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Open a runtime for `{"type":"open","requestId","path","schema","binding","projectionGeneration"?}`
+/// Open a runtime for `{"type":"open","requestId","path","schema","binding"}`
 /// and answer its id (never 0, never reused). The open itself runs on the new
 /// thread and completes `requestId` through the outbox; a failed open
 /// completes it with the error and closes the runtime. Only a request that
@@ -405,15 +405,10 @@ fn open_runtime(request: &Value) -> axton_client::Result<ClientRuntime<SqliteSto
         let stream = request["stream"]
             .as_str()
             .ok_or_else(|| axton_client::invalid("stream must be string"))?;
-        let generation = request.get("projectionGeneration").map_or(Ok("1"), |v| {
-            v.as_str()
-                .ok_or_else(|| axton_client::invalid("projectionGeneration must be string"))
-        })?;
-        let client = axton_client::Client::open05_with_projection(
+        let client = axton_client::Client::open05(
             SqliteStore::open_exclusive05(path, stream)?,
             Schema::from_value(request["schema"].clone())?,
             stream,
-            generation,
         )?;
         return ClientRuntime::new(client).register_prerequisite_handlers(names(
             request,

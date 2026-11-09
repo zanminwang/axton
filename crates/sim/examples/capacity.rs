@@ -19,7 +19,7 @@ fn main() {
             "User:diagnostic",
         )
         .unwrap();
-        client.initialize_stream05(0).unwrap();
+        client.initialize_stream05(0, "1").unwrap();
         let context = client.request_context05().unwrap();
         let authority = |cursor| v05::AuthorityChange::Record {
             key: v05::RecordKey {

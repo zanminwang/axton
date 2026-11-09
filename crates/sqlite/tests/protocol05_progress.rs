@@ -60,7 +60,7 @@ fn unique_transfer_is_final_projection_atomic_and_ahead_content_does_not_advance
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let mut q = DeliveryQueue::new(100_000, 8);
     receive(&mut c, &mut q, "boot", 0, 0, 0, vec![]);
     c.apply_next_delivery05(&mut q, 1).unwrap();
@@ -123,7 +123,7 @@ fn bootstrap_unique_release_closes_cached_conflict_in_one_current_atomic_unit() 
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
-    c.initialize_stream05(40).unwrap();
+    c.initialize_stream05(40, "1").unwrap();
     c.install_cache05(
         &[
             v05::ReadRecord {

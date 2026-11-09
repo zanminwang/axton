@@ -36,8 +36,6 @@ fn fixed_batch_restores_input_presence_and_excludes_new_members() {
 }
 #[test]
 fn no_batch_freezes_before_the_handshake_sets_start() {
-    SqliteStore::set_application_data_directory(std::env::temp_dir().join("axton-task2-locks"))
-        .unwrap();
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
@@ -859,8 +857,6 @@ fn wire(model: &str, id: &str) -> v05::RecordKey {
 }
 #[test]
 fn rollover_drains_frozen_batches_then_clears_only_server_derived_rows() {
-    SqliteStore::set_application_data_directory(std::env::temp_dir().join("axton-task2-locks"))
-        .unwrap();
     use axton_client::{Operation, OperationKind};
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
@@ -1060,8 +1056,6 @@ fn rollover_drains_frozen_batches_then_clears_only_server_derived_rows() {
 }
 #[test]
 fn handshake_generation_rolls_a_fresh_store_over_and_reopen_keeps_it() {
-    SqliteStore::set_application_data_directory(std::env::temp_dir().join("axton-task2-locks"))
-        .unwrap();
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
@@ -1092,8 +1086,6 @@ fn handshake_generation_rolls_a_fresh_store_over_and_reopen_keeps_it() {
 }
 #[test]
 fn reopen_during_drain_keeps_the_reported_generation_desired() {
-    SqliteStore::set_application_data_directory(std::env::temp_dir().join("axton-task2-locks"))
-        .unwrap();
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();

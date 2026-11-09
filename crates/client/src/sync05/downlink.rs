@@ -13,7 +13,6 @@ enum Flight {
     Handshake(v05::HandshakeRequest),
     Delta(v05::DeltaRequest),
     Push(v05::MutationRequest),
-    Owned(v05::MaterializationRequest),
     Socket,
     Expire,
     Retry,
@@ -118,11 +117,7 @@ impl Control {
             .filter(|(_, f)| {
                 matches!(
                     f,
-                    Flight::Socket
-                        | Flight::Delta(_)
-                        | Flight::Handshake(_)
-                        | Flight::Owned(_)
-                        | Flight::Push(_)
+                    Flight::Socket | Flight::Delta(_) | Flight::Handshake(_) | Flight::Push(_)
                 )
             })
             .map(|(id, _)| id.clone())
@@ -279,9 +274,8 @@ impl Control {
                     // cache. Retire incomplete ordinary responses immediately;
                     // repair reconstructs current state from committed B/C.
                     self.queue.plans.retain(|_, plan| {
-                        plan.header.owner.is_some()
-                            || (plan.next..plan.header.units.len() as u64)
-                                .all(|index| plan.complete(index))
+                        (plan.next..plan.header.units.len() as u64)
+                            .all(|index| plan.complete(index))
                     });
                     self.schedule(now)?;
                     self.retry("socket closed or overflow".into());
@@ -326,7 +320,7 @@ impl Control {
                                 .through
                                 .is_some_and(|through| through > cursor);
                     if !self.queue.plans.contains_key(&response.header.plan_id)
-                        && (self.queue.plans.values().any(|p| p.header.owner.is_none())
+                        && (!self.queue.plans.is_empty()
                             || (!advances_prefix
                                 && self.flights.values().any(|f| matches!(f, Flight::Delta(_)))))
                     {
@@ -397,13 +391,6 @@ impl Control {
                 }
                 self.schedule(now)?;
             }
-            Flight::Owned(request) => {
-                let response: v05::MaterializationResponse = serde_json::from_str(&body)?;
-                response.delivery.require_complete()?;
-                self.queue
-                    .receive_owned(&request, &response, &self.context, now)?;
-                self.schedule(now)?;
-            }
             Flight::Push(request) => {
                 let receipt = v05::decode::<v05::BatchAcknowledgement>(body.as_bytes())?;
                 if receipt.context != request.context
@@ -435,11 +422,6 @@ impl Control {
             Flight::Delta(request) => {
                 self.http(Flight::Delta(request.clone()), HttpRoute::Pull, &request)
             }
-            Flight::Owned(request) => self.http(
-                Flight::Owned(request.clone()),
-                HttpRoute::Materialize,
-                &request,
-            ),
             Flight::Push(request) => {
                 self.http(Flight::Push(request.clone()), HttpRoute::Push, &request)
             }
@@ -469,10 +451,6 @@ impl Control {
             && let Some(p) = self.queue.plans.get_mut(&id)
         {
             p.blocked = true;
-            if p.header.owner.is_some() {
-                self.queue.plans.remove(&id);
-                self.jobs.push_back(StoreCommand::Needs);
-            }
         }
         self.applying = false;
         self.freezing = false;
@@ -494,16 +472,37 @@ impl Control {
                 };
             }
             StoreReport::Snapshot(status) => {
-                if status.context.store_id != self.context.store_id {
-                    let reconnect = self.connected;
-                    self.stop();
+                if status.context != self.context {
+                    // A reset or a rollover clear made this Store a fresh
+                    // device in a new context. Staging of the old one is void.
                     self.queue = DeliveryQueue::new(16 * 1024 * 1024, 32);
                     self.applying = false;
                     self.applying_plan = None;
-                    self.delivery_head = status.cursor.unwrap_or(0);
-                    self.context = status.context.clone();
-                    if reconnect {
-                        self.connect()?;
+                    if status.context.store_id == self.context.store_id
+                        && status.start_cursor.is_some()
+                    {
+                        // The clear committed with this connection's handshake
+                        // head: keep the handshake and socket, retire old pulls.
+                        let stale = self
+                            .flights
+                            .iter()
+                            .filter(|(_, f)| matches!(f, Flight::Delta(_)))
+                            .map(|(id, _)| id.clone())
+                            .collect::<Vec<_>>();
+                        for id in stale {
+                            self.flights.remove(&id);
+                            self.events.push(Event::CancelEffect { effect_id: id });
+                        }
+                        self.jobs
+                            .retain(|job| !matches!(job, StoreCommand::Apply { .. }));
+                    } else {
+                        let reconnect = self.connected;
+                        self.stop();
+                        self.delivery_head = status.cursor.unwrap_or(0);
+                        self.context = status.context.clone();
+                        if reconnect {
+                            self.connect()?;
+                        }
                     }
                 }
                 self.context = status.context.clone();
@@ -511,67 +510,7 @@ impl Control {
                 self.wake_after_needs = true;
                 self.jobs.push_back(StoreCommand::Needs);
             }
-            StoreReport::Needs { status, schema } => {
-                // Needs is the Store's complete durable owner snapshot. A
-                // completed owner cannot keep network or staged work alive.
-                let pending = |context: &v05::RequestContext, owner: &v05::MaterializationOwner| {
-                    match owner {
-                        v05::MaterializationOwner::Schema {
-                            previous_materialization,
-                        } => schema.as_ref().is_some_and(|s| {
-                            &s.desired_context == context
-                                && &s.previous_context.materialization == previous_materialization
-                        }),
-                        v05::MaterializationOwner::Settlement { .. } => false,
-                    }
-                };
-                let stale = self
-                    .flights
-                    .iter()
-                    .filter_map(|(id, flight)| match flight {
-                        Flight::Owned(r) if !pending(&r.context, &r.owner) => Some(id.clone()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
-                for id in stale {
-                    self.flights.remove(&id);
-                    self.events.push(Event::CancelEffect { effect_id: id });
-                }
-                self.refresh_waiters.retain(|flight| match flight {
-                    Flight::Owned(r) => pending(&r.context, &r.owner),
-                    _ => true,
-                });
-                self.queue.plans.retain(|_, plan| {
-                    plan.header
-                        .owner
-                        .as_ref()
-                        .is_none_or(|owner| pending(&plan.header.context, owner))
-                });
-                // Undispatched Apply work can be removed here. A dispatched
-                // snapshot finishes through its guarded Store report, which
-                // releases applying without resurrecting the retired plan.
-                let mut retired_apply = false;
-                self.jobs.retain(|job| {
-                    let stale = matches!(job, StoreCommand::Apply {plan_id,..} if !self.queue.plans.contains_key(plan_id));
-                    retired_apply |= stale;
-                    !stale
-                });
-                if retired_apply {
-                    self.applying = false;
-                    self.applying_plan = None;
-                }
-                if let Some(schema) = schema {
-                    let request = v05::MaterializationRequest {
-                        context: schema.desired_context,
-                        request_id: format!("schema:{}", self.issued + 1),
-                        owner: v05::MaterializationOwner::Schema {
-                            previous_materialization: schema.previous_context.materialization,
-                        },
-                        keys: schema.authority_keys,
-                        models: schema.bootstrap_models,
-                    };
-                    self.owned(request)?;
-                }
+            StoreReport::Needs { status } => {
                 if let Some(status) = status {
                     self.status = status;
                     // Receipt acknowledgement can freeze before settlement makes
@@ -607,30 +546,11 @@ impl Control {
                 active_plans,
                 ..
             } => {
-                if status.context != self.context {
-                    self.queue
-                        .plans
-                        .retain(|_, p| p.header.context == status.context);
-                    let stale = self
-                        .flights
-                        .iter()
-                        .filter_map(|(id, f)| match f {
-                            Flight::Delta(r) if r.context != status.context => Some(id.clone()),
-                            Flight::Owned(r) if r.context != status.context => Some(id.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>();
-                    for id in stale {
-                        self.flights.remove(&id);
-                        self.events.push(Event::CancelEffect { effect_id: id });
-                    }
-                }
                 if let Some(active) = active_plans {
                     self.queue
                         .plans
                         .retain(|id, p| p.next == 0 || active.contains(id));
                 }
-                self.context = status.context.clone();
                 self.status = status;
                 self.wake_after_needs = true;
                 self.jobs.push_back(StoreCommand::Needs);
@@ -648,28 +568,6 @@ impl Control {
             }
         }
         self.schedule(now)
-    }
-    fn owned(&mut self, request: v05::MaterializationRequest) -> Result<()> {
-        if !self.connected || self.paused {
-            return Ok(());
-        }
-        if self
-            .flights
-            .values()
-            .any(|f| matches!(f,Flight::Owned(r) if r.owner==request.owner))
-            || self
-                .queue
-                .plans
-                .values()
-                .any(|p| p.header.owner.as_ref() == Some(&request.owner))
-        {
-            return Ok(());
-        }
-        self.http(
-            Flight::Owned(request.clone()),
-            HttpRoute::Materialize,
-            &request,
-        )
     }
     fn retire_bootstrap_prefetch(&mut self) {
         let committed = self.status.bootstrap_cursor.unwrap_or(0);
@@ -689,9 +587,7 @@ impl Control {
             |flight| !matches!(flight, Flight::Delta(r) if r.bootstrap && r.after > committed),
         );
         self.queue.plans.retain(|_, p| {
-            p.header.owner.is_some()
-                || !p.header.bootstrap
-                || p.header.after.is_none_or(|after| after <= committed)
+            !p.header.bootstrap || p.header.after.is_none_or(|after| after <= committed)
         });
     }
     fn bootstrap_prefetch_after(&self, committed: u64, through: u64) -> Option<u64> {
@@ -699,8 +595,7 @@ impl Control {
             return None;
         }
         let mut pages = self.queue.plans.values().filter(|p| {
-            p.header.owner.is_none()
-                && p.header.bootstrap
+            p.header.bootstrap
                 && p.header.context == self.context
                 && p.header.through.is_some_and(|end| end > committed)
         });
@@ -751,12 +646,9 @@ impl Control {
         if !self.applying {
             for (id, p) in &self.queue.plans {
                 if p.blocked
-                    || (p.header.owner.is_none()
-                        && self.queue.plans.values().any(|blocked| {
-                            blocked.blocked
-                                && blocked.header.owner.is_none()
-                                && blocked.header.bootstrap == p.header.bootstrap
-                        }))
+                    || self.queue.plans.values().any(|blocked| {
+                        blocked.blocked && blocked.header.bootstrap == p.header.bootstrap
+                    })
                 {
                     continue;
                 }
@@ -766,12 +658,6 @@ impl Control {
                     self.status.cursor.unwrap_or(0)
                 };
                 if p.header.after.is_some_and(|after| after > position) {
-                    continue;
-                }
-                if p.header.owner.is_some()
-                    && (p.owner.is_none()
-                        || (0..p.header.units.len() as u64).any(|index| !p.complete(index)))
-                {
                     continue;
                 }
                 if p.unit(p.next)?.is_some() {

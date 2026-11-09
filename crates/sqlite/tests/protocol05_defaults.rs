@@ -333,7 +333,7 @@ fn a_default_only_change_opens_in_place_and_rewrites_nothing() {
         "User:u",
     )
     .unwrap();
-    assert!(c.pending_schema05().unwrap().is_none());
+    assert!(!c.rollover_pending05().unwrap());
     assert_eq!(rows(&mut c), before);
     assert_eq!(c.freeze_batch05().unwrap().unwrap(), batch);
     assert!(

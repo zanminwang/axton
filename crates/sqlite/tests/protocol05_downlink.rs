@@ -1013,127 +1013,6 @@ fn crash_after_commit_before_dequeue_reopens_without_reapplying_later_direct() {
     assert_eq!(c.read(&key).unwrap().unwrap()["text"], "later");
 }
 #[test]
-fn owned_schema_transfer_waits_for_all_parts_and_reproves_newly_held_keys() {
-    let d = tempfile::tempdir().unwrap();
-    let path = d.path().join("db");
-    let mut c = client(&path);
-    c.initialize_stream05(5).unwrap();
-    let old = c.request_context05().unwrap();
-    c.install_authority05(&old, &[change("a", 2), change("b", 3)], None)
-        .unwrap();
-    drop(c);
-    let mut schema: serde_json::Value =
-        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
-    schema["models"][0]["version"] = serde_json::json!(2);
-    let mut c = Client::open05(
-        SqliteStore::open(&path).unwrap(),
-        Schema::from_value(schema).unwrap(),
-        "User:u",
-    )
-    .unwrap();
-    let pending = c.pending_schema05().unwrap().unwrap();
-    let request = v05::MaterializationRequest {
-        context: pending.desired_context.clone(),
-        request_id: "schema".into(),
-        owner: v05::MaterializationOwner::Schema {
-            previous_materialization: old.materialization.clone(),
-        },
-        keys: pending.authority_keys,
-        models: pending.bootstrap_models,
-    };
-    let f = v05::freeze_materialization(
-        request.context.clone(),
-        "schema-plan".into(),
-        request.owner.clone(),
-        5,
-        10000,
-        vec![
-            v05::DeliveryUnit {
-                index: 0,
-                through: None,
-                changes: vec![change("a", 2)],
-            },
-            v05::DeliveryUnit {
-                index: 1,
-                through: None,
-                changes: vec![change("b", 3)],
-            },
-        ],
-        1,
-    )
-    .unwrap();
-    let mut q = DeliveryQueue::new(1000000, 4);
-    q.receive_owned(
-        &request,
-        &v05::MaterializationResponse {
-            request_id: "schema".into(),
-            delivery: v05::DeliveryResponse {
-                header: f.header.clone(),
-                parts: f.parts[..1].to_vec(),
-            },
-        },
-        &old,
-        1,
-    )
-    .unwrap();
-    assert!(c.apply_next_delivery05(&mut q, 1).unwrap().is_none());
-    assert_eq!(c.request_context05().unwrap(), old);
-    c.install_authority05(&old, &[change("c", 4)], None)
-        .unwrap();
-    q.receive_owned(
-        &request,
-        &v05::MaterializationResponse {
-            request_id: "schema".into(),
-            delivery: v05::DeliveryResponse {
-                header: f.header,
-                parts: f.parts[1..].to_vec(),
-            },
-        },
-        &old,
-        1,
-    )
-    .unwrap();
-    assert!(c.apply_next_delivery05(&mut q, 1).is_err());
-    assert_eq!(c.request_context05().unwrap(), old);
-    assert_eq!(c.store_status05().unwrap().cursor, Some(5));
-    let pending = c.pending_schema05().unwrap().unwrap();
-    let request = v05::MaterializationRequest {
-        keys: pending.authority_keys,
-        ..request
-    };
-    let f = v05::freeze_materialization(
-        request.context.clone(),
-        "schema-repair".into(),
-        request.owner.clone(),
-        5,
-        10000,
-        vec![v05::DeliveryUnit {
-            index: 0,
-            through: None,
-            changes: vec![change("a", 2), change("b", 3), change("c", 4)],
-        }],
-        1,
-    )
-    .unwrap();
-    q.receive_owned(
-        &request,
-        &v05::MaterializationResponse {
-            request_id: "schema".into(),
-            delivery: v05::DeliveryResponse {
-                header: f.header,
-                parts: f.parts,
-            },
-        },
-        &old,
-        1,
-    )
-    .unwrap();
-    c.apply_next_delivery05(&mut q, 1).unwrap().unwrap();
-    assert_eq!(c.request_context05().unwrap(), request.context);
-    assert_eq!(c.store_status05().unwrap().cursor, Some(5));
-    assert!(c.pending_schema05().unwrap().is_none());
-}
-#[test]
 fn foreign_live_context_is_only_a_head_hint_for_retained_context_repair() {
     use axton_client::{
         runtime::{EffectOutcome, Event, HttpRoute, Operation},
@@ -1627,82 +1506,6 @@ fn process_crash_spill_reclaims_without_sweeping_other_clients() {
 }
 
 #[test]
-fn offline_needs_never_dispatches_owned_http_and_reconnect_cancels_old_owner() {
-    use axton_client::{
-        runtime::{Event, HttpRoute, Operation},
-        sync05::{Control, StoreReport},
-    };
-    let d = tempfile::tempdir().unwrap();
-    let path = d.path().join("db");
-    let mut c = client(&path);
-    c.initialize_stream05(0).unwrap();
-    drop(c);
-    let mut s: serde_json::Value =
-        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
-    s["models"][0]["fields"].as_array_mut().unwrap().push(serde_json::json!({"name":"extra","type":{"kind":"scalar","name":"string"},"nullable":true}));
-    let mut c = Client::open05(
-        SqliteStore::open(&path).unwrap(),
-        Schema::from_value(s).unwrap(),
-        "User:u",
-    )
-    .unwrap();
-    let pending = c.pending_schema05().unwrap().unwrap();
-    let mut control = Control::new(c.store_status05().unwrap());
-    control
-        .report(
-            StoreReport::Needs {
-                status: None,
-                schema: Some(pending.clone()),
-            },
-            1,
-        )
-        .unwrap();
-    assert!(!control.events().iter().any(|e| matches!(
-        e,
-        Event::Effect {
-            operation: Operation::Http {
-                route: HttpRoute::Materialize,
-                ..
-            },
-            ..
-        }
-    )));
-    control.connect().unwrap();
-    control.events();
-    control
-        .report(
-            StoreReport::Needs {
-                status: None,
-                schema: Some(pending),
-            },
-            1,
-        )
-        .unwrap();
-    let owner = control
-        .events()
-        .into_iter()
-        .find_map(|e| match e {
-            Event::Effect {
-                effect_id,
-                operation:
-                    Operation::Http {
-                        route: HttpRoute::Materialize,
-                        ..
-                    },
-            } => Some(effect_id),
-            _ => None,
-        })
-        .unwrap();
-    control.connect().unwrap();
-    assert!(
-        control
-            .events()
-            .iter()
-            .any(|e| matches!(e,Event::CancelEffect{effect_id} if *effect_id==owner))
-    );
-}
-
-#[test]
 fn repair_continuation_can_replace_near_capacity_future_payload() {
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
@@ -1783,13 +1586,7 @@ fn settlement_progress_wakes_uplink_once_and_waiting_needs_stays_idle() {
     control.report(StoreReport::Frozen(None), 1).unwrap();
     control.jobs();
     control
-        .report(
-            StoreReport::Needs {
-                status: None,
-                schema: None,
-            },
-            1,
-        )
+        .report(StoreReport::Needs { status: None }, 1)
         .unwrap();
     assert!(
         control.jobs().is_empty(),
@@ -1799,7 +1596,6 @@ fn settlement_progress_wakes_uplink_once_and_waiting_needs_stays_idle() {
         .report(
             StoreReport::Needs {
                 status: Some(status),
-                schema: None,
             },
             1,
         )
@@ -1810,13 +1606,7 @@ fn settlement_progress_wakes_uplink_once_and_waiting_needs_stays_idle() {
         matches!(&jobs[0], StoreCommand::Guarded { command, .. } if matches!(**command, StoreCommand::Freeze))
     );
     control
-        .report(
-            StoreReport::Needs {
-                status: None,
-                schema: None,
-            },
-            1,
-        )
+        .report(StoreReport::Needs { status: None }, 1)
         .unwrap();
     assert!(control.jobs().is_empty());
 }
@@ -1884,84 +1674,10 @@ fn pending_settlement_control(
     control.connect().unwrap();
     control.events();
     control
-        .report(
-            StoreReport::Needs {
-                status: None,
-                schema: None,
-            },
-            1,
-        )
+        .report(StoreReport::Needs { status: None }, 1)
         .unwrap();
     control.events();
     (c, control)
-}
-
-#[test]
-fn pending_schema_keeps_its_desired_context_owned_request() {
-    use axton_client::{
-        runtime::{Event, HttpRoute, Operation},
-        sync05::{Control, StoreReport},
-    };
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("db");
-    let mut c = client(&path);
-    c.initialize_stream05(0).unwrap();
-    let old = c.request_context05().unwrap();
-    c.install_authority05(&old, &[change("e", 1)], None)
-        .unwrap();
-    drop(c);
-    let mut schema: serde_json::Value =
-        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
-    schema["models"][0]["version"] = serde_json::json!(2);
-    let mut c = Client::open05(
-        SqliteStore::open(&path).unwrap(),
-        Schema::from_value(schema).unwrap(),
-        "User:u",
-    )
-    .unwrap();
-    let mut control = Control::new(c.store_status05().unwrap());
-    control.connect().unwrap();
-    control.events();
-    control
-        .report(
-            StoreReport::Needs {
-                status: None,
-                schema: c.pending_schema05().unwrap(),
-            },
-            1,
-        )
-        .unwrap();
-    let id = control
-        .events()
-        .into_iter()
-        .find_map(|e| match e {
-            Event::Effect {
-                effect_id,
-                operation:
-                    Operation::Http {
-                        route: HttpRoute::Materialize,
-                        ..
-                    },
-            } => Some(effect_id),
-            _ => None,
-        })
-        .unwrap();
-    control
-        .report(
-            StoreReport::Needs {
-                status: None,
-                schema: c.pending_schema05().unwrap(),
-            },
-            2,
-        )
-        .unwrap();
-    assert!(
-        !control
-            .events()
-            .iter()
-            .any(|e| matches!(e,Event::CancelEffect {effect_id} if effect_id==&id)),
-        "schema owner belongs to desired context, not the current active context"
-    );
 }
 
 #[test]
@@ -2005,13 +1721,7 @@ fn settlement_commit_reconciles_before_freezing_next_batch() {
     assert!(jobs.iter().any(|job| matches!(job,StoreCommand::Guarded {command,..} if matches!(**command,StoreCommand::Needs))));
     assert!(!jobs.iter().any(|job| matches!(job,StoreCommand::Guarded {command,..} if matches!(**command,StoreCommand::Freeze))),"next Batch cannot freeze before durable settlement reconciliation");
     control
-        .report(
-            StoreReport::Needs {
-                status: None,
-                schema: None,
-            },
-            3,
-        )
+        .report(StoreReport::Needs { status: None }, 3)
         .unwrap();
     assert!(control.jobs().iter().any(|job| matches!(job,StoreCommand::Guarded {command,..} if matches!(**command,StoreCommand::Freeze))),"reconciliation must release the committed wake even without another Call completion");
 }
@@ -2078,13 +1788,7 @@ fn already_dispatched_freeze_waits_for_reconciliation_before_push() {
             control.events();
         }
         control
-            .report(
-                StoreReport::Needs {
-                    status: None,
-                    schema: None,
-                },
-                3,
-            )
+            .report(StoreReport::Needs { status: None }, 3)
             .unwrap();
         let events = control.events();
         let pushes: Vec<_> = events
@@ -2111,25 +1815,13 @@ fn already_dispatched_freeze_waits_for_reconciliation_before_push() {
         } else {
             assert_eq!(pushes.len(), 1);
             control
-                .report(
-                    StoreReport::Needs {
-                        status: None,
-                        schema: None,
-                    },
-                    4,
-                )
+                .report(StoreReport::Needs { status: None }, 4)
                 .unwrap();
             control
                 .report(StoreReport::Snapshot(c.store_status05().unwrap()), 4)
                 .unwrap();
             control
-                .report(
-                    StoreReport::Needs {
-                        status: None,
-                        schema: None,
-                    },
-                    4,
-                )
+                .report(StoreReport::Needs { status: None }, 4)
                 .unwrap();
             assert!(
                 !control.events().iter().any(|e| matches!(

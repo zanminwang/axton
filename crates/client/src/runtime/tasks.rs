@@ -222,14 +222,14 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         if self.connection.is_some()
             && matches!(&command, Command::Invoke { .. } | Command::Fetch { .. })
         {
-            let schema_pending = self.client.pending_schema05().is_ok_and(|s| s.is_some());
+            let rollover_pending = self.client.rollover_pending05().unwrap_or(false);
             let storing = matches!(&command, Command::Invoke {store,..} | Command::Fetch {store,..} if store.as_ref().is_none_or(|v|v==&Value::Bool(true)));
             let initial_pending = storing
                 && self
                     .client
                     .store_status05()
                     .is_ok_and(|s| s.start_cursor.is_none());
-            if schema_pending || initial_pending {
+            if rollover_pending || initial_pending {
                 self.tasks.initial_reads.push_back(Queued {
                     request_id,
                     command,

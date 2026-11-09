@@ -1,6 +1,5 @@
 //! Rebuild held projections after canonical base or queue ownership changes.
-use crate::mutate::apply_settled;
-use crate::{ClientStore, Operation, OperationKind, Report, ReportKind, engine::Engine};
+use crate::{ClientStore, Operation, Report, ReportKind, engine::Engine};
 use axton_core::{RecordKey, Result, invalid};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -66,36 +65,6 @@ impl<S: ClientStore> Engine<'_, S> {
             operations.push(operation.clone());
         }
         self.exec("axton_local_replica_layer", "INSERT INTO axton_local_replica_layer(model,identity,operations) VALUES(?,?,?) ON CONFLICT(model,identity) DO UPDATE SET operations=excluded.operations", &[json!(key.model),json!(key.encoded_identity()?),json!(serde_json::to_string(&operations)?)])?;
-        Ok(())
-    }
-    pub(crate) fn stage_preserving_local(
-        &mut self,
-        key: &axton_core::RecordKey,
-        incoming: Option<&Value>,
-        held: &mut Held,
-    ) -> Result<()> {
-        let mut adapted = incoming.cloned();
-        for operation in self.local_layer(key)? {
-            if operation.op == OperationKind::Create && adapted.is_some() {
-                // Old creates own original fields, not fields introduced by rematerialization.
-                if let (Some(row), Some(fields)) = (
-                    adapted.as_mut(),
-                    operation.values.as_ref().and_then(Value::as_object),
-                ) {
-                    for (field, value) in fields {
-                        row[field] = value.clone();
-                    }
-                }
-            } else {
-                apply_settled(&mut adapted, &operation);
-            }
-        }
-        if self.dirty(key)? {
-            self.before_set(key, adapted.as_ref())?;
-            held.insert(key.encoded()?, key.clone());
-        } else {
-            self.main_set(key, adapted.as_ref())?;
-        }
         Ok(())
     }
     pub fn rebuild_held(&mut self, held: &Held) -> Result<Vec<Report>> {

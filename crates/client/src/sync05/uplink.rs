@@ -48,7 +48,6 @@ pub enum StoreReport {
     Needs {
         // Present only when settlement committed terminal Call progress.
         status: Option<StoreStatus05>,
-        schema: Option<crate::store05::PendingSchema05>,
     },
     Frozen(Option<v05::MutationRequest>),
     Committed {

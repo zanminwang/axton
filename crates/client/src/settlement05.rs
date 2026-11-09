@@ -415,31 +415,6 @@ impl<S: ClientStore> Engine<'_, S> {
         held: &mut Held,
     ) -> Result<usize> {
         context.admit(&self.context05()?)?;
-        self.stage_changes05(context, changes, held)
-    }
-    pub fn stage_materialization05(
-        &mut self,
-        context: &v05::RequestContext,
-        changes: &[v05::AuthorityChange],
-        held: &mut Held,
-    ) -> Result<usize> {
-        let active = self.context05()?;
-        context.admit_store(&active)?;
-        if context.materialization != active.materialization
-            && self
-                .pending_schema05()?
-                .is_none_or(|p| p.desired_context != *context)
-        {
-            return Err(invalid("unowned desired schema context"));
-        }
-        self.stage_changes05(context, changes, held)
-    }
-    fn stage_changes05(
-        &mut self,
-        context: &v05::RequestContext,
-        changes: &[v05::AuthorityChange],
-        held: &mut Held,
-    ) -> Result<usize> {
         // Immediate UNIQUE checks must see the final atomic projection, rather
         // than a changed row conflicting with another row's superseded value.
         // The enclosing Store transaction rolls this transient removal back on
@@ -510,11 +485,7 @@ impl<S: ClientStore> Engine<'_, S> {
                         "UPDATE axton_authority SET base=? WHERE model=? AND identity=?",
                         &[text(&incoming)?, json!(key.model), text(&key.identity)?],
                     )?;
-                    if admission == evidence::AuthorityAdmission::Newer {
-                        self.stage_one(&key, incoming.as_ref(), held)?;
-                    } else {
-                        self.stage_preserving_local(&key, incoming.as_ref(), held)?;
-                    }
+                    self.stage_one(&key, incoming.as_ref(), held)?;
                     if incoming.is_none() {
                         for child in self.descendants_where(&key, |e, k| {
                             Ok(e.evidence05(k)?
@@ -525,11 +496,7 @@ impl<S: ClientStore> Engine<'_, S> {
                                 .unwrap_or(0)
                                 <= *cursor)
                         })? {
-                            if admission == evidence::AuthorityAdmission::Newer {
-                                self.stage_one(&child, None, held)?;
-                            } else {
-                                self.stage_preserving_local(&child, None, held)?;
-                            }
+                            self.stage_one(&child, None, held)?;
                             self.direct_evidence05(&child)?;
                         }
                     }

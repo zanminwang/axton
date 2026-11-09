@@ -43,7 +43,6 @@ pub struct MembershipPosition {
 pub enum AuthorityAdmission {
     Duplicate,
     Newer,
-    Rematerialize,
 }
 impl RecordEvidence {
     pub fn validate(&self) -> Result<()> {
@@ -75,8 +74,8 @@ impl RecordEvidence {
     pub fn allows_cache(&self) -> bool {
         self.current.is_none()
     }
-    /// The caller must first admit the active direct/Stream context. A new
-    /// context can adapt the same base position, but never an older position.
+    /// The caller must first admit the active direct/Stream context. Another
+    /// context's evidence admits the same position, never an older one.
     pub fn admission(&self, materialization: &str, cursor: u64) -> Result<AuthorityAdmission> {
         self.validate()?;
         nonblank(materialization)?;
@@ -95,29 +94,21 @@ impl RecordEvidence {
         let previous = self.history.values().copied().max().unwrap_or(0);
         Ok(if cursor < previous {
             AuthorityAdmission::Duplicate
-        } else if cursor == previous {
-            AuthorityAdmission::Rematerialize
         } else {
             AuthorityAdmission::Newer
         })
     }
-    /// Installs evidence only. Rematerialize requires consumers to adapt base
-    /// fields and replay surviving direct/pending operations in this commit.
+    /// Installs evidence only; the consumer replaces the base in this commit.
     pub fn install(&mut self, materialization: &str, cursor: u64, deleted: bool) -> Result<bool> {
-        let admission = self.admission(materialization, cursor)?;
-        if admission == AuthorityAdmission::Duplicate {
+        if self.admission(materialization, cursor)? == AuthorityAdmission::Duplicate {
             return Ok(false);
         }
-        let preserve_direct =
-            admission == AuthorityAdmission::Rematerialize && self.current.is_none();
         self.history.insert(materialization.into(), cursor);
-        if !preserve_direct || deleted {
-            self.current = Some(AuthorityProtection {
-                materialization: materialization.into(),
-                cursor,
-                deleted,
-            });
-        }
+        self.current = Some(AuthorityProtection {
+            materialization: materialization.into(),
+            cursor,
+            deleted,
+        });
         if self
             .membership
             .as_ref()

@@ -1289,7 +1289,7 @@ fn retained_private_snapshot_never_evaluates_new_creation_defaults() {
     ]);
     let desired = Schema::from_value(desired).unwrap();
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), desired.clone(), "User:u").unwrap();
-    assert!(c.pending_schema05().unwrap().is_some());
+    assert!(c.rollover_pending05().unwrap());
     assert_eq!(c.freeze_batch05().unwrap().unwrap(), batch);
     let receipt = ack(
         &batch,

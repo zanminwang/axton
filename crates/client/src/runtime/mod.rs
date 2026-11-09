@@ -251,6 +251,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 return Ok(StoreReport::Snapshot(self.client.store_status05()?));
             }
             StoreCommand::Initialize(head) => {
+                // A rollover with nothing frozen clears in the same commit
+                // that starts the fresh Store at this handshake's head.
                 self.client.initialize_stream05(head)?;
                 self.release_initial_reads05(true);
                 StoreReport::Snapshot(self.client.store_status05()?)
@@ -260,14 +262,17 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 // remains accepted and is retried independently of the wire.
                 let report = self.client.settle_ready05()?;
                 self.settled(&report);
-                let status = if report.completions.is_empty() {
-                    None
+                if self.client.rollover05()? {
+                    // Drained: the Store is now a fresh device to Bootstrap.
+                    StoreReport::Snapshot(self.client.store_status05()?)
                 } else {
-                    Some(self.client.store_status05()?)
-                };
-                StoreReport::Needs {
-                    status,
-                    schema: self.client.pending_schema05()?,
+                    StoreReport::Needs {
+                        status: if report.completions.is_empty() {
+                            None
+                        } else {
+                            Some(self.client.store_status05()?)
+                        },
+                    }
                 }
             }
             StoreCommand::Cleanup(now) => {
@@ -298,7 +303,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                     .unwrap_or_default();
                 let next = queue.plans.get(&plan_id).map_or(u64::MAX, |p| p.next);
                 self.settled(&report);
-                if self.client.pending_schema05()?.is_none() {
+                if !self.client.rollover_pending05()? {
                     self.release_initial_reads05(true);
                 }
                 StoreReport::Committed {

@@ -48,16 +48,16 @@ fn membership_remove_releases_live_content_but_preserves_true_deletion() {
 }
 
 #[test]
-fn rematerialization_preserves_direct_guard_state_and_never_regresses_position() {
+fn another_context_admits_the_same_position_but_never_an_older_one() {
     let mut evidence = RecordEvidence::default();
     evidence.install("schema-one", 57, false).unwrap();
     evidence.current = None; // State after an explicit local operation.
     assert_eq!(
         evidence.admission("schema-two", 57).unwrap(),
-        AuthorityAdmission::Rematerialize
+        AuthorityAdmission::Newer
     );
     evidence.install("schema-two", 57, false).unwrap();
-    assert!(evidence.allows_cache()); // actual consumer must replay direct D over adapted base
+    assert!(!evidence.allows_cache());
     assert_eq!(evidence.history.len(), 2);
     evidence.install("schema-two", 58, false).unwrap();
     assert_eq!(

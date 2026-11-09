@@ -14,7 +14,7 @@ String _hash05(String domain, Object value) => sha256.convert([
   ...utf8.encode(_canonical(value)),
 ]).toString();
 Map<String, Object?> emptyHandshake(Map body) => {
-  'protocol': 5,
+  'protocol': 6,
   'storeId': body['storeId'],
   'stream': body['stream'],
   'head': 0,
@@ -41,7 +41,6 @@ Map<String, Object?> delivery05(Map body, [List<Object?> changes = const []]) {
     ...context05(body),
     'planId': 'transport-${body['storeId']}',
     'bootstrap': body['bootstrap'],
-    'owner': null,
     'after': body['after'],
     'through': body['through'],
     'observedHead': body['through'],

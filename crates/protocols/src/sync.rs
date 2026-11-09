@@ -5,7 +5,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PROTOCOL: u64 = 5;
+pub const PROTOCOL: u64 = 6;
 pub trait Validate {
     fn validate(&self) -> Result<()>;
 }
@@ -395,25 +395,6 @@ impl Validate for ReadResponse {
 pub enum DeliveryPurpose {
     Bootstrap,
     Sync,
-    Settlement { batch_id: u64, mutation_id: u64 },
-    Schema { previous_materialization: String },
-}
-impl Validate for DeliveryPurpose {
-    fn validate(&self) -> Result<()> {
-        match self {
-            Self::Settlement {
-                batch_id,
-                mutation_id,
-            } => {
-                positive(*batch_id)?;
-                positive(*mutation_id)
-            }
-            Self::Schema {
-                previous_materialization,
-            } => text(previous_materialization),
-            _ => Ok(()),
-        }
-    }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -497,12 +478,8 @@ pub struct DeliveryHeader {
     pub plan_id: String,
     pub digest: String,
     pub bootstrap: bool,
-    #[serde(deserialize_with = "required_option")]
-    pub owner: Option<MaterializationOwner>,
-    #[serde(deserialize_with = "required_option")]
-    pub after: Option<u64>,
-    #[serde(deserialize_with = "required_option")]
-    pub through: Option<u64>,
+    pub after: u64,
+    pub through: u64,
     pub observed_head: u64,
     pub expires_at: u64,
     pub units: Vec<UnitManifest>,
@@ -517,120 +494,6 @@ pub struct DeliveryPart {
     pub changes: Vec<AuthorityChange>,
 }
 
-/// Owner is internal durable proof identity, never an application load API.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
-pub enum MaterializationOwner {
-    Settlement { batch_id: u64, mutation_id: u64 },
-    Schema { previous_materialization: String },
-}
-impl Validate for MaterializationOwner {
-    fn validate(&self) -> Result<()> {
-        match self {
-            Self::Settlement {
-                batch_id,
-                mutation_id,
-            } => {
-                positive(*batch_id)?;
-                positive(*mutation_id)
-            }
-            Self::Schema {
-                previous_materialization,
-            } => text(previous_materialization),
-        }
-    }
-}
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct MaterializationRequest {
-    #[serde(flatten)]
-    pub context: RequestContext,
-    pub request_id: String,
-    pub owner: MaterializationOwner,
-    pub keys: Vec<RecordKey>,
-    pub models: BTreeMap<String, u64>,
-}
-impl Validate for MaterializationRequest {
-    fn validate(&self) -> Result<()> {
-        self.context.validate()?;
-        text(&self.request_id)?;
-        self.owner.validate()?;
-        let mut keys = BTreeSet::new();
-        for key in &self.keys {
-            key.validate()?;
-            if !keys.insert(key.encoded()?) {
-                return Err(invalid("duplicate materialization key"));
-            }
-        }
-        for (model, version) in &self.models {
-            text(model)?;
-            positive(*version)?;
-        }
-        match &self.owner {
-            MaterializationOwner::Settlement { .. } => {
-                if !self.models.is_empty() || self.keys.is_empty() {
-                    return Err(invalid("settlement materializes only owned keys"));
-                }
-            }
-            MaterializationOwner::Schema {
-                previous_materialization,
-            } => {
-                if previous_materialization == &self.context.materialization {
-                    return Err(invalid("schema context did not change"));
-                }
-            }
-        }
-        Ok(())
-    }
-}
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct MaterializationResponse {
-    pub request_id: String,
-    pub delivery: DeliveryResponse,
-}
-impl Validate for MaterializationResponse {
-    fn validate(&self) -> Result<()> {
-        text(&self.request_id)?;
-        self.delivery.validate()?;
-        if self.delivery.header.owner.is_none() {
-            return Err(invalid("owned materialization required"));
-        }
-        Ok(())
-    }
-}
-impl MaterializationResponse {
-    pub fn admit(&self, request: &MaterializationRequest, active: &RequestContext) -> Result<()> {
-        self.validate()?;
-        request.validate()?;
-        admit_owned_context(&request.context, Some(&request.owner), active)?;
-        let header = &self.delivery.header;
-        if self.request_id != request.request_id
-            || header.context != request.context
-            || header.owner.as_ref() != Some(&request.owner)
-        {
-            return Err(invalid("materialization correlation mismatch"));
-        }
-        let requested: BTreeSet<_> = request
-            .keys
-            .iter()
-            .map(RecordKey::encoded)
-            .collect::<Result<_>>()?;
-        for change in self.delivery.parts.iter().flat_map(|part| &part.changes) {
-            if !requested.contains(&change.key().encoded()?)
-                && !request.models.contains_key(&change.key().model)
-            {
-                return Err(invalid("unowned materialization key"));
-            }
-        }
-        Ok(())
-    }
-}
 /// A network response may contain only some parts. Complete units are the sole
 /// application boundary; fragment admission never advances B/C.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -663,7 +526,7 @@ impl Validate for DeliveryResponse {
 }
 impl DeliveryResponse {
     /// An HTTP cursor page carries every fragment of every selected atomic unit.
-    /// A lost response is reconstructed from committed cursor/owner evidence.
+    /// A lost response is reconstructed from committed cursor evidence.
     pub fn require_complete(&self) -> Result<()> {
         let expected: usize = self.header.units.iter().map(|unit| unit.parts.len()).sum();
         if self.parts.len() != expected {
@@ -675,13 +538,11 @@ impl DeliveryResponse {
         self.validate()?;
         request.validate()?;
         request.context.admit(active)?;
+        let through = self.header.through;
         if self.header.context != request.context
-            || self.header.owner.is_some()
-            || self.header.after != Some(request.after)
-            || self.header.through.is_none_or(|through| {
-                through > request.through
-                    || (request.after < request.through && through <= request.after)
-            })
+            || self.header.after != request.after
+            || through > request.through
+            || (request.after < request.through && through <= request.after)
             || self.header.bootstrap != request.bootstrap
         {
             return Err(invalid("delta correlation mismatch"));
@@ -851,62 +712,9 @@ mod mutation;
 pub use delivery::*;
 pub use mutation::*;
 
-fn admit_owned_context(
-    context: &RequestContext,
-    owner: Option<&MaterializationOwner>,
-    active: &RequestContext,
-) -> Result<()> {
-    context.admit_store(active)?;
-    if let Some(MaterializationOwner::Schema {
-        previous_materialization,
-    }) = owner
-    {
-        if &active.materialization != previous_materialization
-            && active.materialization != context.materialization
-        {
-            return Err(invalid("schema transfer context mismatch"));
-        }
-        Ok(())
-    } else {
-        context.admit(active)
-    }
-}
 impl DeliveryHeader {
-    /// A schema transfer is authorized while its previous descriptor is enabled;
-    /// completion enables the desired descriptor. Store/Stream never change.
     pub fn admit(&self, active: &RequestContext) -> Result<()> {
         self.validate()?;
-        admit_owned_context(&self.context, self.owner.as_ref(), active)
+        self.context.admit(active)
     }
-}
-/// Validate the complete owned transfer before enabling a schema context or
-/// considering target materialization done. Partial response admission checks
-/// only scope/correlation and cannot prove all requested identities arrived.
-pub fn validate_materialization(
-    request: &MaterializationRequest,
-    header: &DeliveryHeader,
-    units: &[DeliveryUnit],
-) -> Result<()> {
-    request.validate()?;
-    validate_delivery(header, units)?;
-    if header.context != request.context || header.owner.as_ref() != Some(&request.owner) {
-        return Err(invalid("owned transfer mismatch"));
-    }
-    let required: BTreeSet<_> = request
-        .keys
-        .iter()
-        .map(RecordKey::encoded)
-        .collect::<Result<_>>()?;
-    let mut delivered = BTreeSet::new();
-    for change in units.iter().flat_map(|u| &u.changes) {
-        let key = change.key().encoded()?;
-        if !required.contains(&key) && !request.models.contains_key(&change.key().model) {
-            return Err(invalid("unowned materialization identity"));
-        }
-        delivered.insert(key);
-    }
-    if !required.is_subset(&delivered) {
-        return Err(invalid("incomplete materialization identity set"));
-    }
-    Ok(())
 }

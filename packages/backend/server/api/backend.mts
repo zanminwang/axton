@@ -316,7 +316,6 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     for (const name of [
       "handshake05",
       "processDelivery05",
-      "processMaterialization05",
       "processLive05",
       "processRead05",
       "processBatchMember",
@@ -738,15 +737,6 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     handshake: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
         native.handshake05!(config, owner, text(request), host(tx, session)),
-      ),
-    materialize: (owner: string, request: Uint8Array | string) =>
-      run((tx, session) =>
-        native.processMaterialization05!(
-          config,
-          owner,
-          text(request),
-          host(tx, session),
-        ),
       ),
     negotiateLive: (
       owner: string,

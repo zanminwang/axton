@@ -63,10 +63,7 @@ impl<S: ClientStore> Client<S> {
             } else {
                 status.cursor
             };
-            !(p.header.context == context
-                && position
-                    .zip(p.header.through)
-                    .is_some_and(|(c, through)| c >= through))
+            !(p.header.context == context && position.is_some_and(|c| c >= p.header.through))
         });
         let mut selected = None;
         for (id, p) in &q.plans {
@@ -81,15 +78,13 @@ impl<S: ClientStore> Client<S> {
             if p.header.context != context {
                 continue;
             }
-            if let Some(after) = p.header.after {
-                let position = if p.header.bootstrap {
-                    status.bootstrap_cursor.unwrap_or(0)
-                } else {
-                    status.cursor.ok_or_else(|| invalid("handshake required"))?
-                };
-                if after > position {
-                    continue;
-                }
+            let position = if p.header.bootstrap {
+                status.bootstrap_cursor.unwrap_or(0)
+            } else {
+                status.cursor.ok_or_else(|| invalid("handshake required"))?
+            };
+            if p.header.after > position {
+                continue;
             }
             if let Some(unit) = p.unit(p.next)? {
                 selected = Some((id.clone(), p.header.clone(), unit));
@@ -125,15 +120,15 @@ impl<S: ClientStore> Client<S> {
             let final_unit=unit.index+1==header.units.len() as u64;
             if header.bootstrap {
                 let start=e.scalar("SELECT start_cursor FROM axton_store",&[])?.ok_or_else(||invalid("handshake required"))?;
-                if header.through.is_none_or(|through| start.as_u64().is_none_or(|start| through>start)){return Err(invalid("bootstrap start mismatch"))}
+                if start.as_u64().is_none_or(|start| header.through>start){return Err(invalid("bootstrap start mismatch"))}
                 if let Some(through)=unit.through {
                     let current=e.scalar("SELECT bootstrap_cursor FROM axton_store",&[])?.and_then(|v|v.as_u64()).unwrap_or(0);
-                    if header.after.unwrap()>current {return Err(invalid("bootstrap prefix gap"))}
+                    if header.after>current {return Err(invalid("bootstrap prefix gap"))}
                     if through>current || final_unit {e.exec("axton_store","UPDATE axton_store SET bootstrap_cursor=?",&[json!(through.max(current))])?;}
                 }
             }else{
                 let current=e.scalar("SELECT cursor FROM axton_store",&[])?.and_then(|v|v.as_u64()).ok_or_else(||invalid("handshake required"))?;
-                if header.after.unwrap()>current {return Err(invalid("sync prefix gap"))}
+                if header.after>current {return Err(invalid("sync prefix gap"))}
                 if let Some(through)=unit.through.filter(|c|*c>current) {e.commit_sync_coverage05(current,through)?;}
             }
             let completions=tracing::info_span!(target: "axton::client", "delivery.apply.reconcile").in_scope(|| e.reconcile_ready05(&mut held))?;

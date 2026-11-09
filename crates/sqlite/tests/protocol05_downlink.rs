@@ -141,7 +141,7 @@ fn socket_loss_discards_incomplete_response_and_repairs_from_committed_cursor() 
                 ok: true,
                 value: Some(serde_json::Value::String(
                     serde_json::to_string(&v05::HandshakeResponse {
-                        protocol: 5,
+                        protocol: axton_client::v05::PROTOCOL,
                         store_id: context.store_id.clone(),
                         stream: context.stream.clone(),
                         head: 0,
@@ -250,7 +250,7 @@ fn connected_control(c: &mut Client<SqliteStore>) -> (axton_client::sync05::Cont
                 ok: true,
                 value: Some(serde_json::Value::String(
                     serde_json::to_string(&v05::HandshakeResponse {
-                        protocol: 5,
+                        protocol: axton_client::v05::PROTOCOL,
                         store_id: context.store_id,
                         stream: context.stream,
                         head: 0,
@@ -515,7 +515,7 @@ fn held_http_repair_does_not_block_live_prefix_and_late_reply_cannot_undo_it() {
     let (mut control, socket) = connected_control(&mut c);
     let context = c.request_context05().unwrap();
     let ack = v05::HandshakeResponse {
-        protocol: 5,
+        protocol: axton_client::v05::PROTOCOL,
         store_id: context.store_id.clone(),
         stream: context.stream.clone(),
         head: 1,
@@ -1044,7 +1044,7 @@ fn foreign_live_context_is_only_a_head_hint_for_retained_context_repair() {
             _ => None,
         })
         .unwrap();
-    control.receive(&h,EffectOutcome{ok:true,value:Some(serde_json::json!({"protocol":5,"storeId":context.store_id,"stream":context.stream,"head":0}).to_string().into()),error:None},1).unwrap();
+    control.receive(&h,EffectOutcome{ok:true,value:Some(serde_json::json!({"protocol":axton_client::v05::PROTOCOL,"storeId":context.store_id,"stream":context.stream,"head":0}).to_string().into()),error:None},1).unwrap();
     let socket = control
         .events()
         .into_iter()
@@ -1457,7 +1457,7 @@ fn earlier_missing_prefix_can_replace_near_capacity_payload() {
 fn crash_spill_has_no_named_remnants_child() {
     let dir = std::env::var("AXTON_TASK5_SPOOL_DIR").unwrap();
     let context = v05::RequestContext {
-        protocol: 5,
+        protocol: axton_client::v05::PROTOCOL,
         store_id: "spool".into(),
         stream: "User:u".into(),
         materialization: "m".into(),

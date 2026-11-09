@@ -89,10 +89,10 @@ async function withBridge(body, carrier = native) {
   }
 }
 
-test("open answers the client id and bound protocol 5 context", async () => {
+test("open answers the client id and bound protocol 6 context", async () => {
   await withBridge(async (bridge, opened) => {
     assert.equal(typeof opened.clientId, "string");
-    assert.equal(opened.context.protocol, 5);
+    assert.equal(opened.context.protocol, 6);
     assert.equal(opened.context.stream, "User:viewer");
     assert.equal(typeof opened.context.storeId, "string");
     assert.equal("schema" in opened, false);

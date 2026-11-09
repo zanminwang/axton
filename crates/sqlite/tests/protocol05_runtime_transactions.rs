@@ -2231,7 +2231,7 @@ fn a_direct_apply_that_fails_to_commit_fails_the_call_and_lets_nothing_escape() 
             .unwrap();
         let request: Value =
             serde_json::from_str(http["operation"]["body"].as_str().unwrap()).unwrap();
-        let response = json!({"protocol":5,"storeId":request["storeId"],"stream":request["stream"],"materialization":request["materialization"],"requestId":request["requestId"],"outcome":{"kind":"succeeded","result":{"id":"e","text":"returned","note":null}},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"returned","note":null}}]});
+        let response = json!({"protocol":axton_client::v05::PROTOCOL,"storeId":request["storeId"],"stream":request["stream"],"materialization":request["materialization"],"requestId":request["requestId"],"outcome":{"kind":"succeeded","result":{"id":"e","text":"returned","note":null}},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"returned","note":null}}]});
         armed.store(fail, Ordering::SeqCst);
         h.submit(json!({"type":"effectResult","effectId":http["effectId"],"outcome":{"ok":true,"value":response.to_string()}})).unwrap();
         let events = h.run();

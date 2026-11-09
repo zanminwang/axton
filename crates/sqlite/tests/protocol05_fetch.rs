@@ -59,7 +59,7 @@ fn fetch(
         .find(|e| e["operation"]["route"] == "fetch")
         .unwrap_or_else(|| panic!("Fetch effect missing: {e:?}"));
     let b: Value = serde_json::from_str(http["operation"]["body"].as_str().unwrap()).unwrap();
-    let response = json!({"protocol":5,"storeId":b["storeId"],"stream":b["stream"],"materialization":b["materialization"],"requestId":b["requestId"],"outcome":{"kind":"succeeded","result":result},"records":[{"key":{"model":"Todo","identity":{"id":ID}},"cursor":null,"state":state}]});
+    let response = json!({"protocol":axton_client::v05::PROTOCOL,"storeId":b["storeId"],"stream":b["stream"],"materialization":b["materialization"],"requestId":b["requestId"],"outcome":{"kind":"succeeded","result":result},"records":[{"key":{"model":"Todo","identity":{"id":ID}},"cursor":null,"state":state}]});
     send(r,json!({"type":"effectResult","effectId":http["effectId"],"outcome":{"ok":true,"value":response.to_string()}}))
         .into_iter().find(|e|e["requestId"]==request_id).unwrap()
 }

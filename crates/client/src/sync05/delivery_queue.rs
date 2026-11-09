@@ -210,9 +210,9 @@ impl DeliveryQueue {
                 .plans
                 .values()
                 .filter(|p| p.header.bootstrap == header.bootstrap)
-                .filter_map(|p| p.header.after)
+                .map(|p| p.header.after)
                 .min();
-            let repair = header.after.is_some_and(|a| earliest.is_none_or(|e| a < e));
+            let repair = earliest.is_none_or(|e| header.after < e);
             if self.plans.len() >= self.slots || (!repair && self.plans.len() >= self.slots - 1) {
                 if speculative {
                     return Ok(false);
@@ -236,14 +236,10 @@ impl DeliveryQueue {
         let mut candidates: Vec<_> = self
             .plans
             .iter()
-            .filter_map(|(id, p)| match (header.after, p.header.after) {
-                (Some(after), Some(future))
-                    if header.bootstrap == p.header.bootstrap && future > after =>
-                {
-                    Some((future, id.clone()))
-                }
-                _ => None,
+            .filter(|(_, p)| {
+                p.header.bootstrap == header.bootstrap && p.header.after > header.after
             })
+            .map(|(id, p)| (p.header.after, id.clone()))
             .collect();
         candidates.sort_by(|a, b| b.cmp(a));
         let totals = |plans: &BTreeMap<String, Plan>| {
@@ -368,9 +364,11 @@ impl DeliveryQueue {
             {
                 return Err(invalid("fragment correlation mismatch"));
             }
-            if part.changes.iter().any(|c| {
-                c.cursor() > header.observed_head || header.after.is_some_and(|a| c.cursor() <= a)
-            }) {
+            if part
+                .changes
+                .iter()
+                .any(|c| c.cursor() > header.observed_head || c.cursor() <= header.after)
+            {
                 return Err(invalid("fragment outside plan"));
             }
         }
@@ -399,7 +397,7 @@ mod prefetch_tests {
 
     fn offer(id: &str, after: u64) -> v05::FrozenDelivery {
         let context = v05::RequestContext {
-            protocol: 5,
+            protocol: v05::PROTOCOL,
             store_id: "store".into(),
             stream: "User:u".into(),
             materialization: "0".repeat(64),

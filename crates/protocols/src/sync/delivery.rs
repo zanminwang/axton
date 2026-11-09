@@ -1,4 +1,4 @@
-//! Frozen planning, fragment admission and owned settlement proof helpers.
+//! Frozen planning, fragment admission and settlement proof helpers.
 use super::*;
 
 /// Conservative constraint components over an already selected, fenced current
@@ -216,10 +216,10 @@ impl DeliveryProgress {
         };
         unit.validate()?;
         if unit.changes.iter().map(AuthorityChange::cursor).min() != manifest.minimum_cursor
-            || unit.changes.iter().any(|c| {
-                c.cursor() > self.header.observed_head
-                    || self.header.after.is_some_and(|after| c.cursor() <= after)
-            })
+            || unit
+                .changes
+                .iter()
+                .any(|c| c.cursor() > self.header.observed_head || c.cursor() <= self.header.after)
             || unit_digest(&unit)? != manifest.digest
         {
             return Err(invalid("assembled unit digest mismatch"));
@@ -408,28 +408,10 @@ impl Validate for DeliveryHeader {
         if self.units.is_empty() {
             return Err(invalid("empty plan manifest"));
         }
-        match (&self.owner, self.after, self.through) {
-            (Some(owner), None, None) => {
-                owner.validate()?;
-                if let MaterializationOwner::Schema {
-                    previous_materialization,
-                } = owner
-                    && previous_materialization == &self.context.materialization
-                {
-                    return Err(invalid("schema context did not change"));
-                }
-                if self.bootstrap || self.units.iter().any(|u| u.through.is_some()) {
-                    return Err(invalid("materialization cannot claim range coverage"));
-                }
-            }
-            (None, Some(after), Some(through)) => {
-                counter(after)?;
-                counter(through)?;
-                if after > through || through > self.observed_head {
-                    return Err(invalid("invalid delivery range"));
-                }
-            }
-            _ => return Err(invalid("range/owner mismatch")),
+        counter(self.after)?;
+        counter(self.through)?;
+        if self.after > self.through || self.through > self.observed_head {
+            return Err(invalid("invalid delivery range"));
         }
         let mut suffix_minima = vec![None; self.units.len() + 1];
         for (index, unit) in self.units.iter().enumerate().rev() {
@@ -449,23 +431,23 @@ impl Validate for DeliveryHeader {
             }
             if let Some(cursor) = unit.minimum_cursor {
                 positive(cursor)?;
-                if cursor > self.observed_head || self.after.is_some_and(|after| cursor <= after) {
+                if cursor > self.observed_head || cursor <= self.after {
                     return Err(invalid("invalid candidate minimum"));
                 }
             }
             if let Some(through) = unit.through {
                 counter(through)?;
-                if covered.is_none_or(|covered| through < covered)
-                    || self.through.is_none_or(|end| through > end)
-                    || (index + 1 < self.units.len() && Some(through) == self.through)
+                if through < covered
+                    || through > self.through
+                    || (index + 1 < self.units.len() && through == self.through)
                     || suffix_minima[index + 1].is_some_and(|cursor| cursor <= through)
                 {
                     return Err(invalid("invalid unit coverage"));
                 }
-                covered = Some(through);
+                covered = through;
             }
         }
-        if self.owner.is_none() && self.units.last().unwrap().through != self.through {
+        if self.units.last().unwrap().through != Some(self.through) {
             return Err(invalid("incomplete range coverage"));
         }
         if delivery_digest(self)? != self.digest {
@@ -525,7 +507,7 @@ pub fn validate_delivery(header: &DeliveryHeader, units: &[DeliveryUnit]) -> Res
         }
         for change in &unit.changes {
             if change.cursor() > header.observed_head
-                || header.after.is_some_and(|after| change.cursor() <= after)
+                || change.cursor() <= header.after
                 || !keys.insert(change.key().encoded()?)
             {
                 return Err(invalid("candidate outside range or duplicate identity"));
@@ -548,39 +530,12 @@ pub fn freeze_delivery(
     units: Vec<DeliveryUnit>,
     part_size: usize,
 ) -> Result<FrozenDelivery> {
-    if !matches!(purpose, DeliveryPurpose::Bootstrap | DeliveryPurpose::Sync) {
-        return Err(invalid("use owned materialization envelope"));
-    }
     freeze(
         context,
         plan_id,
         purpose == DeliveryPurpose::Bootstrap,
-        None,
-        Some(after),
-        Some(through),
-        observed_head,
-        expires_at,
-        units,
-        part_size,
-    )
-}
-#[allow(clippy::too_many_arguments)]
-pub fn freeze_materialization(
-    context: RequestContext,
-    plan_id: String,
-    owner: MaterializationOwner,
-    observed_head: u64,
-    expires_at: u64,
-    units: Vec<DeliveryUnit>,
-    part_size: usize,
-) -> Result<FrozenDelivery> {
-    freeze(
-        context,
-        plan_id,
-        false,
-        Some(owner),
-        None,
-        None,
+        after,
+        through,
         observed_head,
         expires_at,
         units,
@@ -592,9 +547,8 @@ fn freeze(
     context: RequestContext,
     plan_id: String,
     bootstrap: bool,
-    owner: Option<MaterializationOwner>,
-    after: Option<u64>,
-    through: Option<u64>,
+    after: u64,
+    through: u64,
     observed_head: u64,
     expires_at: u64,
     units: Vec<DeliveryUnit>,
@@ -636,7 +590,6 @@ fn freeze(
         plan_id,
         digest: String::new(),
         bootstrap,
-        owner,
         after,
         through,
         observed_head,

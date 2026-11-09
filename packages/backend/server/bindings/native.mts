@@ -12,12 +12,6 @@ export type Native = {
     request: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
-  processMaterialization05?(
-    config: string,
-    owner: string,
-    request: string,
-    callback: (request: string) => Promise<string>,
-  ): Promise<string>;
   processRead05?(
     config: string,
     owner: string,
@@ -145,7 +139,6 @@ function typedNative(native: Native): Native {
     ...Object.fromEntries(
       [
         "processDelivery05",
-        "processMaterialization05",
         "processRead05",
         "handshake05",
         "processLive05",

@@ -179,7 +179,7 @@ for (const kind of ["Query", "Fetch", "Query Model Loader"])
               },
             });
             const context = {
-              protocol: 5,
+              protocol: 6,
               storeId: "same-store",
               stream: "User:alice",
               materialization: app.materializationId,
@@ -188,7 +188,7 @@ for (const kind of ["Query", "Fetch", "Query Model Loader"])
               await app.handshake(
                 "alice",
                 JSON.stringify({
-                  protocol: 5,
+                  protocol: 6,
                   storeId: context.storeId,
                   stream: context.stream,
                 }),
@@ -329,7 +329,7 @@ test("ordinary read refuses existing Store owner or Stream mismatch before appli
     });
     await app.handshake(
       "alice",
-      JSON.stringify({ protocol: 5, storeId: "owned", stream: "User:alice" }),
+      JSON.stringify({ protocol: 6, storeId: "owned", stream: "User:alice" }),
     );
     for (const [owner, stream] of [
       ["bob", "User:bob"],
@@ -339,7 +339,7 @@ test("ordinary read refuses existing Store owner or Stream mismatch before appli
         app.action(
           owner,
           JSON.stringify({
-            protocol: 5,
+            protocol: 6,
             storeId: "owned",
             stream,
             materialization: app.materializationId,
@@ -377,7 +377,6 @@ for (const kind of [
   "handshake",
   "pull",
   "live",
-  "materialization",
   "cursor_resume",
 ]) {
   test(
@@ -424,22 +423,12 @@ for (const kind of [
         );
         const cfg = structuredClone(config);
         cfg.schema.models[0].bootstrap = true;
-        const previousMaterialization = native.serverMaterializationId05(
-          JSON.stringify(cfg),
-          "previous",
-        );
         const app = createBackend({
           config: cfg,
           native,
           database,
           authenticate: () => "alice",
           protocol5: {
-            materializations: {
-              [previousMaterialization]: {
-                schema: cfg.schema,
-                projectionGeneration: "previous",
-              },
-            },
             authorizeStream: (owner, stream) =>
               allow && stream === `User:${owner}`,
           },
@@ -481,7 +470,7 @@ for (const kind of [
           );
         }
         const hello = {
-          protocol: 5,
+          protocol: 6,
           storeId: "same-store",
           stream: "User:alice",
         };
@@ -506,20 +495,6 @@ for (const kind of [
           const ctx = { ...context, stream };
           if (kind === "handshake")
             return app.handshake(owner, JSON.stringify({ ...hello, stream }));
-          if (kind === "materialization")
-            return app.materialize(
-              owner,
-              JSON.stringify({
-                ...ctx,
-                requestId: "owned",
-                owner: {
-                  kind: "schema",
-                  previousMaterialization,
-                },
-                keys: [{ model: "Task", identity: { id: "initial" } }],
-                models: {},
-              }),
-            );
           const request = {
             ...delta,
             ...ctx,

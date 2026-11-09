@@ -285,7 +285,7 @@ fn reconnect_handshake_still_repairs_the_missing_committed_prefix() {
                 ok: true,
                 value: Some(json!(
                     serde_json::to_string(&v05::HandshakeResponse {
-                        protocol: 5,
+                        protocol: axton_client::v05::PROTOCOL,
                         store_id: scenario.receipt.context.store_id.clone(),
                         stream: scenario.receipt.context.stream.clone(),
                         head: 2,

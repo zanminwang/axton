@@ -126,7 +126,6 @@ pub enum Protocol05Operation {
         stream: String,
         after: u64,
         models: Option<Vec<String>>,
-        keys: Option<Vec<MemberKey>>,
         capacity: u64,
         #[serde(default)]
         page_size: Option<u64>,
@@ -158,11 +157,6 @@ pub enum Protocol05Operation {
         batch_id: u64,
         #[serde(with = "counter")]
         ordinal: u64,
-    },
-    ReadResults {
-        store_id: String,
-        #[serde(with = "cursor")]
-        batch_id: u64,
     },
     SaveResult {
         store_id: String,

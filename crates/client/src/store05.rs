@@ -69,7 +69,7 @@ pub fn admit05<S: ClientStore>(store: &mut S, stream: &str) -> Result<bool> {
     let row=store.query("SELECT id,stream,materialization,schema_descriptor,next_mutation_id,next_local_sequence,last_acknowledged_batch_id,start_cursor,bootstrap_cursor,cursor,generation FROM axton_store",&[])?.rows;
     let r = &row[0];
     let context = v05::RequestContext {
-        protocol: 5,
+        protocol: v05::PROTOCOL,
         store_id: r[0]
             .as_str()
             .ok_or_else(|| invalid("Store ID missing"))?
@@ -197,7 +197,7 @@ impl<S: ClientStore> Client<S> {
             return Err(e);
         }
         let context05 = Some(v05::RequestContext {
-            protocol: 5,
+            protocol: v05::PROTOCOL,
             store_id: client_id.clone(),
             stream: stream.into(),
             materialization: enabled_materialization,
@@ -234,7 +234,7 @@ impl<S: ClientStore> Engine<'_, S> {
             .rows
             .remove(0);
         Ok(v05::RequestContext {
-            protocol: 5,
+            protocol: v05::PROTOCOL,
             store_id: r[0].as_str().unwrap().into(),
             stream: r[1].as_str().unwrap().into(),
             materialization: r[2].as_str().unwrap().into(),

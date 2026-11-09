@@ -643,7 +643,7 @@ if (process.argv[2] === "enqueue-child") {
         "joined-private",
       ]);
       const submitted = JSON.parse(h.batches[0]);
-      assert.equal(submitted.protocol, 5);
+      assert.equal(submitted.protocol, 6);
       assert.equal(submitted.mutations.length, 3);
       await b.bootstrap();
       // A's receipt and B's initial Bootstrap do not fence B's live delivery.

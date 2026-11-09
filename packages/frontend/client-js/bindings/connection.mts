@@ -1,9 +1,8 @@
 import { reportCallbackError, type EffectOutcome } from "./bridge.mts";
 import type { RecordValue } from "../api/values.mts";
 
-/** The six backend routes emitted by the runtime's HTTP effects. */
-export type HttpRoute =
-  "handshake" | "materialize" | "push" | "pull" | "action" | "fetch";
+/** The five backend routes emitted by the runtime's HTTP effects. */
+export type HttpRoute = "handshake" | "push" | "pull" | "action" | "fetch";
 /** One HTTP POST: `kind` is the route; an unknown route must be refused. Errors carry `status` when the server answered. */
 export type Transport = (
   kind: HttpRoute,

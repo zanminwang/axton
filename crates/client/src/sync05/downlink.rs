@@ -127,7 +127,7 @@ impl Control {
             self.events.push(Event::CancelEffect { effect_id: id });
         }
         let request = v05::HandshakeRequest {
-            protocol: 5,
+            protocol: v05::PROTOCOL,
             store_id: self.context.store_id.clone(),
             stream: self.context.stream.clone(),
         };
@@ -285,7 +285,7 @@ impl Control {
                     if raw.get("head").is_some() && raw.get("header").is_none() {
                         let ack = v05::decode::<v05::HandshakeResponse>(body.as_bytes())?;
                         ack.admit(&v05::HandshakeRequest {
-                            protocol: 5,
+                            protocol: v05::PROTOCOL,
                             store_id: self.context.store_id.clone(),
                             stream: self.context.stream.clone(),
                         })?;
@@ -296,7 +296,7 @@ impl Control {
                     let response: v05::DeliveryResponse = serde_json::from_str(&body)?;
                     // Socket offers are finite ranges. Authentication fixed the
                     // Stream; local Store/context and plan still need admission.
-                    if response.header.bootstrap || response.header.owner.is_some() {
+                    if response.header.bootstrap {
                         return Err(invalid("invalid socket delivery purpose"));
                     }
                     response.header.context.admit_store(&self.context)?;
@@ -314,11 +314,7 @@ impl Control {
                     // Fragments of an already admitted response still complete it.
                     let cursor = self.status.cursor.unwrap_or(0);
                     let advances_prefix =
-                        response.header.after.is_some_and(|after| after <= cursor)
-                            && response
-                                .header
-                                .through
-                                .is_some_and(|through| through > cursor);
+                        response.header.after <= cursor && response.header.through > cursor;
                     if !self.queue.plans.contains_key(&response.header.plan_id)
                         && (!self.queue.plans.is_empty()
                             || (!advances_prefix
@@ -586,32 +582,28 @@ impl Control {
         self.refresh_waiters.retain(
             |flight| !matches!(flight, Flight::Delta(r) if r.bootstrap && r.after > committed),
         );
-        self.queue.plans.retain(|_, p| {
-            !p.header.bootstrap || p.header.after.is_none_or(|after| after <= committed)
-        });
+        self.queue
+            .plans
+            .retain(|_, p| !p.header.bootstrap || p.header.after <= committed);
     }
     fn bootstrap_prefetch_after(&self, committed: u64, through: u64) -> Option<u64> {
         if !self.bootstrap_prefetch {
             return None;
         }
         let mut pages = self.queue.plans.values().filter(|p| {
-            p.header.bootstrap
-                && p.header.context == self.context
-                && p.header.through.is_some_and(|end| end > committed)
+            p.header.bootstrap && p.header.context == self.context && p.header.through > committed
         });
         let current = pages.next()?;
         if pages.next().is_some()
             || current.blocked
-            || current.header.after.is_none_or(|after| after > committed)
+            || current.header.after > committed
             || (current.next..current.header.units.len() as u64)
                 .any(|index| !current.complete(index))
         {
             return None;
         }
-        current
-            .header
-            .through
-            .filter(|end| *end > committed && *end < through)
+        let end = current.header.through;
+        (end > committed && end < through).then_some(end)
     }
     fn schedule(&mut self, now: u64) -> Result<()> {
         if !self.connected || self.paused {
@@ -657,7 +649,7 @@ impl Control {
                 } else {
                     self.status.cursor.unwrap_or(0)
                 };
-                if p.header.after.is_some_and(|after| after > position) {
+                if p.header.after > position {
                     continue;
                 }
                 if p.unit(p.next)?.is_some() {
@@ -697,9 +689,7 @@ impl Control {
             self.delivery_head
         };
         if self.queue.plans.values().any(|p| {
-            p.header.bootstrap == bootstrap
-                && p.header.after.is_some_and(|a| a <= after)
-                && p.header.through.is_some_and(|end| end >= after)
+            p.header.bootstrap == bootstrap && p.header.after <= after && p.header.through >= after
         }) {
             if bootstrap && let Some(after) = self.bootstrap_prefetch_after(after, through) {
                 let request = v05::DeltaRequest {

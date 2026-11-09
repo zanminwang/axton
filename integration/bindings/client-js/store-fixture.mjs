@@ -32,11 +32,11 @@ const hash05 = (domain, value) =>
     .update(canonical(value))
     .digest("hex");
 export function emptyHandshake(body) {
-  return { protocol: 5, storeId: body.storeId, stream: body.stream, head: 0 };
+  return { protocol: 6, storeId: body.storeId, stream: body.stream, head: 0 };
 }
 const fixtureExpiry = Date.now() + 300000;
-export function delivery05(body, changes = [], head = body.through ?? 0) {
-  const through = body.through ?? null;
+export function delivery05(body, changes = [], head = body.through) {
+  const through = body.through;
   const unit = { index: 0, through, changes };
   const part = {
     planId: `transport-${body.storeId}-${body.bootstrap ? "bootstrap" : "sync"}-${body.after}-${body.through}`,
@@ -58,8 +58,7 @@ export function delivery05(body, changes = [], head = body.through ?? 0) {
     planId: part.planId,
     digest: "",
     bootstrap: body.bootstrap ?? false,
-    owner: body.owner ?? null,
-    after: body.after ?? null,
+    after: body.after,
     through,
     observedHead: head,
     expiresAt: fixtureExpiry,
@@ -80,7 +79,7 @@ export function read05(body, result = null, records = []) {
 }
 const request05 = (text) => {
   const request = typeof text === "string" ? JSON.parse(text) : text;
-  if (request.protocol !== 5) throw Error("fixture requires protocol 5");
+  if (request.protocol !== 6) throw Error("fixture requires protocol 6");
   return request;
 };
 export function emptyPull(text) {

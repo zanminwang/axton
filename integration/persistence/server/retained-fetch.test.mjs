@@ -200,7 +200,7 @@ async function run(store, body, invalid, kind, requestedVersion = 1) {
       backend[kind === "Query" ? "action" : "fetch"](
         "alice",
         JSON.stringify({
-          protocol: 5,
+          protocol: 6,
           storeId: `viewer-${serial}`,
           stream: "User:alice",
           materialization: backend.materializationId,

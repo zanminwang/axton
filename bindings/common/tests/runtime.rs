@@ -133,7 +133,10 @@ fn open_answers_on_the_wake_and_a_failed_open_closes_the_runtime() {
     let (mut carrier, opened) = Carrier::open(&dir.path().join("db"));
     assert_eq!(opened["ok"], true);
     assert!(!opened["value"]["clientId"].as_str().unwrap().is_empty());
-    assert_eq!(opened["value"]["context"]["protocol"], 5);
+    assert_eq!(
+        opened["value"]["context"]["protocol"],
+        axton_client::v05::PROTOCOL
+    );
     carrier.task("1", create("e"));
     assert_eq!(carrier.completed("1")["ok"], true);
     carrier.submit(json!({"type":"close"}));
@@ -480,7 +483,7 @@ fn a_client_waiting_on_the_network_holds_no_writer_and_no_other_client_waits() {
     );
 
     // The caller snapshot completes independently of caching.
-    let response = json!({"protocol":5,"storeId":body["storeId"],"stream":body["stream"],"materialization":body["materialization"],"requestId":body["requestId"],"outcome":{"kind":"succeeded","result":null},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"server","note":null}}]});
+    let response = json!({"protocol":axton_client::v05::PROTOCOL,"storeId":body["storeId"],"stream":body["stream"],"materialization":body["materialization"],"requestId":body["requestId"],"outcome":{"kind":"succeeded","result":null},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"server","note":null}}]});
     a.submit(json!({"type":"effectResult","effectId":request["effectId"],"outcome":{"ok":true,"value":{"status":200,"body":response.to_string()}}}));
     let done = a.completed("call");
     assert_eq!(

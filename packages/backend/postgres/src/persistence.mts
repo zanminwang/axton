@@ -3,7 +3,6 @@ import type {
   Acknowledged,
   HostRequest,
   MemberPosition,
-  MemberKey,
   TrackingPair,
   Database,
   Persistence,
@@ -160,31 +159,18 @@ async function answer05(
       return safe(row!.now);
     }
     case "deliveryCandidates": {
-      const models = r.models as string[] | null,
-        keys = r.keys as MemberKey[] | null;
+      const models = r.models as string[] | null;
       const cap = Math.min(safe(r.capacity), 100000);
-      if (keys?.length) {
-        for (const group of batches(keys)) {
-          const tracked = await q(
-            "SELECT count(*) n FROM axton_stream_record s JOIN axton_record r ON r.id=s.record_id JOIN jsonb_array_elements($2::jsonb) k ON k->>'model'=r.model AND k->>'identityKey'=r.identity_key WHERE s.stream=$1",
-            r.stream,
-            JSON.stringify(group),
-          );
-          if (safe(tracked[0]!.n) !== group.length)
-            throw new Error("delivery.identity_untracked");
-        }
-      }
       const pageSize =
         r.pageSize == null ? null : Math.min(positiveCounter(r.pageSize), cap);
-      const select = `SELECT r.model,r.identity_key,s.cursor,s.kind FROM axton_stream_record s JOIN axton_record r ON r.id=s.record_id WHERE s.stream=$1 AND s.cursor>$2 AND ($3::text[] IS NULL OR r.model=ANY($3::text[]) OR EXISTS(SELECT 1 FROM jsonb_array_elements($4::jsonb) k WHERE k->>'model'=r.model AND k->>'identityKey'=r.identity_key))`;
+      const select = `SELECT r.model,r.identity_key,s.cursor,s.kind FROM axton_stream_record s JOIN axton_record r ON r.id=s.record_id WHERE s.stream=$1 AND s.cursor>$2 AND ($3::text[] IS NULL OR r.model=ANY($3::text[]))`;
       const rows = await q(
         pageSize === null
-          ? `${select} ORDER BY s.cursor,r.model COLLATE "C",r.identity_key COLLATE "C" LIMIT $5`
-          : `SELECT * FROM (${select} ORDER BY s.cursor FETCH FIRST $6 ROWS WITH TIES) page LIMIT $5`,
+          ? `${select} ORDER BY s.cursor,r.model COLLATE "C",r.identity_key COLLATE "C" LIMIT $4`
+          : `SELECT * FROM (${select} ORDER BY s.cursor FETCH FIRST $5 ROWS WITH TIES) page LIMIT $4`,
         r.stream,
         safe(r.after),
         models,
-        JSON.stringify(keys ?? []),
         cap + 1,
         ...(pageSize === null ? [] : [pageSize + 1]),
       );
@@ -243,10 +229,6 @@ async function answer05(
       );
       return row ? json(row.result) : null;
     }
-    case "readResults":
-      return (await q(SQL.V05_RESULTS_READ, r.storeId, r.batchId)).map((row) =>
-        json(row.result),
-      );
     case "saveResult": {
       const result = r.result as { mutationId: number };
       const rows = await q(

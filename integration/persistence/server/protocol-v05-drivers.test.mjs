@@ -167,7 +167,7 @@ for (const [name, base] of adapters)
       },
     });
     const r = {
-      protocol: 5,
+      protocol: 6,
       storeId: `driver-${name}`,
       stream: "User:alice",
       materialization: app.materializationId,

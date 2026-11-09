@@ -15,7 +15,7 @@ const timeout = (p) =>
   ]);
 
 const subscribe = JSON.stringify({
-  protocol: 5,
+  protocol: 6,
   storeId: "00000000-0000-4000-8000-000000000001",
   stream: "User:viewer",
 });
@@ -181,7 +181,6 @@ async function syncFixture({ onPull, onAction, upgrade } = {}) {
     requests.push({ url: req.url, body, headers: req.headers });
     try {
       if (req.url === "/sync/handshake") res.end(JSON.stringify({...emptyHandshake(body),head:state.head}));
-      else if (req.url === "/sync/materialize") res.end(JSON.stringify({requestId:body.requestId,delivery:delivery05(body,[],state.head)}));
       else if (body.bootstrap) {
         const context = {protocol:body.protocol,storeId:body.storeId,stream:body.stream,materialization:body.materialization};
         contexts.set(body.storeId,context);
@@ -1080,7 +1079,7 @@ test("the HTTP transport maps every runtime route and refuses an unknown one", a
       url: `http://127.0.0.1:${server.address().port}`,
       token: "secret",
     });
-    for (const route of ["handshake", "push", "pull", "action", "fetch", "materialize"])
+    for (const route of ["handshake", "push", "pull", "action", "fetch"])
       assert.equal(await timeout(live.push(route, "{}")), "{}");
     assert.deepEqual(paths, [
       "/sync/handshake",
@@ -1088,12 +1087,11 @@ test("the HTTP transport maps every runtime route and refuses an unknown one", a
       "/sync/pull",
       "/sync/actions",
       "/sync/fetch",
-      "/sync/materialize",
     ]);
     await assert.rejects(live.push("load", "{}"), /unknown route load/);
     await assert.rejects(live.push("nope", "{}"), /unknown route nope/);
     await assert.rejects(live.push("toString", "{}"), /unknown route toString/);
-    assert.equal(paths.length, 6, "nothing was posted for an unknown route");
+    assert.equal(paths.length, 5, "nothing was posted for an unknown route");
   } finally {
     await new Promise((r) => server.close(r));
   }
@@ -1117,12 +1115,10 @@ async function admissionServer() {
       return;
     }
     const body = JSON.parse(Buffer.concat(chunks));
-    assert.equal(body.protocol, 5);
+    assert.equal(body.protocol, 6);
     res.end(
       JSON.stringify(
-        body.mutations ? receiptFor(body)
-          : req.url === "/sync/materialize" ? {requestId:body.requestId,delivery:delivery05(body)}
-          : JSON.parse(emptyPull(body)),
+        body.mutations ? receiptFor(body) : JSON.parse(emptyPull(body)),
       ),
     );
   });
@@ -1159,7 +1155,7 @@ test("client headers reach every HTTP route and the upgrade; AXTON's own headers
       token: "secret",
       headers: { "x-app-build": "7" },
     });
-    for (const route of ["handshake", "push", "pull", "action", "fetch", "materialize"])
+    for (const route of ["handshake", "push", "pull", "action", "fetch"])
       await timeout(live.push(route, subscribe));
     const opened = Promise.withResolvers();
     const abort = new AbortController();
@@ -1176,7 +1172,6 @@ test("client headers reach every HTTP route and the upgrade; AXTON's own headers
       ["/sync/pull", "7", "Bearer secret"],
       ["/sync/actions", "7", "Bearer secret"],
       ["/sync/fetch", "7", "Bearer secret"],
-      ["/sync/materialize", "7", "Bearer secret"],
       ["/sync/live", "7", "Bearer secret"],
     ]);
     for (const name of [

@@ -47,7 +47,7 @@ export function bootstrapSuite(test, Transaction) {
           return offlineNetwork().push(route, text);
         const request = JSON.parse(text);
         requests.push({ route, body: request });
-        assert.equal(request.protocol, 5);
+        assert.equal(request.protocol, 6);
         if (route === "handshake") {
           if (loseStart) {
             loseStart = false;

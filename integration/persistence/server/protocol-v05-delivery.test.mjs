@@ -86,7 +86,7 @@ function appFor(
 }
 const app = appFor(config);
 const context = (storeId) => ({
-  protocol: 5,
+  protocol: 6,
   storeId,
   stream: "User:alice",
   materialization,
@@ -158,7 +158,7 @@ test("cursor pages skip moved versions, resume latest updates/removals and autho
     schema: { ...config.schema, models: [{ ...model, unique: [] }] },
   };
   const chosen = appFor(cfg);
-  const hello = { protocol: 5, storeId: "cursor-pages", stream: "User:alice" };
+  const hello = { protocol: 6, storeId: "cursor-pages", stream: "User:alice" };
   assert.equal(
     JSON.parse(await chosen.handshake("alice", JSON.stringify(hello))).head,
     1500,
@@ -400,39 +400,6 @@ test("real selected and unique-model capacity measurements", async () => {
       );
     }
 });
-test("target materialization returns current Remove, never enrolls unknown keys", async () => {
-  await fixture(2);
-  await q(
-    "UPDATE axton_stream_record SET kind='remove' WHERE record_id=(SELECT id FROM axton_record WHERE identity_key='{\"id\":\"e1\"}')",
-  );
-  // A schema owner may reconcile held keys only. Unknown explicit keys are refused.
-
-  const r = {
-    ...context("materialize"),
-    requestId: "m",
-    owner: { kind: "schema", previousMaterialization: previous },
-    keys: [{ model: "Entry", identity: { id: "e1" } }],
-    models: {},
-  };
-  const d = JSON.parse(await app.materialize("alice", JSON.stringify(r)));
-  assert.equal(d.delivery.header.after, null);
-  assert.equal(d.delivery.header.units[0].through, null);
-  assert.equal(d.delivery.parts[0].changes[0].kind, "remove");
-  await assert.rejects(
-    app.materialize(
-      "alice",
-      JSON.stringify({
-        ...r,
-        requestId: "unknown",
-        keys: [{ model: "Entry", identity: { id: "unknown" } }],
-      }),
-    ),
-  );
-  assert.equal(
-    (await q("SELECT count(*) n FROM axton_stream_record"))[0].n,
-    "2",
-  );
-});
 test("compacted unique ownership transfer returns all fragments in one cursor response", async () => {
   await fixture(1500);
   await q("UPDATE delivery_business SET text='free' WHERE id='e1'");
@@ -492,7 +459,7 @@ test("preparation publishes before the initial head, retries only replay committ
         await app.handshake(
           "alice",
           JSON.stringify({
-            protocol: 5,
+            protocol: 6,
             storeId: "prepare",
             stream: "User:alice",
           }),
@@ -534,7 +501,7 @@ for (const [name, prefix] of [
       ctx.stream.track.entry(ids); // Repeated tracks keep the same membership.
     });
     const storeId = `fresh-${name}`;
-    const request = { protocol: 5, storeId, stream: "User:alice" };
+    const request = { protocol: 6, storeId, stream: "User:alice" };
     const ack = JSON.parse(
       await chosen.handshake("alice", JSON.stringify(request)),
     );
@@ -599,7 +566,7 @@ test("WebSocket offers current complete cursor pages; reconnect head leaves HTTP
       socket.once("error", j);
     });
     socket.send(
-      JSON.stringify({ protocol: 5, storeId: "live", stream: "User:alice" }),
+      JSON.stringify({ protocol: 6, storeId: "live", stream: "User:alice" }),
     );
     const ack = await waitFrame((f) => f.head !== undefined);
     assert.equal(ack.head, 45);
@@ -620,7 +587,7 @@ test("WebSocket offers current complete cursor pages; reconnect head leaves HTTP
     const next = JSON.parse(
       await app.handshake(
         "alice",
-        JSON.stringify({ protocol: 5, storeId: "live", stream: "User:alice" }),
+        JSON.stringify({ protocol: 6, storeId: "live", stream: "User:alice" }),
       ),
     );
     assert.equal(next.head, 47);
@@ -866,25 +833,6 @@ test("retained unique metadata keeps 501 distinct positions in one component", a
     ),
   );
   assert.equal(answer.header.units.length, 1);
-  const owned = JSON.parse(
-    await chosen.materialize(
-      "alice",
-      JSON.stringify({
-        ...context("retained-owned"),
-        requestId: "owned",
-        owner: {
-          kind: "schema",
-          previousMaterialization: native.serverMaterializationId05(
-            JSON.stringify(cfg),
-            "1",
-          ),
-        },
-        keys: [],
-        models: { Entry: 1 },
-      }),
-    ),
-  );
-  assert.equal(owned.delivery.header.units.length, 1);
 });
 test("malformed Fetch Loader aborts the outer transaction and reports infrastructure failure", async () => {
   await fixture(1);
@@ -1014,23 +962,4 @@ test("retained cascade metadata keeps related distinct positions in one componen
     ),
   );
   assert.equal(d.header.units.length, 1);
-  const m = JSON.parse(
-    await chosen.materialize(
-      "alice",
-      JSON.stringify({
-        ...ctx,
-        requestId: "cascade-owned",
-        owner: {
-          kind: "schema",
-          previousMaterialization: native.serverMaterializationId05(
-            JSON.stringify(cfg),
-            "1",
-          ),
-        },
-        keys: [],
-        models: { Entry: 1, Extra: 1 },
-      }),
-    ),
-  );
-  assert.equal(m.delivery.header.units.length, 1);
 });

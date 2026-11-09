@@ -63,7 +63,7 @@ class AdmissionServer {
         acknowledged++;
         socket.add(
           jsonEncode(
-            sub['protocol'] == 5
+            sub['protocol'] == 6
                 ? emptyHandshake(sub)
                 : {
                     'context': sub['context'],
@@ -79,7 +79,7 @@ class AdmissionServer {
     envelopes.add(body);
     request.response.write(
       jsonEncode(
-        body['protocol'] == 5
+        body['protocol'] == 6
             ? switch (request.uri.path) {
                 '/sync/handshake' => emptyHandshake(body),
                 '/sync/pull' => delivery05(body),
@@ -151,7 +151,6 @@ void main() {
     await session.action(body, never);
     await session.fetch(body, never);
     await session.handshake(body, never);
-    await session.materialize(body, never);
     final opened = Completer<void>();
     final cancel = Completer<void>();
     session.open(
@@ -171,7 +170,6 @@ void main() {
         '/sync/actions',
         '/sync/fetch',
         '/sync/handshake',
-        '/sync/materialize',
         '/sync/live',
       ])
         (path, '7', 'Bearer secret'),
@@ -296,7 +294,7 @@ void main() {
       await until(() => server.acknowledged == 2, 'the later socket');
       expect(server.envelopes, isNotEmpty);
       for (final envelope in server.envelopes) {
-        expect(envelope['protocol'], 5);
+        expect(envelope['protocol'], 6);
         expect(envelope['stream'], 'User:viewer');
         expect(envelope['storeId'], matches(RegExp(r'^[0-9a-f-]{36}$')));
       }

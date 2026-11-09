@@ -10,7 +10,7 @@ fn request() -> MutationRequest {
     let c = config();
     let mut r = MutationRequest {
         context: RequestContext {
-            protocol: 5,
+            protocol: axton_protocols::sync::PROTOCOL,
             store_id: "s".into(),
             stream: "User:a".into(),
             materialization: "m".into(),
@@ -70,7 +70,7 @@ fn compatible_field_reorder_admits_frozen_old_artifact() {
     );
     let mut r = MutationRequest {
         context: RequestContext {
-            protocol: 5,
+            protocol: axton_protocols::sync::PROTOCOL,
             store_id: "s".into(),
             stream: "User:a".into(),
             materialization: v05::materialization_id(&old.schema, "1").unwrap(),

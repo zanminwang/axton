@@ -28,7 +28,10 @@ fn native_open_requires_stream_and_owns_physical_file() {
     let stream = json!("User:a");
     let (id, first) = open(&p, stream.clone());
     assert_eq!(first["ok"], true, "{first:?}");
-    assert_eq!(first["value"]["context"]["protocol"], 5);
+    assert_eq!(
+        first["value"]["context"]["protocol"],
+        axton_client::v05::PROTOCOL
+    );
     let (second, result) = open(&p, stream);
     assert_eq!(result["ok"], false);
     assert!(result["error"].as_str().unwrap().contains("store_in_use"));

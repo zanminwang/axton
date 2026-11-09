@@ -804,7 +804,6 @@ pub enum Operation {
 #[serde(rename_all = "camelCase")]
 pub enum HttpRoute {
     Handshake,
-    Materialize,
     // `/sync/mutations`: a frozen push batch.
     Push,
     // `/sync/pull`: an ordinary catch-up or a Bootstrap page.

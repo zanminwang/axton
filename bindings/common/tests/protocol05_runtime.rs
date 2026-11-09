@@ -31,7 +31,10 @@ fn protocol05_open_derives_durable_context_and_keeps_routing_id() {
     let id = open(&d.path().join("db"));
     let events = wait(id);
     assert_eq!(events[0]["ok"], true, "{events:?}");
-    assert_eq!(events[0]["value"]["context"]["protocol"], 5);
+    assert_eq!(
+        events[0]["value"]["context"]["protocol"],
+        axton_client::v05::PROTOCOL
+    );
     assert!(events[0]["value"]["clientId"].is_string());
     actor::detach(id);
     assert!(actor::wait_closed(id, Duration::from_secs(5)));
@@ -65,8 +68,8 @@ fn identical_queries_execute_independent_protocol05_reads() {
     }
     assert_ne!(reads[0].1["requestId"], reads[1].1["requestId"]);
     for (e, b) in reads {
-        assert_eq!(b["protocol"], 5);
-        actor::submit(id,json!({"type":"effectResult","effectId":e["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&json!({"protocol":5,"storeId":b["storeId"],"stream":b["stream"],"materialization":b["materialization"],"requestId":b["requestId"],"outcome":{"kind":"succeeded","result":[]},"records":[]})).unwrap()}})).unwrap();
+        assert_eq!(b["protocol"], axton_client::v05::PROTOCOL);
+        actor::submit(id,json!({"type":"effectResult","effectId":e["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&json!({"protocol":axton_client::v05::PROTOCOL,"storeId":b["storeId"],"stream":b["stream"],"materialization":b["materialization"],"requestId":b["requestId"],"outcome":{"kind":"succeeded","result":[]},"records":[]})).unwrap()}})).unwrap();
     }
     actor::detach(id);
     assert!(actor::wait_closed(id, Duration::from_secs(5)));
@@ -110,7 +113,7 @@ fn handshake_reception_progresses_while_application_transaction_owns_worker() {
         .unwrap();
     let h = handshake.unwrap();
     let body: Value = serde_json::from_str(h["operation"]["body"].as_str().unwrap()).unwrap();
-    actor::submit(id,json!({"type":"effectResult","effectId":h["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&json!({"protocol":5,"storeId":body["storeId"],"stream":body["stream"],"head":0})).unwrap()}})).unwrap();
+    actor::submit(id,json!({"type":"effectResult","effectId":h["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&json!({"protocol":axton_client::v05::PROTOCOL,"storeId":body["storeId"],"stream":body["stream"],"head":0})).unwrap()}})).unwrap();
     // A socket effect is emitted by control before SQLite initialization can run.
     let events = wait(id);
     assert!(
@@ -138,7 +141,7 @@ fn no_store_returns_own_snapshot_and_duplicate_effect_completes_once() {
         .find(|e| e["operation"]["route"] == "action")
         .unwrap();
     let b: Value = serde_json::from_str(e["operation"]["body"].as_str().unwrap()).unwrap();
-    let response = json!({"protocol":5,"storeId":b["storeId"],"stream":b["stream"],"materialization":b["materialization"],"requestId":b["requestId"],"outcome":{"kind":"succeeded","result":[{"id":"e","text":"snapshot","note":null}]},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"snapshot","note":null}}]});
+    let response = json!({"protocol":axton_client::v05::PROTOCOL,"storeId":b["storeId"],"stream":b["stream"],"materialization":b["materialization"],"requestId":b["requestId"],"outcome":{"kind":"succeeded","result":[{"id":"e","text":"snapshot","note":null}]},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"snapshot","note":null}}]});
     let answer = json!({"type":"effectResult","effectId":e["effectId"],"outcome":{"ok":true,"value":response.to_string()}});
     actor::submit(id, answer.clone()).unwrap();
     actor::submit(id, answer).unwrap();
@@ -191,7 +194,7 @@ fn real_slow_sql_keeps_fragment_reception_and_close_nonblocking() {
         std::thread::sleep(Duration::from_millis(2));
     };
     let body: Value = serde_json::from_str(h["operation"]["body"].as_str().unwrap()).unwrap();
-    actor::submit(id,json!({"type":"effectResult","effectId":h["effectId"],"outcome":{"ok":true,"value":json!({"protocol":5,"storeId":body["storeId"],"stream":"User:u","head":0}).to_string()}})).unwrap();
+    actor::submit(id,json!({"type":"effectResult","effectId":h["effectId"],"outcome":{"ok":true,"value":json!({"protocol":axton_client::v05::PROTOCOL,"storeId":body["storeId"],"stream":"User:u","head":0}).to_string()}})).unwrap();
     let socket = wait(id)
         .into_iter()
         .find(|e| e["operation"]["kind"] == "socket")
@@ -294,7 +297,7 @@ fn mutation_local_acceptance_precedes_backend_settlement_and_survives_reopen() {
             let b: Value = serde_json::from_str(body).unwrap();
             let response = match e["operation"]["route"].as_str() {
                 Some("handshake") => {
-                    json!({"protocol":5,"storeId":b["storeId"],"stream":b["stream"],"head":0})
+                    json!({"protocol":axton_client::v05::PROTOCOL,"storeId":b["storeId"],"stream":b["stream"],"head":0})
                 }
                 Some("push") => {
                     let request: v05::MutationRequest = serde_json::from_value(b).unwrap();
@@ -464,7 +467,7 @@ fn storing_reads_wait_for_initial_s_commit_but_no_store_does_not() {
     let b: Value = serde_json::from_str(reads[0]["operation"]["body"].as_str().unwrap()).unwrap();
     assert_eq!(b["store"], false);
     let b: Value = serde_json::from_str(handshake["operation"]["body"].as_str().unwrap()).unwrap();
-    actor::submit(id,json!({"type":"effectResult","effectId":handshake["effectId"],"outcome":{"ok":true,"value":json!({"protocol":5,"storeId":b["storeId"],"stream":b["stream"],"head":7}).to_string()}})).unwrap();
+    actor::submit(id,json!({"type":"effectResult","effectId":handshake["effectId"],"outcome":{"ok":true,"value":json!({"protocol":axton_client::v05::PROTOCOL,"storeId":b["storeId"],"stream":b["stream"],"head":7}).to_string()}})).unwrap();
     let start = Instant::now();
     let read = loop {
         if let Some(e) = actor::drain(id)
@@ -559,7 +562,7 @@ fn rollover_parks_reads_until_the_handshake_starts_the_fresh_store() {
             .iter()
             .all(|e| e["operation"]["route"] != "action")
     );
-    actor::submit(id,json!({"type":"effectResult","effectId":handshake["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&v05::HandshakeResponse{protocol:5,store_id:old.store_id.clone(),stream:old.stream.clone(),head:0}).unwrap()}})).unwrap();
+    actor::submit(id,json!({"type":"effectResult","effectId":handshake["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&v05::HandshakeResponse{protocol:axton_client::v05::PROTOCOL,store_id:old.store_id.clone(),stream:old.stream.clone(),head:0}).unwrap()}})).unwrap();
     let start = Instant::now();
     let read = loop {
         let events = actor::drain(id);
@@ -690,7 +693,7 @@ fn refused_query_uses_existing_bridge_status_outcome() {
         .find(|e| e["operation"]["route"] == "action")
         .unwrap();
     let body: Value = serde_json::from_str(effect["operation"]["body"].as_str().unwrap()).unwrap();
-    let response = json!({"protocol":5,"storeId":body["storeId"],"stream":body["stream"],"materialization":body["materialization"],"requestId":body["requestId"],"outcome":{"kind":"failed","code":"lookup.denied","message":"denied"},"records":[]});
+    let response = json!({"protocol":axton_client::v05::PROTOCOL,"storeId":body["storeId"],"stream":body["stream"],"materialization":body["materialization"],"requestId":body["requestId"],"outcome":{"kind":"failed","code":"lookup.denied","message":"denied"},"records":[]});
     actor::submit(id,json!({"type":"effectResult","effectId":effect["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&response).unwrap()}})).unwrap();
     let events = wait(id);
     let completed = events.iter().find(|e| e["requestId"] == "query").unwrap();
@@ -725,7 +728,7 @@ fn callback_held_reset_fences_pre_reset_handshake_initialization() {
         .find(|e| e["operation"]["kind"] == "callback")
         .unwrap();
     let request: Value = serde_json::from_str(h["operation"]["body"].as_str().unwrap()).unwrap();
-    actor::submit(id,json!({"type":"effectResult","effectId":h["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&json!({"protocol":5,"storeId":request["storeId"],"stream":request["stream"],"head":47})).unwrap()}})).unwrap();
+    actor::submit(id,json!({"type":"effectResult","effectId":h["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&json!({"protocol":axton_client::v05::PROTOCOL,"storeId":request["storeId"],"stream":request["stream"],"head":47})).unwrap()}})).unwrap();
     assert!(wait(id).iter().any(|e| e["operation"]["kind"] == "socket"));
     actor::submit(id,json!({"type":"task","requestId":"reset","command":{"kind":"resetStore","discardPending":true}})).unwrap();
     actor::submit(id,json!({"type":"callbackResult","effectId":callback["effectId"],"transactionId":callback["operation"]["transactionId"],"ok":true})).unwrap();
@@ -786,7 +789,7 @@ fn record_status_and_query_completion_use_protocol05_canonical_paths() {
         .find(|e| e["operation"]["route"] == "action")
         .unwrap();
     let b: Value = serde_json::from_str(e["operation"]["body"].as_str().unwrap()).unwrap();
-    actor::submit(id,json!({"type":"effectResult","effectId":e["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&json!({"protocol":5,"storeId":b["storeId"],"stream":b["stream"],"materialization":b["materialization"],"requestId":b["requestId"],"outcome":{"kind":"succeeded","result":[]},"records":[]})).unwrap()}})).unwrap();
+    actor::submit(id,json!({"type":"effectResult","effectId":e["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&json!({"protocol":axton_client::v05::PROTOCOL,"storeId":b["storeId"],"stream":b["stream"],"materialization":b["materialization"],"requestId":b["requestId"],"outcome":{"kind":"succeeded","result":[]},"records":[]})).unwrap()}})).unwrap();
     let events = wait(id);
     assert_eq!(
         events
@@ -821,7 +824,7 @@ fn fetch_preserves_unavailable_and_invalid_response_codes() {
         .find(|e| e["operation"]["route"] == "fetch")
         .unwrap();
     let b: Value = serde_json::from_str(e["operation"]["body"].as_str().unwrap()).unwrap();
-    actor::submit(id,json!({"type":"effectResult","effectId":e["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&json!({"protocol":5,"storeId":b["storeId"],"stream":b["stream"],"materialization":b["materialization"],"requestId":b["requestId"],"outcome":{"kind":"succeeded","result":{"id":"e"}},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{}}]})).unwrap()}})).unwrap();
+    actor::submit(id,json!({"type":"effectResult","effectId":e["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&json!({"protocol":axton_client::v05::PROTOCOL,"storeId":b["storeId"],"stream":b["stream"],"materialization":b["materialization"],"requestId":b["requestId"],"outcome":{"kind":"succeeded","result":{"id":"e"}},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{}}]})).unwrap()}})).unwrap();
     let events = wait(id);
     let event = events.iter().find(|e| e["requestId"] == "bad").unwrap();
     assert_eq!(event["details"]["code"], "fetch.invalid_response");
@@ -1019,7 +1022,7 @@ fn fetch_snapshot_disagreement_keeps_store_failure_without_message_classificatio
         .find(|e| e["operation"]["route"] == "fetch")
         .unwrap();
     let b: Value = serde_json::from_str(effect["operation"]["body"].as_str().unwrap()).unwrap();
-    actor::submit(id,json!({"type":"effectResult","effectId":effect["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&json!({"protocol":5,"storeId":b["storeId"],"stream":b["stream"],"materialization":b["materialization"],"requestId":b["requestId"],"outcome":{"kind":"succeeded","result":{"id":"e","text":"different","note":null}},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"canonical","note":null}}]})).unwrap()}})).unwrap();
+    actor::submit(id,json!({"type":"effectResult","effectId":effect["effectId"],"outcome":{"ok":true,"value":serde_json::to_string(&json!({"protocol":axton_client::v05::PROTOCOL,"storeId":b["storeId"],"stream":b["stream"],"materialization":b["materialization"],"requestId":b["requestId"],"outcome":{"kind":"succeeded","result":{"id":"e","text":"different","note":null}},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"canonical","note":null}}]})).unwrap()}})).unwrap();
     let event = wait(id)
         .into_iter()
         .find(|e| e["requestId"] == "mismatch")
@@ -1179,7 +1182,7 @@ fn accepted_create_settlement_wakes_lifecycle_dependent_update() {
             let b: Value = serde_json::from_str(body).unwrap();
             let response = match e["operation"]["route"].as_str() {
                 Some("handshake") => {
-                    json!({"protocol":5,"storeId":b["storeId"],"stream":b["stream"],"head":0})
+                    json!({"protocol":axton_client::v05::PROTOCOL,"storeId":b["storeId"],"stream":b["stream"],"head":0})
                 }
                 Some("push") => {
                     let request: v05::MutationRequest = serde_json::from_value(b).unwrap();
@@ -1283,7 +1286,7 @@ fn mutation_submitted_while_handshake_is_in_flight_pushes_after_it() {
     );
     let body: Value =
         serde_json::from_str(handshake["operation"]["body"].as_str().unwrap()).unwrap();
-    actor::submit(id,json!({"type":"effectResult","effectId":handshake["effectId"],"outcome":{"ok":true,"value":json!({"protocol":5,"storeId":body["storeId"],"stream":body["stream"],"head":3}).to_string()}})).unwrap();
+    actor::submit(id,json!({"type":"effectResult","effectId":handshake["effectId"],"outcome":{"ok":true,"value":json!({"protocol":axton_client::v05::PROTOCOL,"storeId":body["storeId"],"stream":body["stream"],"head":3}).to_string()}})).unwrap();
     let start = Instant::now();
     loop {
         if actor::drain(id)

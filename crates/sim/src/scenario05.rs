@@ -40,6 +40,7 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
         identity: json!({"id":"e"}),
     };
     let mut client = open(path);
+    client.initialize_stream05(0).unwrap();
     let call = client
         .transaction(|tx| {
             tx.submit_mutation05(

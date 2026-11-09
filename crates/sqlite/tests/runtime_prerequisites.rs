@@ -32,11 +32,11 @@ fn schema() -> Schema {
     Schema::from_value(schema).unwrap()
 }
 fn runtime(path: &Path, handlers: &[&str]) -> ClientRuntime<SqliteStore> {
-    ClientRuntime::new(
-        Client::open05(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap(),
-    )
-    .register_prerequisite_handlers(handlers.iter().map(|h| h.to_string()).collect())
-    .unwrap()
+    let mut client = Client::open05(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap();
+    client.initialize_stream05(0).unwrap();
+    ClientRuntime::new(client)
+        .register_prerequisite_handlers(handlers.iter().map(|h| h.to_string()).collect())
+        .unwrap()
 }
 fn blob(key: &str) -> String {
     json!({"arguments":{"key":key},"name":"RemoteBlob"}).to_string()

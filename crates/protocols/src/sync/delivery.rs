@@ -291,44 +291,50 @@ pub enum TargetDisposition {
 }
 /// FinalizeOwned grants only ownership cleanup/fallback: no membership or
 /// positive Stream evidence and no permission to overwrite later local work.
+/// A Stream target at or below the Store's start `S` in a Model its active
+/// materialization does not Bootstrap is never delivered to this Store, so it
+/// finalizes from the receipt like a Private target.
 pub fn target_disposition(
     target: &SettlementTarget,
     materialization: &str,
+    start_cursor: Option<u64>,
+    bootstrap: bool,
     evidence: &TargetEvidence,
 ) -> Result<TargetDisposition> {
     target.validate()?;
     text(materialization)?;
     evidence.validate()?;
+    let receipt_owned = || {
+        if evidence.protected {
+            TargetDisposition::PreserveAuthority
+        } else {
+            TargetDisposition::FinalizeOwned
+        }
+    };
     Ok(match target {
         SettlementTarget::Stream { cursor, .. } => {
             if evidence.materialization.as_deref() == Some(materialization)
                 && evidence.content_cursor.is_some_and(|c| c >= *cursor)
             {
                 TargetDisposition::InstalledAuthority
-            } else if evidence.removed_cursor.is_some_and(|c| c > *cursor) {
-                if evidence.protected {
-                    TargetDisposition::PreserveAuthority
-                } else {
-                    TargetDisposition::FinalizeOwned
-                }
+            } else if evidence.removed_cursor.is_some_and(|c| c > *cursor)
+                || (!bootstrap && start_cursor.is_some_and(|start| *cursor <= start))
+            {
+                receipt_owned()
             } else {
                 TargetDisposition::AwaitAuthority
             }
         }
-        SettlementTarget::Private { .. } => {
-            if evidence.protected {
-                TargetDisposition::PreserveAuthority
-            } else {
-                TargetDisposition::FinalizeOwned
-            }
-        }
+        SettlementTarget::Private { .. } => receipt_owned(),
     })
 }
 pub fn settlement_ready(
     sync_cursor: u64,
     normal_cursor: Option<u64>,
+    start_cursor: Option<u64>,
     targets: &[SettlementTarget],
     materialization: &str,
+    bootstrap_models: &BTreeSet<String>,
     evidence: &BTreeMap<String, TargetEvidence>,
 ) -> Result<bool> {
     counter(sync_cursor)?;
@@ -346,6 +352,8 @@ pub fn settlement_ready(
         if target_disposition(
             target,
             materialization,
+            start_cursor,
+            bootstrap_models.contains(&target.key().model),
             evidence.get(&key).unwrap_or(&TargetEvidence::default()),
         )? == TargetDisposition::AwaitAuthority
         {

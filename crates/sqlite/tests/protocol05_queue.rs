@@ -12,6 +12,7 @@ fn fixed_batch_restores_input_presence_and_excludes_new_members() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    c.initialize_stream05(0).unwrap();
     let call = c
         .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
         .unwrap();
@@ -32,6 +33,23 @@ fn fixed_batch_restores_input_presence_and_excludes_new_members() {
         v05::encode(&c.freeze_batch05().unwrap().unwrap()).unwrap(),
         v05::encode(&b).unwrap()
     );
+}
+#[test]
+fn no_batch_freezes_before_the_handshake_sets_start() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    let call = c
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .unwrap();
+    assert!(c.freeze_batch05().unwrap().is_none());
+    drop(c);
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    assert!(c.freeze_batch05().unwrap().is_none());
+    assert_eq!(c.store_status05().unwrap().last_acknowledged_batch_id, 0);
+    c.initialize_stream05(7).unwrap();
+    let b = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!((b.batch_id, b.mutations[0].id), (1, call.ordinal));
 }
 #[test]
 fn refuses_unsupported_file_without_touching_rollback_or_wal_bytes() {
@@ -78,6 +96,7 @@ fn nested_rollback_reuses_only_uncommitted_ids_and_nonempty_lists_restore() {
         "User:u",
     )
     .unwrap();
+    c.initialize_stream05(0).unwrap();
     let call=c.transaction(|tx|{let rolled:axton_client::Result<()>=tx.savepoint(|tx|{tx.submit_mutation05("Write",1,json!({"entries":[{"id":"bad","text":"discarded","note":null}]}),vec![])?;Err(axton_client::invalid("rollback"))});assert!(rolled.is_err());tx.submit_mutation05("Write",1,json!({"entries":[{"id":"e1","text":"one","note":null},{"id":"e2","text":"two","note":null}],"maybe":null}),vec![])}).unwrap();
     assert_eq!(call.ordinal, 1);
     let b = c.freeze_batch05().unwrap().unwrap();
@@ -92,6 +111,7 @@ fn compatible_descriptor_reopen_preserves_assigned_context_and_input() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    c.initialize_stream05(0).unwrap();
     c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
@@ -119,6 +139,7 @@ fn value_arguments_have_one_entry_and_do_not_create_model_optimism() {
     let s = Schema::from_value(s).unwrap();
     let mut c =
         Client::open05(SqliteStore::open(d.path().join("db")).unwrap(), s, "User:u").unwrap();
+    c.initialize_stream05(0).unwrap();
     c.transaction(|tx| {
         tx.submit_mutation05("Arg", 1, json!({"label":null,"tags":["a","b"]}), vec![])
     })
@@ -145,6 +166,7 @@ fn next_batch_preserves_previous_ownership_until_settlement() {
         "User:u",
     )
     .unwrap();
+    c.initialize_stream05(0).unwrap();
     let first = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -201,10 +223,7 @@ fn next_batch_preserves_previous_ownership_until_settlement() {
         c.freeze_batch05().unwrap().is_none(),
         "an acknowledged Batch still owns settlement targets"
     );
-    assert_eq!(
-        c.pending_settlement05().unwrap()[0].mutation_id,
-        first.ordinal
-    );
+    assert!(c.mutation_result05(first.ordinal).unwrap().is_none());
     drop(c);
     let mut c = Client::open05(
         SqliteStore::open(d.path().join("db")).unwrap(),
@@ -216,7 +235,6 @@ fn next_batch_preserves_previous_ownership_until_settlement() {
         c.freeze_batch05().unwrap().is_none(),
         "reopen retains the ownership fence"
     );
-    c.initialize_stream05(9).unwrap();
     c.install_authority05(
         &b.context,
         &[v05::AuthorityChange::Record {
@@ -227,7 +245,7 @@ fn next_batch_preserves_previous_ownership_until_settlement() {
             cursor: 9,
             state: json!({"text":"one","note":null}),
         }],
-        None,
+        Some((0, 9)),
     )
     .unwrap();
     assert!(c.call_completion05(&first.call_id).unwrap().is_some());
@@ -247,6 +265,7 @@ fn descriptor_snapshot_reorder_retains_original_hash_in_identical_read_context()
     v["actions"][0]["input"] = json!({"models":v["models"].clone(),"enums":[]});
     s = Schema::from_value(v).unwrap();
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
+    c.initialize_stream05(0).unwrap();
     c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
@@ -266,6 +285,7 @@ fn discard_refuses_assigned_owner_and_dismiss_retains_completed_outcome() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    c.initialize_stream05(0).unwrap();
     let call = c
         .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
         .unwrap();
@@ -340,6 +360,7 @@ fn assigned_payload_and_membership_cannot_be_edited_or_cancelled_in_sql() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    c.initialize_stream05(0).unwrap();
     let first = c
         .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
         .unwrap();
@@ -384,6 +405,7 @@ fn same_identity_in_two_slots_keeps_paths_and_binding_failure_is_atomic() {
         "User:u",
     )
     .unwrap();
+    c.initialize_stream05(0).unwrap();
     assert!(c.transaction(|tx|tx.submit_mutation05("Pair",1,json!({"first":{"id":"e","text":"one","note":null},"second":{"id":"other","text":"two"}}),vec![])).is_err());
     assert_eq!(c.store_status05().unwrap().next_mutation_id, 1);
     c.transaction(|tx| {
@@ -574,6 +596,7 @@ fn late_cascade_discovery_extends_owned_effects_without_changing_frozen_input() 
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
+    c.initialize_stream05(0).unwrap();
     c.transaction(|tx| {
         tx.direct(Operation {
             model: "Book".into(),
@@ -635,6 +658,7 @@ fn offline_create_then_sequenced_update_preserves_lifecycle_dependency() {
     let s = creation_then_sequenced_edit_schema();
     let mut c =
         Client::open05(SqliteStore::open(d.path().join("db")).unwrap(), s, "User:u").unwrap();
+    c.initialize_stream05(0).unwrap();
     let (created, edited) = c
         .transaction(|tx| {
             let created = tx.submit_mutation05(
@@ -692,6 +716,7 @@ fn offline_sequenced_update_waits_for_creation_settlement_and_survives_reopen() 
     let path = d.path().join("db");
     let s = creation_then_sequenced_edit_schema();
     let mut c = Client::open05(SqliteStore::open(&path).unwrap(), s.clone(), "User:u").unwrap();
+    c.initialize_stream05(0).unwrap();
     let created = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -761,7 +786,6 @@ fn offline_sequenced_update_waits_for_creation_settlement_and_survives_reopen() 
         c.freeze_batch05().unwrap().is_none(),
         "reopen preserves the dependency fence"
     );
-    c.initialize_stream05(9).unwrap();
     c.install_authority05(
         &batch.context,
         &[v05::AuthorityChange::Record {
@@ -772,7 +796,7 @@ fn offline_sequenced_update_waits_for_creation_settlement_and_survives_reopen() 
             cursor: 9,
             state: json!({"text":"created","note":null}),
         }],
-        None,
+        Some((0, 9)),
     )
     .unwrap();
     assert_eq!(c.read(&key).unwrap().unwrap()["text"], "edited");
@@ -800,6 +824,7 @@ fn rejected_predecessor_releases_sequence_survivor_and_rolls_back_lifecycle_depe
         }));
         let s = Schema::from_value(value).unwrap();
         let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
+        c.initialize_stream05(0).unwrap();
         let existing = RecordKey {
             model: "Entry".into(),
             identity: json!({"id":"e"}),
@@ -905,6 +930,7 @@ fn fresh_store_uses_only_canonical_tables_without_compatibility_views_or_trigger
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db");
     let mut client = Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
+    client.initialize_stream05(0).unwrap();
     let objects = client.read_sql("SELECT name,type FROM sqlite_schema WHERE name IN ('axton_client','axton_mutation','axton_mutation_operation','axton_queue_diverged')", &[]).unwrap();
     assert!(objects.is_empty(), "retired framework objects: {objects:?}");
     assert_eq!(client.pending_count().unwrap(), 0);

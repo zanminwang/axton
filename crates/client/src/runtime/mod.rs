@@ -268,7 +268,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 StoreReport::Needs {
                     status,
                     schema: self.client.pending_schema05()?,
-                    settlements: self.client.pending_settlement05()?,
                 }
             }
             StoreCommand::Cleanup(now) => {

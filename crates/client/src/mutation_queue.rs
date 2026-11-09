@@ -304,11 +304,19 @@ impl<S: ClientStore> Engine<'_, S> {
         Ok(request)
     }
     pub(crate) fn freeze05(&mut self) -> Result<Option<v05::MutationRequest>> {
-        let last = as_u64(
-            &self
-                .scalar("SELECT last_acknowledged_batch_id FROM axton_store", &[])?
-                .unwrap(),
-        )?;
+        // Push waits for the handshake: a Mutation then executes after the
+        // head read, so its syncCursor is at or after the Store's start S.
+        let store = self
+            .rows(
+                "SELECT last_acknowledged_batch_id,start_cursor FROM axton_store",
+                &[],
+            )?
+            .rows
+            .remove(0);
+        if store[1].is_null() {
+            return Ok(None);
+        }
+        let last = as_u64(&store[0])?;
         if let Some(batch) = self
             .scalar(
                 "SELECT MIN(batch_id) FROM axton_mutation_queue WHERE batch_id>?",

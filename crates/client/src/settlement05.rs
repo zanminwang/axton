@@ -30,12 +30,6 @@ use crate::mutation_queue::{decode, text};
 use crate::queue::OpKind;
 use axton_protocols::sync::{self as v05, Validate};
 use std::collections::BTreeMap;
-#[derive(Clone, Debug)]
-pub struct PendingSettlement05 {
-    pub mutation_id: u64,
-    pub batch_id: u64,
-    pub missing_keys: Vec<v05::RecordKey>,
-}
 impl<S: ClientStore> Engine<'_, S> {
     fn outcome05(&mut self, id: u64) -> Result<Option<v05::MutationOutcome>> {
         let r=self.rows("SELECT sync_cursor,result,targets,rejection_code,rejection_message FROM axton_mutation_queue WHERE id=?",&[json!(id)])?.rows;
@@ -205,31 +199,6 @@ impl<S: ClientStore> Engine<'_, S> {
             protected: evidence.current.is_some(),
         })
     }
-    pub fn pending_settlement05(&mut self) -> Result<Vec<PendingSettlement05>> {
-        let context = self.context05()?;
-        let rows=self.rows("SELECT id,batch_id,targets FROM axton_mutation_queue WHERE sync_cursor IS NOT NULL AND reconciled=0 ORDER BY id",&[])?.rows;
-        let mut pending = vec![];
-        for r in rows {
-            let targets: Vec<v05::SettlementTarget> = decode(&r[2])?;
-            let mut missing_keys = vec![];
-            for target in targets {
-                if v05::target_disposition(
-                    &target,
-                    &context.materialization,
-                    &self.target_evidence05(target.key())?,
-                )? == v05::TargetDisposition::AwaitAuthority
-                {
-                    missing_keys.push(target.key().clone())
-                }
-            }
-            pending.push(PendingSettlement05 {
-                mutation_id: as_u64(&r[0])?,
-                batch_id: as_u64(&r[1])?,
-                missing_keys,
-            })
-        }
-        Ok(pending)
-    }
     fn owned05(&mut self, id: u64, step: u64, key: &RecordKey) -> Result<bool> {
         let saved=self.scalar("SELECT owner_history FROM axton_mutation_queue_operation WHERE mutation_id=? AND step=?",&[json!(id),json!(step)])?.ok_or_else(||invalid("owned operation missing"))?;
         let history: BTreeMap<String, u64> = decode(&saved)?;
@@ -251,13 +220,36 @@ impl<S: ClientStore> Engine<'_, S> {
     /// held keys and emits returned completion events only after COMMIT.
     pub fn reconcile_ready05(&mut self, held: &mut Held) -> Result<Vec<CallCompletion>> {
         let context = self.context05()?;
-        let cursor = self
-            .scalar("SELECT cursor FROM axton_store", &[])?
-            .and_then(|v| v.as_u64());
-        let pending = self.pending_settlement05()?;
+        let row = self
+            .rows(
+                "SELECT cursor,start_cursor,enabled_descriptor FROM axton_store",
+                &[],
+            )?
+            .rows
+            .remove(0);
+        let (cursor, start_cursor) = (row[0].as_u64(), row[1].as_u64());
+        // Bootstrap flags come from the active materialization: a rollover
+        // drain settles under the previous contract's selection.
+        let bootstrap_models = self
+            .retained_schema05(
+                row[2]
+                    .as_str()
+                    .ok_or_else(|| invalid("descriptor missing"))?,
+            )?
+            .models
+            .into_iter()
+            .filter(|m| m.bootstrap)
+            .map(|m| m.name)
+            .collect::<std::collections::BTreeSet<_>>();
+        let pending = self
+            .rows(
+                "SELECT id FROM axton_mutation_queue WHERE sync_cursor IS NOT NULL AND reconciled=0 ORDER BY id",
+                &[],
+            )?
+            .rows;
         let mut completions = vec![];
-        for pending in pending {
-            let id = pending.mutation_id;
+        for row in pending {
+            let id = as_u64(&row[0])?;
             let Some(v05::MutationOutcome::Accepted {
                 sync_cursor,
                 targets,
@@ -276,8 +268,10 @@ impl<S: ClientStore> Engine<'_, S> {
             if !v05::settlement_ready(
                 sync_cursor,
                 cursor,
+                start_cursor,
                 &targets,
                 &context.materialization,
+                &bootstrap_models,
                 &evidence,
             )? {
                 continue;
@@ -291,6 +285,8 @@ impl<S: ClientStore> Engine<'_, S> {
                 if v05::target_disposition(
                     target,
                     &context.materialization,
+                    start_cursor,
+                    bootstrap_models.contains(&target.key().model),
                     &evidence[&target.key().encoded()?],
                 )? != v05::TargetDisposition::FinalizeOwned
                 {
@@ -373,10 +369,6 @@ impl<S: ClientStore> Client<S> {
     pub fn acknowledge_batch05(&mut self, ack: &v05::BatchAcknowledgement) -> Result<ApplyReport> {
         self.request_context05()?;
         self.write(|e| e.acknowledge05(ack))
-    }
-    pub fn pending_settlement05(&mut self) -> Result<Vec<PendingSettlement05>> {
-        self.request_context05()?;
-        self.view(|e| e.pending_settlement05())
     }
     pub fn settle_ready05(&mut self) -> Result<ApplyReport> {
         self.request_context05()?;

@@ -29,7 +29,7 @@ pub struct Control {
     paused: bool,
     live: bool,
     network_state: Option<(bool, bool)>,
-    /// Highest handshake/delivery head. Receipt cursors belong to settlement.
+    /// Highest handshake, delivery or accepted receipt head.
     delivery_head: u64,
     bootstrap_prefetch: bool,
     events: Vec<Event>,
@@ -412,6 +412,13 @@ impl Control {
                 {
                     return Err(invalid("Batch acknowledgement correlation mismatch"));
                 }
+                // Settlement evidence arrives only through the Stream. Raising
+                // the head lets an idle socket's Store pull (C, syncCursor].
+                for result in &receipt.results {
+                    if let v05::MutationOutcome::Accepted { sync_cursor, .. } = result.outcome {
+                        self.delivery_head = self.delivery_head.max(sync_cursor);
+                    }
+                }
                 self.jobs.push_back(StoreCommand::Acknowledge(receipt));
             }
             _ => {}
@@ -504,11 +511,7 @@ impl Control {
                 self.wake_after_needs = true;
                 self.jobs.push_back(StoreCommand::Needs);
             }
-            StoreReport::Needs {
-                status,
-                schema,
-                settlements,
-            } => {
+            StoreReport::Needs { status, schema } => {
                 // Needs is the Store's complete durable owner snapshot. A
                 // completed owner cannot keep network or staged work alive.
                 let pending = |context: &v05::RequestContext, owner: &v05::MaterializationOwner| {
@@ -519,15 +522,7 @@ impl Control {
                             &s.desired_context == context
                                 && &s.previous_context.materialization == previous_materialization
                         }),
-                        v05::MaterializationOwner::Settlement {
-                            batch_id,
-                            mutation_id,
-                        } => {
-                            context == &self.context
-                                && settlements.iter().any(|s| {
-                                    s.batch_id == *batch_id && s.mutation_id == *mutation_id
-                                })
-                        }
+                        v05::MaterializationOwner::Settlement { .. } => false,
                     }
                 };
                 let stale = self
@@ -582,21 +577,6 @@ impl Control {
                     // Receipt acknowledgement can freeze before settlement makes
                     // lifecycle dependents ready. Wake only after durable progress.
                     self.wake_after_needs = true;
-                }
-                for pending in settlements {
-                    if !pending.missing_keys.is_empty() {
-                        let request = v05::MaterializationRequest {
-                            context: self.context.clone(),
-                            request_id: format!("settlement:{}", self.issued + 1),
-                            owner: v05::MaterializationOwner::Settlement {
-                                batch_id: pending.batch_id,
-                                mutation_id: pending.mutation_id,
-                            },
-                            keys: pending.missing_keys,
-                            models: BTreeMap::new(),
-                        };
-                        self.owned(request)?;
-                    }
                 }
                 let wake = std::mem::take(&mut self.wake_after_needs);
                 if let Some(request) = self.waiting_push.take() {

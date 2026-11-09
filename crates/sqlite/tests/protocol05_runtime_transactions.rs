@@ -728,6 +728,7 @@ fn a_named_mutation_submitted_in_a_callback_is_provisional_until_the_commit() {
     assert_eq!(events[1], done("tx", Value::Null));
     assert_eq!(events[2]["requestId"], "barrier");
     assert_eq!(events[2]["ok"], true);
+    h.runtime.client().initialize_stream05(0).unwrap();
     let batch = h.runtime.client().freeze_batch05().unwrap().unwrap();
     assert_eq!(batch.mutations[0].id, 1);
     assert_eq!(h.pending(), 1);
@@ -804,6 +805,7 @@ fn a_local_callback_runs_inside_its_submission_and_its_writes_are_companions() {
         h.operations(),
         ["companion Entry draft delete", "wire Entry p create"]
     );
+    h.runtime.client().initialize_stream05(0).unwrap();
     let batch = h.runtime.client().freeze_batch05().unwrap().unwrap();
     let body = String::from_utf8(axton_protocols::sync::encode(&batch).unwrap()).unwrap();
     assert!(!body.contains("draft"), "a companion is never sent: {body}");

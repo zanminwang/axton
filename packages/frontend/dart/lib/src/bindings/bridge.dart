@@ -553,7 +553,6 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
     required String path,
     required Map<String, dynamic> schema,
     required String stream,
-    String projectionGeneration = "1",
     String? libraryPath,
     Carrier? carrier,
     List<String> prerequisiteHandlers = const [],
@@ -568,7 +567,6 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
       'schema': schema,
       'stream': stream,
       'protocol': 5,
-      'projectionGeneration': projectionGeneration,
       if (diagnostics != null) 'diagnostics': true,
       if (prerequisiteHandlers.isNotEmpty)
         'prerequisiteHandlers': prerequisiteHandlers,

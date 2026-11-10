@@ -304,7 +304,7 @@ fn failed_commit_and_rolled_back_savepoints_do_not_leak_model_candidates() {
 #[test]
 fn authority_replay_rejection_cache_and_reset_refresh_the_committed_projection() {
     let (mut h, probe) = measured(schema());
-    h.runtime.client().initialize_stream05(0).unwrap();
+    h.runtime.client().initialize_stream05(0, "1").unwrap();
     let context = h.runtime.client().request_context05().unwrap();
     let authority = |cursor, text: &str, note: Value| v05::AuthorityChange::Record {
         key: v05::RecordKey {

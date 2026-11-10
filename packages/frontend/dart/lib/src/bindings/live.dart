@@ -49,7 +49,6 @@ class SyncServer {
 }
 
 class StoreConnection extends SyncServer {
-  final String projectionGeneration;
   final void Function(Object)? onError;
   final Future<void> Function()? refreshAuth;
   final Duration directTimeout;
@@ -57,7 +56,6 @@ class StoreConnection extends SyncServer {
     required super.url,
     required super.token,
     super.headers,
-    this.projectionGeneration = '1',
     this.onError,
     this.refreshAuth,
     this.directTimeout = const Duration(seconds: 30),
@@ -97,10 +95,6 @@ class ServerSession {
   /// `POST /sync/handshake`: the Store's current Stream head.
   Future<String> handshake(String body, Future<void> cancellation) =>
       _post('handshake', 'handshake', body, cancellation);
-
-  /// `POST /sync/materialize`: an owned settlement or schema plan.
-  Future<String> materialize(String body, Future<void> cancellation) =>
-      _post('materialize', 'materialize', body, cancellation);
 
   /// `POST /sync/mutations`: one frozen push batch.
   Future<String> push(String body, Future<void> cancellation) =>

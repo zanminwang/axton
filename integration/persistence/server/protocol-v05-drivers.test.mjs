@@ -95,7 +95,10 @@ for (const [name, base] of adapters)
       await setup.query(`SET LOCAL search_path=${namespace}`);
       await setup.query(
         await readFile(
-          new URL("../../../packages/backend/postgres/migration.sql", import.meta.url),
+          new URL(
+            "../../../packages/backend/postgres/migration.sql",
+            import.meta.url,
+          ),
           "utf8",
         ),
       );
@@ -167,7 +170,7 @@ for (const [name, base] of adapters)
       },
     });
     const r = {
-      protocol: 5,
+      protocol: 6,
       storeId: `driver-${name}`,
       stream: "User:alice",
       materialization: app.materializationId,
@@ -191,10 +194,14 @@ for (const [name, base] of adapters)
       })),
     };
     r.digest = createHash("sha256")
-      .update("axton:mutation-batch:5\0")
+      .update("axton:batch-intent:1\0")
       .update(
         canonical(
-          Object.fromEntries(Object.entries(r).filter(([k]) => k !== "digest")),
+          Object.fromEntries(
+            Object.entries(r).filter(
+              ([k]) => k !== "digest" && k !== "protocol",
+            ),
+          ),
         ),
       )
       .digest("hex");

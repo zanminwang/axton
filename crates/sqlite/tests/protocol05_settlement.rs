@@ -40,6 +40,7 @@ fn rejected_owner_preserves_later_direct_and_completion_after_reopen() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = open(&p);
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -72,6 +73,7 @@ fn accepted_private_result_waits_for_coverage_then_settles_later_direct() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = open(&p);
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -87,7 +89,7 @@ fn accepted_private_result_waits_for_coverage_then_settles_later_direct() {
     let a = ack(
         &b,
         v05::MutationOutcome::Accepted {
-            sync_cursor: 0,
+            sync_cursor: 1,
             result: Value::Null,
             targets: vec![v05::SettlementTarget::Private {
                 record: v05::ReadRecord {
@@ -158,6 +160,7 @@ fn direct_delete_clears_current_tombstone_but_retains_stream_history() {
 fn newer_stream_supersedes_private_fallback_even_after_direct_releases_protection() {
     let d = tempfile::tempdir().unwrap();
     let mut c = open(&d.path().join("db"));
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -201,6 +204,7 @@ fn rejected_update_preserves_later_direct_b_and_historical_evidence() {
     value["actions"][0]["inputs"][0]["operation"] = json!("update");
     s = Schema::from_value(value).unwrap();
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     install(&mut c, "e", 3, Some("base"));
     let call = c
         .transaction(|tx| {
@@ -230,6 +234,7 @@ fn private_acceptance_finalizes_at_original_position_and_retains_result_after_cl
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = open(&p);
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -350,6 +355,7 @@ fn commit_failure_rolls_back_assignment_and_acknowledgement() {
         crash_ack: false,
     };
     let mut c = Client::open05(store, schema(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -385,6 +391,7 @@ fn commit_failure_rolls_back_assignment_and_acknowledgement() {
 fn partial_duplicate_or_foreign_acknowledgement_changes_nothing() {
     let d = tempfile::tempdir().unwrap();
     let mut c = open(&d.path().join("db"));
+    c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| {
         tx.submit_mutation05(
             "Write",
@@ -446,6 +453,7 @@ fn abrupt_process_exit_before_ack_commit_restores_exact_batch_and_later_direct()
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     c.install_authority05(
         &context,
@@ -534,9 +542,10 @@ fn pending_optimism_keeps_authoritative_base_protection() {
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "optimistic");
 }
 #[test]
-fn coverage_cannot_settle_missing_old_target_but_compatible_authority_can() {
+fn target_moved_past_sync_cursor_keeps_local_layer_until_newer_position_lands() {
     let d = tempfile::tempdir().unwrap();
     let mut c = open(&d.path().join("db"));
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -567,11 +576,11 @@ fn coverage_cannot_settle_missing_old_target_but_compatible_authority_can() {
     c.acknowledge_batch05(&a).unwrap();
     let context = c.request_context05().unwrap();
     c.install_authority05(&context, &[], Some((0, 40))).unwrap();
+    // Coverage of syncCursor alone does not settle: compaction moved the
+    // target to a later unit, so the pending layer stays over the base.
     assert!(c.call_completion05(&call.call_id).unwrap().is_none());
-    assert_eq!(
-        c.pending_settlement05().unwrap()[0].missing_keys,
-        vec![stream_key("e")]
-    );
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
+    assert_eq!(c.pending_count().unwrap(), 1);
     install(&mut c, "e", 45, Some("latest"));
     assert!(c.call_completion05(&call.call_id).unwrap().is_some());
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "latest");
@@ -591,6 +600,7 @@ fn lifecycle_dependents_are_rejected_atomically_and_retained_but_not_replayed() 
         "User:u",
     )
     .unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let first = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -651,6 +661,7 @@ fn accepted_companion_keeps_original_order_and_later_authority_supersedes_it() {
         "User:u",
     )
     .unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let ctx = c.request_context05().unwrap();
     c.install_authority05(
         &ctx,
@@ -737,6 +748,7 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     let mut s = schema();
     s.models[0].unique.push(vec!["text".into()]);
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| {
         tx.direct(Operation {
             model: "Entry".into(),
@@ -760,7 +772,7 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     let a = ack(
         &b,
         v05::MutationOutcome::Accepted {
-            sync_cursor: 0,
+            sync_cursor: 1,
             result: Value::Null,
             targets: vec![v05::SettlementTarget::Private {
                 record: v05::ReadRecord {
@@ -773,7 +785,7 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     );
     c.acknowledge_batch05(&a).unwrap();
     let ctx = c.request_context05().unwrap();
-    assert!(c.install_authority05(&ctx, &[], Some((0, 0))).is_err());
+    assert!(c.install_authority05(&ctx, &[], Some((0, 1))).is_err());
     assert!(c.call_completion05(&call.call_id).unwrap().is_none());
     assert_eq!(c.store_status05().unwrap().last_acknowledged_batch_id, 1);
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "optimistic");
@@ -790,7 +802,7 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     })
     .unwrap();
     let ctx = c.request_context05().unwrap();
-    c.install_authority05(&ctx, &[], Some((0, 0))).unwrap();
+    c.install_authority05(&ctx, &[], Some((0, 1))).unwrap();
     assert!(c.call_completion05(&call.call_id).unwrap().is_some());
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "taken");
 }
@@ -819,6 +831,7 @@ fn abrupt_assignment_commit_boundaries_preserve_canonical_retry() {
         let p = d.path().join(format!("{mode}.db"));
         let evidence = d.path().join(format!("{mode}.evidence"));
         let mut c = open(&p);
+        c.initialize_stream05(0, "1").unwrap();
         c.transaction(|tx| {
             tx.submit_mutation05(
                 "Write",
@@ -964,6 +977,7 @@ fn dismissed_rejection_keeps_durable_completion_but_retires_input_after_reopen()
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db");
     let mut client = open(&path);
+    client.initialize_stream05(0, "1").unwrap();
     let call = client
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -1149,7 +1163,7 @@ fn dismiss_missing_is_noop_but_pending_and_accepted_outcomes_are_protected() {
     let schema = Schema::from_value(descriptor).unwrap();
     let mut client =
         Client::open05(SqliteStore::open(&path).unwrap(), schema.clone(), "User:u").unwrap();
-    client.initialize_stream05(0).unwrap();
+    client.initialize_stream05(0, "1").unwrap();
     client.transaction(|tx| tx.dismiss_rejection05(99)).unwrap();
     let call = client
         .transaction(|tx| tx.submit_mutation05("Ping", 1, json!({}), vec![]))
@@ -1209,7 +1223,7 @@ fn failed_reset_keeps_old_store_rows_authority_and_prefix_after_real_reopen() {
         "User:u",
     )
     .unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let old = c.request_context05().unwrap();
     c.install_authority05(
         &old,
@@ -1251,6 +1265,7 @@ fn retained_private_snapshot_never_evaluates_new_creation_defaults() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = open(&p);
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -1274,7 +1289,7 @@ fn retained_private_snapshot_never_evaluates_new_creation_defaults() {
     ]);
     let desired = Schema::from_value(desired).unwrap();
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), desired.clone(), "User:u").unwrap();
-    assert!(c.pending_schema05().unwrap().is_some());
+    assert!(c.rollover_pending05().unwrap());
     assert_eq!(c.freeze_batch05().unwrap().unwrap(), batch);
     let receipt = ack(
         &batch,
@@ -1311,7 +1326,7 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
         let p = d.path().join("db");
         let mut c =
             Client::open05(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
-        c.initialize_stream05(0).unwrap();
+        c.initialize_stream05(0, "1").unwrap();
         let context = c.request_context05().unwrap();
         let mut q = DeliveryQueue::new(100_000, 8);
         let initial = v05::freeze_delivery(
@@ -1408,7 +1423,6 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
         assert!(!e.membership.unwrap().live);
         assert_eq!(c.store_status05().unwrap().cursor, Some(3));
         assert_eq!(c.pending_count().unwrap(), 0);
-        assert!(c.pending_settlement05().unwrap().is_empty());
         assert!(c.call_completion05(&call.call_id).unwrap().is_some());
         assert!(c.settle_ready05().unwrap().completions.is_empty());
         drop(c);
@@ -1429,141 +1443,95 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
 }
 
 #[test]
-fn historical_receipt_target_settles_below_prefix_while_public_bootstrap_remains_incomplete() {
+fn historical_target_finalizes_from_receipt_unless_bootstrap_will_deliver_it() {
     use axton_client::sync05::DeliveryQueue;
-    let d = tempfile::tempdir().unwrap();
-    let p = d.path().join("db");
-    let mut c = open(&p);
-    c.initialize_stream05(80).unwrap();
-    let context = c.request_context05().unwrap();
-    let public = v05::freeze_delivery(
-        context.clone(),
-        "public-bootstrap".into(),
-        v05::DeliveryPurpose::Bootstrap,
-        0,
-        80,
-        80,
-        10000,
-        vec![v05::DeliveryUnit {
-            index: 0,
-            through: Some(80),
-            changes: vec![
-                v05::AuthorityChange::Record {
-                    key: stream_key("a"),
-                    cursor: 70,
-                    state: state("public-a"),
-                },
-                v05::AuthorityChange::Record {
-                    key: stream_key("b"),
-                    cursor: 71,
-                    state: state("public-b"),
-                },
-            ],
-        }],
-        1,
-    )
-    .unwrap();
-    assert!(public.parts.len() > 1);
-    let mut q = DeliveryQueue::new(100_000, 8);
-    q.receive(&public.header, &public.parts[..1], &context, 1)
-        .unwrap();
-    assert!(c.apply_next_delivery05(&mut q, 1).unwrap().is_none());
-    let call = c
-        .transaction(|tx| {
-            tx.submit_mutation05(
-                "Write",
-                1,
-                json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                vec![],
-            )
-        })
-        .unwrap();
-    let b = c.freeze_batch05().unwrap().unwrap();
-    c.acknowledge_batch05(&ack(
-        &b,
-        v05::MutationOutcome::Accepted {
-            sync_cursor: 80,
-            result: Value::Null,
-            targets: vec![v05::SettlementTarget::Stream {
-                key: stream_key("e"),
-                cursor: 57,
-                fallback: v05::ReadRecord {
+    for bootstrap in [false, true] {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("db");
+        let mut s = serde_json::to_value(schema()).unwrap();
+        s["models"][0]["bootstrap"] = json!(bootstrap);
+        let schema = Schema::from_value(s).unwrap();
+        let mut c =
+            Client::open05(SqliteStore::open(&p).unwrap(), schema.clone(), "User:u").unwrap();
+        c.initialize_stream05(80, "1").unwrap();
+        let context = c.request_context05().unwrap();
+        let call = c
+            .transaction(|tx| {
+                tx.submit_mutation05(
+                    "Write",
+                    1,
+                    json!({"entry":{"id":"e","text":"optimistic","note":null}}),
+                    vec![],
+                )
+            })
+            .unwrap();
+        let b = c.freeze_batch05().unwrap().unwrap();
+        c.acknowledge_batch05(&ack(
+            &b,
+            v05::MutationOutcome::Accepted {
+                sync_cursor: 80,
+                result: Value::Null,
+                targets: vec![v05::SettlementTarget::Stream {
                     key: stream_key("e"),
-                    cursor: (),
-                    state: state("fallback"),
-                },
-            }],
-        },
-    ))
-    .unwrap();
-    assert!(c.call_completion05(&call.call_id).unwrap().is_none());
-    let pending = c.pending_settlement05().unwrap().remove(0);
-    assert_eq!(pending.missing_keys, vec![stream_key("e")]);
-    let request = v05::MaterializationRequest {
-        context: context.clone(),
-        request_id: "owned-settlement".into(),
-        owner: v05::MaterializationOwner::Settlement {
-            batch_id: pending.batch_id,
-            mutation_id: pending.mutation_id,
-        },
-        keys: pending.missing_keys,
-        models: Default::default(),
-    };
-    let owned = v05::freeze_materialization(
-        context.clone(),
-        "owned-target".into(),
-        request.owner.clone(),
-        80,
-        10000,
-        vec![v05::DeliveryUnit {
-            index: 0,
-            through: None,
-            changes: vec![v05::AuthorityChange::Record {
-                key: stream_key("e"),
-                cursor: 57,
-                state: state("canonical"),
-            }],
-        }],
-        10,
-    )
-    .unwrap();
-    q.receive_owned(
-        &request,
-        &v05::MaterializationResponse {
-            request_id: request.request_id.clone(),
-            delivery: v05::DeliveryResponse {
-                header: owned.header,
-                parts: owned.parts,
+                    cursor: 57,
+                    fallback: v05::ReadRecord {
+                        key: stream_key("e"),
+                        cursor: (),
+                        state: state("fallback"),
+                    },
+                }],
             },
-        },
-        &context,
-        1,
-    )
-    .unwrap();
-    let applied = c.apply_next_delivery05(&mut q, 1).unwrap().unwrap();
-    assert_eq!(applied.completions.len(), 1);
-    assert!(c.call_completion05(&call.call_id).unwrap().is_some());
-    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "canonical");
-    assert_eq!(
-        c.record_evidence05(&key()).unwrap().history[&context.materialization],
-        57
-    );
-    assert_eq!(c.store_status05().unwrap().cursor, Some(80));
-    assert_eq!(c.store_status05().unwrap().bootstrap_cursor, None);
-    assert!(c.apply_next_delivery05(&mut q, 1).unwrap().is_none());
-    // Only the remaining public parts may finish public Bootstrap.
-    q.receive(&public.header, &public.parts[1..], &context, 1)
+        ))
         .unwrap();
-    assert!(c.apply_next_delivery05(&mut q, 1).unwrap().is_some());
-    assert_eq!(c.store_status05().unwrap().bootstrap_cursor, Some(80));
-    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "canonical");
-    drop(c);
-    let mut c = open(&p);
-    assert!(c.call_completion05(&call.call_id).unwrap().is_some());
-    assert_eq!(
-        c.record_evidence05(&key()).unwrap().history[&context.materialization],
-        57
-    );
+        let settled = c.settle_ready05().unwrap().completions.len();
+        if !bootstrap {
+            // The Stream never delivers an unmarked position at or below S.
+            assert_eq!(settled, 1);
+            assert!(c.call_completion05(&call.call_id).unwrap().is_some());
+            assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "fallback");
+            let e = c.record_evidence05(&key()).unwrap();
+            assert!(e.history.is_empty() && e.membership.is_none() && e.current.is_none());
+            drop(c);
+            let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema, "User:u").unwrap();
+            assert!(c.call_completion05(&call.call_id).unwrap().is_some());
+            assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "fallback");
+            continue;
+        }
+        // A marked target arrives when Bootstrap passes it.
+        assert_eq!(settled, 0);
+        assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "optimistic");
+        let public = v05::freeze_delivery(
+            context.clone(),
+            "public-bootstrap".into(),
+            v05::DeliveryPurpose::Bootstrap,
+            0,
+            80,
+            80,
+            10000,
+            vec![v05::DeliveryUnit {
+                index: 0,
+                through: Some(80),
+                changes: vec![v05::AuthorityChange::Record {
+                    key: stream_key("e"),
+                    cursor: 57,
+                    state: state("canonical"),
+                }],
+            }],
+            10,
+        )
+        .unwrap();
+        let mut q = DeliveryQueue::new(100_000, 8);
+        q.receive(&public.header, &public.parts, &context, 1)
+            .unwrap();
+        let applied = c.apply_next_delivery05(&mut q, 1).unwrap().unwrap();
+        assert_eq!(applied.completions.len(), 1);
+        assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "canonical");
+        assert_eq!(
+            c.record_evidence05(&key()).unwrap().history[&context.materialization],
+            57
+        );
+        assert_eq!(c.store_status05().unwrap().bootstrap_cursor, Some(80));
+    }
 }
 
 #[test]
@@ -1581,7 +1549,7 @@ fn failed_local_settlement_retains_previous_batch_window_after_reopen() {
         "User:u",
     )
     .unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let first = c
         .transaction(|tx| {
             tx.submit_mutation05(

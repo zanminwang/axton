@@ -132,7 +132,7 @@ Model results are resolved through the shared Loader path. A returned Model is t
 
 ## Bootstrap selection
 
-`@@bootstrap` marks a Model for initial Bootstrap materialization. It is a boolean Model annotation, preserved by generated schema metadata. Initial Bootstrap excludes unmarked historical Models; rematerialization also covers held authority and absence. Load declarations and their generated managers are removed in 0.4. Use named Queries for business reads and Fetch for a Model identity.
+`@@bootstrap` marks a Model for initial Bootstrap delivery. It is a boolean Model annotation, preserved by generated schema metadata. Initial Bootstrap, and Bootstrap after a materialization rollover, exclude unmarked historical Models. Load declarations and their generated managers are removed in 0.4. Use named Queries for business reads and Fetch for a Model identity.
 
 ## History and compatibility
 

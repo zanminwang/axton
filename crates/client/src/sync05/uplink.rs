@@ -21,7 +21,8 @@ pub enum StoreCommand {
         fence: WorkFence05,
         command: Box<StoreCommand>,
     },
-    Initialize(u64),
+    /// An admitted handshake: its head and the backend's projection generation.
+    Initialize(v05::HandshakeResponse),
     NetworkState {
         live: bool,
         catching_up: bool,
@@ -48,10 +49,10 @@ pub enum StoreReport {
     Needs {
         // Present only when settlement committed terminal Call progress.
         status: Option<StoreStatus05>,
-        schema: Option<crate::store05::PendingSchema05>,
-        settlements: Vec<crate::settlement05::PendingSettlement05>,
     },
     Frozen(Option<v05::MutationRequest>),
+    /// The uplink cannot continue from durable state; nothing retries it.
+    Halted(String),
     Committed {
         status: StoreStatus05,
         report: ApplyReport,

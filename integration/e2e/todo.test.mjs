@@ -84,7 +84,7 @@ const target = (name) => (x) =>
   x.path === "/sync/mutations" &&
   intent(x).mutations.some((mutation) => mutation.name === name);
 
-test("seeds materialize for both viewers and durable reopen keeps their edited state", async () =>
+test("seeds Bootstrap for both viewers and durable reopen keeps their edited state", async () =>
   scenario(async (ctx) => {
     const alice = await ctx.open("alice", "alice");
     const bob = await ctx.open("bob", "bob");

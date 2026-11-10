@@ -47,8 +47,6 @@ export const V05_BATCH_BEGIN =
   "SELECT id FROM admitted";
 export const V05_RESULT_READ =
   "SELECT result FROM axton_mutation_result WHERE store_id=$1 AND batch_id=$2 AND ordinal=$3";
-export const V05_RESULTS_READ =
-  "SELECT result FROM axton_mutation_result WHERE store_id=$1 AND batch_id=$2 ORDER BY ordinal";
 /** Progress and its immutable result either both change or neither does. */
 export const V05_RESULT_SAVE =
   "WITH advanced AS (UPDATE axton_store SET progress=CASE WHEN $3+1=$4 THEN 0 ELSE $3+1 END,last_processed_batch_id=CASE WHEN $3+1=$4 THEN $2 ELSE last_processed_batch_id END,last_digest=CASE WHEN $3+1=$4 THEN current_digest ELSE last_digest END,last_count=CASE WHEN $3+1=$4 THEN current_count ELSE last_count END,current_digest=CASE WHEN $3+1=$4 THEN NULL ELSE current_digest END,current_count=CASE WHEN $3+1=$4 THEN NULL ELSE current_count END WHERE id=$1 AND last_processed_batch_id=$2-1 AND progress=$3 AND current_count=$4 RETURNING id) " +

@@ -101,7 +101,7 @@ test("generated backend decodes Date values and declares canonical identities th
                 op: "admit",
                 owner: "alice",
                 context: {
-                  protocol: 5,
+                  protocol: 6,
                   storeId: "fixture-store",
                   stream: "todos",
                   materialization: "fixture-materialization",
@@ -252,7 +252,7 @@ function nativeHost(requests: object[], answers: unknown[]) {
                 op: "admit",
                 owner: "alice",
                 context: {
-                  protocol: 5,
+                  protocol: 6,
                   storeId: "fixture-store",
                   stream: "todos",
                   materialization: "fixture-materialization",

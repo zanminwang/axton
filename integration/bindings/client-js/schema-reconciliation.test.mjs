@@ -8,7 +8,7 @@ import {openStore} from './store-fixture.mjs';
 const schema=JSON.parse(await readFile(new URL('../../../fixtures/schemas/entry.json',import.meta.url),'utf8'));
 schema.actions=[{name:'Edit',kind:'mutation',version:1,inputs:[{kind:'model',name:'entry',model:'Entry',operation:'update',cardinality:'single',allowedFields:['text','note']}],outputs:[]}];
 test('offline schema evolution retains named pending work in the same physical Store',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'axton-rematerialize-'));const path=join(dir,'client.sqlite');let client;
+ const dir=await mkdtemp(join(tmpdir(),'axton-schema-evolution-'));const path=join(dir,'client.sqlite');let client;
  try{
   client=await openStore(Client,{path,schema});
   await client.direct({model:'Entry',op:'create',identity:{id:'e'},values:{text:'A'}});

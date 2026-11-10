@@ -24,7 +24,7 @@ fn scalar_calls_share_commit_but_own_companions_and_independent_outcomes() {
         let mut s = common05::schema();
         s.actions=serde_json::from_value(json!([{"name":"Ping","version":1,"inputs":[{"kind":"value","name":"label","type":{"kind":"scalar","name":"string"},"nullable":false}],"outputs":[]}])).unwrap();
         let mut c = Client::open05(SqliteStore::open(&path).unwrap(), s.clone(), "User:u").unwrap();
-        c.initialize_stream05(0).unwrap();
+        c.initialize_stream05(0, "1").unwrap();
         c.transaction(|tx| {
             for id in ["a", "b", "independent"] {
                 tx.direct(common05::create(
@@ -156,7 +156,7 @@ fn text_of(c: &mut Client<SqliteStore>, id: &str) -> Option<String> {
 fn start(comp: &str) -> (tempfile::TempDir, Client<SqliteStore>) {
     let d = tempfile::tempdir().unwrap();
     let mut c = common05::open(&d.path().join("db"));
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| {
         tx.direct(common05::create(
             "Entry",
@@ -344,7 +344,7 @@ fn overlapping_companions_keep_local_order_across_outcome_order_and_reopen() {
         let schema = axton_client::Schema::from_value(s).unwrap();
         let mut c =
             Client::open05(SqliteStore::open(&path).unwrap(), schema.clone(), "User:u").unwrap();
-        c.initialize_stream05(0).unwrap();
+        c.initialize_stream05(0, "1").unwrap();
         c.transaction(|tx| {
             tx.direct(common05::create(
                 "Entry",

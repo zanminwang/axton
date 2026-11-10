@@ -177,6 +177,7 @@ fn a_rolled_back_transaction_keeps_no_generated_record() {
 fn update_omission_changes_nothing_and_never_evaluates_defaults() {
     let dir = tempfile::tempdir().unwrap();
     let mut client = open(&dir.path().join("db"));
+    client.initialize_stream05(0, "1").unwrap();
     client
         .transaction(|tx| {
             tx.direct(Operation {
@@ -229,6 +230,7 @@ fn update_omission_changes_nothing_and_never_evaluates_defaults() {
 fn prepared(name: &str, args: Value) -> Result<Value> {
     let d = tempfile::tempdir().unwrap();
     let mut c = open(&d.path().join("db"));
+    c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| tx.submit_mutation05(name, 1, args, vec![]))?;
     let b = c.freeze_batch05()?.unwrap();
     v05::reconstruct_input(&b.mutations[0].operations)
@@ -259,6 +261,7 @@ fn durable_create_and_local_companion_defaults_expand_once_before_freeze() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = open(&p);
+    c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| {
         tx.submit_mutation05(
             "Add",
@@ -310,6 +313,7 @@ fn a_default_only_change_opens_in_place_and_rewrites_nothing() {
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("db");
     let mut c = open(&path);
+    c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| {
         tx.submit_mutation05("Add", 1, json!({"todo":{"title":"queued"}}), vec![])?;
         tx.direct(local_create(json!({"title":"local"})))
@@ -329,7 +333,7 @@ fn a_default_only_change_opens_in_place_and_rewrites_nothing() {
         "User:u",
     )
     .unwrap();
-    assert!(c.pending_schema05().unwrap().is_none());
+    assert!(!c.rollover_pending05().unwrap());
     assert_eq!(rows(&mut c), before);
     assert_eq!(c.freeze_batch05().unwrap().unwrap(), batch);
     assert!(

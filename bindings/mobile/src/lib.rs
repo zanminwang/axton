@@ -150,7 +150,7 @@ mod tests {
         };
         let opened = wait(&mut events, "taskCompleted");
         assert_eq!(opened["ok"], true, "{opened:?}");
-        assert_eq!(opened["value"]["context"]["protocol"], 5);
+        assert_eq!(opened["value"]["context"]["protocol"], 6);
         assert!(opened["value"]["clientId"].is_string());
 
         let close = CString::new(r#"{"type":"close"}"#).unwrap();

@@ -158,25 +158,64 @@ impl Scenario {
                     ..
                 }
             )),
-            "a Mutation receipt is a settlement fence, not an observed delivery head"
+            "committed coverage already reaches the receipt head"
         );
+    }
+
+    fn answer_pull(
+        &mut self,
+        id: &str,
+        request: &v05::DeltaRequest,
+        changes: Vec<v05::AuthorityChange>,
+    ) {
+        let delivery = v05::freeze_delivery(
+            request.context.clone(),
+            format!("pull-{}-{}", request.after, request.through),
+            v05::DeliveryPurpose::Sync,
+            request.after,
+            request.through,
+            request.through,
+            10000,
+            vec![v05::DeliveryUnit {
+                index: 0,
+                through: Some(request.through),
+                changes,
+            }],
+            500,
+        )
+        .unwrap();
+        let body = serde_json::to_string(&v05::DeliveryResponse {
+            header: delivery.header,
+            parts: delivery.parts,
+        })
+        .unwrap();
+        self.control
+            .receive(
+                id,
+                EffectOutcome {
+                    ok: true,
+                    value: Some(json!(body)),
+                    error: None,
+                },
+                1,
+            )
+            .unwrap();
+        self.run_store();
     }
 
     fn assert_completed(&mut self) {
         let client = self.runtime.client();
         assert!(client.call_completion05(&self.call_id).unwrap().is_some());
-        assert!(client.pending_settlement05().unwrap().is_empty());
         assert_eq!(client.query("Entry", &json!({})).unwrap()[0]["text"], "e");
         assert!(client.settle_ready05().unwrap().completions.is_empty());
     }
 }
 
 #[test]
-fn receipt_waits_for_committed_delivery_without_requesting_cursor_repair() {
+fn receipt_with_silent_socket_pulls_through_its_sync_cursor_and_settles() {
     let directory = tempfile::tempdir().unwrap();
     let mut scenario = Scenario::new(&directory.path().join("db"));
     scenario.acknowledge();
-    scenario.assert_no_cursor_pull();
     let client = scenario.runtime.client();
     assert_eq!(client.store_status05().unwrap().cursor, Some(0));
     assert!(
@@ -185,20 +224,13 @@ fn receipt_waits_for_committed_delivery_without_requesting_cursor_repair() {
             .unwrap()
             .is_none()
     );
-    assert_eq!(client.pending_settlement05().unwrap().len(), 1);
-
-    // Target authority alone cannot complete the receipt's later prefix fence.
-    scenario.deliver(0, 1, vec![change("e", 1)]);
-    scenario.assert_no_cursor_pull();
-    assert!(
-        scenario
-            .runtime
-            .client()
-            .call_completion05(&scenario.call_id)
-            .unwrap()
-            .is_none()
+    // The receipt raises the delivery head; no live frame ever arrives.
+    let (id, request) = super::cursor_pull(&mut scenario.control);
+    assert_eq!(
+        (request.after, request.through, request.bootstrap),
+        (0, 2, false)
     );
-    scenario.deliver(1, 2, vec![]);
+    scenario.answer_pull(&id, &request, vec![change("e", 1)]);
     scenario.assert_no_cursor_pull();
     scenario.assert_completed();
 }
@@ -227,7 +259,7 @@ fn reconnect_handshake_still_repairs_the_missing_committed_prefix() {
     let directory = tempfile::tempdir().unwrap();
     let mut scenario = Scenario::new(&directory.path().join("db"));
     scenario.acknowledge();
-    scenario.assert_no_cursor_pull();
+    super::cursor_pull(&mut scenario.control);
     scenario.control.connect().unwrap();
     let handshake = scenario
         .control
@@ -253,10 +285,11 @@ fn reconnect_handshake_still_repairs_the_missing_committed_prefix() {
                 ok: true,
                 value: Some(json!(
                     serde_json::to_string(&v05::HandshakeResponse {
-                        protocol: 5,
+                        protocol: axton_client::v05::PROTOCOL,
                         store_id: scenario.receipt.context.store_id.clone(),
                         stream: scenario.receipt.context.stream.clone(),
                         head: 2,
+                        projection_generation: "1".into(),
                     })
                     .unwrap()
                 )),

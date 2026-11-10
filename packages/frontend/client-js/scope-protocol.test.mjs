@@ -50,6 +50,6 @@ test('bound Stream Remove retains guards and newer canonical null protects delet
   assert.equal(await client.read('Entry',{id:'e'}),null);
   assert.equal((await client.fetchModel('Entry',1,{id:'e'},value=>value)).text,'read');
   assert.equal(await client.read('Entry',{id:'e'}),null,'ordinary snapshot cannot resurrect protected absence');
-  assert.ok(envelopes.every(x=>x.stream==='User:viewer' && x.protocol===5));assert.deepEqual(errors,[]);
+  assert.ok(envelopes.every(x=>x.stream==='User:viewer' && x.protocol===6));assert.deepEqual(errors,[]);
  } finally {await client.close();for(const current of ws.clients)current.terminate();await new Promise(resolve=>ws.close(resolve));await new Promise(resolve=>server.close(resolve));await rm(dir,{recursive:true,force:true});}
 });

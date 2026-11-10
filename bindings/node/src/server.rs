@@ -255,33 +255,6 @@ pub async fn process_delivery05(
 }
 
 #[napi]
-pub async fn process_materialization05(
-    config_json: String,
-    owner: String,
-    request_json: String,
-    callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
-    diagnostics: Option<bool>,
-) -> Result<String> {
-    let host = CallbackHost(callback);
-    observe(
-        "native.process_materialization05",
-        diagnostics.unwrap_or(false),
-        &host,
-        async {
-            axton_server::process_materialization05(
-                &config(&config_json)?,
-                &owner,
-                request_json.as_bytes(),
-                &host,
-            )
-            .await
-            .map_err(reason)
-        },
-    )
-    .await
-}
-
-#[napi]
 pub async fn process_read05(
     config_json: String,
     owner: String,

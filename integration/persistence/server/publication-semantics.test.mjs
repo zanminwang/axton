@@ -86,7 +86,7 @@ async function fixture(body) {
         await backend.fetch(
           owner,
           JSON.stringify({
-            protocol: 5,
+            protocol: 6,
             storeId: `viewer-${owner}`,
             stream: `User:${owner}`,
             materialization: backend.materializationId,
@@ -110,7 +110,7 @@ async function fixture(body) {
         await backend.pull(
           owner,
           JSON.stringify({
-            protocol: 5,
+            protocol: 6,
             storeId: `viewer-${owner}`,
             stream: `User:${owner}`,
             materialization: backend.materializationId,

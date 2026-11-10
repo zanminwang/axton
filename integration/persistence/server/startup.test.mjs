@@ -105,7 +105,6 @@ test("only actual5 native entrypoints are exported; startup preserves device-onl
   for (const name of [
     "processRead05",
     "processDelivery05",
-    "processMaterialization05",
     "processLive05",
     "processBatchMember",
     "processBatchGroup",

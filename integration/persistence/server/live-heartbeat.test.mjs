@@ -137,7 +137,7 @@ async function fixture(t, { autoPong = true, idleProxy = false, held } = {}) {
   const serverSocket = await accepted.promise;
   const ready = once(socket, "message");
   socket.send(
-    JSON.stringify({ protocol: 5, storeId: "fixture", stream: "User:fixture" }),
+    JSON.stringify({ protocol: 6, storeId: "fixture", stream: "User:fixture" }),
   );
   if (held) await held.entered.promise;
   else await ready;

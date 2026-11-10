@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 fn ctx() -> RequestContext {
     RequestContext {
-        protocol: 5,
+        protocol: PROTOCOL,
         store_id: "store".into(),
         stream: "User:a".into(),
         materialization: "schema1".into(),
@@ -65,6 +65,18 @@ fn a1_canonical_batch_binds_exact_order_context_and_descriptor() {
     }
 }
 #[test]
+fn batch_digest_survives_a_protocol_number_change() {
+    // The protocol number is transport: a Batch frozen under one protocol
+    // keeps its digest under the next, while admission still checks it.
+    let request = request();
+    for protocol in [PROTOCOL - 1, PROTOCOL + 1] {
+        let mut moved = request.clone();
+        moved.context.protocol = protocol;
+        assert_eq!(batch_digest(&moved).unwrap(), request.digest);
+        assert!(validate_batch(&moved).is_err());
+    }
+}
+#[test]
 fn strict_envelopes_counters_and_duplicates() {
     let request = request();
     let value = serde_json::to_value(&request).unwrap();
@@ -79,7 +91,7 @@ fn strict_envelopes_counters_and_duplicates() {
         rejects::<MutationRequest>(bad);
     }
     let mut bad = value.clone();
-    bad["protocol"] = json!(4);
+    bad["protocol"] = json!(5);
     rejects::<MutationRequest>(bad);
     let mut bad = value.clone();
     bad["batchId"] = json!(9_007_199_254_740_992u64);
@@ -257,7 +269,7 @@ fn delivery_manifest_binds_coverage_payload_parts_and_complete_units() {
     for variant in 0..4 {
         let mut h = frozen.header.clone();
         match variant {
-            0 => h.through = Some(5),
+            0 => h.through = 5,
             1 => h.context.stream = "User:b".into(),
             2 => h.units[0].parts.pop().map(|_| ()).unwrap(),
             _ => h.digest = "0".repeat(64),
@@ -272,7 +284,7 @@ fn delivery_manifest_binds_coverage_payload_parts_and_complete_units() {
     rejects::<DeliveryHeader>(bad);
 }
 #[test]
-fn malformed_optional_coverage_and_materialization_owner_are_rejected() {
+fn malformed_coverage_and_rangeless_headers_are_rejected() {
     let f = frozen();
     let units = vec![DeliveryUnit {
         index: 0,
@@ -293,9 +305,20 @@ fn malformed_optional_coverage_and_materialization_owner_are_rejected() {
         )
         .is_err()
     );
-    let mut bad = serde_json::to_value(&f.header).unwrap();
-    bad["owner"] = json!({"kind":"settlement","batchId":0,"mutationId":1});
-    rejects::<DeliveryHeader>(bad);
+    // Every plan is a Stream range: a rangeless or owner-carrying header
+    // from an earlier protocol is not a delivery.
+    for (field, value) in [
+        ("after", Value::Null),
+        ("through", Value::Null),
+        (
+            "owner",
+            json!({"kind":"settlement","batchId":1,"mutationId":1}),
+        ),
+    ] {
+        let mut bad = serde_json::to_value(&f.header).unwrap();
+        bad[field] = value;
+        rejects::<DeliveryHeader>(bad);
+    }
 }
 #[test]
 fn read_completions_require_definitive_outcome_and_empty_error_records() {
@@ -320,11 +343,16 @@ fn accepted_acknowledgement_requires_every_server_model_input_target() {
 }
 #[test]
 fn handshake_and_reads_correlate_store_stream_request_and_modes() {
-    let request =
+    // A 0.5 peer gets unsupported_protocol, not a digest or route error.
+    assert!(
         decode::<HandshakeRequest>(br#"{"protocol":5,"storeId":"store","stream":"User:a"}"#)
+            .is_err()
+    );
+    let request =
+        decode::<HandshakeRequest>(br#"{"protocol":6,"storeId":"store","stream":"User:a"}"#)
             .unwrap();
     let response = decode::<HandshakeResponse>(
-        br#"{"protocol":5,"storeId":"store","stream":"User:a","head":0}"#,
+        br#"{"protocol":6,"storeId":"store","stream":"User:a","head":0,"projectionGeneration":"1"}"#,
     )
     .unwrap();
     response.admit(&request).unwrap();
@@ -372,65 +400,6 @@ fn handshake_and_reads_correlate_store_stream_request_and_modes() {
     assert!(response.admit(&wrong, &ctx()).is_err());
 }
 #[test]
-fn owned_materialization_has_no_ranges_and_rejects_foreign_keys_or_owner() {
-    let req=decode::<MaterializationRequest>(&serde_json::to_vec(&wire(json!({"context":ctx(),"requestId":"owned1","owner":{"kind":"settlement","batchId":1,"mutationId":2},"keys":[{"model":"Entry","identity":{"id":"e"}}],"models":{}}))).unwrap()).unwrap();
-    let unit = DeliveryUnit {
-        index: 0,
-        through: None,
-        changes: vec![AuthorityChange::Record {
-            key: req.keys[0].clone(),
-            cursor: 20,
-            state: json!({"text":"a"}),
-        }],
-    };
-    let f = freeze_materialization(
-        ctx(),
-        "owned".into(),
-        req.owner.clone(),
-        40,
-        100,
-        vec![unit.clone()],
-        1,
-    )
-    .unwrap();
-    assert_eq!(f.header.after, None);
-    assert_eq!(f.header.through, None);
-    let response = MaterializationResponse {
-        request_id: "owned1".into(),
-        delivery: DeliveryResponse {
-            header: f.header.clone(),
-            parts: f.parts,
-        },
-    };
-    response.admit(&req, &ctx()).unwrap();
-    let mut wrong = req.clone();
-    wrong.keys[0].identity = json!({"id":"other"});
-    assert!(response.admit(&wrong, &ctx()).is_err());
-    let mut wrong = req.clone();
-    wrong.owner = MaterializationOwner::Settlement {
-        batch_id: 1,
-        mutation_id: 3,
-    };
-    assert!(response.admit(&wrong, &ctx()).is_err());
-    let mut header = f.header;
-    header.after = Some(40);
-    header.through = Some(40);
-    header.digest = delivery_digest(&header).unwrap();
-    assert!(header.validate().is_err());
-    let mut covered = unit;
-    covered.through = Some(40);
-    assert!(
-        freeze_materialization(ctx(), "bad".into(), req.owner, 40, 100, vec![covered], 1).is_err()
-    );
-    let schema = wire(
-        json!({"context":ctx(),"requestId":"schema","owner":{"kind":"schema","previousMaterialization":"old"},"keys":[],"models":{"Entry":2}}),
-    );
-    assert!(decode::<MaterializationRequest>(&serde_json::to_vec(&schema).unwrap()).is_ok());
-    let mut bad = schema;
-    bad["after"] = json!(0);
-    rejects::<MaterializationRequest>(bad);
-}
-#[test]
 fn later_manifest_minimum_cannot_be_hidden_behind_earlier_coverage() {
     let f = frozen();
     let mut header = f.header;
@@ -446,37 +415,10 @@ fn shared_wire_fixture_roundtrips_every_message_and_hash_domain() {
     let request = request();
     let acknowledgement = ack(&request);
     let f = frozen();
-    let materialize = MaterializationRequest {
-        context: ctx(),
-        request_id: "owned1".into(),
-        owner: MaterializationOwner::Settlement {
-            batch_id: 1,
-            mutation_id: 2,
-        },
-        keys: vec![RecordKey {
-            model: "Entry".into(),
-            identity: json!({"id":"e"}),
-        }],
-        models: Default::default(),
+    let key = RecordKey {
+        model: "Entry".into(),
+        identity: json!({"id":"e"}),
     };
-    let owned = freeze_materialization(
-        ctx(),
-        "owned".into(),
-        materialize.owner.clone(),
-        40,
-        100,
-        vec![DeliveryUnit {
-            index: 0,
-            through: None,
-            changes: vec![AuthorityChange::Record {
-                key: materialize.keys[0].clone(),
-                cursor: 20,
-                state: json!({"text":"accepted"}),
-            }],
-        }],
-        1,
-    )
-    .unwrap();
     let query = ReadRequest {
         context: ctx(),
         request_id: "q1".into(),
@@ -492,12 +434,12 @@ fn shared_wire_fixture_roundtrips_every_message_and_hash_domain() {
         request_id: "f1".into(),
         store: false,
         invocation: ReadInvocation::Fetch {
-            key: materialize.keys[0].clone(),
+            key: key.clone(),
             version: 1,
         },
     };
     let snapshot = ReadRecord {
-        key: materialize.keys[0].clone(),
+        key: key.clone(),
         cursor: (),
         state: json!({"text":"accepted"}),
     };
@@ -518,15 +460,6 @@ fn shared_wire_fixture_roundtrips_every_message_and_hash_domain() {
         },
         records: vec![],
     };
-    let schema = MaterializationRequest {
-        context: ctx(),
-        request_id: "schema1".into(),
-        owner: MaterializationOwner::Schema {
-            previous_materialization: "schema0".into(),
-        },
-        keys: vec![],
-        models: std::collections::BTreeMap::from([("Entry".into(), 2)]),
-    };
     let mut rejected = acknowledgement.clone();
     rejected.results[0].outcome = MutationOutcome::Rejected {
         code: "write.not_allowed".into(),
@@ -534,8 +467,8 @@ fn shared_wire_fixture_roundtrips_every_message_and_hash_domain() {
     };
     let fixtures = json!({
         "mutationRequest":request,"batchAcknowledgement":acknowledgement,"rejectedAcknowledgement":rejected,
-        "handshakeRequest":HandshakeRequest{protocol:5,store_id:"store".into(),stream:"User:a".into()},
-        "handshakeResponse":HandshakeResponse{protocol:5,store_id:"store".into(),stream:"User:a".into(),head:40},
+        "handshakeRequest":HandshakeRequest{protocol:PROTOCOL,store_id:"store".into(),stream:"User:a".into()},
+        "handshakeResponse":HandshakeResponse{protocol:PROTOCOL,store_id:"store".into(),stream:"User:a".into(),head:40,projection_generation:"1".into()},
         "queryRequest":query,"fetchRequest":fetch,"readSuccess":success,"readFailure":failure,
         "readRecord":snapshot,"streamTarget":SettlementTarget::Stream{key:snapshot.key.clone(),cursor:20,fallback:snapshot.clone()},
         "privateTarget":SettlementTarget::Private{record:snapshot},
@@ -543,13 +476,23 @@ fn shared_wire_fixture_roundtrips_every_message_and_hash_domain() {
         "cursorPageRequest":DeltaRequest{context:ctx(),after:2,through:4,bootstrap:false},
         "deliveryHeader":f.header,"deliveryUnit":DeliveryUnit{index:0,through:Some(4),changes:f.parts.iter().flat_map(|p|p.changes.clone()).collect()},
         "deliveryPart":f.parts[0],"deliveryResponse":DeliveryResponse{header:f.header.clone(),parts:f.parts.clone()},
-        "materializationRequest":materialize,"schemaMaterializationRequest":schema,
-        "materializationResponse":MaterializationResponse{request_id:"owned1".into(),delivery:DeliveryResponse{header:owned.header.clone(),parts:owned.parts.clone()}},
-        "ownedDeliveryHeader":owned.header,"ownedDeliveryUnit":DeliveryUnit{index:0,through:None,changes:owned.parts[0].changes.clone()},
         "removeChange":AuthorityChange::Remove{key:RecordKey{model:"Entry".into(),identity:json!({"id":"removed"})},cursor:30},
         "deliveryProgress":DeliveryProgress::new(&f.header,&ctx(),0).unwrap(),
         "cases":{"bootstrapRecordMovesPastStart":{"startCursor":40,"bootstrapCursor":null,"before":[{"model":"Entry","id":"e","cursor":20,"text":"a"}],"atPlan":[{"model":"Entry","id":"e","cursor":45,"text":"b"}],"observedHead":45,"expected":{"bootstrapCursor":40,"entryText":"b","entryCursor":45}}}
     });
+    // AXTON_UPDATE_FIXTURES=1 regenerates the file after an intended wire change.
+    if std::env::var_os("AXTON_UPDATE_FIXTURES").is_some() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/protocol/0.5.json"
+        );
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(&fixtures).unwrap() + "\n",
+        )
+        .unwrap();
+        return;
+    }
     let saved: Value =
         serde_json::from_str(include_str!("../../../fixtures/protocol/0.5.json")).unwrap();
     assert_eq!(saved, fixtures, "frozen cross-language fixture drift");
@@ -577,96 +520,12 @@ fn shared_wire_fixture_roundtrips_every_message_and_hash_domain() {
     check!("deliveryUnit", DeliveryUnit);
     check!("deliveryPart", DeliveryPart);
     check!("deliveryResponse", DeliveryResponse);
-    check!("materializationRequest", MaterializationRequest);
-    check!("schemaMaterializationRequest", MaterializationRequest);
-    check!("materializationResponse", MaterializationResponse);
-    check!("ownedDeliveryHeader", DeliveryHeader);
-    check!("ownedDeliveryUnit", DeliveryUnit);
     check!("removeChange", AuthorityChange);
     check!("deliveryProgress", DeliveryProgress);
     assert_eq!(
         batch_digest(&request).unwrap(),
         saved["mutationRequest"]["digest"]
     );
-}
-#[test]
-fn schema_transfer_admits_pending_descriptor_before_it_is_enabled() {
-    let mut desired = ctx();
-    desired.materialization = "schema2".into();
-    let f = freeze_materialization(
-        desired,
-        "schema-plan".into(),
-        MaterializationOwner::Schema {
-            previous_materialization: "schema1".into(),
-        },
-        40,
-        100,
-        vec![DeliveryUnit {
-            index: 0,
-            through: None,
-            changes: vec![],
-        }],
-        1,
-    )
-    .unwrap();
-    assert!(
-        DeliveryProgress::new(&f.header, &ctx(), 0).is_ok(),
-        "pending schema transfer requires old enabled context"
-    );
-    let mut foreign = ctx();
-    foreign.materialization = "unrelated".into();
-    assert!(DeliveryProgress::new(&f.header, &foreign, 0).is_err());
-}
-#[test]
-fn full_materialization_checks_required_identity_set_before_completion() {
-    let request = MaterializationRequest {
-        context: ctx(),
-        request_id: "materialize".into(),
-        owner: MaterializationOwner::Settlement {
-            batch_id: 1,
-            mutation_id: 1,
-        },
-        keys: vec![RecordKey {
-            model: "Entry".into(),
-            identity: json!({"id":"required"}),
-        }],
-        models: Default::default(),
-    };
-    let empty = DeliveryUnit {
-        index: 0,
-        through: None,
-        changes: vec![],
-    };
-    let f = freeze_materialization(
-        ctx(),
-        "empty".into(),
-        request.owner.clone(),
-        40,
-        100,
-        vec![empty.clone()],
-        1,
-    )
-    .unwrap();
-    assert!(validate_materialization(&request, &f.header, &[empty]).is_err());
-    let complete = DeliveryUnit {
-        index: 0,
-        through: None,
-        changes: vec![AuthorityChange::Remove {
-            key: request.keys[0].clone(),
-            cursor: 30,
-        }],
-    };
-    let f = freeze_materialization(
-        ctx(),
-        "complete".into(),
-        request.owner.clone(),
-        40,
-        100,
-        vec![complete.clone()],
-        1,
-    )
-    .unwrap();
-    validate_materialization(&request, &f.header, &[complete]).unwrap();
 }
 #[test]
 fn receipt_stream_target_cannot_exceed_its_fenced_sync_head() {
@@ -692,56 +551,6 @@ fn receipt_stream_target_cannot_exceed_its_fenced_sync_head() {
         }],
     };
     assert!(validate_acknowledgement(&r, &a).is_err());
-}
-
-#[test]
-fn owned_retry_accepts_a_fresh_response_but_rejects_changed_owner_or_request() {
-    let fixture: Value =
-        serde_json::from_str(include_str!("../../../fixtures/protocol/0.5.json")).unwrap();
-    let request: MaterializationRequest =
-        serde_json::from_value(fixture["materializationRequest"].clone()).unwrap();
-    let original: MaterializationResponse =
-        serde_json::from_value(fixture["materializationResponse"].clone()).unwrap();
-    let frozen = freeze_materialization(
-        ctx(),
-        "fresh-response".into(),
-        request.owner.clone(),
-        41,
-        10001,
-        vec![DeliveryUnit {
-            index: 0,
-            through: None,
-            changes: vec![AuthorityChange::Record {
-                key: request.keys[0].clone(),
-                cursor: 41,
-                state: json!({"text":"latest"}),
-            }],
-        }],
-        500,
-    )
-    .unwrap();
-    let mut fresh = MaterializationResponse {
-        request_id: request.request_id.clone(),
-        delivery: DeliveryResponse {
-            header: frozen.header,
-            parts: frozen.parts,
-        },
-    };
-    assert_ne!(
-        fresh.delivery.header.plan_id,
-        original.delivery.header.plan_id
-    );
-    fresh.admit(&request, &ctx()).unwrap();
-    fresh.delivery.require_complete().unwrap();
-    fresh.request_id = "other-request".into();
-    assert!(fresh.admit(&request, &ctx()).is_err());
-    fresh.request_id = request.request_id.clone();
-    fresh.delivery.header.owner = Some(MaterializationOwner::Settlement {
-        batch_id: 99,
-        mutation_id: 99,
-    });
-    fresh.delivery.header.digest = delivery_digest(&fresh.delivery.header).unwrap();
-    assert!(fresh.admit(&request, &ctx()).is_err());
 }
 
 #[test]

@@ -12,6 +12,7 @@ fn fixed_batch_restores_input_presence_and_excludes_new_members() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
         .unwrap();
@@ -32,6 +33,23 @@ fn fixed_batch_restores_input_presence_and_excludes_new_members() {
         v05::encode(&c.freeze_batch05().unwrap().unwrap()).unwrap(),
         v05::encode(&b).unwrap()
     );
+}
+#[test]
+fn no_batch_freezes_before_the_handshake_sets_start() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    let call = c
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .unwrap();
+    assert!(c.freeze_batch05().unwrap().is_none());
+    drop(c);
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    assert!(c.freeze_batch05().unwrap().is_none());
+    assert_eq!(c.store_status05().unwrap().last_acknowledged_batch_id, 0);
+    c.initialize_stream05(7, "1").unwrap();
+    let b = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!((b.batch_id, b.mutations[0].id), (1, call.ordinal));
 }
 #[test]
 fn refuses_unsupported_file_without_touching_rollback_or_wal_bytes() {
@@ -78,6 +96,7 @@ fn nested_rollback_reuses_only_uncommitted_ids_and_nonempty_lists_restore() {
         "User:u",
     )
     .unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let call=c.transaction(|tx|{let rolled:axton_client::Result<()>=tx.savepoint(|tx|{tx.submit_mutation05("Write",1,json!({"entries":[{"id":"bad","text":"discarded","note":null}]}),vec![])?;Err(axton_client::invalid("rollback"))});assert!(rolled.is_err());tx.submit_mutation05("Write",1,json!({"entries":[{"id":"e1","text":"one","note":null},{"id":"e2","text":"two","note":null}],"maybe":null}),vec![])}).unwrap();
     assert_eq!(call.ordinal, 1);
     let b = c.freeze_batch05().unwrap().unwrap();
@@ -92,6 +111,7 @@ fn compatible_descriptor_reopen_preserves_assigned_context_and_input() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
@@ -103,12 +123,12 @@ fn compatible_descriptor_reopen_preserves_assigned_context_and_input() {
         c.request_context05().unwrap().materialization,
         b.context.materialization
     );
-    assert!(c.pending_schema05().unwrap().is_some());
+    assert!(c.rollover_pending05().unwrap());
     let status = c.status_snapshot05().unwrap();
     assert!(status.get("schema").is_none());
     assert_eq!(status["context"], serde_json::to_value(&b.context).unwrap());
     assert_eq!(status["pending"], 1);
-    assert!(c.pending_schema05().unwrap().is_some());
+    assert!(c.rollover_pending05().unwrap());
     assert_eq!(c.freeze_batch05().unwrap().unwrap(), b);
 }
 #[test]
@@ -119,6 +139,7 @@ fn value_arguments_have_one_entry_and_do_not_create_model_optimism() {
     let s = Schema::from_value(s).unwrap();
     let mut c =
         Client::open05(SqliteStore::open(d.path().join("db")).unwrap(), s, "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| {
         tx.submit_mutation05("Arg", 1, json!({"label":null,"tags":["a","b"]}), vec![])
     })
@@ -145,6 +166,7 @@ fn next_batch_preserves_previous_ownership_until_settlement() {
         "User:u",
     )
     .unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let first = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -201,10 +223,7 @@ fn next_batch_preserves_previous_ownership_until_settlement() {
         c.freeze_batch05().unwrap().is_none(),
         "an acknowledged Batch still owns settlement targets"
     );
-    assert_eq!(
-        c.pending_settlement05().unwrap()[0].mutation_id,
-        first.ordinal
-    );
+    assert!(c.mutation_result05(first.ordinal).unwrap().is_none());
     drop(c);
     let mut c = Client::open05(
         SqliteStore::open(d.path().join("db")).unwrap(),
@@ -216,7 +235,6 @@ fn next_batch_preserves_previous_ownership_until_settlement() {
         c.freeze_batch05().unwrap().is_none(),
         "reopen retains the ownership fence"
     );
-    c.initialize_stream05(9).unwrap();
     c.install_authority05(
         &b.context,
         &[v05::AuthorityChange::Record {
@@ -227,7 +245,7 @@ fn next_batch_preserves_previous_ownership_until_settlement() {
             cursor: 9,
             state: json!({"text":"one","note":null}),
         }],
-        None,
+        Some((0, 9)),
     )
     .unwrap();
     assert!(c.call_completion05(&first.call_id).unwrap().is_some());
@@ -247,6 +265,7 @@ fn descriptor_snapshot_reorder_retains_original_hash_in_identical_read_context()
     v["actions"][0]["input"] = json!({"models":v["models"].clone(),"enums":[]});
     s = Schema::from_value(v).unwrap();
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
@@ -266,6 +285,7 @@ fn discard_refuses_assigned_owner_and_dismiss_retains_completed_outcome() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
         .unwrap();
@@ -340,6 +360,7 @@ fn assigned_payload_and_membership_cannot_be_edited_or_cancelled_in_sql() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let first = c
         .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
         .unwrap();
@@ -384,6 +405,7 @@ fn same_identity_in_two_slots_keeps_paths_and_binding_failure_is_atomic() {
         "User:u",
     )
     .unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     assert!(c.transaction(|tx|tx.submit_mutation05("Pair",1,json!({"first":{"id":"e","text":"one","note":null},"second":{"id":"other","text":"two"}}),vec![])).is_err());
     assert_eq!(c.store_status05().unwrap().next_mutation_id, 1);
     c.transaction(|tx| {
@@ -437,132 +459,6 @@ fn unsafe_sequence_counter_rolls_back_model_write_and_mutation_id() {
     assert!(c.freeze_batch05().unwrap().is_none());
 }
 #[test]
-fn changed_materialization_remains_desired_until_owned_transfer_commit() {
-    let d = tempfile::tempdir().unwrap();
-    let p = d.path().join("db");
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
-    let original = c.request_context05().unwrap();
-    let initial = c.store_status05().unwrap();
-    drop(c);
-    let mut next = schema();
-    next.models[0].bootstrap = !next.models[0].bootstrap;
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), next.clone(), "User:u").unwrap();
-    assert_eq!(c.request_context05().unwrap(), original);
-    let pending = c.pending_schema05().unwrap().unwrap();
-    assert_ne!(
-        pending.desired_context.materialization,
-        original.materialization
-    );
-    assert_eq!(pending.previous_context, original);
-    drop(c);
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), next, "User:u").unwrap();
-    assert_eq!(c.request_context05().unwrap(), original);
-    c.transaction(|tx| tx.enable_schema05(&pending.previous_context, &pending.desired_context))
-        .unwrap();
-    assert_eq!(c.request_context05().unwrap(), pending.desired_context);
-    assert!(c.pending_schema05().unwrap().is_none());
-    let status = c.store_status05().unwrap();
-    assert_eq!(
-        (status.start_cursor, status.bootstrap_cursor, status.cursor),
-        (
-            initial.start_cursor,
-            initial.bootstrap_cursor,
-            initial.cursor
-        )
-    );
-}
-#[test]
-fn desired_transfer_admission_and_enable_share_the_sqlite_transaction() {
-    use axton_client::{ClientStore, RecordKey, authority::Held, engine::Engine};
-    let d = tempfile::tempdir().unwrap();
-    let p = d.path().join("db");
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
-    let old = c.request_context05().unwrap();
-    let change = v05::AuthorityChange::Record {
-        key: v05::RecordKey {
-            model: "Entry".into(),
-            identity: json!({"id":"e"}),
-        },
-        cursor: 7,
-        state: json!({"text":"base","note":null}),
-    };
-    c.install_authority05(&old, std::slice::from_ref(&change), None)
-        .unwrap();
-    drop(c);
-    let mut next = schema();
-    next.models[0].bootstrap = true;
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), next.clone(), "User:u").unwrap();
-    let pending = c.pending_schema05().unwrap().unwrap();
-    assert_eq!(pending.authority_keys, vec![change.key().clone()]);
-    assert_eq!(pending.bootstrap_models.get("Entry"), Some(&1));
-    drop(c);
-    let mut store = SqliteStore::open(&p).unwrap();
-    store.begin().unwrap();
-    let mut changed = std::collections::BTreeSet::new();
-    let mut held = Held::new();
-    {
-        let mut e = Engine::new(&mut store, &next, &mut changed, false);
-        assert!(
-            e.stage_authority05(
-                &pending.desired_context,
-                std::slice::from_ref(&change),
-                &mut held
-            )
-            .is_err()
-        );
-        let mut foreign = pending.desired_context.clone();
-        foreign.materialization = "foreign".into();
-        assert!(
-            e.stage_materialization05(&foreign, std::slice::from_ref(&change), &mut held)
-                .is_err()
-        );
-        e.stage_materialization05(
-            &pending.desired_context,
-            std::slice::from_ref(&change),
-            &mut held,
-        )
-        .unwrap();
-        assert!(
-            e.enable_schema05(&pending.previous_context, &foreign)
-                .is_err()
-        );
-        e.enable_schema05(&pending.previous_context, &pending.desired_context)
-            .unwrap();
-        e.rebuild_held(&held).unwrap();
-    }
-    store.rollback().unwrap();
-    drop(store);
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), next.clone(), "User:u").unwrap();
-    assert_eq!(c.request_context05().unwrap(), old);
-    let key = RecordKey {
-        model: "Entry".into(),
-        identity: json!({"id":"e"}),
-    };
-    assert!(
-        !c.record_evidence05(&key)
-            .unwrap()
-            .history
-            .contains_key(&pending.desired_context.materialization)
-    );
-    drop(c);
-    let mut store = SqliteStore::open(&p).unwrap();
-    store.begin().unwrap();
-    {
-        let mut e = Engine::new(&mut store, &next, &mut changed, false);
-        e.stage_materialization05(&pending.desired_context, &[change], &mut held)
-            .unwrap();
-        e.enable_schema05(&pending.previous_context, &pending.desired_context)
-            .unwrap();
-        e.rebuild_held(&held).unwrap();
-    }
-    store.commit().unwrap();
-    drop(store);
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), next, "User:u").unwrap();
-    assert_eq!(c.request_context05().unwrap(), pending.desired_context);
-    assert!(c.pending_schema05().unwrap().is_none());
-}
-
-#[test]
 fn late_cascade_discovery_extends_owned_effects_without_changing_frozen_input() {
     use axton_client::{Operation, OperationKind, RecordKey};
     let mut value = json!({"enums":[],"models":[
@@ -574,6 +470,7 @@ fn late_cascade_discovery_extends_owned_effects_without_changing_frozen_input() 
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| {
         tx.direct(Operation {
             model: "Book".into(),
@@ -635,6 +532,7 @@ fn offline_create_then_sequenced_update_preserves_lifecycle_dependency() {
     let s = creation_then_sequenced_edit_schema();
     let mut c =
         Client::open05(SqliteStore::open(d.path().join("db")).unwrap(), s, "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let (created, edited) = c
         .transaction(|tx| {
             let created = tx.submit_mutation05(
@@ -692,6 +590,7 @@ fn offline_sequenced_update_waits_for_creation_settlement_and_survives_reopen() 
     let path = d.path().join("db");
     let s = creation_then_sequenced_edit_schema();
     let mut c = Client::open05(SqliteStore::open(&path).unwrap(), s.clone(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let created = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -761,7 +660,6 @@ fn offline_sequenced_update_waits_for_creation_settlement_and_survives_reopen() 
         c.freeze_batch05().unwrap().is_none(),
         "reopen preserves the dependency fence"
     );
-    c.initialize_stream05(9).unwrap();
     c.install_authority05(
         &batch.context,
         &[v05::AuthorityChange::Record {
@@ -772,7 +670,7 @@ fn offline_sequenced_update_waits_for_creation_settlement_and_survives_reopen() 
             cursor: 9,
             state: json!({"text":"created","note":null}),
         }],
-        None,
+        Some((0, 9)),
     )
     .unwrap();
     assert_eq!(c.read(&key).unwrap().unwrap()["text"], "edited");
@@ -800,6 +698,7 @@ fn rejected_predecessor_releases_sequence_survivor_and_rolls_back_lifecycle_depe
         }));
         let s = Schema::from_value(value).unwrap();
         let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
+        c.initialize_stream05(0, "1").unwrap();
         let existing = RecordKey {
             model: "Entry".into(),
             identity: json!({"id":"e"}),
@@ -905,6 +804,7 @@ fn fresh_store_uses_only_canonical_tables_without_compatibility_views_or_trigger
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db");
     let mut client = Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
+    client.initialize_stream05(0, "1").unwrap();
     let objects = client.read_sql("SELECT name,type FROM sqlite_schema WHERE name IN ('axton_client','axton_mutation','axton_mutation_operation','axton_queue_diverged')", &[]).unwrap();
     assert!(objects.is_empty(), "retired framework objects: {objects:?}");
     assert_eq!(client.pending_count().unwrap(), 0);
@@ -916,4 +816,366 @@ fn fresh_store_uses_only_canonical_tables_without_compatibility_views_or_trigger
     let mut client = Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
     assert_eq!(client.pending_count().unwrap(), 1);
     assert_eq!(client.freeze_batch05().unwrap().unwrap().mutations.len(), 1);
+}
+
+fn rollover_schema(extra: bool) -> Schema {
+    let mut note = vec![
+        json!({"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false}),
+        json!({"name":"text","type":{"kind":"scalar","name":"string"},"nullable":false}),
+        json!({"name":"blob","type":{"kind":"scalar","name":"string"},"nullable":true}),
+    ];
+    if extra {
+        note.push(json!({"name":"label","type":{"kind":"scalar","name":"string"},"nullable":true}));
+    }
+    Schema::from_value(json!({"enums":[],
+        "models":[
+            {"name":"Marked","version":1,"identity":["id"],"bootstrap":true,"fields":[
+                {"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false},
+                {"name":"text","type":{"kind":"scalar","name":"string"},"nullable":false}]},
+            {"name":"Note","version":1,"identity":["id"],"fields":note}],
+        "prerequisites":[{"name":"RemoteBlob","fields":[{"name":"key","type":"String"}]}],
+        "actions":[
+            {"name":"Write","version":1,"outputs":[],
+             "inputs":[{"kind":"model","name":"note","model":"Note","operation":"update","cardinality":"single"}],
+             "requirements":[{"model":"Note","field":"blob","name":"RemoteBlob","arguments":{"key":"self"}}]},
+            {"name":"Create","version":1,"outputs":[],
+             "inputs":[{"kind":"model","name":"note","model":"Note","operation":"create","cardinality":"single"}]}
+        ]}))
+    .unwrap()
+}
+fn note(id: &str) -> axton_client::RecordKey {
+    axton_client::RecordKey {
+        model: "Note".into(),
+        identity: json!({"id":id}),
+    }
+}
+fn wire(model: &str, id: &str) -> v05::RecordKey {
+    v05::RecordKey {
+        model: model.into(),
+        identity: json!({"id":id}),
+    }
+}
+#[test]
+fn rollover_drains_frozen_batches_then_clears_only_server_derived_rows() {
+    use axton_client::{Operation, OperationKind};
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = Client::open05(
+        SqliteStore::open(&p).unwrap(),
+        rollover_schema(false),
+        "User:u",
+    )
+    .unwrap();
+    c.initialize_stream05(10, "1").unwrap();
+    let old = c.request_context05().unwrap();
+    c.transaction(|tx| {
+        tx.direct(Operation {
+            model: "Note".into(),
+            identity: json!({"id":"device"}),
+            op: OperationKind::Create,
+            values: Some(json!({"text":"device","blob":null})),
+        })
+    })
+    .unwrap();
+    c.install_cache05(
+        &[v05::ReadRecord {
+            key: wire("Note", "cached"),
+            cursor: (),
+            state: json!({"text":"cached","blob":null}),
+        }],
+        true,
+    )
+    .unwrap();
+    c.install_authority05(
+        &old,
+        &[
+            v05::AuthorityChange::Record {
+                key: wire("Marked", "m"),
+                cursor: 3,
+                state: json!({"text":"marked"}),
+            },
+            v05::AuthorityChange::Record {
+                key: wire("Note", "stream"),
+                cursor: 4,
+                state: json!({"text":"stream","blob":null}),
+            },
+            v05::AuthorityChange::Record {
+                key: wire("Note", "dirty"),
+                cursor: 5,
+                state: json!({"text":"old base","blob":null}),
+            },
+        ],
+        None,
+    )
+    .unwrap();
+    // Prerequisite-blocked, so never frozen and never drained.
+    let blocked = c
+        .transaction(|tx| {
+            tx.submit_mutation05(
+                "Write",
+                1,
+                json!({"note":{"id":"dirty","blob":"pending"}}),
+                vec![],
+            )
+        })
+        .unwrap();
+    let frozen = c
+        .transaction(|tx| {
+            tx.submit_mutation05(
+                "Create",
+                1,
+                json!({"note":{"id":"receipt","text":"optimistic","blob":null}}),
+                vec![],
+            )
+        })
+        .unwrap();
+    let batch = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(
+        batch.mutations.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![frozen.ordinal]
+    );
+    drop(c);
+
+    let mut c = Client::open05(
+        SqliteStore::open(&p).unwrap(),
+        rollover_schema(true),
+        "User:u",
+    )
+    .unwrap();
+    assert!(c.rollover_pending05().unwrap());
+    // Hold: the frozen Batch drains in its context; nothing new freezes.
+    let held = c
+        .transaction(|tx| {
+            tx.submit_mutation05(
+                "Create",
+                1,
+                json!({"note":{"id":"held","text":"held","blob":null}}),
+                vec![],
+            )
+        })
+        .unwrap();
+    let before = c.store_status05().unwrap();
+    assert!(
+        !c.rollover05().unwrap(),
+        "a frozen Batch drains before the clear"
+    );
+    assert_eq!(c.freeze_batch05().unwrap().unwrap(), batch);
+    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+        context: batch.context.clone(),
+        batch_id: batch.batch_id,
+        digest: batch.digest.clone(),
+        results: vec![v05::MutationResult {
+            mutation_id: frozen.ordinal,
+            outcome: v05::MutationOutcome::Accepted {
+                sync_cursor: 10,
+                result: Value::Null,
+                targets: vec![v05::SettlementTarget::Stream {
+                    key: wire("Note", "receipt"),
+                    cursor: 6,
+                    fallback: v05::ReadRecord {
+                        key: wire("Note", "receipt"),
+                        cursor: (),
+                        state: json!({"text":"receipt","blob":null}),
+                    },
+                }],
+            },
+        }],
+    })
+    .unwrap();
+    assert_eq!(c.settle_ready05().unwrap().completions.len(), 1);
+    assert!(
+        c.freeze_batch05().unwrap().is_none(),
+        "the hold freezes nothing new"
+    );
+
+    assert!(c.rollover05().unwrap());
+    let after = c.store_status05().unwrap();
+    assert!(!c.rollover_pending05().unwrap());
+    assert_ne!(after.context.materialization, old.materialization);
+    assert_eq!(after.context.store_id, old.store_id);
+    assert_eq!(
+        (after.start_cursor, after.bootstrap_cursor, after.cursor),
+        (None, None, None)
+    );
+    assert_eq!(
+        (
+            after.next_mutation_id,
+            after.next_local_sequence,
+            after.last_acknowledged_batch_id
+        ),
+        (before.next_mutation_id, before.next_local_sequence, 1)
+    );
+    let text = |c: &mut Client<SqliteStore>, key: &axton_client::RecordKey| {
+        c.read(key).unwrap().map(|row| row["text"].clone())
+    };
+    assert_eq!(text(&mut c, &note("device")), Some(json!("device")));
+    assert_eq!(text(&mut c, &note("cached")), Some(json!("cached")));
+    assert_eq!(text(&mut c, &note("receipt")), Some(json!("receipt")));
+    assert_eq!(text(&mut c, &note("held")), Some(json!("held")));
+    assert_eq!(text(&mut c, &note("stream")), None);
+    let marked = axton_client::RecordKey {
+        model: "Marked".into(),
+        identity: json!({"id":"m"}),
+    };
+    assert_eq!(text(&mut c, &marked), None);
+    // The dirty row keeps its pending layer; only its evidence is gone.
+    assert_eq!(c.read(&note("dirty")).unwrap().unwrap()["blob"], "pending");
+    assert_eq!(
+        c.record_evidence05(&note("dirty")).unwrap(),
+        Default::default()
+    );
+
+    // Bootstrap again: the next delivery re-bases the dirty row as Newer.
+    c.initialize_stream05(20, "1").unwrap();
+    let fresh = c.request_context05().unwrap();
+    c.install_authority05(
+        &fresh,
+        &[v05::AuthorityChange::Record {
+            key: wire("Note", "dirty"),
+            cursor: 21,
+            state: json!({"text":"new base","blob":null,"label":"fresh"}),
+        }],
+        Some((20, 21)),
+    )
+    .unwrap();
+    let dirty = c.read(&note("dirty")).unwrap().unwrap();
+    assert_eq!(
+        (&dirty["text"], &dirty["blob"], &dirty["label"]),
+        (&json!("new base"), &json!("pending"), &json!("fresh"))
+    );
+    let next = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(
+        (next.batch_id, next.context.materialization.as_str()),
+        (2, fresh.materialization.as_str())
+    );
+    assert_eq!(
+        next.mutations.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![held.ordinal]
+    );
+    assert!(c.mutation_result05(blocked.ordinal).unwrap().is_none());
+}
+#[test]
+fn handshake_generation_rolls_a_fresh_store_over_and_reopen_keeps_it() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    let opened = c.request_context05().unwrap();
+    let call = c
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .unwrap();
+    // Nothing is frozen: the clear commits with the handshake's head.
+    c.initialize_stream05(5, "2").unwrap();
+    let rolled = c.request_context05().unwrap();
+    assert_eq!(
+        rolled.materialization,
+        v05::materialization_id(&schema(), "2").unwrap()
+    );
+    assert_ne!(rolled.materialization, opened.materialization);
+    assert_eq!(rolled.store_id, opened.store_id);
+    let status = c.store_status05().unwrap();
+    assert_eq!((status.start_cursor, status.cursor), (Some(5), Some(5)));
+    let b = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(b.context, rolled);
+    assert_eq!(b.mutations[0].id, call.ordinal);
+    drop(c);
+    // The generation came from the backend; reopening cannot undo it.
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    assert!(!c.rollover_pending05().unwrap());
+    assert_eq!(c.request_context05().unwrap(), rolled);
+    assert_eq!(c.freeze_batch05().unwrap().unwrap(), b);
+}
+#[test]
+fn reopen_during_drain_keeps_the_reported_generation_desired() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
+    let old = c.request_context05().unwrap();
+    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .unwrap();
+    let frozen = c.freeze_batch05().unwrap().unwrap();
+    // The backend moved while a Batch is frozen: drain first.
+    c.initialize_stream05(0, "2").unwrap();
+    assert!(c.rollover_pending05().unwrap());
+    assert_eq!(c.request_context05().unwrap(), old);
+    drop(c);
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    assert!(c.rollover_pending05().unwrap());
+    assert_eq!(c.freeze_batch05().unwrap().unwrap(), frozen);
+}
+#[test]
+fn stale_frozen_digest_halts_the_uplink_once_without_deleting_anything() {
+    use axton_client::{
+        runtime::{ClientRuntime, Event, Operation},
+        sync05::{Control, StoreCommand, StoreReport},
+    };
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
+    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .unwrap();
+    c.freeze_batch05().unwrap().unwrap();
+    drop(c);
+    // A Batch frozen under the protocol-5 digest definition looks like this.
+    let raw = rusqlite::Connection::open(&p).unwrap();
+    raw.execute_batch(&format!(
+        "DROP TRIGGER axton_queue_envelope; UPDATE axton_mutation_queue SET batch_digest='{}'",
+        "0".repeat(64)
+    ))
+    .unwrap();
+    drop(raw);
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    let error = c.freeze_batch05().unwrap_err();
+    assert!(matches!(error, axton_client::Error::Terminal(_)), "{error}");
+    assert!(error.to_string().contains("reset the Store"));
+    let rows = || {
+        let raw = rusqlite::Connection::open(&p).unwrap();
+        raw.query_row(
+            "SELECT COUNT(*),MAX(batch_id),MAX(batch_digest) FROM axton_mutation_queue",
+            [],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .unwrap()
+    };
+    let before = rows();
+    assert_eq!(before, (1, 1, "0".repeat(64)));
+
+    // The runtime reports it as a halt, and control stops instead of retrying.
+    let mut runtime = ClientRuntime::new(c);
+    let status = runtime.client().store_status05().unwrap();
+    let report = runtime.store_worker05(StoreCommand::Freeze).unwrap();
+    assert!(matches!(report, StoreReport::Halted(_)));
+    let mut control = Control::new(status);
+    control.connect().unwrap();
+    control.events();
+    control.report(report, 1).unwrap();
+    let events = control.events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, Event::Report { .. }))
+            .count(),
+        1,
+        "{events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::Effect {
+                operation: Operation::Timer { .. } | Operation::Http { .. },
+                ..
+            }
+        )),
+        "a halt schedules no retry: {events:?}"
+    );
+    control.wake();
+    assert!(control.jobs().is_empty());
+    assert_eq!(rows(), before);
 }

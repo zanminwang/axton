@@ -18,7 +18,7 @@ impl Harness {
     }
     fn configured(path: &std::path::Path, enabled: bool) -> Self {
         let mut client = client(path);
-        client.initialize_stream05(3).unwrap();
+        client.initialize_stream05(3, "1").unwrap();
         let context = client.request_context05().unwrap();
         let status = client.store_status05().unwrap();
         let mut control = if enabled {
@@ -49,10 +49,11 @@ impl Harness {
                     ok: true,
                     value: Some(json!(
                         serde_json::to_string(&v05::HandshakeResponse {
-                            protocol: 5,
+                            protocol: axton_client::v05::PROTOCOL,
                             store_id: context.store_id,
                             stream: context.stream,
                             head: 3,
+                            projection_generation: "1".into(),
                         })
                         .unwrap()
                     )),
@@ -313,10 +314,11 @@ fn reconnect_retires_future_offer_and_reuses_only_the_admitted_prefix() {
                 ok: true,
                 value: Some(json!(
                     serde_json::to_string(&v05::HandshakeResponse {
-                        protocol: 5,
+                        protocol: axton_client::v05::PROTOCOL,
                         store_id: status.context.store_id.clone(),
                         stream: status.context.stream.clone(),
                         head: 3,
+                        projection_generation: "1".into(),
                     })
                     .unwrap()
                 )),

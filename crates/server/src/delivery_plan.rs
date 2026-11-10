@@ -8,8 +8,7 @@ use crate::{
 };
 use axton_core::canonical_json;
 use axton_protocols::server_bridge::{
-    Acknowledged, BootstrapEffects, HandledAction, HostRequest, Loaded, LoaderMode, MemberKey,
-    StreamIntent,
+    Acknowledged, BootstrapEffects, HandledAction, HostRequest, Loaded, LoaderMode, StreamIntent,
 };
 use axton_protocols::sync::{self as v05, Validate};
 use serde::Deserialize;
@@ -111,29 +110,28 @@ pub async fn handshake05(
     raw: &impl Host,
 ) -> Result<String> {
     let r: v05::HandshakeRequest = v05::decode(bytes).map_err(request_invalid)?;
+    let projection_generation = config
+        .protocol5
+        .as_ref()
+        .map_or("1", |p| p.projection_generation.as_str())
+        .to_owned();
     let context = v05::RequestContext {
-        protocol: 5,
+        protocol: v05::PROTOCOL,
         store_id: r.store_id.clone(),
         stream: r.stream.clone(),
-        materialization: v05::materialization_id(
-            &config.schema,
-            config
-                .protocol5
-                .as_ref()
-                .map(|p| p.projection_generation.as_str())
-                .unwrap_or("1"),
-        )
-        .map_err(internal)?,
+        materialization: v05::materialization_id(&config.schema, &projection_generation)
+            .map_err(internal)?,
     };
     bind_delivery(owner, &context, raw).await?;
     let host = Publication05::new(raw);
     prepare(config, owner, &context, &host).await?;
     let head: u64 = call(&host, json!({"op":"deliveryHead","stream":r.stream})).await?;
     encode(&v05::HandshakeResponse {
-        protocol: 5,
+        protocol: v05::PROTOCOL,
         store_id: r.store_id,
         stream: r.stream,
         head,
+        projection_generation,
     })
 }
 #[derive(Deserialize)]
@@ -185,17 +183,13 @@ async fn prepared_candidates(
     context: &v05::RequestContext,
     after: u64,
     models: Option<Vec<String>>,
-    keys: Option<Vec<MemberKey>>,
     host: &impl Host,
 ) -> Result<Vec<Position>> {
     let versions = crate::mutation_batch::models(config, context)?;
-    let page_size = keys
-        .is_none()
-        .then(|| cursor_page_size(context_schema(config, context)))
-        .flatten();
+    let page_size = cursor_page_size(context_schema(config, context));
     let mut prepared = std::collections::BTreeSet::new();
     loop {
-        let positions:Option<Vec<Position>>=call(host,json!({"op":"deliveryCandidates","stream":context.stream,"after":after,"models":models,"keys":keys,"capacity":100000,"pageSize":page_size})).await?;
+        let positions:Option<Vec<Position>>=call(host,json!({"op":"deliveryCandidates","stream":context.stream,"after":after,"models":models,"capacity":100000,"pageSize":page_size})).await?;
         let positions = positions.ok_or_else(|| Error::code("delivery.capacity"))?;
         let fresh = positions
             .iter()
@@ -474,10 +468,10 @@ pub(crate) fn verify_indexed_part(
             .get(part.unit as usize)
             .and_then(|u| u.parts.get(part.part as usize))
             != Some(&v05::part_digest(part).map_err(storage_invalid)?)
-        || part.changes.iter().any(|c| {
-            c.cursor() > header.observed_head
-                || header.after.is_some_and(|after| c.cursor() <= after)
-        })
+        || part
+            .changes
+            .iter()
+            .any(|c| c.cursor() > header.observed_head || c.cursor() <= header.after)
     {
         return Err(storage_invalid("indexed part mismatch"));
     }
@@ -514,7 +508,6 @@ pub async fn process_delivery05(
         &r.context,
         r.after,
         selection(config, &r.context, r.bootstrap)?,
-        None,
         &host,
     )
     .await?;
@@ -577,106 +570,6 @@ pub async fn process_delivery05(
         })
         .map_err(internal)?;
     encode(&response(frozen)?)
-}
-#[tracing::instrument(target = "axton::server", name = "delivery.materialize", skip_all)]
-pub async fn process_materialization05(
-    config: &Config,
-    owner: &str,
-    bytes: &[u8],
-    raw: &impl Host,
-) -> Result<String> {
-    let r: v05::MaterializationRequest = v05::decode(bytes).map_err(request_invalid)?;
-    let versions = crate::mutation_batch::models(config, &r.context)?;
-    bind_delivery(owner, &r.context, raw).await?;
-    if let v05::MaterializationOwner::Schema {
-        previous_materialization,
-    } = &r.owner
-    {
-        let previous = v05::RequestContext {
-            materialization: previous_materialization.clone(),
-            ..r.context.clone()
-        };
-        crate::mutation_batch::models(config, &previous)?;
-    }
-    if let v05::MaterializationOwner::Settlement {
-        batch_id,
-        mutation_id,
-    } = r.owner
-    {
-        let results: Vec<v05::MutationResult> = call(
-            raw,
-            json!({"op":"readResults","storeId":r.context.store_id,"batchId":batch_id}),
-        )
-        .await?;
-        let result = results
-            .iter()
-            .find(|v| v.mutation_id == mutation_id)
-            .ok_or_else(|| request_invalid("unknown settlement owner"))?;
-        let targets = match &result.outcome {
-            v05::MutationOutcome::Accepted { targets, .. } => targets,
-            _ => return Err(request_invalid("rejected settlement owner")),
-        };
-        if r.keys.iter().any(|k| {
-            !targets
-                .iter()
-                .any(|t| matches!(t,v05::SettlementTarget::Stream{key,..} if key==k))
-        }) {
-            return Err(request_invalid("unowned settlement target"));
-        }
-    }
-    for (model, version) in &r.models {
-        if versions.get(model) != Some(version)
-            || !bootstrap_model(config, &r.context, model, *version)
-        {
-            return Err(request_invalid("unselected schema Model"));
-        }
-    }
-    let host = Publication05::new(raw);
-    let positions = prepared_candidates(
-        config,
-        owner,
-        &r.context,
-        0,
-        Some(r.models.keys().cloned().collect()),
-        Some(
-            r.keys
-                .iter()
-                .map(|k| {
-                    MemberKey::from_key(&axton_core::RecordKey {
-                        model: k.model.clone(),
-                        identity: k.identity.clone(),
-                    })
-                })
-                .collect(),
-        ),
-        &host,
-    )
-    .await?;
-    let head: u64 = call(
-        &host,
-        json!({"op":"deliveryHead","stream":r.context.stream}),
-    )
-    .await?;
-    let changes = materialize(config, owner, &r.context, positions, &host).await?;
-    let mut units = units(context_schema(config, &r.context), &changes, 0, head, head)?;
-    for u in &mut units {
-        u.through = None;
-    }
-    let now: u64 = call(&host, json!({"op":"deliveryNow"})).await?;
-    let frozen = v05::freeze_materialization(
-        r.context.clone(),
-        uuid::Uuid::new_v4().to_string(),
-        r.owner.clone(),
-        head,
-        now + 300000,
-        units,
-        500,
-    )
-    .map_err(internal)?;
-    encode(&v05::MaterializationResponse {
-        request_id: r.request_id,
-        delivery: response(frozen)?,
-    })
 }
 /// Query/Fetch reuse retained normalization and snapshot assembly; snapshots
 /// carry null cursors; only explicit authenticated Query tracking enrolls.
@@ -977,7 +870,7 @@ mod tests {
     #[test]
     fn indexed_fragment_rejects_changed_payload_without_scanning_other_units() {
         let context = v05::RequestContext {
-            protocol: 5,
+            protocol: v05::PROTOCOL,
             store_id: "s".into(),
             stream: "User:a".into(),
             materialization: "m".into(),

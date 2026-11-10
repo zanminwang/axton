@@ -7,7 +7,7 @@ import 'package:axton/src/bindings/live.dart' show ServerSession, SocketEvents;
 import 'package:test/test.dart';
 
 final subscribe = {
-  'protocol': 5,
+  'protocol': 6,
   'storeId': 'store',
   'stream': 'User:viewer',
   'cursor': 7,
@@ -61,10 +61,11 @@ void main() {
           );
           socket.add(
             jsonEncode({
-              'protocol': 5,
+              'protocol': 6,
               'storeId': 'store',
               'stream': 'User:viewer',
               'head': 8,
+              'projectionGeneration': '1',
             }),
           );
         }, onDone: () => finished.complete());
@@ -249,7 +250,7 @@ void main() {
         client = await open();
         await arrivals[1].future.timeout(const Duration(seconds: 5));
         expect(frames[0], frames[1]);
-        expect(frames[0]['protocol'], 5);
+        expect(frames[0]['protocol'], 6);
         expect(frames[0]['stream'], 'User:viewer');
         expect(frames[0]['storeId'], matches(RegExp(r'^[0-9a-f-]{36}$')));
         expect(frames[0].containsKey('streams'), isFalse);

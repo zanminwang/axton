@@ -139,8 +139,7 @@ impl Subscriptions {
                 if self.running.is_none()
                     || d.header.context != context
                     || d.header.bootstrap
-                    || d.header.owner.is_some()
-                    || d.header.after
+                    || Some(d.header.after)
                         != self.running.as_ref().unwrap().get(&context.stream).copied()
                 {
                     return Err(Error::code(code::LIVE_INVALID_PAGE));
@@ -223,7 +222,7 @@ pub async fn negotiate05(
     let ack: axton_protocols::sync::HandshakeResponse =
         axton_protocols::sync::decode(response.as_bytes()).map_err(crate::internal)?;
     let context = axton_protocols::sync::RequestContext {
-        protocol: 5,
+        protocol: axton_protocols::sync::PROTOCOL,
         store_id: ack.store_id,
         stream: ack.stream,
         materialization: crate::materialization_id05(

@@ -40,7 +40,7 @@ fn bootstrap_defers_independent_moved_ahead_authority_to_sync() {
         };
         let r = DeltaRequest {
             context: RequestContext {
-                protocol: 5,
+                protocol: axton_protocols::sync::PROTOCOL,
                 store_id: "s".into(),
                 stream: "User:alice".into(),
                 materialization: v05::materialization_id(&c.schema, "1").unwrap(),
@@ -76,7 +76,7 @@ fn run(f: impl Future<Output = ()>) {
 fn live_coverage_waits_for_every_frozen_fragment() {
     let c = config();
     let context = RequestContext {
-        protocol: 5,
+        protocol: axton_protocols::sync::PROTOCOL,
         store_id: "s".into(),
         stream: "User:alice".into(),
         materialization: v05::materialization_id(&c.schema, "1").unwrap(),
@@ -131,7 +131,7 @@ fn preparation_precedes_observed_head_capture() {
         };
         let r = DeltaRequest {
             context: RequestContext {
-                protocol: 5,
+                protocol: axton_protocols::sync::PROTOCOL,
                 store_id: "s".into(),
                 stream: "User:alice".into(),
                 materialization: v05::materialization_id(&c.schema, "1").unwrap(),
@@ -160,7 +160,7 @@ fn preparation_precedes_observed_head_capture() {
 fn live_advances_each_complete_unit_while_retaining_the_plan_start() {
     let c = config();
     let context = RequestContext {
-        protocol: 5,
+        protocol: axton_protocols::sync::PROTOCOL,
         store_id: "s".into(),
         stream: "User:alice".into(),
         materialization: v05::materialization_id(&c.schema, "1").unwrap(),

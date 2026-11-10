@@ -4,7 +4,7 @@
 
 Open each Store with one Stream and a fresh format-5 SQLite file. Opening binds the local database before connecting. Credentials belong to the connection; refreshing a token does not change the Store's identity.
 
-`await client.bootstrap()` waits for every complete required Bootstrap unit at the finite captured head. It is useful for initial data and supported schema rematerialization. A Query or Fetch reads named records; it does not replace Bootstrap. Model watches report committed local state throughout delivery.
+`await client.bootstrap()` waits for every complete required Bootstrap unit at the finite captured head. It is useful for initial data and after a materialization rollover. A Query or Fetch reads named records; it does not replace Bootstrap. Model watches report committed local state throughout delivery.
 
 ## Submit and settle
 

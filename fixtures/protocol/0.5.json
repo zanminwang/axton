@@ -1,9 +1,9 @@
 {
   "batchAcknowledgement": {
     "batchId": 1,
-    "digest": "e1e8ded0a38f66aac623f190ca5cca1de826d326592c73ee140594b795535f56",
+    "digest": "2ecc56bed16fa22a88b260c91ad7e226998e86c8c5f97202afe460b7f923198c",
     "materialization": "schema1",
-    "protocol": 5,
+    "protocol": 6,
     "results": [
       {
         "mutationId": 1,
@@ -51,16 +51,24 @@
       "startCursor": 40
     }
   },
+  "cursorPageRequest": {
+    "after": 2,
+    "bootstrap": false,
+    "materialization": "schema1",
+    "protocol": 6,
+    "storeId": "store",
+    "stream": "User:a",
+    "through": 4
+  },
   "deliveryHeader": {
     "after": 0,
     "bootstrap": false,
-    "digest": "68263a54eaba02f2dd89264e6a84987b3c35bac04dac2d47059032791f18cbc9",
+    "digest": "aca9dc957bb3fe025e8a0c86a6731613e13bce5d9f5485ac14c209566b1215b2",
     "expiresAt": 100,
     "materialization": "schema1",
     "observedHead": 4,
-    "owner": null,
     "planId": "plan",
-    "protocol": 5,
+    "protocol": 6,
     "storeId": "store",
     "stream": "User:a",
     "through": 4,
@@ -93,7 +101,7 @@
       }
     ],
     "part": 0,
-    "planDigest": "68263a54eaba02f2dd89264e6a84987b3c35bac04dac2d47059032791f18cbc9",
+    "planDigest": "aca9dc957bb3fe025e8a0c86a6731613e13bce5d9f5485ac14c209566b1215b2",
     "planId": "plan",
     "unit": 0
   },
@@ -102,13 +110,12 @@
     "header": {
       "after": 0,
       "bootstrap": false,
-      "digest": "68263a54eaba02f2dd89264e6a84987b3c35bac04dac2d47059032791f18cbc9",
+      "digest": "aca9dc957bb3fe025e8a0c86a6731613e13bce5d9f5485ac14c209566b1215b2",
       "expiresAt": 100,
       "materialization": "schema1",
       "observedHead": 4,
-      "owner": null,
       "planId": "plan",
-      "protocol": 5,
+      "protocol": 6,
       "storeId": "store",
       "stream": "User:a",
       "through": 4,
@@ -131,13 +138,12 @@
     "header": {
       "after": 0,
       "bootstrap": false,
-      "digest": "68263a54eaba02f2dd89264e6a84987b3c35bac04dac2d47059032791f18cbc9",
+      "digest": "aca9dc957bb3fe025e8a0c86a6731613e13bce5d9f5485ac14c209566b1215b2",
       "expiresAt": 100,
       "materialization": "schema1",
       "observedHead": 4,
-      "owner": null,
       "planId": "plan",
-      "protocol": 5,
+      "protocol": 6,
       "storeId": "store",
       "stream": "User:a",
       "through": 4,
@@ -171,7 +177,7 @@
           }
         ],
         "part": 0,
-        "planDigest": "68263a54eaba02f2dd89264e6a84987b3c35bac04dac2d47059032791f18cbc9",
+        "planDigest": "aca9dc957bb3fe025e8a0c86a6731613e13bce5d9f5485ac14c209566b1215b2",
         "planId": "plan",
         "unit": 0
       },
@@ -192,7 +198,7 @@
           }
         ],
         "part": 1,
-        "planDigest": "68263a54eaba02f2dd89264e6a84987b3c35bac04dac2d47059032791f18cbc9",
+        "planDigest": "aca9dc957bb3fe025e8a0c86a6731613e13bce5d9f5485ac14c209566b1215b2",
         "planId": "plan",
         "unit": 0
       }
@@ -234,7 +240,7 @@
     "after": 0,
     "bootstrap": false,
     "materialization": "schema1",
-    "protocol": 5,
+    "protocol": 6,
     "storeId": "store",
     "stream": "User:a",
     "through": 4
@@ -251,103 +257,27 @@
       "version": 1
     },
     "materialization": "schema1",
-    "protocol": 5,
+    "protocol": 6,
     "requestId": "f1",
     "store": false,
     "storeId": "store",
     "stream": "User:a"
   },
   "handshakeRequest": {
-    "protocol": 5,
+    "protocol": 6,
     "storeId": "store",
     "stream": "User:a"
   },
   "handshakeResponse": {
     "head": 40,
-    "protocol": 5,
+    "projectionGeneration": "1",
+    "protocol": 6,
     "storeId": "store",
     "stream": "User:a"
-  },
-  "materializationRequest": {
-    "keys": [
-      {
-        "identity": {
-          "id": "e"
-        },
-        "model": "Entry"
-      }
-    ],
-    "materialization": "schema1",
-    "models": {},
-    "owner": {
-      "batchId": 1,
-      "kind": "settlement",
-      "mutationId": 2
-    },
-    "protocol": 5,
-    "requestId": "owned1",
-    "storeId": "store",
-    "stream": "User:a"
-  },
-  "materializationResponse": {
-    "delivery": {
-      "header": {
-        "after": null,
-        "bootstrap": false,
-        "digest": "03f99311e93fe16e443def6c6576f351918cfe5d7e6c5ec247753a2fe7176ed0",
-        "expiresAt": 100,
-        "materialization": "schema1",
-        "observedHead": 40,
-        "owner": {
-          "batchId": 1,
-          "kind": "settlement",
-          "mutationId": 2
-        },
-        "planId": "owned",
-        "protocol": 5,
-        "storeId": "store",
-        "stream": "User:a",
-        "through": null,
-        "units": [
-          {
-            "digest": "4c57c70d4df9cd7bfbae305cfff827e320a61847cf5e5112e7b30f74f435a43c",
-            "minimumCursor": 20,
-            "parts": [
-              "b5a6d27890c4822bee3920960682163d0fc2f6d442bd0c5fd68a07bc7db06c6f"
-            ],
-            "through": null
-          }
-        ]
-      },
-      "parts": [
-        {
-          "changes": [
-            {
-              "cursor": 20,
-              "key": {
-                "identity": {
-                  "id": "e"
-                },
-                "model": "Entry"
-              },
-              "kind": "record",
-              "state": {
-                "text": "accepted"
-              }
-            }
-          ],
-          "part": 0,
-          "planDigest": "03f99311e93fe16e443def6c6576f351918cfe5d7e6c5ec247753a2fe7176ed0",
-          "planId": "owned",
-          "unit": 0
-        }
-      ]
-    },
-    "requestId": "owned1"
   },
   "mutationRequest": {
     "batchId": 1,
-    "digest": "e1e8ded0a38f66aac623f190ca5cca1de826d326592c73ee140594b795535f56",
+    "digest": "2ecc56bed16fa22a88b260c91ad7e226998e86c8c5f97202afe460b7f923198c",
     "materialization": "schema1",
     "mutations": [
       {
@@ -383,56 +313,9 @@
         "version": 1
       }
     ],
-    "protocol": 5,
+    "protocol": 6,
     "storeId": "store",
     "stream": "User:a"
-  },
-  "ownedDeliveryHeader": {
-    "after": null,
-    "bootstrap": false,
-    "digest": "03f99311e93fe16e443def6c6576f351918cfe5d7e6c5ec247753a2fe7176ed0",
-    "expiresAt": 100,
-    "materialization": "schema1",
-    "observedHead": 40,
-    "owner": {
-      "batchId": 1,
-      "kind": "settlement",
-      "mutationId": 2
-    },
-    "planId": "owned",
-    "protocol": 5,
-    "storeId": "store",
-    "stream": "User:a",
-    "through": null,
-    "units": [
-      {
-        "digest": "4c57c70d4df9cd7bfbae305cfff827e320a61847cf5e5112e7b30f74f435a43c",
-        "minimumCursor": 20,
-        "parts": [
-          "b5a6d27890c4822bee3920960682163d0fc2f6d442bd0c5fd68a07bc7db06c6f"
-        ],
-        "through": null
-      }
-    ]
-  },
-  "ownedDeliveryUnit": {
-    "changes": [
-      {
-        "cursor": 20,
-        "key": {
-          "identity": {
-            "id": "e"
-          },
-          "model": "Entry"
-        },
-        "kind": "record",
-        "state": {
-          "text": "accepted"
-        }
-      }
-    ],
-    "index": 0,
-    "through": null
   },
   "privateTarget": {
     "kind": "private",
@@ -459,7 +342,7 @@
       "version": 1
     },
     "materialization": "schema1",
-    "protocol": 5,
+    "protocol": 6,
     "requestId": "q1",
     "store": true,
     "storeId": "store",
@@ -472,7 +355,7 @@
       "kind": "failed",
       "message": null
     },
-    "protocol": 5,
+    "protocol": 6,
     "records": [],
     "requestId": "q1",
     "storeId": "store",
@@ -499,7 +382,7 @@
         "text": "accepted"
       }
     },
-    "protocol": 5,
+    "protocol": 6,
     "records": [
       {
         "cursor": null,
@@ -520,9 +403,9 @@
   },
   "rejectedAcknowledgement": {
     "batchId": 1,
-    "digest": "e1e8ded0a38f66aac623f190ca5cca1de826d326592c73ee140594b795535f56",
+    "digest": "2ecc56bed16fa22a88b260c91ad7e226998e86c8c5f97202afe460b7f923198c",
     "materialization": "schema1",
-    "protocol": 5,
+    "protocol": 6,
     "results": [
       {
         "mutationId": 1,
@@ -546,21 +429,6 @@
     },
     "kind": "remove"
   },
-  "schemaMaterializationRequest": {
-    "keys": [],
-    "materialization": "schema1",
-    "models": {
-      "Entry": 2
-    },
-    "owner": {
-      "kind": "schema",
-      "previousMaterialization": "schema0"
-    },
-    "protocol": 5,
-    "requestId": "schema1",
-    "storeId": "store",
-    "stream": "User:a"
-  },
   "streamTarget": {
     "cursor": 20,
     "fallback": {
@@ -582,14 +450,5 @@
       "model": "Entry"
     },
     "kind": "stream"
-  },
-  "cursorPageRequest": {
-    "after": 2,
-    "bootstrap": false,
-    "materialization": "schema1",
-    "protocol": 5,
-    "storeId": "store",
-    "stream": "User:a",
-    "through": 4
   }
 }

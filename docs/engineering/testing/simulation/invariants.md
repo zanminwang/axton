@@ -1,6 +1,6 @@
 # Simulation invariants
 
-The current [protocol05_coverage.rs](../../../../crates/sim/tests/protocol05_coverage.rs) checks explicit protocol properties through deterministic examples: partial or expired fragments leave progress unchanged; complete units alone advance coverage; transitive dependencies remain one unit; owned materialization advances no range; publication overflow leaves input heads unchanged.
+The current [protocol05_coverage.rs](../../../../crates/sim/tests/protocol05_coverage.rs) checks explicit protocol properties through deterministic examples: partial or expired fragments leave progress unchanged; complete units alone advance coverage; transitive dependencies remain one unit; settlement waits for target evidence unless the target is an undeliverable historical position; publication overflow leaves input heads unchanged.
 
 The overlay harness clones its candidate map, checks unique values, then installs the candidate projection. That is model evidence, not a real database transaction. The many-unit scenario checks ordered coverage and rejects a late low cursor hidden behind earlier progress.
 

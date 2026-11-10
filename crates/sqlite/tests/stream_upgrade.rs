@@ -92,7 +92,7 @@ fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
-    c.initialize_stream05(0).unwrap();
+    c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let k = v05::RecordKey {
         model: "Todo".into(),

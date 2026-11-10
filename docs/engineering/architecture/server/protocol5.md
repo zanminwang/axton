@@ -6,7 +6,7 @@ The Batch path runs bounded sequential commit groups and resumes a fixed request
 
 ## 3. Context and Scope
 
-`BackendOptions.protocol5` supplies known current/retained read schemas, projection generation and `authorizeStream(principal, stream, tx)`. The server derives the read context through core's protocol-5 materialization helper. Authentication identifies the principal. Mutation admission/replay and finite authority planning authorize under their Serializable transaction. Ordinary Query/Fetch validate the immutable Store binding and authorize without holding Store progress across arbitrary Handler/Loader awaits. Explicit Query tracking writes membership in its Serializable read transaction and may force a complete retry.
+`BackendOptions.protocol5` supplies known current/retained read schemas, projection generation and `authorizeStream(principal, stream, tx)`. The server derives the read context through core's protocol-5 materialization helper, and the handshake and socket acknowledgement report its projection generation; clients take the generation only from there. Authentication identifies the principal. Mutation admission/replay and finite authority planning authorize under their Serializable transaction. Ordinary Query/Fetch validate the immutable Store binding and authorize without holding Store progress across arbitrary Handler/Loader awaits. Explicit Query tracking writes membership in its Serializable read transaction and may force a complete retry.
 
 The SDK carries one validated immutable request through sequential `processBatchGroup` native calls, each in one Serializable transaction. Size 1 uses `processBatchMember` instead. Rust validates the complete request, selects the trusted Mutation by name/version and normalizes its input. The caller's descriptor fingerprint is immutable intent bound by the Batch digest; it is not an equality gate against today's artifact. Compatible input widening or field reordering therefore does not refuse frozen work.
 
@@ -14,7 +14,7 @@ The SDK carries one validated immutable request through sequential `processBatch
 
 - [protocol_v05.rs](../../../../crates/server/src/protocol_v05.rs) validates carriers, assembles acknowledgements and adapts existing settlement/Loader machinery.
 - [mutation_batch.rs](../../../../crates/server/src/mutation_batch.rs) owns Store admission, replay, per-member execution and outcome persistence.
-- [delivery_plan.rs](../../../../crates/server/src/delivery_plan.rs) builds Bootstrap/repair cursor pages and owned materialization and carries Query/Fetch snapshots.
+- [delivery_plan.rs](../../../../crates/server/src/delivery_plan.rs) builds Bootstrap/repair cursor pages and carries Query/Fetch snapshots.
 - [Server bridge](../../../../crates/protocols/src/server_bridge/mod.rs) defines strict `Protocol05Operation` requests, mirrored in [host-contract.mts](../../../../packages/backend/server/bindings/host-contract.mts).
 - [persistence.mts](../../../../packages/backend/postgres/src/persistence.mts) dispatches those operations through the shared pg/Prisma/Drizzle driver; [migration.sql](../../../../packages/backend/postgres/migration.sql) installs five tables in a fresh framework namespace and refuses an existing legacy namespace unchanged.
 
@@ -22,7 +22,7 @@ The SDK carries one validated immutable request through sequential `processBatch
 
 A member locks its Store before checking immutable principal/Stream binding, Batch sequence, digest, count and progress. Only the current Batch or the last completed Batch can replay. A valid next Batch prunes the older result set in the same transaction. Saved members run neither handler nor preparation.
 
-Existing Store ownership on delivery, materialization and completed reconnects is
+Existing Store ownership on delivery and completed reconnects is
 inspected without locking Mutation progress. First claims and unfinished Bootstrap
 initialization retain their guard. Progress writers use `FOR NO KEY UPDATE`, which
 still serializes uploads while allowing references to the immutable Store
@@ -99,7 +99,7 @@ backend and client must be upgraded together.
 
 The socket controller advances its connection-local offered cursor only at complete units and requests another fresh cursor page while below the observed head. Reconnect starts at its new handshake head; HTTP repairs missed coverage. Live headers name the backend's active materialization. A client retaining an older descriptor must treat a foreign-context live header as a repair hint and request HTTP authority under its own context, without installing the foreign payload or advancing its cursors.
 
-Owned materialization binds saved settlement targets or a compatible schema owner. Explicit keys must already have StreamRecord evidence; selected schema Models must be Bootstrap-marked. It returns current authority or membership Remove, never enrollment or range coverage. Private receipt fallback remains the client's separate owned-settlement path.
+Delivery is only Stream ranges: Bootstrap and Sync pull pages and live offers. There is no point fetch by key. A materialization change keeps `protocol5.materializations[<previous id>]` until clients have drained their frozen Batches; without it those Batches are refused with `context_mismatch`.
 
 Query/Fetch use the shared `ReadRequest`/`ReadResponse` carrier and existing retained descriptor normalization, Loader state normalization and Query snapshot assembly. Records carry explicit null cursors. Query exposes explicit tracking through its authenticated Stream context, settled through Publication05 in the same read transaction. It exposes no invalidate or business-change declaration handles; storing a snapshot never implies enrollment. Repeated live tracking retains its position; a new pair receives a positive Stream position. Business refusal rolls back its read savepoint. Infrastructure failures abort the outer transaction.
 

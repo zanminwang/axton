@@ -104,7 +104,7 @@ fn mixed_batch(unsupported_name: &str, unsupported_version: u64) {
         let path = directory.path().join("client.sqlite");
         let mut client =
             Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:alice").unwrap();
-        client.initialize_stream05(0).unwrap();
+        client.initialize_stream05(0, "1").unwrap();
         let mut calls = vec![];
         for (name, version, text) in [
             ("Say", 1, "before"),
@@ -211,6 +211,7 @@ fn malformed_wire_bound_slot_and_forbidden_patch_remain_structural_request_error
         "User:alice",
     )
     .unwrap();
+    client.initialize_stream05(0, "1").unwrap();
     client
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -286,6 +287,7 @@ fn retained_query_cannot_enter_a_mutation_batch() {
         "User:alice",
     )
     .unwrap();
+    client.initialize_stream05(0, "1").unwrap();
     client
         .transaction(|tx| tx.submit_mutation05("Say", 1, json!({"text":"intent"}), vec![]))
         .unwrap();

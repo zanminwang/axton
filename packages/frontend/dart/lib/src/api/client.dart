@@ -145,7 +145,6 @@ class Client implements WritePort, SubmitMutationPort {
       path: path,
       schema: schema,
       stream: stream,
-      projectionGeneration: connection?.projectionGeneration ?? '1',
       libraryPath: libraryPath,
       carrier: carrier,
       prerequisiteHandlers: required.keys.toList(),

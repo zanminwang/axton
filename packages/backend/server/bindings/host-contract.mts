@@ -61,7 +61,7 @@ export type ApplyStreamMembersRequest = {
 
 /** Protocol-5 persistence/application seam. Every call uses the retained transaction. */
 export type Protocol05Context = {
-  protocol: 5;
+  protocol: 6;
   storeId: string;
   stream: string;
   materialization: string;
@@ -77,7 +77,6 @@ export type Protocol05Operation =
       stream: string;
       after: number;
       models: string[] | null;
-      keys: MemberKey[] | null;
       capacity: number;
       pageSize?: number | null;
     }
@@ -92,7 +91,6 @@ export type Protocol05Operation =
       count: number;
     }
   | { op: "readResult"; storeId: string; batchId: number; ordinal: number }
-  | { op: "readResults"; storeId: string; batchId: number }
   | {
       op: "saveResult";
       storeId: string;

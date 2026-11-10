@@ -25,7 +25,7 @@ fn real_postgres_delivery_capacity() {
             .unwrap()
             .parse()
             .unwrap();
-        client.initialize_stream05(head).unwrap();
+        client.initialize_stream05(head, "1").unwrap();
         fs::write(
             directory.join("context.json"),
             serde_json::to_vec(&context).unwrap(),

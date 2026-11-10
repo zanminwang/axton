@@ -23,7 +23,6 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<string, number>> = {
 };
 export interface HttpBackend {
   handshake?(owner: string, request: Uint8Array | string): Promise<string>;
-  materialize?(owner: string, request: Uint8Array | string): Promise<string>;
   push(owner: string, request: Uint8Array | string): Promise<string>;
   pull(owner: string, request: Uint8Array | string): Promise<string>;
   action(owner: string, request: Uint8Array | string): Promise<string>;
@@ -50,7 +49,6 @@ export function createHttpHandler(options: {
       path !== "/sync/pull" &&
       path !== "/sync/actions" &&
       path !== "/sync/fetch" &&
-      path !== "/sync/materialize" &&
       path !== "/sync/handshake"
     ) {
       send(404, { code: "not_found" });
@@ -104,15 +102,13 @@ export function createHttpHandler(options: {
       }
       const result = await (path === "/sync/handshake"
         ? options.backend.handshake!(owner, bytes)
-        : path === "/sync/materialize"
-          ? options.backend.materialize!(owner, bytes)
-          : path === "/sync/mutations"
-            ? options.backend.push(owner, bytes)
-            : path === "/sync/actions"
-              ? options.backend.action(owner, bytes)
-              : path === "/sync/fetch"
-                ? options.backend.fetch(owner, bytes)
-                : options.backend.pull(owner, bytes));
+        : path === "/sync/mutations"
+          ? options.backend.push(owner, bytes)
+          : path === "/sync/actions"
+            ? options.backend.action(owner, bytes)
+            : path === "/sync/fetch"
+              ? options.backend.fetch(owner, bytes)
+              : options.backend.pull(owner, bytes));
       send(200, result);
     } catch (error) {
       const status =

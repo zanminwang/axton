@@ -11,7 +11,6 @@ const client = await GeneratedClient.open({
   path: 'local.sqlite', stream: 'User:alice',
   connection: {
     url: 'http://127.0.0.1:4242', token: 'alice',
-    projectionGeneration: '1',
     options: { onError: console.error },
   },
 });
@@ -26,7 +25,7 @@ final client = await GeneratedClient.open(
 );
 ```
 
-Opening commits local storage before starting network work; connectivity is not required to reopen a Store. Normal reopen retains its Store identity, pending Mutations, frozen Batch and delivery progress. Use a separate file for each Stream binding and one active owner per physical file. Protocol 5 requires a fresh format-5 file; another format is refused without changing the original database, WAL or SHM. Keep the old release available to drain or export unresolved work before retiring its backend. Configure the same `projectionGeneration` on client and backend; it defaults to `'1'`.
+Opening commits local storage before starting network work; connectivity is not required to reopen a Store. Normal reopen retains its Store identity, pending Mutations, frozen Batch and delivery progress. Use a separate file for each Stream binding and one active owner per physical file. Protocol 5 requires a fresh format-5 file; another format is refused without changing the original database, WAL or SHM. Keep the old release available to drain or export unresolved work before retiring its backend. The backend reports its projection generation at every handshake; the client has no setting for it.
 
 ## Native libraries
 
@@ -53,6 +52,6 @@ await client.bootstrap();
 final subscription = client.models.entry.watch().listen(render);
 ```
 
-Bootstrap waits for complete finite authority units at its captured head; it does not promise perpetual freshness. An empty result still completes. Models marked `@@bootstrap` are selected initially; later rematerialization also covers held authority. The Stream supplied at open continues delivering after Bootstrap. Watch local Models for continuous state and use Query/Fetch results as invocation snapshots.
+Bootstrap waits for complete finite authority units at its captured head; it does not promise perpetual freshness. An empty result still completes. Models marked `@@bootstrap` are selected initially and again after a materialization rollover. The Stream supplied at open continues delivering after Bootstrap. Watch local Models for continuous state and use Query/Fetch results as invocation snapshots.
 
 Close the client when its application session ends; cancel individual observers when their view ends. See [the generated API](client-api.md) for named Mutations, request-level storage, local transactions and unsent-work controls.

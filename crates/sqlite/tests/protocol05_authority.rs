@@ -1,5 +1,5 @@
 pub mod common05;
-use axton_client::{Client, Operation, OperationKind, Schema, v05};
+use axton_client::{Client, Operation, OperationKind, v05};
 use axton_sqlite::SqliteStore;
 use common05::{key, open};
 use serde_json::{Value, json};
@@ -139,117 +139,6 @@ fn cache_mode_false_changes_no_rows_or_evidence_and_true_is_best_effort_without_
 }
 
 #[test]
-fn rematerialization_keeps_direct_patches_and_pending_without_overwriting_new_fields() {
-    let d = tempfile::tempdir().unwrap();
-    let p = d.path().join("db");
-    let mut c = open(&p);
-    stream(&mut c, 57, Some("A"));
-    c.transaction(|tx| tx.direct(op(OperationKind::Update, Some("D"))))
-        .unwrap();
-    c.transaction(|tx| {
-        tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"P"}}), vec![])
-    })
-    .unwrap();
-    let old = c.request_context05().unwrap();
-    drop(c);
-    let mut changed = serde_json::to_value(common05::schema()).unwrap();
-    changed["models"][0]["fields"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"name":"label","nullable":true,"type":{"kind":"scalar","name":"string"}}));
-    let mut c = Client::open05(
-        SqliteStore::open(&p).unwrap(),
-        Schema::from_value(changed).unwrap(),
-        "User:u",
-    )
-    .unwrap();
-    let pending = c.pending_schema05().unwrap().unwrap();
-    c.transaction(|tx| tx.enable_schema05(&pending.previous_context, &pending.desired_context))
-        .unwrap();
-    let current = c.request_context05().unwrap();
-    assert_ne!(old.materialization, current.materialization);
-    c.install_authority05(
-        &current,
-        &[v05::AuthorityChange::Record {
-            key: v05::RecordKey {
-                model: "Entry".into(),
-                identity: key().identity,
-            },
-            cursor: 57,
-            state: json!({"text":"A","note":null,"label":"fresh"}),
-        }],
-        None,
-    )
-    .unwrap();
-    assert_eq!(
-        c.read(&key()).unwrap().unwrap(),
-        json!({"id":"e","text":"P","note":null,"label":"fresh"})
-    );
-    let evidence = c.record_evidence05(&key()).unwrap();
-    assert!(evidence.current.is_none());
-    assert_eq!(evidence.history[&old.materialization], 57);
-    assert_eq!(evidence.history[&current.materialization], 57);
-    // Request-owner fencing is covered by actual read05 runtime tests.
-}
-
-#[test]
-fn same_position_rematerialized_absence_keeps_later_direct_recreation_and_pending_patch() {
-    let d = tempfile::tempdir().unwrap();
-    let p = d.path().join("db");
-    let mut c = open(&p);
-    stream(&mut c, 57, None);
-    c.transaction(|tx| tx.direct(op(OperationKind::Create, Some("direct"))))
-        .unwrap();
-    c.transaction(|tx| {
-        tx.submit_mutation05(
-            "Edit",
-            1,
-            json!({"entry":{"id":"e","text":"pending"}}),
-            vec![],
-        )
-    })
-    .unwrap();
-    let old = c.request_context05().unwrap();
-    drop(c);
-    let mut changed = serde_json::to_value(common05::schema()).unwrap();
-    changed["models"][0]["fields"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"name":"label","nullable":true,"type":{"kind":"scalar","name":"string"}}));
-    let mut c = Client::open05(
-        SqliteStore::open(&p).unwrap(),
-        Schema::from_value(changed).unwrap(),
-        "User:u",
-    )
-    .unwrap();
-    let pending = c.pending_schema05().unwrap().unwrap();
-    c.transaction(|tx| tx.enable_schema05(&pending.previous_context, &pending.desired_context))
-        .unwrap();
-    let active = c.request_context05().unwrap();
-    c.install_authority05(
-        &active,
-        &[v05::AuthorityChange::Record {
-            key: v05::RecordKey {
-                model: "Entry".into(),
-                identity: key().identity,
-            },
-            cursor: 57,
-            state: Value::Null,
-        }],
-        None,
-    )
-    .unwrap();
-    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "pending");
-    let evidence = c.record_evidence05(&key()).unwrap();
-    assert_eq!(evidence.history[&old.materialization], 57);
-    assert_eq!(evidence.history[&active.materialization], 57);
-    assert!(evidence.current.unwrap().deleted);
-    cache(&mut c, Some("late cache"), true);
-    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "pending");
-    assert_eq!(c.pending_count().unwrap(), 1);
-}
-
-#[test]
 fn repeated_clean_direct_updates_retain_one_patch_and_authority_clears_it() {
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("db");
@@ -294,7 +183,7 @@ fn direct_writes_survive_refusal_but_newer_authority_retires_them_before_or_afte
             let d = tempfile::tempdir().unwrap();
             let path = d.path().join("db");
             let mut c = open(&path);
-            c.initialize_stream05(0).unwrap();
+            c.initialize_stream05(0, "1").unwrap();
             stream(&mut c, 1, Some("A"));
             if order == "before" {
                 c.transaction(|tx| tx.direct(op(OperationKind::Update, Some("direct"))))

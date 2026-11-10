@@ -28,7 +28,7 @@ The bound API has no custom `onStore` callbacks. Local transactions, Mutation co
 | L4 | Direct writes are device-only and carry no Stream content version. They release live-content protection but retain historical evidence and true Stream tombstones. Older Mutation settlement cannot retimestamp companions or undo later independent writes. Newer Stream positions replace settled direct state; older/equal duplicates do not. |
 | L5 | Local deletion follows declared cascades in the initiating rollback scope. Device cascades manufacture no authoritative child version; backends publish canonical child deletions explicitly. |
 
-Pending optimism changes the projection without clearing base protection. Ordinary reads may refill local absence, but not current Stream tombstones. Compatible same-position rematerialization updates the base while preserving surviving direct and pending layers.
+Pending optimism changes the projection without clearing base protection. Ordinary reads may refill local absence, but not current Stream tombstones.
 
 ## P. Push
 
@@ -37,7 +37,7 @@ Pending optimism changes the projection without clearing base protection. Ordina
 | P1 | Frozen-request retry returns its saved backend outcome without rerunning handlers, preparation, tracking or publication. |
 | P2 | Authenticated Store context, Mutation identity and exact frozen intent reject foreign or conflicting replay before business work. Each immutable Batch contains named Mutations with individually saved outcomes; members in one commit group become durable together. |
 | P3 | Unready prerequisites block dependent calls; lifecycle and sequence dependencies retain their declared meaning. Independent ready work can proceed. |
-| P4 | Frozen intent, call identity and original descriptor survive retries, reopen and supported retained-schema reconciliation unchanged. |
+| P4 | Frozen intent, call identity and original descriptor survive retries, reopen, supported retained-schema reconciliation and wire protocol changes unchanged; the Batch digest excludes the protocol number. |
 | P5 | Rejection removes only that Mutation's optimism and companions, rejects lifecycle dependents and retains a readable refusal. Other pending work replays. |
 | P6 | A Mutation-level refusal rolls back its savepoint and effects, preserving successful independent calls. Infrastructure failure rolls back the current uncommitted backend group or enclosing local delivery/receipt and stays retryable. |
 | P7 | Unsupported Mutation versions are per-call refusals. Backend acceptance followed by local failure remains accepted-awaiting-settlement; it never becomes business rejection. |
@@ -78,11 +78,11 @@ Only Stream delivery establishes authority. Current content/deletion protection,
 | --- | --- |
 | A1 | Authority replaces settled older state; later pending operations replay over the base. |
 | A2 | `C` advances only across a proven contiguous committed prefix. Required companions may be ahead of that prefix, bounded by the observed head; installing them advances `G`, never an invented `C`. |
-| A3 | Mutation completion requires committed execution acknowledgment plus real target Stream evidence or permitted call-owned private settlement. Untracked/no-op/other-Stream calls can finish without enrolling targets or bumping a shared cursor. |
+| A3 | Mutation completion requires committed execution acknowledgment, coverage through its `syncCursor`, plus real target Stream evidence or permitted receipt-owned settlement. Untracked/no-op/other-Stream calls can finish without enrolling targets or bumping a shared cursor. |
 | A4 | Receipt-before-Stream and Stream-before-receipt converge. Receipts cannot replace newer authority, but their outstanding obligations still complete after sufficient evidence commits. |
 | A5 | Admission checks exact frozen intent, Store identity, Stream and retained descriptor from this database. Execution acknowledgment persists before fallible local settlement; queue retirement and terminal completion commit together. |
 
-Receipt-owned Materialize can obtain current authority for an otherwise missing historical target. It runs no public Bootstrap handler, enrolls nothing and advances no `C`. A later membership Remove may enable saved private fallback at the original operation order, subject to original generation/current guards. Acceptance cannot revive work superseded by newer Stream content.
+A Batch freezes only after the handshake commits `S`, so every `syncCursor` is at or after `S`. An accepted receipt raises the delivery head to its `syncCursor`; a Store whose socket is silent pulls `(C, syncCursor]`. A Stream target at or below `S` in a Model the active materialization does not `@@bootstrap` is never delivered to this Store; it finalizes from the receipt fallback as cache, with no evidence or tracking, like a Private target. Other Stream targets wait for evidence at or after their position or a later Remove. A later membership Remove may enable saved private fallback at the original operation order, subject to original generation/current guards. Acceptance cannot revive work superseded by newer Stream content.
 
 ## D. Distribution
 
@@ -91,7 +91,7 @@ Convergence assumes correct publication, valid contracts and resumed delivery. D
 | ID | Required behavior |
 | --- | --- |
 | D1 | Stores with the same Stream and compatible viewer/materialization context converge after delivery and settlement. Their queues, observers and progress remain independent. |
-| D2 | Higher Stream positions replace older authority; older/equal duplicates cannot undo direct state. Compatible same-position rematerialization updates the base without erasing surviving local layers. |
+| D2 | Higher Stream positions replace older authority; older/equal duplicates cannot undo direct state. |
 | D3 | Explicit track enrolls missing pairs with real positions. Repeated live pairs do not move the cursor. Invalidation updates affected existing pairs without enrolling them. |
 | D4 | Content and position come from one Serializable canonical view. Preparation publications settle before final reads. Saved Mutation replay runs no preparation; cursor read retries construct a fresh view. |
 | D5 | True Stream absence retains protected identity/position evidence. Older Stream content and cursor-null cache reads cannot revive it. Newer child authority survives an older parent cascade. |
@@ -101,7 +101,9 @@ Convergence assumes correct publication, valid contracts and resumed delivery. D
 | D9 | Store identity and Stream persist offline and across reopen/reconnect. The initial boundary commits once; ACK alone proves neither delivery nor Bootstrap coverage. Reconnection never replaces committed progress. |
 | D10 | Handshake commits initial head S and C=S. B starts absent and advances only with committed complete Bootstrap units; initialization completes at B=S. Bootstrap and Sync cover finite cursor boundaries using current views. Independent records moved beyond a boundary arrive through subsequent Sync; completion is neither an old whole-dataset snapshot nor perpetual freshness. |
 
-Bootstrap selects initial Models through concrete `@@bootstrap` declarations after explicit application enrollment. Companions share an atomic unit but earn no ordinal coverage. Later Stream delivery includes unmarked Models normally. Compatible rematerialization also includes Store-held authoritative identities and preserves local work. Rows, evidence and unit coverage commit together.
+Bootstrap selects initial Models through concrete `@@bootstrap` declarations after explicit application enrollment. Companions share an atomic unit but earn no ordinal coverage. Later Stream delivery includes unmarked Models normally. Rows, evidence and unit coverage commit together.
+
+A materialization change (a compatible schema change, or a projection generation the handshake reports) holds new freezes and drains frozen Batches under the previous context. One transaction then deletes every row with Stream evidence and clears `S`, `B` and `C`; the Store Bootstraps again. The guarantee is that queued Mutations are never deleted and are uploaded, and that `@@bootstrap` Models are pulled again. Only two kinds of row survive: rows with no Stream evidence (device-only direct writes, cache installs and receipt-finalized rows on records the Stream never delivered) and rows of keys that unfrozen Mutations hold, which keep their row and lose only their evidence. A direct write on a record that has Stream evidence and no unfrozen Mutation is cleared with it. Unmarked rows return through later Stream changes or Queries. The backend retains the previous materialization until clients have drained.
 
 Query/Fetch Model snapshots always carry `cursor:null`. Storage checks current protection at commit, not whether an ID ever appeared in the Stream. Declared delete-cascade references to a currently Stream-deleted parent suppress stale child cache writes without inventing child authority. Missing or device-deleted parents do not imply that guard.
 

@@ -363,9 +363,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     ) -> std::result::Result<(), String> {
         if self
             .client
-            .pending_schema05()
+            .rollover_pending05()
             .map_err(|e| e.to_string())?
-            .is_some()
         {
             return Err("read.schema_pending".into());
         }

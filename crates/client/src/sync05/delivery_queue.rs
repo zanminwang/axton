@@ -1,8 +1,5 @@
 use crate::{Result, invalid, v05};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 use v05::Validate;
 
 #[derive(Clone)]
@@ -85,27 +82,20 @@ pub(crate) struct Plan {
     pub parts: BTreeMap<(u64, u64), StagedPart>,
     pub next: u64,
     pub blocked: bool,
-    pub owner: Option<v05::MaterializationRequest>,
-    owner_keys: Arc<BTreeSet<String>>,
     metadata_bytes: usize,
 }
 impl Plan {
     pub fn worker_snapshot(&self) -> Self {
-        let parts = if self.header.owner.is_some() {
-            self.parts.clone()
-        } else {
-            self.parts
-                .range((self.next, 0)..=(self.next, u64::MAX))
-                .map(|(k, p)| (*k, p.clone()))
-                .collect()
-        };
+        let parts = self
+            .parts
+            .range((self.next, 0)..=(self.next, u64::MAX))
+            .map(|(k, p)| (*k, p.clone()))
+            .collect();
         Self {
             header: self.header.clone(),
             parts,
             next: self.next,
             blocked: self.blocked,
-            owner: self.owner.clone(),
-            owner_keys: self.owner_keys.clone(),
             metadata_bytes: self.metadata_bytes,
         }
     }
@@ -219,10 +209,10 @@ impl DeliveryQueue {
             let earliest = self
                 .plans
                 .values()
-                .filter(|p| p.header.owner.is_none() && p.header.bootstrap == header.bootstrap)
-                .filter_map(|p| p.header.after)
+                .filter(|p| p.header.bootstrap == header.bootstrap)
+                .map(|p| p.header.after)
                 .min();
-            let repair = header.after.is_some_and(|a| earliest.is_none_or(|e| a < e));
+            let repair = earliest.is_none_or(|e| header.after < e);
             if self.plans.len() >= self.slots || (!repair && self.plans.len() >= self.slots - 1) {
                 if speculative {
                     return Ok(false);
@@ -246,17 +236,10 @@ impl DeliveryQueue {
         let mut candidates: Vec<_> = self
             .plans
             .iter()
-            .filter_map(|(id, p)| match (header.after, p.header.after) {
-                (Some(after), Some(future))
-                    if header.owner.is_none()
-                        && p.header.owner.is_none()
-                        && header.bootstrap == p.header.bootstrap
-                        && future > after =>
-                {
-                    Some((future, id.clone()))
-                }
-                _ => None,
+            .filter(|(_, p)| {
+                p.header.bootstrap == header.bootstrap && p.header.after > header.after
             })
+            .map(|(id, p)| (p.header.after, id.clone()))
             .collect();
         candidates.sort_by(|a, b| b.cmp(a));
         let totals = |plans: &BTreeMap<String, Plan>| {
@@ -347,8 +330,6 @@ impl DeliveryQueue {
                 parts: BTreeMap::new(),
                 next: 0,
                 blocked: false,
-                owner: None,
-                owner_keys: Arc::default(),
                 metadata_bytes,
             });
         for (key, part) in staged {
@@ -383,61 +364,13 @@ impl DeliveryQueue {
             {
                 return Err(invalid("fragment correlation mismatch"));
             }
-            if part.changes.iter().any(|c| {
-                c.cursor() > header.observed_head || header.after.is_some_and(|a| c.cursor() <= a)
-            }) {
+            if part
+                .changes
+                .iter()
+                .any(|c| c.cursor() > header.observed_head || c.cursor() <= header.after)
+            {
                 return Err(invalid("fragment outside plan"));
             }
-        }
-        Ok(())
-    }
-    pub fn receive_owned(
-        &mut self,
-        request: &v05::MaterializationRequest,
-        response: &v05::MaterializationResponse,
-        active: &v05::RequestContext,
-        now: u64,
-    ) -> Result<()> {
-        if let Some(plan) = self.plans.get(&response.delivery.header.plan_id)
-            && let Some(original) = &plan.owner
-        {
-            request.validate()?;
-            if original != request || response.request_id != request.request_id {
-                return Err(invalid("changed materialization owner"));
-            }
-            for change in response.delivery.parts.iter().flat_map(|p| &p.changes) {
-                if !plan.owner_keys.contains(&change.key().encoded()?)
-                    && !request.models.contains_key(&change.key().model)
-                {
-                    return Err(invalid("unowned materialization key"));
-                }
-            }
-        } else {
-            response.admit(request, active)?;
-        }
-        self.receive(
-            &response.delivery.header,
-            &response.delivery.parts,
-            active,
-            now,
-        )?;
-        let plan = self
-            .plans
-            .get_mut(&response.delivery.header.plan_id)
-            .unwrap();
-        if let Some(original) = &plan.owner {
-            if original != request {
-                return Err(invalid("changed materialization owner"));
-            }
-        } else {
-            plan.owner_keys = Arc::new(
-                request
-                    .keys
-                    .iter()
-                    .map(v05::RecordKey::encoded)
-                    .collect::<Result<_>>()?,
-            );
-            plan.owner = Some(request.clone());
         }
         Ok(())
     }
@@ -464,7 +397,7 @@ mod prefetch_tests {
 
     fn offer(id: &str, after: u64) -> v05::FrozenDelivery {
         let context = v05::RequestContext {
-            protocol: 5,
+            protocol: v05::PROTOCOL,
             store_id: "store".into(),
             stream: "User:u".into(),
             materialization: "0".repeat(64),

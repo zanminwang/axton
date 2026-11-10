@@ -16,6 +16,7 @@ export async function host({
   rollover = false,
   versioned = false,
   materializations = {},
+  projectionGeneration = "1",
   mixed = false,
   unbootstrapped = false,
   transactionFailures = [],
@@ -78,6 +79,7 @@ export async function host({
     database,
     authenticate: devAuth(),
     protocol5: {
+      projectionGeneration,
       materializations,
       authorizeStream: (owner, stream) => stream === `User:${owner}`,
     },
@@ -206,11 +208,7 @@ export async function host({
     holdReads = false,
     heldReads = [],
     holdHandshake = false,
-    heldHandshake = [],
-    holdSchema = false,
-    heldSchema = [],
-    holdSettlement = false,
-    heldSettlement = [];
+    heldHandshake = [];
   const proxy = createServer(async (incoming, outgoing) => {
     const chunks = [];
     for await (const chunk of incoming) chunks.push(chunk);
@@ -260,17 +258,6 @@ export async function host({
             response.on("end", () => outgoing.destroy());
             return;
           }
-          if (holdSchema && incoming.url === "/sync/materialize") {
-            const bytes = [];
-            response.on("data", (chunk) => bytes.push(chunk));
-            response.on("end", () =>
-              heldSchema.push(() => {
-                outgoing.writeHead(response.statusCode, response.headers);
-                outgoing.end(Buffer.concat(bytes));
-              }),
-            );
-            return;
-          }
           if (
             holdReads &&
             (incoming.url === "/sync/actions" || incoming.url === "/sync/fetch")
@@ -292,13 +279,7 @@ export async function host({
       upstream.on("error", (error) => outgoing.destroy(error));
       upstream.end(body);
     };
-    if (
-      incoming.url === "/sync/materialize" &&
-      holdSettlement &&
-      JSON.parse(body).owner.kind === "settlement"
-    )
-      heldSettlement.push(forward);
-    else if (incoming.url === "/sync/handshake" && holdHandshake)
+    if (incoming.url === "/sync/handshake" && holdHandshake)
       heldHandshake.push(forward);
     else if (mutation && hold) held.push(forward);
     else forward();
@@ -370,30 +351,6 @@ export async function host({
     rawErrors,
     transactions,
     url: `http://127.0.0.1:${proxy.address().port}`,
-    holdSettlement() {
-      holdSettlement = true;
-    },
-    get heldSettlementCount() {
-      return heldSettlement.length;
-    },
-    releaseSettlement() {
-      holdSettlement = false;
-      const pending = heldSettlement;
-      heldSettlement = [];
-      for (const forward of pending) forward();
-    },
-    holdSchema() {
-      holdSchema = true;
-    },
-    get heldSchemaCount() {
-      return heldSchema.length;
-    },
-    releaseSchema() {
-      holdSchema = false;
-      const pending = heldSchema;
-      heldSchema = [];
-      for (const respond of pending) respond();
-    },
     holdHandshake() {
       holdHandshake = true;
     },

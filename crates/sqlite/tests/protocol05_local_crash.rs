@@ -89,6 +89,7 @@ fn interrupted(committed: bool) {
     assert_eq!(c.read(&key("draft")).unwrap().is_none(), committed);
     assert_eq!(c.read(&key("p")).unwrap().is_some(), committed);
     assert_eq!(c.pending_count().unwrap(), usize::from(committed));
+    c.initialize_stream05(0, "1").unwrap();
     let batch = c.freeze_batch05().unwrap();
     if committed {
         let batch = batch.unwrap();

@@ -513,7 +513,7 @@ void main() {
         expect(done, false);
         expect(
           network.requests.where(
-            (b) => b['protocol'] == 5 && !b.containsKey('materialization'),
+            (b) => b['protocol'] == 6 && !b.containsKey('materialization'),
           ),
           hasLength(1),
         );

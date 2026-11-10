@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 fn ctx() -> RequestContext {
     RequestContext {
-        protocol: 5,
+        protocol: PROTOCOL,
         store_id: "store".into(),
         stream: "User:a".into(),
         materialization: "m1".into(),
@@ -48,47 +48,17 @@ fn freeze(
     head: u64,
     limit: usize,
 ) -> FrozenDelivery {
-    match purpose {
-        DeliveryPurpose::Settlement {
-            batch_id,
-            mutation_id,
-        } => freeze_materialization(
-            ctx(),
-            "plan".into(),
-            MaterializationOwner::Settlement {
-                batch_id,
-                mutation_id,
-            },
-            head,
-            100,
-            units,
-            limit,
-        ),
-        DeliveryPurpose::Schema {
-            previous_materialization,
-        } => freeze_materialization(
-            ctx(),
-            "plan".into(),
-            MaterializationOwner::Schema {
-                previous_materialization,
-            },
-            head,
-            100,
-            units,
-            limit,
-        ),
-        _ => freeze_delivery(
-            ctx(),
-            "plan".into(),
-            purpose,
-            after,
-            through,
-            head,
-            100,
-            units,
-            limit,
-        ),
-    }
+    freeze_delivery(
+        ctx(),
+        "plan".into(),
+        purpose,
+        after,
+        through,
+        head,
+        100,
+        units,
+        limit,
+    )
     .unwrap()
 }
 // Authority overlay harness. Constraint checks happen on the whole candidate
@@ -396,9 +366,19 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
             state: json!({"text":"accepted"}),
         },
     };
+    let none = BTreeSet::new();
     let mut evidence = BTreeMap::new();
     assert!(
-        !settlement_ready(20, Some(40), std::slice::from_ref(&target), "m1", &evidence).unwrap()
+        !settlement_ready(
+            20,
+            Some(40),
+            Some(10),
+            std::slice::from_ref(&target),
+            "m1",
+            &none,
+            &evidence
+        )
+        .unwrap()
     );
     evidence.insert(
         key("Entry", "e").encoded().unwrap(),
@@ -410,13 +390,40 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
         },
     );
     assert!(
-        !settlement_ready(20, Some(19), std::slice::from_ref(&target), "m1", &evidence).unwrap()
+        !settlement_ready(
+            20,
+            Some(19),
+            Some(10),
+            std::slice::from_ref(&target),
+            "m1",
+            &none,
+            &evidence
+        )
+        .unwrap()
     );
     assert!(
-        settlement_ready(20, Some(40), std::slice::from_ref(&target), "m1", &evidence).unwrap()
+        settlement_ready(
+            20,
+            Some(40),
+            Some(10),
+            std::slice::from_ref(&target),
+            "m1",
+            &none,
+            &evidence
+        )
+        .unwrap()
     );
     assert!(
-        !settlement_ready(20, Some(40), std::slice::from_ref(&target), "m2", &evidence).unwrap()
+        !settlement_ready(
+            20,
+            Some(40),
+            Some(10),
+            std::slice::from_ref(&target),
+            "m2",
+            &none,
+            &evidence
+        )
+        .unwrap()
     );
     let removed = TargetEvidence {
         content_cursor: None,
@@ -425,7 +432,7 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
         protected: false,
     };
     assert_eq!(
-        target_disposition(&target, "m1", &removed).unwrap(),
+        target_disposition(&target, "m1", Some(10), false, &removed).unwrap(),
         TargetDisposition::FinalizeOwned
     );
     let protected = TargetEvidence {
@@ -433,7 +440,7 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
         ..removed
     };
     assert_eq!(
-        target_disposition(&target, "m1", &protected).unwrap(),
+        target_disposition(&target, "m1", Some(10), false, &protected).unwrap(),
         TargetDisposition::PreserveAuthority
     );
     let private = SettlementTarget::Private {
@@ -443,36 +450,69 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
             state: json!({"text":"private"}),
         },
     };
-    assert!(settlement_ready(40, Some(40), &[private], "m1", &BTreeMap::new()).unwrap());
-    assert!(settlement_ready(40, Some(40), &[], "m1", &BTreeMap::new()).unwrap());
-    assert!(!settlement_ready(40, None, &[], "m1", &BTreeMap::new()).unwrap());
-}
-#[test]
-fn a14_owned_schema_materialization_installs_without_range_coverage() {
-    let unit = DeliveryUnit {
-        index: 0,
-        through: None,
-        changes: vec![record("Entry", "e", 20, json!({"newField":"new"}))],
+    assert!(
+        settlement_ready(
+            40,
+            Some(40),
+            Some(10),
+            &[private],
+            "m1",
+            &none,
+            &BTreeMap::new()
+        )
+        .unwrap()
+    );
+    // A historical position at or below S is never delivered to this Store
+    // unless its Model is Bootstrapped; such a target finalizes from the receipt.
+    let historical = SettlementTarget::Stream {
+        key: key("Entry", "old"),
+        cursor: 5,
+        fallback: ReadRecord {
+            key: key("Entry", "old"),
+            cursor: (),
+            state: json!({"text":"old"}),
+        },
     };
-    for purpose in [
-        DeliveryPurpose::Schema {
-            previous_materialization: "m0".into(),
-        },
-        DeliveryPurpose::Settlement {
-            batch_id: 1,
-            mutation_id: 2,
-        },
-    ] {
-        let frozen = freeze(vec![unit.clone()], purpose, 40, 40, 40, 1);
-        let mut p = DeliveryProgress::new(&frozen.header, &ctx(), 0).unwrap();
-        let complete = p
-            .stage_with_limit(&frozen.parts[0], &ctx(), 1, 1024 * 1024)
-            .unwrap()
-            .unwrap();
-        p.commit(&complete, &ctx(), 1).unwrap();
-        assert_eq!(p.covered, None);
-        assert_eq!(p.next_unit, 1);
-    }
+    let none_evidence = TargetEvidence::default();
+    assert_eq!(
+        target_disposition(&historical, "m1", Some(10), false, &none_evidence).unwrap(),
+        TargetDisposition::FinalizeOwned
+    );
+    assert_eq!(
+        target_disposition(&historical, "m1", Some(10), true, &none_evidence).unwrap(),
+        TargetDisposition::AwaitAuthority
+    );
+    assert_eq!(
+        target_disposition(&historical, "m1", Some(4), false, &none_evidence).unwrap(),
+        TargetDisposition::AwaitAuthority
+    );
+    let marked = BTreeSet::from(["Entry".to_string()]);
+    assert!(
+        settlement_ready(
+            40,
+            Some(40),
+            Some(10),
+            std::slice::from_ref(&historical),
+            "m1",
+            &none,
+            &BTreeMap::new()
+        )
+        .unwrap()
+    );
+    assert!(
+        !settlement_ready(
+            40,
+            Some(40),
+            Some(10),
+            &[historical],
+            "m1",
+            &marked,
+            &BTreeMap::new()
+        )
+        .unwrap()
+    );
+    assert!(settlement_ready(40, Some(40), Some(10), &[], "m1", &none, &BTreeMap::new()).unwrap());
+    assert!(!settlement_ready(40, None, Some(10), &[], "m1", &none, &BTreeMap::new()).unwrap());
 }
 #[test]
 fn a15_one_publication_position_per_affected_stream_and_overflow_is_atomic() {

@@ -7,7 +7,7 @@ import 'connection_test.dart' show FakeHost;
 
 void main() {
   test(
-    'protocol5 Handshake and Materialize effects preserve route and body',
+    'protocol5 HTTP effects preserve route and body and refuse others',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final seen = <List<String>>[];
@@ -31,7 +31,7 @@ void main() {
         ),
       );
       try {
-        for (final route in ['handshake', 'materialize']) {
+        for (final route in ['handshake', 'push', 'pull', 'action', 'fetch']) {
           final id = host.effect({
             'kind': 'http',
             'route': route,
@@ -41,9 +41,16 @@ void main() {
           expect(outcome['ok'], true, reason: outcome.toString());
           expect(outcome['value'], 'native answer');
         }
+        final refused = await host.answerOf(
+          host.effect({'kind': 'http', 'route': 'load', 'body': 'frozen'}),
+        );
+        expect(refused['ok'], false);
         expect(seen, [
           ['/sync/handshake', 'frozen', 'Bearer credential'],
-          ['/sync/materialize', 'frozen', 'Bearer credential'],
+          ['/sync/mutations', 'frozen', 'Bearer credential'],
+          ['/sync/pull', 'frozen', 'Bearer credential'],
+          ['/sync/actions', 'frozen', 'Bearer credential'],
+          ['/sync/fetch', 'frozen', 'Bearer credential'],
         ]);
       } finally {
         await connection.close();

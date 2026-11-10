@@ -69,7 +69,7 @@ pub fn admit05<S: ClientStore>(store: &mut S, stream: &str) -> Result<bool> {
     let row=store.query("SELECT id,stream,materialization,schema_descriptor,next_mutation_id,next_local_sequence,last_acknowledged_batch_id,start_cursor,bootstrap_cursor,cursor,generation FROM axton_store",&[])?.rows;
     let r = &row[0];
     let context = v05::RequestContext {
-        protocol: 5,
+        protocol: v05::PROTOCOL,
         store_id: r[0]
             .as_str()
             .ok_or_else(|| invalid("Store ID missing"))?
@@ -106,26 +106,51 @@ pub fn admit05<S: ClientStore>(store: &mut S, stream: &str) -> Result<bool> {
     }
     Ok(true)
 }
-impl<S: ClientStore> Client<S> {
-    pub fn open05(store: S, schema: Schema, stream: &str) -> Result<Self> {
-        Self::open05_with_projection(store, schema, stream, "1")
-    }
-    pub fn open05_with_projection(
-        mut store: S,
-        schema: Schema,
-        stream: &str,
-        projection: &str,
-    ) -> Result<Self> {
-        schema.validate()?;
-        let existing = admit05(&mut store, stream)?;
-        let materialization = axton_protocols::sync::materialization_id(&schema, projection)?;
-        let descriptor_text = canonical_json(&serde_json::to_value(&schema)?)?;
+/// The stored descriptor of `schema` under a projection generation:
+/// its read materialization, retained-descriptor context and canonical text.
+struct Descriptor05 {
+    materialization: String,
+    context: String,
+    text: String,
+}
+impl Descriptor05 {
+    fn new(schema: &Schema, projection_generation: &str) -> Result<Self> {
+        let text = canonical_json(&serde_json::to_value(schema)?)?;
         let mut hash = Sha256::new();
         hash.update(b"axton:stored-descriptor:5\0");
-        hash.update(descriptor_text.as_bytes());
+        hash.update(text.as_bytes());
         hash.update([0]);
-        hash.update(projection.as_bytes());
-        let descriptor_context = format!("{:x}", hash.finalize());
+        hash.update(projection_generation.as_bytes());
+        Ok(Self {
+            materialization: v05::materialization_id(schema, projection_generation)?,
+            context: format!("{:x}", hash.finalize()),
+            text,
+        })
+    }
+}
+const INSERT_DESCRIPTOR: &str = "INSERT OR IGNORE INTO axton_descriptor(context,materialization,descriptor,projection_generation) VALUES(?,?,?,?)";
+/// The desired materialization follows the schema descriptor; the enabled
+/// descriptor follows only while the materialization is unchanged.
+const DESIRE_DESCRIPTOR: &str = "UPDATE axton_store SET desired_materialization=?,schema_descriptor=?,enabled_descriptor=CASE WHEN materialization=? THEN ? ELSE enabled_descriptor END";
+const SCHEMA_GENERATION: &str = "SELECT projection_generation FROM axton_descriptor WHERE context=(SELECT schema_descriptor FROM axton_store)";
+impl<S: ClientStore> Client<S> {
+    /// Open the Store. The projection generation is the one the backend last
+    /// reported (stored with the schema descriptor), so a reopen never undoes
+    /// a server-driven change; a fresh file starts at "1".
+    pub fn open05(mut store: S, schema: Schema, stream: &str) -> Result<Self> {
+        schema.validate()?;
+        let existing = admit05(&mut store, stream)?;
+        let projection = if existing {
+            store
+                .query(SCHEMA_GENERATION, &[])?
+                .rows
+                .first()
+                .and_then(|r| r[0].as_str().map(str::to_owned))
+                .ok_or_else(|| invalid("Store descriptor missing"))?
+        } else {
+            "1".into()
+        };
+        let descriptor = Descriptor05::new(&schema, &projection)?;
         if existing {
             let old=store.query("SELECT descriptor FROM axton_descriptor WHERE context=(SELECT schema_descriptor FROM axton_store)",&[])?.rows;
             let old: Schema = serde_json::from_str(
@@ -154,13 +179,29 @@ impl<S: ClientStore> Client<S> {
         let opened = (|| {
             if !existing {
                 store.execute_batch(DDL)?;
-                store.execute("INSERT INTO axton_store(singleton,format,id,stream,materialization,desired_materialization,schema_descriptor,enabled_descriptor) VALUES(1,5,?,?,?,?,?,?)",&[json!(uuid::Uuid::new_v4().to_string()),json!(stream),json!(materialization),json!(materialization),json!(descriptor_context),json!(descriptor_context)])?;
+                store.execute("INSERT INTO axton_store(singleton,format,id,stream,materialization,desired_materialization,schema_descriptor,enabled_descriptor) VALUES(1,5,?,?,?,?,?,?)",&[json!(uuid::Uuid::new_v4().to_string()),json!(stream),json!(descriptor.materialization),json!(descriptor.materialization),json!(descriptor.context),json!(descriptor.context)])?;
             }
             ddl::reconcile(&mut store, &schema)?;
-            store.execute("INSERT OR IGNORE INTO axton_descriptor(context,materialization,descriptor,projection_generation) VALUES(?,?,?,?)",&[json!(descriptor_context),json!(materialization),json!(descriptor_text),json!(projection)])?;
+            // Network plans do not survive a reopen.
+            Engine::new(&mut store, &schema, &mut BTreeSet::new(), false)
+                .clear_delivery_staging05()?;
             store.execute(
-                "UPDATE axton_store SET desired_materialization=?,schema_descriptor=?,enabled_descriptor=CASE WHEN materialization=? THEN ? ELSE enabled_descriptor END",
-                &[json!(materialization),json!(descriptor_context),json!(materialization),json!(descriptor_context)],
+                INSERT_DESCRIPTOR,
+                &[
+                    json!(descriptor.context),
+                    json!(descriptor.materialization),
+                    json!(descriptor.text),
+                    json!(projection),
+                ],
+            )?;
+            store.execute(
+                DESIRE_DESCRIPTOR,
+                &[
+                    json!(descriptor.materialization),
+                    json!(descriptor.context),
+                    json!(descriptor.materialization),
+                    json!(descriptor.context),
+                ],
             )?;
             let rows = store
                 .query("SELECT id,generation,materialization FROM axton_store", &[])?
@@ -183,7 +224,7 @@ impl<S: ClientStore> Client<S> {
             return Err(e);
         }
         let context05 = Some(v05::RequestContext {
-            protocol: 5,
+            protocol: v05::PROTOCOL,
             store_id: client_id.clone(),
             stream: stream.into(),
             materialization: enabled_materialization,
@@ -220,7 +261,7 @@ impl<S: ClientStore> Engine<'_, S> {
             .rows
             .remove(0);
         Ok(v05::RequestContext {
-            protocol: 5,
+            protocol: v05::PROTOCOL,
             store_id: r[0].as_str().unwrap().into(),
             stream: r[1].as_str().unwrap().into(),
             materialization: r[2].as_str().unwrap().into(),
@@ -244,93 +285,142 @@ impl<S: ClientStore> Engine<'_, S> {
         Ok(n)
     }
 }
-#[derive(Clone, Debug)]
-pub struct PendingSchema05 {
-    pub previous_context: v05::RequestContext,
-    pub desired_context: v05::RequestContext,
-    pub authority_keys: Vec<v05::RecordKey>,
-    pub bootstrap_models: std::collections::BTreeMap<String, u64>,
-}
+/// Engine tables that hold state for one record, keyed by Model and identity.
+const RECORD_STATE: [&str; 3] = [
+    "axton_local_replica_layer",
+    "axton_local_write",
+    "axton_authority",
+];
 impl<S: ClientStore> Engine<'_, S> {
-    pub fn pending_schema05(&mut self) -> Result<Option<PendingSchema05>> {
-        let previous_context = self.context05()?;
-        let row=self.rows("SELECT desired_materialization,enabled_descriptor,schema_descriptor FROM axton_store",&[])?.rows.remove(0);
-        if row[0] == previous_context.materialization {
-            return Ok(None);
+    fn delete_record_state05(
+        &mut self,
+        key: &axton_core::RecordKey,
+        tables: &[&str],
+    ) -> Result<()> {
+        for table in tables {
+            self.exec(
+                table,
+                &format!("DELETE FROM {table} WHERE model=? AND identity=?"),
+                &[json!(key.model), json!(key.encoded_identity()?)],
+            )?;
         }
-        let mut desired_context = previous_context.clone();
-        desired_context.materialization = row[0]
-            .as_str()
-            .ok_or_else(|| invalid("desired context missing"))?
-            .into();
-        let previous_schema = self.retained_schema05(row[1].as_str().unwrap())?;
-        let desired_schema = self.retained_schema05(row[2].as_str().unwrap())?;
-        let bootstrap_models = desired_schema
-            .models
-            .iter()
-            .filter(|m| {
-                m.bootstrap
-                    && previous_schema
-                        .models
-                        .iter()
-                        .find(|old| old.name == m.name)
-                        .is_none_or(|old| !old.bootstrap)
-            })
-            .map(|m| (m.name.clone(), m.version))
-            .collect();
-        let rows = self
-            .rows(
-                "SELECT model,identity,evidence FROM axton_authority ORDER BY model,identity",
+        Ok(())
+    }
+    /// Delete one record: its Model row, before-image and engine state.
+    pub(crate) fn delete_record05(&mut self, key: &axton_core::RecordKey) -> Result<()> {
+        self.main_set(key, None)?;
+        self.before_set(key, None)?;
+        self.delete_record_state05(key, &RECORD_STATE)
+    }
+    /// Delete every record: all Model rows, before-images and engine state.
+    pub(crate) fn delete_records05(&mut self) -> Result<()> {
+        for model in self.schema.models.clone() {
+            for table in [model.name.clone(), ddl::before_table(&model.name)] {
+                self.exec(&table, &format!("DELETE FROM {}", ddl::quote(&table)), &[])?;
+            }
+        }
+        for table in RECORD_STATE {
+            self.exec(table, &format!("DELETE FROM {table}"), &[])?;
+        }
+        Ok(())
+    }
+    /// Adopt the projection generation a handshake reported. A change writes
+    /// the descriptor for the app schema under it and makes that the desired
+    /// materialization; the rollover then runs as for a schema change.
+    pub(crate) fn adopt_generation05(&mut self, projection_generation: &str) -> Result<()> {
+        if self
+            .scalar(SCHEMA_GENERATION, &[])?
+            .as_ref()
+            .and_then(|v| v.as_str())
+            == Some(projection_generation)
+        {
+            return Ok(());
+        }
+        let d = Descriptor05::new(self.schema, projection_generation)?;
+        self.exec(
+            "axton_descriptor",
+            INSERT_DESCRIPTOR,
+            &[
+                json!(d.context),
+                json!(d.materialization),
+                json!(d.text),
+                json!(projection_generation),
+            ],
+        )?;
+        self.exec(
+            "axton_store",
+            DESIRE_DESCRIPTOR,
+            &[
+                json!(d.materialization),
+                json!(d.context),
+                json!(d.materialization),
+                json!(d.context),
+            ],
+        )?;
+        Ok(())
+    }
+    /// The Store's materialization differs from the one the schema and the
+    /// backend's projection generation now require.
+    pub fn rollover_pending05(&mut self) -> Result<bool> {
+        Ok(self
+            .scalar(
+                "SELECT 1 FROM axton_store WHERE materialization<>desired_materialization",
                 &[],
             )?
+            .is_some())
+    }
+    /// Rollover: once every frozen Batch has settled under the previous
+    /// materialization, the Store becomes a fresh device in the desired one.
+    /// Server-derived rows (Stream evidence) are cleared; direct writes, cache
+    /// installs, receipt-finalized rows, the queue and its counters stay.
+    /// Keys held dirty by unfrozen Mutations keep their rows and lose only
+    /// their evidence, so the next delivery re-bases them as Newer.
+    pub(crate) fn rollover05(&mut self) -> Result<bool> {
+        if !self.rollover_pending05()?
+            || self
+                .scalar(
+                    "SELECT 1 FROM axton_mutation_queue WHERE batch_id IS NOT NULL AND reconciled=0 LIMIT 1",
+                    &[],
+                )?
+                .is_some()
+        {
+            return Ok(false);
+        }
+        let rows = self
+            .rows("SELECT model,identity,evidence FROM axton_authority", &[])?
             .rows;
-        let mut authority_keys = vec![];
         for row in rows {
             let evidence: axton_core::authority::RecordEvidence =
                 crate::mutation_queue::decode(&row[2])?;
-            if !evidence.history.is_empty() && evidence.membership.is_some_and(|m| m.live) {
-                authority_keys.push(v05::RecordKey {
-                    model: row[0].as_str().unwrap().into(),
-                    identity: crate::mutation_queue::decode(&row[1])?,
-                });
+            if evidence.history.is_empty() && evidence.membership.is_none() {
+                continue;
+            }
+            let key = axton_core::RecordKey {
+                model: row[0]
+                    .as_str()
+                    .ok_or_else(|| invalid("authority model"))?
+                    .into(),
+                identity: crate::mutation_queue::decode(&row[1])?,
+            };
+            if self.dirty(&key)? {
+                self.delete_record_state05(&key, &["axton_authority"])?;
+            } else {
+                self.delete_record05(&key)?;
             }
         }
-        Ok(Some(PendingSchema05 {
-            previous_context,
-            desired_context,
-            authority_keys,
-            bootstrap_models,
-        }))
-    }
-    /// Task 5 calls this only in the final, validated complete owned transfer
-    /// transaction. Pair admission prevents an obsolete plan enabling a schema.
-    pub fn enable_schema05(
-        &mut self,
-        previous: &v05::RequestContext,
-        desired: &v05::RequestContext,
-    ) -> Result<()> {
-        let pending = self
-            .pending_schema05()?
-            .ok_or_else(|| invalid("no pending schema transfer"))?;
-        if &pending.previous_context != previous || &pending.desired_context != desired {
-            return Err(invalid("schema transfer context mismatch"));
-        }
-        self.exec("axton_store","UPDATE axton_store SET materialization=desired_materialization,enabled_descriptor=schema_descriptor",&[])?;
-        Ok(())
+        self.clear_delivery_staging05()?;
+        self.exec("axton_store","UPDATE axton_store SET materialization=desired_materialization,enabled_descriptor=schema_descriptor,start_cursor=NULL,bootstrap_cursor=NULL,cursor=NULL",&[])?;
+        Ok(true)
     }
 }
 impl<S: ClientStore> Client<S> {
-    pub fn pending_schema05(&mut self) -> Result<Option<PendingSchema05>> {
+    pub fn rollover_pending05(&mut self) -> Result<bool> {
         self.request_context05()?;
-        self.view(|e| e.pending_schema05())
+        self.view(|e| e.rollover_pending05())
     }
-}
-impl<S: ClientStore> crate::ClientTransaction<'_, S> {
-    pub fn enable_schema05(
-        &mut self,
-        previous: &v05::RequestContext,
-        desired: &v05::RequestContext,
-    ) -> Result<()> {
-        self.savepoint(|tx| tx.engine.enable_schema05(previous, desired))
+    /// Run the rollover clear when it is due; true when the Store was cleared.
+    pub fn rollover05(&mut self) -> Result<bool> {
+        self.request_context05()?;
+        self.write(|e| e.rollover05())
     }
 }

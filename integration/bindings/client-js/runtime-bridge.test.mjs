@@ -89,10 +89,10 @@ async function withBridge(body, carrier = native) {
   }
 }
 
-test("open answers the client id and bound protocol 5 context", async () => {
+test("open answers the client id and bound protocol 6 context", async () => {
   await withBridge(async (bridge, opened) => {
     assert.equal(typeof opened.clientId, "string");
-    assert.equal(opened.context.protocol, 5);
+    assert.equal(opened.context.protocol, 6);
     assert.equal(opened.context.stream, "User:viewer");
     assert.equal(typeof opened.context.storeId, "string");
     assert.equal("schema" in opened, false);
@@ -1084,6 +1084,6 @@ test("public transaction Stream mutation and custom store hook surfaces are abse
 test("Bridge open carries stream and protocol 5 and correlates completion", async () => {
  let request, wake; const events=[];
  const carrier={runtimeOpen(text,notify){request=JSON.parse(text);wake=notify;events.push({type:"taskCompleted",requestId:request.requestId,ok:true,value:{clientId:"native",schema:{}}});queueMicrotask(wake);return "5";},runtimeSubmit(_id,text){if(JSON.parse(text).type==="close")events.push({type:"runtimeClosed"});queueMicrotask(wake);},runtimeDrain(){return JSON.stringify(events.splice(0));},runtimeDetach(){}};
- const {bridge,opened}=await Bridge.open(carrier,{path:"unused",schema:{},stream:"User:u",projectionGeneration:"2"});
- assert.equal(request.protocol,5);assert.equal(request.stream,"User:u");assert.equal(request.projectionGeneration,"2");assert.equal(request.binding,undefined);assert.equal(opened.clientId,"native");await bridge.close();
+ const {bridge,opened}=await Bridge.open(carrier,{path:"unused",schema:{},stream:"User:u"});
+ assert.equal(request.protocol,5);assert.equal(request.stream,"User:u");assert.equal(request.projectionGeneration,undefined);assert.equal(request.binding,undefined);assert.equal(opened.clientId,"native");await bridge.close();
 });

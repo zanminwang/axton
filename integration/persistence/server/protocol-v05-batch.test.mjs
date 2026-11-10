@@ -30,10 +30,12 @@ const canonical = (v) =>
       : JSON.stringify(v);
 const digest = (r) =>
   createHash("sha256")
-    .update("axton:mutation-batch:5\0")
+    .update("axton:batch-intent:1\0")
     .update(
       canonical(
-        Object.fromEntries(Object.entries(r).filter(([k]) => k !== "digest")),
+        Object.fromEntries(
+          Object.entries(r).filter(([k]) => k !== "digest" && k !== "protocol"),
+        ),
       ),
     )
     .digest("hex");
@@ -82,7 +84,7 @@ const materialization = native.serverMaterializationId05(
 );
 function batch(s, modes = ["ok"], batchId = 1) {
   const r = {
-    protocol: 5,
+    protocol: 6,
     storeId: s,
     stream: "User:alice",
     materialization,
@@ -650,7 +652,7 @@ test("no-op with no Model targets accepts at head zero and replays without busin
     },
   });
   const r = {
-    protocol: 5,
+    protocol: 6,
     storeId: store(),
     stream: "User:fresh-empty",
     materialization: native.serverMaterializationId05(JSON.stringify(cfg), "1"),

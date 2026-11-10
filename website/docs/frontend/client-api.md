@@ -18,7 +18,6 @@ One physical SQLite file belongs to one Client, Store identity and Stream. The b
       stream: 'User:alice',
       connection: {
         url: 'http://127.0.0.1:4242', token: 'alice',
-        projectionGeneration: '1',
         options: { onError: console.error },
       },
     });
@@ -35,7 +34,7 @@ One physical SQLite file belongs to one Client, Store identity and Stream. The b
     );
     ```
 
-`path` and `stream` are required; `connection` is optional. Opening commits local storage before starting its connection and works offline. `projectionGeneration` defaults to `'1'`; configure the same generation on backend and client. Changes to it or the normalized Model contracts require rematerialization. Retain supported old contracts so durable queued Mutations remain retryable.
+`path` and `stream` are required; `connection` is optional. Opening commits local storage before starting its connection and works offline. The backend reports its projection generation at every handshake; the client has no option for it. A change to it or to the normalized Model contracts rolls the Store over. Retain supported old contracts and the previous materialization on the backend so durable queued Mutations drain.
 
 `prerequisites` registers named prerequisite handlers. Dart `libraryPath` selects an explicit development library; installed packages use their bundled library. Android applications initialize the process's stable support/files directory once with `Client.configureApplicationData(path)` before opening any Store. This directory is application configuration, not a per-client lock option.
 
@@ -172,7 +171,7 @@ Failures reject with `CallError`:
 | `fetch.transport_failed` | The request or credential refresh failed; `cause` carries the message and the HTTP status, if any |
 | `fetch.invalid_response` | The response did not answer this request |
 | `fetch.store_failed` | The permitted local cache transaction failed; no content or progress from that transaction commits. |
-| `fetch.schema_pending` | The Store is waiting for required schema rematerialization |
+| `fetch.schema_pending` | The Store is rolling over to a new materialization |
 | `fetch.schema_changed` | An explicit Store reset replaced the context while the call waited |
 
 A failure never deletes the local row. `execution` is `rejected` for the backend's codes, `fetch.invalid_options`, and `unknown` otherwise; a read has no side effects either way. A call on a client that is already closed rejects with the runtime's plain `client_closed` error (`Error` in TypeScript, `StateError` in Dart), not a `CallError`. A result the generated decoder cannot read rejects with `action.observation_failed`, as for a direct call.
@@ -319,13 +318,13 @@ A local write may target a Model that Streams also deliver. For example, an appl
 - **Newer server data replaces it.** A later Stream authority replaces direct local state. Ordinary Query/Fetch cache writes follow current-protection admission; private receipt settlement can finalize only its owned effects. Nothing restores the local write afterwards, not a later rejection and not a restart. A record that exists only because of a local write has no server version yet, so the first server data for it replaces it.
 - **A rejection does not undo it.** A local write can land on a record that a pending Mutation also changes. If the backend rejects that Mutation, AXTON removes only that Mutation's changes, including its `local` changes, and the local write stays until newer server data replaces it. The exception is a record whose only creation is a pending Mutation: if that create is rejected, the record goes, local writes included.
 
-Stream authority retires preceding direct changes and preserves later pending operation overlays. Ordinary Query and Fetch snapshots never replace current Stream content or tombstones. Equal-position schema rematerialization adapts the authoritative base while preserving later local work.
+Stream authority retires preceding direct changes and preserves later pending operation overlays. Ordinary Query and Fetch snapshots never replace current Stream content or tombstones.
 
 ## Bootstrap and Stream delivery
 
 The Stream supplied at open is the client's only Stream. `await client.bootstrap()` waits for its entire Bootstrap: finite immutable authority units applied atomically through the captured head. An empty plan still completes. Capturing a head never advances delivery progress. Normal reopen resumes persisted work.
 
-Initial Bootstrap selects Models marked `@@bootstrap`. Rematerialization additionally covers held authority and absence, including unmarked Models. Mutation receipt recovery can materialize exact missing targets through an internal settlement-owned plan without running the application's Bootstrap handler again, implicitly tracking, or allocating a new cursor.
+Initial Bootstrap selects Models marked `@@bootstrap`. A materialization change (a compatible schema change, or a new projection generation reported by the backend) drains frozen Mutations, clears Stream-delivered rows and runs Bootstrap again. A Mutation settles when the Stream delivers its targets; a target in an unmarked Model at or below the Store's initial cursor never arrives, so it settles from the receipt without tracking or allocating a new cursor.
 
 Bootstrap and delta failures commit neither the failing unit nor its progress. Earlier independent committed units remain valid. Required constraint closure is indivisible; reducing transport page size cannot split it. Membership Remove releases current live-content protection without deleting the Model or clearing historical evidence; true Stream deletion remains protected.
 

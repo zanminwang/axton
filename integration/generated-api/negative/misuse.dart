@@ -10,6 +10,7 @@ Future<void> misuse(GeneratedClient client, ApplicationTransaction tx, Companion
  client.queries.readEntry(id:row.id,refresh:false); // reject: UNDEFINED_NAMED_PARAMETER
  client.queries.invalidate; // reject: UNDEFINED_GETTER
  StoreConnection(url:'unused',token:()=>'x',identity:{}); // reject: UNDEFINED_NAMED_PARAMETER
+ StoreConnection(url:'unused',token:()=>'x',projectionGeneration:'2'); // reject: UNDEFINED_NAMED_PARAMETER
  client.models.entry.query(where:const EntryFilter(tags:Present(['x']))); // reject: UNDEFINED_NAMED_PARAMETER
  client.models.entry.query(orderBy:[EntryOrder(EntryOrderField.byStatus)]); // reject: UNDEFINED_ENUM_CONSTANT
  client.models.entry.query(where:const EntryFilter(at:Present('2026-01-01'))); // reject: ARGUMENT_TYPE_NOT_ASSIGNABLE

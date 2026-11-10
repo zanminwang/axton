@@ -129,7 +129,7 @@ for (const carrier of ["protocol5"]) {
     try {
       await once(socket, "open");
       const ack = once(socket, "message");
-      socket.send(JSON.stringify({ protocol: 5, storeId: viewer, stream }));
+      socket.send(JSON.stringify({ protocol: 6, storeId: viewer, stream }));
       await ack;
       await app.transaction(({ invalidate }) => invalidate.space(identity));
       await entered.promise;
@@ -369,7 +369,7 @@ for (const scenario of ["negotiation", "multiple pulls", "rejected pull"]) {
         const ready = once(socket, "message");
         socket.send(
           JSON.stringify({
-            protocol: 5,
+            protocol: 6,
             storeId: viewer,
             stream: `User:${viewer}`,
           }),
@@ -499,7 +499,7 @@ test("throwing upgrade Reporter cannot release another admission or an aborted L
     const ready = once(socket, "message");
     socket.send(
       JSON.stringify({
-        protocol: 5,
+        protocol: 6,
         storeId: "held-session",
         stream: "User:held-session",
       }),

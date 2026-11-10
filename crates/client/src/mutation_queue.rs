@@ -299,16 +299,27 @@ impl<S: ClientStore> Engine<'_, S> {
             .iter()
             .any(|r| !r[5].is_null() && r[5] != request.digest)
         {
-            return Err(invalid("frozen Batch digest changed"));
+            // Includes Batches frozen under the protocol-5 digest definition.
+            return Err(axton_core::Error::Terminal(format!(
+                "frozen Batch {batch} no longer matches its saved digest and cannot be resent; reset the Store to discard it"
+            )));
         }
         Ok(request)
     }
     pub(crate) fn freeze05(&mut self) -> Result<Option<v05::MutationRequest>> {
-        let last = as_u64(
-            &self
-                .scalar("SELECT last_acknowledged_batch_id FROM axton_store", &[])?
-                .unwrap(),
-        )?;
+        // Push waits for the handshake: a Mutation then executes after the
+        // head read, so its syncCursor is at or after the Store's start S.
+        let store = self
+            .rows(
+                "SELECT last_acknowledged_batch_id,start_cursor FROM axton_store",
+                &[],
+            )?
+            .rows
+            .remove(0);
+        if store[1].is_null() {
+            return Ok(None);
+        }
+        let last = as_u64(&store[0])?;
         if let Some(batch) = self
             .scalar(
                 "SELECT MIN(batch_id) FROM axton_mutation_queue WHERE batch_id>?",
@@ -324,6 +335,11 @@ impl<S: ClientStore> Engine<'_, S> {
             "SELECT 1 FROM axton_mutation_queue WHERE batch_id IS NOT NULL AND reconciled=0 LIMIT 1",
             &[],
         )?.is_some() {
+            return Ok(None);
+        }
+        // Rollover hold: frozen work drains under the previous context;
+        // new work waits for the fresh Store.
+        if self.rollover_pending05()? {
             return Ok(None);
         }
         // A terminal refusal finishes sequence ordering. Lifecycle edges

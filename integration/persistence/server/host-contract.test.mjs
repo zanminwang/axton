@@ -94,7 +94,7 @@ async function replay(
               op: "admit",
               owner: "alice",
               context: {
-                protocol: 5,
+                protocol: 6,
                 storeId: "s",
                 stream: "User:alice",
                 materialization: "m",
@@ -123,7 +123,7 @@ async function replay(
       },
     },
   });
-  await backend.push("alice", JSON.stringify({ protocol: 5, mutations: [{}] }));
+  await backend.push("alice", JSON.stringify({ protocol: 6, mutations: [{}] }));
   return { answers, seen, loaded, calls };
 }
 test("fixture and TypeScript host enumerate each retained operation once", () => {

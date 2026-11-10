@@ -579,25 +579,13 @@ if (process.argv[2] === "enqueue-child") {
           entry: { id: "joined-accepted", text: " canonical " },
           call: "multi",
         });
-        refused = await tx.mutations.publish(async (local) => {
-          await local.models.draft.create({
-            id: "refused-companion",
-            text: "undo",
-          });
-          return {
-            entry: { id: "joined-refused", text: "refuse" },
-            call: "normal",
-          };
+        refused = await tx.mutations.publish({
+          entry: { id: "joined-refused", text: "refuse" },
+          call: "normal",
         });
-        privateCall = await tx.mutations.publish(async (local) => {
-          await local.models.draft.create({
-            id: "accepted-companion",
-            text: "keep",
-          });
-          return {
-            entry: { id: "joined-private", text: " private " },
-            call: "private",
-          };
+        privateCall = await tx.mutations.publish({
+          entry: { id: "joined-private", text: " private " },
+          call: "private",
         });
       });
       assert.equal(
@@ -625,11 +613,6 @@ if (process.argv[2] === "enqueue-child") {
       assert.equal(
         (await a.models.entry.get({ id: "joined-private" })).text,
         "later direct",
-      );
-      assert.equal(await a.models.draft.get({ id: "refused-companion" }), null);
-      assert.equal(
-        (await a.models.draft.get({ id: "accepted-companion" })).text,
-        "keep",
       );
       assert.equal(h.batches.length >= 2, true);
       assert.equal(

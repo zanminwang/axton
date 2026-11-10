@@ -651,7 +651,6 @@ class FetchModels { final Client _client; FetchModels(this._client);
  Future<Draft?> draft(DraftIdentity identity, {bool store = true}) => _client.fetchModel('Draft', 1, identity.toRecord(), Draft.fromRecord, store: store);
 }
 class GeneratedTransaction { final Transaction transaction; late final TxModels models=TxModels(transaction); GeneratedTransaction(this.transaction); }
-class CompanionContext { final TxModels models; CompanionContext(WritePort port) : models = TxModels(port); }
 class TransactionMutations {
  final SubmitMutationPort port; TransactionMutations(this.port);
  late final PublishItemMutation publishItem = PublishItemMutation(port);
@@ -661,13 +660,11 @@ class PublishItemMutation {
  final SubmitMutationPort port; PublishItemMutation(this.port);
  Map<String,dynamic> _encode(PublishItemInput input) => {'item': _dartActionEncode(input.item), 'private': _dartActionEncode(input.private)};
  Future<Call<PublishItemOutput>> call(PublishItemInput input) => port.submitMutation<PublishItemOutput>('PublishItem', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return PublishItemOutput(item: Item.fromRecord((row['item'] as Map).cast<String,dynamic>())); });
- Future<Call<PublishItemOutput>> withTransaction(FutureOr<PublishItemInput> Function(CompanionContext tx) body) => port.submitMutation<PublishItemOutput>('PublishItem', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return PublishItemOutput(item: Item.fromRecord((row['item'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class RenameItemMutation {
  final SubmitMutationPort port; RenameItemMutation(this.port);
  Map<String,dynamic> _encode(RenameItemInput input) => {'item': _dartActionEncode(input.item)};
  Future<Call<RenameItemOutput>> call(RenameItemInput input) => port.submitMutation<RenameItemOutput>('RenameItem', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return RenameItemOutput(item: Item.fromRecord((row['item'] as Map).cast<String,dynamic>())); });
- Future<Call<RenameItemOutput>> withTransaction(FutureOr<RenameItemInput> Function(CompanionContext tx) body) => port.submitMutation<RenameItemOutput>('RenameItem', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return RenameItemOutput(item: Item.fromRecord((row['item'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class ApplicationTransaction extends GeneratedTransaction { late final TransactionMutations mutations = TransactionMutations(transaction); late final rejections = transaction.rejections; late final failures = transaction.failures; ApplicationTransaction(super.transaction); }
 class GeneratedClient {

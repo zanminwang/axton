@@ -1131,7 +1131,6 @@ class FetchModels { final Client _client; FetchModels(this._client);
  Future<Placement?> placement(PlacementIdentity identity, {bool store = true}) => _client.fetchModel('Placement', 1, identity.toRecord(), Placement.fromRecord, store: store);
 }
 class GeneratedTransaction { final Transaction transaction; late final TxModels models=TxModels(transaction); GeneratedTransaction(this.transaction); }
-class CompanionContext { final TxModels models; CompanionContext(WritePort port) : models = TxModels(port); }
 class TransactionMutations {
  final SubmitMutationPort port; TransactionMutations(this.port);
  late final AddNoteMutation addNote = AddNoteMutation(port);
@@ -1149,61 +1148,51 @@ class AddNoteMutation {
  final SubmitMutationPort port; AddNoteMutation(this.port);
  Map<String,dynamic> _encode(AddNoteInput input) => {'note': _dartActionEncode(input.note)};
  Future<Call<AddNoteOutput>> call(AddNoteInput input) => port.submitMutation<AddNoteOutput>('AddNote', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return AddNoteOutput(saved: Note.fromRecord((row['saved'] as Map).cast<String,dynamic>())); });
- Future<Call<AddNoteOutput>> withTransaction(FutureOr<AddNoteInput> Function(CompanionContext tx) body) => port.submitMutation<AddNoteOutput>('AddNote', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return AddNoteOutput(saved: Note.fromRecord((row['saved'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class AddTodoMutation {
  final SubmitMutationPort port; AddTodoMutation(this.port);
  Map<String,dynamic> _encode(AddTodoInput input) => {'todo': _dartActionEncode(input.todo)};
  Future<Call<AddTodoOutput>> call(AddTodoInput input) => port.submitMutation<AddTodoOutput>('AddTodo', 1, _encode(input), (_) {});
- Future<Call<AddTodoOutput>> withTransaction(FutureOr<AddTodoInput> Function(CompanionContext tx) body) => port.submitMutation<AddTodoOutput>('AddTodo', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class AnnotateTodoMutation {
  final SubmitMutationPort port; AnnotateTodoMutation(this.port);
  Map<String,dynamic> _encode(AnnotateTodoInput input) => {'todo': _dartActionEncode(input.todo), 'note': _dartActionEncode(input.note), 'body': _dartActionEncode(input.body)};
  Future<Call<AnnotateTodoOutput>> call(AnnotateTodoInput input) => port.submitMutation<AnnotateTodoOutput>('AnnotateTodo', 1, _encode(input), (_) {});
- Future<Call<AnnotateTodoOutput>> withTransaction(FutureOr<AnnotateTodoInput> Function(CompanionContext tx) body) => port.submitMutation<AnnotateTodoOutput>('AnnotateTodo', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class DeleteTodoMutation {
  final SubmitMutationPort port; DeleteTodoMutation(this.port);
  Map<String,dynamic> _encode(DeleteTodoInput input) => {'todo': _dartActionEncode(input.todo)};
  Future<Call<DeleteTodoOutput>> call(DeleteTodoInput input) => port.submitMutation<DeleteTodoOutput>('DeleteTodo', 1, _encode(input), (_) {});
- Future<Call<DeleteTodoOutput>> withTransaction(FutureOr<DeleteTodoInput> Function(CompanionContext tx) body) => port.submitMutation<DeleteTodoOutput>('DeleteTodo', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class EditAndShowMutation {
  final SubmitMutationPort port; EditAndShowMutation(this.port);
  Map<String,dynamic> _encode(EditAndShowInput input) => {'todo': _dartActionEncode(input.todo), 'shown': _dartActionEncode(input.shown)};
  Future<Call<EditAndShowOutput>> call(EditAndShowInput input) => port.submitMutation<EditAndShowOutput>('EditAndShow', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return EditAndShowOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
- Future<Call<EditAndShowOutput>> withTransaction(FutureOr<EditAndShowInput> Function(CompanionContext tx) body) => port.submitMutation<EditAndShowOutput>('EditAndShow', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return EditAndShowOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class PublishEntryMutation {
  final SubmitMutationPort port; PublishEntryMutation(this.port);
  Map<String,dynamic> _encode(PublishEntryInput input) => {'entry': _dartActionEncode(input.entry), 'media': _dartActionEncode(input.media), 'placement': _dartActionEncode(input.placement)};
  Future<Call<PublishEntryOutput>> call(PublishEntryInput input) => port.submitMutation<PublishEntryOutput>('PublishEntry', 1, _encode(input), (_) {});
- Future<Call<PublishEntryOutput>> withTransaction(FutureOr<PublishEntryInput> Function(CompanionContext tx) body) => port.submitMutation<PublishEntryOutput>('PublishEntry', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class RestampMutation {
  final SubmitMutationPort port; RestampMutation(this.port);
  Map<String,dynamic> _encode(RestampInput input) => {'note': _dartActionEncode(input.note), 'at': _dartActionEncode(input.at)};
  Future<Call<RestampOutput>> call(RestampInput input) => port.submitMutation<RestampOutput>('Restamp', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return RestampOutput(at: DateTime.parse(row['at'] as String)); });
- Future<Call<RestampOutput>> withTransaction(FutureOr<RestampInput> Function(CompanionContext tx) body) => port.submitMutation<RestampOutput>('Restamp', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return RestampOutput(at: DateTime.parse(row['at'] as String)); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class RetitleTodosMutation {
  final SubmitMutationPort port; RetitleTodosMutation(this.port);
  Map<String,dynamic> _encode(RetitleTodosInput input) => {'query': _dartActionEncode(input.query), 'title': _dartActionEncode(input.title)};
  Future<Call<RetitleTodosOutput>> call(RetitleTodosInput input) => port.submitMutation<RetitleTodosOutput>('RetitleTodos', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return RetitleTodosOutput(todos: (row['todos'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList(), first: row['first'] == null ? null : Todo.fromRecord((row['first'] as Map).cast<String,dynamic>())); });
- Future<Call<RetitleTodosOutput>> withTransaction(FutureOr<RetitleTodosInput> Function(CompanionContext tx) body) => port.submitMutation<RetitleTodosOutput>('RetitleTodos', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return RetitleTodosOutput(todos: (row['todos'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList(), first: row['first'] == null ? null : Todo.fromRecord((row['first'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class SendEmailMutation {
  final SubmitMutationPort port; SendEmailMutation(this.port);
  Map<String,dynamic> _encode(SendEmailInput input) => {'to': _dartActionEncode(input.to), 'subject': _dartActionEncode(input.subject), 'body': _dartActionEncode(input.body)};
  Future<Call<SendEmailOutput>> call(SendEmailInput input) => port.submitMutation<SendEmailOutput>('SendEmail', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return SendEmailOutput(messageId: row['messageId'] as String); });
- Future<Call<SendEmailOutput>> withTransaction(FutureOr<SendEmailInput> Function(CompanionContext tx) body) => port.submitMutation<SendEmailOutput>('SendEmail', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return SendEmailOutput(messageId: row['messageId'] as String); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class UpdateTodoMutation {
  final SubmitMutationPort port; UpdateTodoMutation(this.port);
  Map<String,dynamic> _encode(UpdateTodoInput input) => {'todo': _dartActionEncode(input.todo)};
  Future<Call<UpdateTodoOutput>> call(UpdateTodoInput input) => port.submitMutation<UpdateTodoOutput>('UpdateTodo', 1, _encode(input), (_) {});
- Future<Call<UpdateTodoOutput>> withTransaction(FutureOr<UpdateTodoInput> Function(CompanionContext tx) body) => port.submitMutation<UpdateTodoOutput>('UpdateTodo', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class ApplicationTransaction extends GeneratedTransaction { late final TransactionMutations mutations = TransactionMutations(transaction); late final rejections = transaction.rejections; late final failures = transaction.failures; ApplicationTransaction(super.transaction); }
 class GeneratedClient {

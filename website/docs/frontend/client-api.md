@@ -208,7 +208,7 @@ Only named Mutations are durable remote writes. The first await commits the owne
 
 | Method | Returns | Completion |
 | --- | --- | --- |
-| `client.mutations.publish(inputOrCallback)` / `tx.mutations.publish(...)` | `Call<PublishOutput>` | Owned local writes, optimism and queue entry committed locally |
+| `client.mutations.publish(input)` / `tx.mutations.publish(input)` | `Call<PublishOutput>` | Optimism and queue entry committed locally |
 | `call.wait()` | `CallOutcome<PublishOutput>` | Backend outcome and local settlement committed |
 | `client.queries.find(args, options?)` | `FindOutput` | Validated invocation snapshot and permitted cache writes committed |
 | `client.fetch.entry(identity, options?)` | `Entry` or null | Validated Loader snapshot and permitted cache writes committed |
@@ -218,11 +218,10 @@ The examples use [the typed SDK fixture](https://github.com/zanminwang/axton/tre
 === "TypeScript"
 
     ```ts title="v05-sdk"
-    const call = await client.mutations.publish(async tx => {
+    const call = await client.transaction(async tx => {
       const draft = await tx.models.draft.get({ id: 'draft-1' });
       if (!draft) throw Error('draft missing');
-      await tx.models.draft.delete({ id: draft.id });
-      return { entry: { id: 'entry-1', text: draft.text }, call: 'publish' };
+      return tx.mutations.publish({ entry: { id: 'entry-1', text: draft.text }, call: 'publish' });
     });
     const outcome = await call.wait();
     if (outcome.error) console.error(outcome.error.code);
@@ -232,21 +231,18 @@ The examples use [the typed SDK fixture](https://github.com/zanminwang/axton/tre
 === "Flutter"
 
     ```dart title="v05-sdk"
-    final call = await client.mutations.publish.withTransaction((tx) async {
+    final call = await client.transaction((tx) async {
       final draft = await tx.models.draft.get(const DraftIdentity(id: 'draft-1'));
       if (draft == null) throw StateError('draft missing');
-      await tx.models.draft.delete(DraftIdentity(id: draft.id));
-      return PublishInput(
-        entry: EntryCreate(id: 'entry-1', text: draft.text), call: 'publish');
+      return tx.mutations.publish(PublishInput(
+          entry: EntryCreate(id: 'entry-1', text: draft.text), call: 'publish'));
     });
     final outcome = await call.wait();
     if (outcome is CallFailure<PublishOutput>) print(outcome.error.code);
     final snapshot = await client.queries.find(id: 'entry-1');
     ```
 
-A typed input can be supplied directly instead. Dart's strongly typed callable invoker uses `.publish(input)` or `.publish.withTransaction(callback)`; both submit the same named Mutation through the same engine scope. A business input named `call` retains its name.
-
-The callback executes before its returned input is applied optimistically. Its `tx.models` reads and device-only writes belong to that Mutation. Acceptance keeps those companions; refusal undoes only owned effects and preserves later independent work. The callback cannot submit another Mutation, use remote reads, or capture another scope. It may be async; await every operation before returning its typed input.
+A Mutation takes its typed input; with nothing to read first, call `client.mutations.publish(input)` directly. A caller that reads before building the input does so in `client.transaction` and then calls `tx.mutations.publish(input)`: the read and the Mutation run in one local transaction and see one snapshot. A business input named `call` retains its name. Refusal undoes only the Mutation's own optimism and preserves later independent work.
 
 ### Storing Model results
 
@@ -274,7 +270,7 @@ Each Query invocation has a fresh request and snapshot. There are no `once`, `re
 
 ### Queue Mutations in a transaction
 
-`client.transaction` commits local CRUD and several named Mutation scopes atomically. Each queued Call keeps its own backend fate. Invoke `tx.mutations` with the same typed input or callback form as the client. Its callback receives only that Mutation's `tx.models` capability.
+`client.transaction` commits local CRUD and several named Mutation scopes atomically. Each queued Call keeps its own backend fate. Invoke `tx.mutations` with the same typed input as the client.
 
 Calling `Call.wait()` before the outer transaction commits fails promptly with `transaction_uncommitted` without settling the Call. A rolled-back scope's Call fails with `transaction_rolled_back` and is never sent. A failed operation poisons its scope even if caught; leaked or unawaited work prevents commit. Captured cross-client or expired transaction handles fail promptly.
 

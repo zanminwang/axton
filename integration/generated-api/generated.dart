@@ -898,7 +898,6 @@ class FetchModels { final Client _client; FetchModels(this._client);
  Future<Composition?> composition(CompositionIdentity identity, {bool store = true}) => _client.fetchModel('Composition', 1, identity.toRecord(), Composition.fromRecord, store: store);
 }
 class GeneratedTransaction { final Transaction transaction; late final TxModels models=TxModels(transaction); GeneratedTransaction(this.transaction); }
-class CompanionContext { final TxModels models; CompanionContext(WritePort port) : models = TxModels(port); }
 class TransactionMutations {
  final SubmitMutationPort port; TransactionMutations(this.port);
  late final PublishEntryMutation publishEntry = PublishEntryMutation(port);
@@ -908,13 +907,11 @@ class PublishEntryMutation {
  final SubmitMutationPort port; PublishEntryMutation(this.port);
  Map<String,dynamic> _encode(PublishEntryInput input) => {'entry': _dartActionEncode(input.entry), 'composition': _dartActionEncode(input.composition)};
  Future<Call<PublishEntryOutput>> call(PublishEntryInput input) => port.submitMutation<PublishEntryOutput>('PublishEntry', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return PublishEntryOutput(published: Entry.fromRecord((row['published'] as Map).cast<String,dynamic>())); });
- Future<Call<PublishEntryOutput>> withTransaction(FutureOr<PublishEntryInput> Function(CompanionContext tx) body) => port.submitMutation<PublishEntryOutput>('PublishEntry', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return PublishEntryOutput(published: Entry.fromRecord((row['published'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class RenameMutation {
  final SubmitMutationPort port; RenameMutation(this.port);
  Map<String,dynamic> _encode(RenameInput input) => {'id': _dartActionEncode(input.id), 'title': _dartActionEncode(input.title)};
  Future<Call<RenameOutput>> call(RenameInput input) => port.submitMutation<RenameOutput>('Rename', 1, _encode(input), (_) {});
- Future<Call<RenameOutput>> withTransaction(FutureOr<RenameInput> Function(CompanionContext tx) body) => port.submitMutation<RenameOutput>('Rename', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class ApplicationTransaction extends GeneratedTransaction { late final TransactionMutations mutations = TransactionMutations(transaction); late final rejections = transaction.rejections; late final failures = transaction.failures; ApplicationTransaction(super.transaction); }
 class GeneratedClient {

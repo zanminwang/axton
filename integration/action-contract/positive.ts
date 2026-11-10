@@ -16,10 +16,10 @@ const defaulted:NoteCreate={memo:null};
 async function clientContract(client:GeneratedClient) {
  const call:Call<AddTodoOutput>=await client.mutations.addTodo(input);
  const outcome:CallOutcome<AddTodoOutput>=await call.wait();
- await client.mutations.addTodo(async tx=>{await tx.models.todo.update(identity,{title:'companion'});return input;});
+ // A Mutation built from a read: one local transaction holds both.
  await client.transaction(async tx=>{
   const before=await tx.models.todo.get(identity);
-  await tx.mutations.addTodo(async owned=>{await owned.models.todo.delete(identity);return {...input,status:before?.state??null};});
+  await tx.mutations.addTodo({...input,status:before?.state??null});
  });
  const found:FindTodosOutput=await client.queries.findTodos({text:'design',cursor:null},{store:false});
  await client.queries.findTodos({text:'design',cursor:found.nextCursor},{store:true});

@@ -259,11 +259,9 @@ export function fetchModels(port:FetchPort):FetchModels { return {
  snapshot:(identity,options)=>port.fetchModel('Snapshot',1,encodeSnapshotIdentity(identity),decodeSnapshot,options),
 }; }
 export class GeneratedTransaction { readonly transaction:WritePort; readonly models:TxModels; constructor(transaction:WritePort) { this.transaction=transaction; this.models=txModels(transaction); } }
-export interface SubmitMutationPort { submitMutation<T>(name:string,version:number,input:object | ((port:WritePort) => Promise<object>),decode:(value:unknown)=>T):Promise<Call<T>>; }
+export interface SubmitMutationPort { submitMutation<T>(name:string,version:number,input:object,decode:(value:unknown)=>T):Promise<Call<T>>; }
 export interface UnsentResolutionPort { readonly rejections:{ dismiss(id:number):Promise<void> }; readonly failures:{ retry(taskKeys:string[]):Promise<void>; drop(ordinal:number):Promise<void> }; }
-/** Local Model operations owned by one Mutation. */
-export class CompanionContext { readonly models:TxModels; constructor(port:WritePort) { this.models=txModels(port); } }
 export function makeTransactionMutations(port:SubmitMutationPort) { return {
- publish: (input:PublishInput | ((tx:CompanionContext) => PublishInput | Promise<PublishInput>)):Promise<Call<PublishOutput>> => port.submitMutation('Publish',1,typeof input === 'function' ? async (companion:WritePort) => encodePublishInput(await input(new CompanionContext(companion))) : encodePublishInput(input),decodePublishOutput),
+ publish: (input:PublishInput):Promise<Call<PublishOutput>> => port.submitMutation('Publish',1,encodePublishInput(input),decodePublishOutput),
 }; }
 export class ApplicationTransaction extends GeneratedTransaction { readonly mutations:ReturnType<typeof makeTransactionMutations>; readonly rejections:UnsentResolutionPort['rejections']; readonly failures:UnsentResolutionPort['failures']; constructor(transaction:WritePort & SubmitMutationPort & UnsentResolutionPort) { super(transaction); this.mutations=makeTransactionMutations(transaction); this.rejections=transaction.rejections; this.failures=transaction.failures; } }

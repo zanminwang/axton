@@ -14,7 +14,7 @@ Future<void> invalid(GeneratedClient client, Call<EchoOutput> call) async {
   client.mutations.call; // error: undefined_getter
   client.queries.enqueue; // error: undefined_getter
   client.mutations.echo((tx) async => EchoInput(at: DateTime.utc(2026), moods: [], maybe: null)); // error: argument_type_not_assignable
-  await client.mutations.echo.withTransaction((tx) async { tx.mutations; return EchoInput(at: DateTime.utc(2026), moods: [], maybe: null); }); // error: undefined_getter
+  await client.mutations.echo.withTransaction((tx) async => EchoInput(at: DateTime.utc(2026), moods: [], maybe: null)); // error: undefined_method
   client.queries.now(at: DateTime.utc(2026), store: {'at': false}); // error: argument_type_not_assignable
   direct.hashCode;
 }

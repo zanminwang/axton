@@ -2,7 +2,7 @@
 // integration/generated-api` type-checks this file, and every
 // `@ts-expect-error` below has to be the error it names; the Dart twin is
 // misuse.dart ([#150](https://github.com/zanminwang/axton/issues/150)).
-import {GeneratedClient, type GeneratedTransaction, Draft, DraftCreate, Entry, ApplicationTransaction, CompanionContext, PublishEntryOutput} from '../client.ts';
+import {GeneratedClient, type GeneratedTransaction, Draft, DraftCreate, Entry, ApplicationTransaction, PublishEntryOutput} from '../client.ts';
 
 export function boundSurfaceMisuse(client:GeneratedClient,tx:GeneratedTransaction){
  // @ts-expect-error exactly one Stream is selected at bound open
@@ -64,8 +64,9 @@ export async function fetchMisuse(client:GeneratedClient,tx:GeneratedTransaction
  void result.label;
 }
 
-// Named Mutation callbacks return typed input and expose local Models only.
-export async function transactionMisuse(client:GeneratedClient,tx:ApplicationTransaction,local:CompanionContext,row:Entry){
+// A named Mutation takes its typed input; a caller reads first in the same
+// transaction instead of passing a callback.
+export async function transactionMisuse(client:GeneratedClient,tx:ApplicationTransaction,row:Entry){
  const id=row.id;
  // @ts-expect-error there is no direct route inside a transaction
  await tx.mutations.call.rename({id,title:'t'});
@@ -77,8 +78,6 @@ export async function transactionMisuse(client:GeneratedClient,tx:ApplicationTra
  await tx.mutations.rename({id,title:1});
  // @ts-expect-error `local` is an option, never a business arg
  await tx.mutations.rename({id,title:'t',local:async()=>{}});
- // @ts-expect-error the callback receives the companion context, not a raw port
- await tx.mutations.rename({id,title:'t'},{local:async(local:{direct(operation:object):Promise<void>;channels:object})=>{void local;}});
  // @ts-expect-error a store selection names only store-eligible outputs
  await tx.mutations.publishEntry({entry:row,composition:id},{store:{missing:false}});
  // @ts-expect-error the Call observes the declared output
@@ -87,23 +86,12 @@ export async function transactionMisuse(client:GeneratedClient,tx:ApplicationTra
  await client.mutations.rename({id,title:'t'},{local:async()=>{}});
  // @ts-expect-error split direct Mutation lane is retired
  await client.mutations.call.rename({id,title:'t'},{local:async()=>{}});
- // @ts-expect-error the callback queues no Mutation
- void local.mutations;
- // @ts-expect-error the callback modifies no Channel
- void local.channels;
- // @ts-expect-error companions have no local Scope registration
- void local.streams;
- // @ts-expect-error the callback opens no savepoint and exposes no raw port
- void local.transaction.savepoint;
- // @ts-expect-error the callback cannot watch
- local.models.composition.watch({},()=>{});
- // @ts-expect-error the callback reads no sync state
- void local.models.composition.syncState;
- await tx.mutations.publishEntry(async inner=>{
-  // @ts-expect-error nested enqueue is unavailable inside the callback
-  await inner.mutations.rename({id,title:'t'});
-  return {entry:row,composition:id};
- });
+ // @ts-expect-error the Mutation input callback is retired
+ await tx.mutations.publishEntry(async()=>({entry:row,composition:id}));
+ // @ts-expect-error the Mutation input callback is retired on the client too
+ await client.mutations.rename(()=>({id,title:'t'}));
+ // @ts-expect-error there is no companion context to pass one to
+ void import('../client.ts').then(module=>module.CompanionContext);
  const call:PublishEntryOutput|undefined=(await (await tx.mutations.publishEntry({entry:row,composition:id})).wait()).result;
  return [wrong,call];
 }

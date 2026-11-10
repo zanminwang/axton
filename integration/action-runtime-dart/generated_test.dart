@@ -70,20 +70,16 @@ void main() {
     expect(EchoInput(at: at, moods: [Mood.calm, Mood.loud], maybe: null).toRecord(), {'at': '2026-09-23T12:00:00.000Z', 'moods': ['calm', 'loud'], 'maybe': null});
     expect(TouchInput(note: NoteCreate(id: 'n', at: at, mood: Mood.calm, label: null), changed: null).toRecord()['changed'], isNull);
   });
-  test('typed callback commits companions and optimism in one durable transaction', () async {
+  test('a Mutation built from a read commits with its transaction and stays durable', () async {
     final at = DateTime.utc(2026, 9, 23);
     final call = await client.transaction((tx) async {
-      final call = await tx.mutations.touch.withTransaction((local) async {
-        expect(await local.models.note.get(const NoteIdentity(id: 'n')), isNull);
-        await local.models.note.create(NoteCreate(id: 'companion', at: at, mood: Mood.loud, label: null));
-        return TouchInput(note: NoteCreate(id: 'n', at: at, mood: Mood.calm, label: null), changed: null);
-      });
+      expect(await tx.models.note.get(const NoteIdentity(id: 'n')), isNull);
+      final call = await tx.mutations.touch(TouchInput(note: NoteCreate(id: 'n', at: at, mood: Mood.calm, label: null), changed: null));
       await expectLater(call.wait(), throwsA(isA<sdk.CallError>().having((e) => e.code, 'code', 'transaction_uncommitted')));
       return call;
     });
     expect(call.status, sdk.CallStatus.pending);
     expect((await client.models.note.get(const NoteIdentity(id: 'n')))!.at, at);
-    expect((await client.models.note.get(const NoteIdentity(id: 'companion')))!.mood, Mood.loud);
     await client.close();
     expect(((await call.wait()) as sdk.CallFailure).error.code, 'client.closed');
     client = await GeneratedClient.open(path: '${directory.path}/state.sqlite', stream: 'User:viewer', connection: offline(), libraryPath: Platform.environment['AXTON_DART_LIBRARY']!);

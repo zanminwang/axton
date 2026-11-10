@@ -398,7 +398,6 @@ class FetchModels { final Client _client; FetchModels(this._client);
  Future<Snapshot?> snapshot(SnapshotIdentity identity, {bool store = true}) => _client.fetchModel('Snapshot', 1, identity.toRecord(), Snapshot.fromRecord, store: store);
 }
 class GeneratedTransaction { final Transaction transaction; late final TxModels models=TxModels(transaction); GeneratedTransaction(this.transaction); }
-class CompanionContext { final TxModels models; CompanionContext(WritePort port) : models = TxModels(port); }
 class TransactionMutations {
  final SubmitMutationPort port; TransactionMutations(this.port);
  late final PublishMutation publish = PublishMutation(port);
@@ -407,7 +406,6 @@ class PublishMutation {
  final SubmitMutationPort port; PublishMutation(this.port);
  Map<String,dynamic> _encode(PublishInput input) => {'entry': _dartActionEncode(input.entry), 'call': _dartActionEncode(input.call)};
  Future<Call<PublishOutput>> call(PublishInput input) => port.submitMutation<PublishOutput>('Publish', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return PublishOutput(entry: Entry.fromRecord((row['entry'] as Map).cast<String,dynamic>())); });
- Future<Call<PublishOutput>> withTransaction(FutureOr<PublishInput> Function(CompanionContext tx) body) => port.submitMutation<PublishOutput>('Publish', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return PublishOutput(entry: Entry.fromRecord((row['entry'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class ApplicationTransaction extends GeneratedTransaction { late final TransactionMutations mutations = TransactionMutations(transaction); late final rejections = transaction.rejections; late final failures = transaction.failures; ApplicationTransaction(super.transaction); }
 class GeneratedClient {

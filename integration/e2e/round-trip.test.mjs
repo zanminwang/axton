@@ -116,13 +116,8 @@ test(
         entry: { id: "entry-1", text: " first " },
       });
       await gate.arrived;
-      const two = await f.client.mutations.editEntry(async (tx) => {
-        await tx.models.entry.create({
-          id: "companion",
-          text: "device companion",
-          note: null,
-        });
-        return { entry: { id: "entry-1", text: " final " } };
+      const two = await f.client.mutations.editEntry({
+        entry: { id: "entry-1", text: " final " },
       });
       assert.equal(
         (await f.client.models.entry.get({ id: "entry-1" })).text,
@@ -134,10 +129,6 @@ test(
       assert.equal(
         (await f.client.models.entry.get({ id: "entry-1" })).text,
         "final",
-      );
-      assert.equal(
-        (await f.client.models.entry.get({ id: "companion" })).text,
-        "device companion",
       );
     } finally {
       f.proxy.releaseAll();

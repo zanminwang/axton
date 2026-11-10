@@ -13,14 +13,10 @@ const oldStates=StateListV1HandlerOutput(states:[StateListV1OutputStatus.open]);
 Future<void> clientContract(GeneratedClient client) async {
  final Call<AddTodoOutput> call=await client.mutations.addTodo(input);
  final CallOutcome<AddTodoOutput> outcome=await call.wait();
- await client.mutations.addTodo.withTransaction((tx) async {
-  await tx.models.todo.update(identity,const TodoPatch(title:Present('companion')));
-  return input;
- });
+ // A Mutation built from a read: one local transaction holds both.
  await client.transaction((tx) async {
-  await tx.mutations.addTodo.withTransaction((owned) async {
-   await owned.models.todo.delete(identity);return input;
-  });
+  final before=await tx.models.todo.get(identity);
+  await tx.mutations.addTodo(AddTodoInput(todo:todo,patch:patch,gone:const [],status:before?.state,tags:const []));
  });
  final FindTodosOutput found=await client.queries.findTodos(text:'x',cursor:null,store:false);
  await client.queries.findTodos(text:'x',cursor:found.nextCursor,store:true);

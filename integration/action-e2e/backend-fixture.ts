@@ -159,8 +159,7 @@ export async function createFixture() {
     // Stores the Entry, its media and its Journal placement in one backend
     // transaction. While `rejectPublish` is set, or for an Entry listed in
     // `rejectedEntries`, it rejects after the Entry and media are inserted,
-    // so the rejection must roll those back. A client's local companion
-    // writes never arrive here.
+    // so the rejection must roll those back.
     async publishEntry({ ctx, args }) {
       handlerCalls++;
       publishes.push(structuredClone(args));

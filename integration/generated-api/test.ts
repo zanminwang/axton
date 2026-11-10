@@ -6,8 +6,8 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {GeneratedClient,CallError,type Call,type BootstrapPhase,type BootstrapStatus,type RefusedAct,type FailedAct,type FailedTask,type SubmittedAct} from './client.ts';
-import type {EntryIdentity, Placement, Status, Composition, PublishEntryOutput, RenameOutput, SubmitMutationPort, UnsentResolutionPort} from './generated.ts';
-import {ApplicationTransaction,CompanionContext,makeTransactionMutations} from './generated.ts';
+import type {EntryIdentity, Placement, Status, PublishEntryOutput, RenameOutput, SubmitMutationPort, UnsentResolutionPort} from './generated.ts';
+import {ApplicationTransaction,makeTransactionMutations} from './generated.ts';
 import type {Transaction as RawTransaction} from '../../packages/frontend/client-js/index.mts';
 import {Client as RawClient} from '../../packages/frontend/client-js/index.mts';
 import {decodeEntry,encodeEntry,EntryModel,EntryLiveModel,GeneratedTransaction,type Entry,type ReadPort,type LivePort,type WritePort,type MutationName,type SyncState} from './generated.ts';
@@ -150,15 +150,14 @@ if(false){
 const tx=new GeneratedTransaction({...reads,async direct(op){check(JSON.stringify(op)===JSON.stringify({model:'Entry',op:'delete',identity:{id:row.id}}),'local write');}});
 check((await tx.models.entry.get({id:row.id}))?.at instanceof Date,'read decode');
 check((await tx.models.entry.query()).length===1,'query facade');await tx.models.entry.delete({id:row.id});
-// The generated adapter encodes typed input/callback through one named port.
+// The generated adapter encodes typed input through one named port.
 const submissions:{name:string;version:number;args:object}[]=[];
 const registry=new (await import('../../packages/frontend/client-js/api/actions.mts')).ActionRegistry();
-const port:SubmitMutationPort={async submitMutation(name,version,input,decode){const args=typeof input==='function'?await input({...reads,async direct(){}}):input;submissions.push({name,version,args});return registry.register(String(submissions.length),decode);}};
+const port:SubmitMutationPort={async submitMutation(name,version,args,decode){submissions.push({name,version,args});return registry.register(String(submissions.length),decode);}};
 const mutations=makeTransactionMutations(port);
 const directCall:Call<PublishEntryOutput>=await mutations.publishEntry({entry:row,composition:row.id});
-const callbackCall:Call<PublishEntryOutput>=await mutations.publishEntry(async scope=>{const local:Composition|null=await scope.models.composition.get({id:row.id});void local;return {entry:row,composition:row.id};});
-check(directCall.status==='pending'&&callbackCall.status==='pending','generated adapter does not invent settlement');
-assert.equal(submissions.length,2);assert.deepEqual(submissions[0],submissions[1]);
+check(directCall.status==='pending','generated adapter does not invent settlement');
+assert.equal(submissions.length,1);
 assert.equal((submissions[0]!.args as {entry:{at:string}}).entry.at,'2026-01-01T00:00:00.000Z');
 if(false){
  const client={} as GeneratedClient;
@@ -192,12 +191,12 @@ if(false){
  void client.loads;
  // @ts-expect-error no split direct Mutation lane
  void client.mutations.call;
- // @ts-expect-error no callback options; callback returns input
+ // @ts-expect-error no callback options
  void client.mutations.rename({id:row.id,title:'new'},{local:async()=>{}});
  const application={} as ApplicationTransaction;
- void application.mutations.rename(async local=>{await local.models.composition.delete({id:row.id});return {id:row.id,title:'new'};});
+ void application.mutations.rename({id:row.id,title:'new'});
  // @ts-expect-error no Query inside a transaction
  void application.queries;
- // @ts-expect-error callback must return typed input
- void client.mutations.rename(async()=>({id:row.id,title:123}));
+ // @ts-expect-error a Mutation takes its typed input, never a callback
+ void client.mutations.rename(async()=>({id:row.id,title:'new'}));
 }

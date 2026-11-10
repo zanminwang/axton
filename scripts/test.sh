@@ -43,7 +43,7 @@ export AXTON_DART_LIBRARY="$AXTON_LIBRARY"
 cargo run -p axton-compiler --locked -- compile integration/action-runtime-dart integration/action-runtime-dart --backend-runtime ../../packages/backend/server/index.mts --client-runtime ../../packages/frontend/client-js/index.mts
 cargo run -p axton-compiler --locked -- compile integration/action-runtime-dart/model_only integration/action-runtime-dart/model_only --backend-runtime ../../../packages/backend/server/index.mts --client-runtime ../../../packages/frontend/client-js/index.mts
 cargo run -p axton-compiler --locked -- compile integration/action-runtime-dart/model_free integration/action-runtime-dart/model_free --backend-runtime ../../../packages/backend/server/index.mts --client-runtime ../../../packages/frontend/client-js/index.mts
-(cd integration/action-runtime-dart && dart pub get && dart analyze generated.dart generated_test.dart application_data.dart model_only/generated.dart model_free/generated.dart action_e2e_publish.dart action_e2e_datetime.dart && bash check-negative.sh && dart test generated_test.dart && dart run application_data.dart)
+(cd integration/action-runtime-dart && dart pub get && dart analyze generated.dart generated_test.dart application_data.dart model_only/generated.dart model_free/generated.dart action_e2e_datetime.dart && bash check-negative.sh && dart test generated_test.dart && dart run application_data.dart)
 bash integration/generated-api/verify.sh
 # Default-v5 e2e includes retained cascade, constraints/SIGKILL, authenticated
 # Store context, whole-read atomicity and admitted HTTP shutdown assertions.

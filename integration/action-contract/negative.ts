@@ -16,8 +16,8 @@ client.mutate;
 client.loads;
 // @ts-expect-error one Stream selected at open
 client.streams;
-// @ts-expect-error callback must return typed input
-client.mutations.addTodo(async()=> 'bad');
+// @ts-expect-error the Mutation input callback is retired
+client.mutations.addTodo(async()=>input);
 // @ts-expect-error old local option removed
 client.mutations.addTodo(input,{local:async()=>{}});
 // @ts-expect-error Mutation has no store option
@@ -30,13 +30,8 @@ client.queries.findTodos({text:'x'});
 client.mutations.findTodos({text:'x',cursor:null});
 // @ts-expect-error no backend reads inside transaction
 client.transaction(async tx=>tx.queries.findTodos({text:'x',cursor:null}));
-client.mutations.addTodo(async tx=>{
- // @ts-expect-error owned callback has no remote Mutation capability
- tx.mutations;
- // @ts-expect-error owned callback has no watches
- tx.models.todo.watch({},()=>{});
- return input;
-});
+// @ts-expect-error the Mutation input callback is retired inside a transaction too
+client.transaction(async tx=>tx.mutations.addTodo(async()=>input));
 // @ts-expect-error defaulted nullable memo remains required
 client.models.note.create({});
 // @ts-expect-error explicit nonnullable default cannot be null

@@ -167,19 +167,18 @@ test("generated bound native Store keeps local CRUD and named optimism durable o
     stop();
     assert.ok(seen.includes("empty") && seen.includes("local"));
     const pending: Call<{ todo: Todo | null; echoed: Date }> =
-      await client.mutations.change(async (tx) => {
-        assert.equal((await tx.models.todo.get({ id: "one" }))?.title, "local");
-        await tx.models.pin.create({ todo: "one", at, label: "companion" });
-        return { todo: { id: "one", title: "optimistic" }, at };
+      await client.transaction(async (tx) => {
+        const read = await tx.models.todo.get({ id: "one" });
+        assert.equal(read?.title, "local");
+        return tx.mutations.change({
+          todo: { id: "one", title: `optimistic ${read?.title}` },
+          at,
+        });
       });
     assert.equal(pending.status, "pending");
     assert.equal(
       (await client.models.todo.get({ id: "one" }))?.title,
-      "optimistic",
-    );
-    assert.equal(
-      (await client.models.pin.get({ todo: "one", at }))?.label,
-      "companion",
+      "optimistic local",
     );
     assert.equal((await client.syncState()).pending, 1);
     await client.close();
@@ -192,11 +191,7 @@ test("generated bound native Store keeps local CRUD and named optimism durable o
     assert.equal((await client.syncState()).pending, 1);
     assert.equal(
       (await client.models.todo.get({ id: "one" }))?.title,
-      "optimistic",
-    );
-    assert.equal(
-      (await client.models.pin.get({ todo: "one", at }))?.label,
-      "companion",
+      "optimistic local",
     );
   } finally {
     await client?.close();

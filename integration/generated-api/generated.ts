@@ -639,12 +639,10 @@ export function fetchModels(port:FetchPort):FetchModels { return {
  composition:(identity,options)=>port.fetchModel('Composition',1,encodeCompositionIdentity(identity),decodeComposition,options),
 }; }
 export class GeneratedTransaction { readonly transaction:WritePort; readonly models:TxModels; constructor(transaction:WritePort) { this.transaction=transaction; this.models=txModels(transaction); } }
-export interface SubmitMutationPort { submitMutation<T>(name:string,version:number,input:object | ((port:WritePort) => Promise<object>),decode:(value:unknown)=>T):Promise<Call<T>>; }
+export interface SubmitMutationPort { submitMutation<T>(name:string,version:number,input:object,decode:(value:unknown)=>T):Promise<Call<T>>; }
 export interface UnsentResolutionPort { readonly rejections:{ dismiss(id:number):Promise<void> }; readonly failures:{ retry(taskKeys:string[]):Promise<void>; drop(ordinal:number):Promise<void> }; }
-/** Local Model operations owned by one Mutation. */
-export class CompanionContext { readonly models:TxModels; constructor(port:WritePort) { this.models=txModels(port); } }
 export function makeTransactionMutations(port:SubmitMutationPort) { return {
- publishEntry: (input:PublishEntryInput | ((tx:CompanionContext) => PublishEntryInput | Promise<PublishEntryInput>)):Promise<Call<PublishEntryOutput>> => port.submitMutation('PublishEntry',1,typeof input === 'function' ? async (companion:WritePort) => encodePublishEntryInput(await input(new CompanionContext(companion))) : encodePublishEntryInput(input),decodePublishEntryOutput),
- rename: (input:RenameInput | ((tx:CompanionContext) => RenameInput | Promise<RenameInput>)):Promise<Call<RenameOutput>> => port.submitMutation('Rename',1,typeof input === 'function' ? async (companion:WritePort) => encodeRenameInput(await input(new CompanionContext(companion))) : encodeRenameInput(input),decodeRenameOutput),
+ publishEntry: (input:PublishEntryInput):Promise<Call<PublishEntryOutput>> => port.submitMutation('PublishEntry',1,encodePublishEntryInput(input),decodePublishEntryOutput),
+ rename: (input:RenameInput):Promise<Call<RenameOutput>> => port.submitMutation('Rename',1,encodeRenameInput(input),decodeRenameOutput),
 }; }
 export class ApplicationTransaction extends GeneratedTransaction { readonly mutations:ReturnType<typeof makeTransactionMutations>; readonly rejections:UnsentResolutionPort['rejections']; readonly failures:UnsentResolutionPort['failures']; constructor(transaction:WritePort & SubmitMutationPort & UnsentResolutionPort) { super(transaction); this.mutations=makeTransactionMutations(transaction); this.rejections=transaction.rejections; this.failures=transaction.failures; } }

@@ -9,7 +9,7 @@ Future<void> misuse(GeneratedClient client,Call<AddTodoOutput> call) async {
  client.streams; // error: undefined_getter
  client.mutate; // error: undefined_getter
  await client.mutations.addTodo('bad'); // error: argument_type_not_assignable
- await client.mutations.addTodo.withTransaction((tx) async => 'bad'); // error: return_of_invalid_type_from_closure
+ await client.mutations.addTodo.withTransaction((tx) async => input); // error: undefined_method
  await client.mutations.addTodo(input,local:(_) async {}); // error: undefined_named_parameter
  await client.mutations.addTodo(input,store:false); // error: undefined_named_parameter
  await client.queries.findTodos(text:'x',cursor:null,store:{'todos':false}); // error: argument_type_not_assignable
@@ -19,9 +19,9 @@ Future<void> misuse(GeneratedClient client,Call<AddTodoOutput> call) async {
   tx.mutations.call; // error: undefined_getter
   tx.models.todo.watch(); // error: undefined_method
  });
- await client.mutations.addTodo.withTransaction((tx) async {
-  tx.mutations; // error: undefined_getter
-  return input;
+ await client.transaction((tx) async {
+  await tx.mutations.addTodo.withTransaction((owned) async => input); // error: undefined_method
+  await tx.mutations.addTodo((owned) async => input); // error: argument_type_not_assignable
  });
  await client.models.note.create(const NoteCreate()); // error: missing_required_argument
  await client.models.todo.update(const TodoIdentity(id:'t'),const TodoPatch(id:'changed')); // error: undefined_named_parameter

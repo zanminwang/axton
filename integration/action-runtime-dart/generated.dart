@@ -328,7 +328,6 @@ class FetchModels { final Client _client; FetchModels(this._client);
  Future<Note?> note(NoteIdentity identity, {bool store = true}) => _client.fetchModel('Note', 1, identity.toRecord(), Note.fromRecord, store: store);
 }
 class GeneratedTransaction { final Transaction transaction; late final TxModels models=TxModels(transaction); GeneratedTransaction(this.transaction); }
-class CompanionContext { final TxModels models; CompanionContext(WritePort port) : models = TxModels(port); }
 class TransactionMutations {
  final SubmitMutationPort port; TransactionMutations(this.port);
  late final EchoMutation echo = EchoMutation(port);
@@ -339,19 +338,16 @@ class EchoMutation {
  final SubmitMutationPort port; EchoMutation(this.port);
  Map<String,dynamic> _encode(EchoInput input) => {'at': _dartActionEncode(input.at), 'moods': _dartActionEncode(input.moods), 'maybe': _dartActionEncode(input.maybe)};
  Future<Call<EchoOutput>> call(EchoInput input) => port.submitMutation<EchoOutput>('Echo', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return EchoOutput(result: DateTime.parse(row['result'] as String), moods: (row['moods'] as List).map((e) => Mood.values.byName(e as String)).toList(), maybe: row['maybe'] == null ? null : DateTime.parse(row['maybe'] as String)); });
- Future<Call<EchoOutput>> withTransaction(FutureOr<EchoInput> Function(CompanionContext tx) body) => port.submitMutation<EchoOutput>('Echo', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return EchoOutput(result: DateTime.parse(row['result'] as String), moods: (row['moods'] as List).map((e) => Mood.values.byName(e as String)).toList(), maybe: row['maybe'] == null ? null : DateTime.parse(row['maybe'] as String)); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class PingMutation {
  final SubmitMutationPort port; PingMutation(this.port);
  Map<String,dynamic> _encode(PingInput input) => {};
  Future<Call<PingOutput>> call(PingInput input) => port.submitMutation<PingOutput>('Ping', 1, _encode(input), (_) {});
- Future<Call<PingOutput>> withTransaction(FutureOr<PingInput> Function(CompanionContext tx) body) => port.submitMutation<PingOutput>('Ping', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class TouchMutation {
  final SubmitMutationPort port; TouchMutation(this.port);
  Map<String,dynamic> _encode(TouchInput input) => {'note': _dartActionEncode(input.note), 'changed': _dartActionEncode(input.changed)};
  Future<Call<TouchOutput>> call(TouchInput input) => port.submitMutation<TouchOutput>('Touch', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return TouchOutput(stamp: DateTime.parse(row['stamp'] as String)); });
- Future<Call<TouchOutput>> withTransaction(FutureOr<TouchInput> Function(CompanionContext tx) body) => port.submitMutation<TouchOutput>('Touch', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return TouchOutput(stamp: DateTime.parse(row['stamp'] as String)); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class ApplicationTransaction extends GeneratedTransaction { late final TransactionMutations mutations = TransactionMutations(transaction); late final rejections = transaction.rejections; late final failures = transaction.failures; ApplicationTransaction(super.transaction); }
 class GeneratedClient {

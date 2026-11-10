@@ -154,7 +154,6 @@ class FetchModels { final Client _client; FetchModels(this._client);
  Future<Entry?> entry(EntryIdentity identity, {bool store = true}) => _client.fetchModel('Entry', 1, identity.toRecord(), Entry.fromRecord, store: store);
 }
 class GeneratedTransaction { final Transaction transaction; late final TxModels models=TxModels(transaction); GeneratedTransaction(this.transaction); }
-class CompanionContext { final TxModels models; CompanionContext(WritePort port) : models = TxModels(port); }
 class TransactionMutations {
  final SubmitMutationPort port; TransactionMutations(this.port);
  late final CreateEntryMutation createEntry = CreateEntryMutation(port);
@@ -163,7 +162,6 @@ class CreateEntryMutation {
  final SubmitMutationPort port; CreateEntryMutation(this.port);
  Map<String,dynamic> _encode(CreateEntryInput input) => {'entry': _dartActionEncode(input.entry)};
  Future<Call<CreateEntryOutput>> call(CreateEntryInput input) => port.submitMutation<CreateEntryOutput>('CreateEntry', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return CreateEntryOutput(entry: Entry.fromRecord((row['entry'] as Map).cast<String,dynamic>())); });
- Future<Call<CreateEntryOutput>> withTransaction(FutureOr<CreateEntryInput> Function(CompanionContext tx) body) => port.submitMutation<CreateEntryOutput>('CreateEntry', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return CreateEntryOutput(entry: Entry.fromRecord((row['entry'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class ApplicationTransaction extends GeneratedTransaction { late final TransactionMutations mutations = TransactionMutations(transaction); late final rejections = transaction.rejections; late final failures = transaction.failures; ApplicationTransaction(super.transaction); }
 class GeneratedClient {

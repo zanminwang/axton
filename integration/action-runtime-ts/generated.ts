@@ -360,16 +360,14 @@ export function fetchModels(port:FetchPort):FetchModels { return {
  pin:(identity,options)=>port.fetchModel('Pin',1,encodePinIdentity(identity),decodePin,options),
 }; }
 export class GeneratedTransaction { readonly transaction:WritePort; readonly models:TxModels; constructor(transaction:WritePort) { this.transaction=transaction; this.models=txModels(transaction); } }
-export interface SubmitMutationPort { submitMutation<T>(name:string,version:number,input:object | ((port:WritePort) => Promise<object>),decode:(value:unknown)=>T):Promise<Call<T>>; }
+export interface SubmitMutationPort { submitMutation<T>(name:string,version:number,input:object,decode:(value:unknown)=>T):Promise<Call<T>>; }
 export interface UnsentResolutionPort { readonly rejections:{ dismiss(id:number):Promise<void> }; readonly failures:{ retry(taskKeys:string[]):Promise<void>; drop(ordinal:number):Promise<void> }; }
-/** Local Model operations owned by one Mutation. */
-export class CompanionContext { readonly models:TxModels; constructor(port:WritePort) { this.models=txModels(port); } }
 export function makeTransactionMutations(port:SubmitMutationPort) { return {
- change: (input:ChangeInput | ((tx:CompanionContext) => ChangeInput | Promise<ChangeInput>)):Promise<Call<ChangeOutput>> => port.submitMutation('Change',1,typeof input === 'function' ? async (companion:WritePort) => encodeChangeInput(await input(new CompanionContext(companion))) : encodeChangeInput(input),decodeChangeOutput),
- clear: (input:ClearInput | ((tx:CompanionContext) => ClearInput | Promise<ClearInput>)):Promise<Call<ClearOutput>> => port.submitMutation('Clear',1,typeof input === 'function' ? async (companion:WritePort) => encodeClearInput(await input(new CompanionContext(companion))) : encodeClearInput(input),decodeClearOutput),
- mark: (input:MarkInput | ((tx:CompanionContext) => MarkInput | Promise<MarkInput>)):Promise<Call<MarkOutput>> => port.submitMutation('Mark',1,typeof input === 'function' ? async (companion:WritePort) => encodeMarkInput(await input(new CompanionContext(companion))) : encodeMarkInput(input),decodeMarkOutput),
- ping: (input:PingInput | ((tx:CompanionContext) => PingInput | Promise<PingInput>)):Promise<Call<PingOutput>> => port.submitMutation('Ping',1,typeof input === 'function' ? async (companion:WritePort) => encodePingInput(await input(new CompanionContext(companion))) : encodePingInput(input),decodePingOutput),
- put: (input:PutInput | ((tx:CompanionContext) => PutInput | Promise<PutInput>)):Promise<Call<PutOutput>> => port.submitMutation('Put',2,typeof input === 'function' ? async (companion:WritePort) => encodePutInput(await input(new CompanionContext(companion))) : encodePutInput(input),decodePutOutput),
- removeMoment: (input:RemoveMomentInput | ((tx:CompanionContext) => RemoveMomentInput | Promise<RemoveMomentInput>)):Promise<Call<RemoveMomentOutput>> => port.submitMutation('RemoveMoment',1,typeof input === 'function' ? async (companion:WritePort) => encodeRemoveMomentInput(await input(new CompanionContext(companion))) : encodeRemoveMomentInput(input),decodeRemoveMomentOutput),
+ change: (input:ChangeInput):Promise<Call<ChangeOutput>> => port.submitMutation('Change',1,encodeChangeInput(input),decodeChangeOutput),
+ clear: (input:ClearInput):Promise<Call<ClearOutput>> => port.submitMutation('Clear',1,encodeClearInput(input),decodeClearOutput),
+ mark: (input:MarkInput):Promise<Call<MarkOutput>> => port.submitMutation('Mark',1,encodeMarkInput(input),decodeMarkOutput),
+ ping: (input:PingInput):Promise<Call<PingOutput>> => port.submitMutation('Ping',1,encodePingInput(input),decodePingOutput),
+ put: (input:PutInput):Promise<Call<PutOutput>> => port.submitMutation('Put',2,encodePutInput(input),decodePutOutput),
+ removeMoment: (input:RemoveMomentInput):Promise<Call<RemoveMomentOutput>> => port.submitMutation('RemoveMoment',1,encodeRemoveMomentInput(input),decodeRemoveMomentOutput),
 }; }
 export class ApplicationTransaction extends GeneratedTransaction { readonly mutations:ReturnType<typeof makeTransactionMutations>; readonly rejections:UnsentResolutionPort['rejections']; readonly failures:UnsentResolutionPort['failures']; constructor(transaction:WritePort & SubmitMutationPort & UnsentResolutionPort) { super(transaction); this.mutations=makeTransactionMutations(transaction); this.rejections=transaction.rejections; this.failures=transaction.failures; } }

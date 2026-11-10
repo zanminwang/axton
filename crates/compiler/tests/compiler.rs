@@ -1380,7 +1380,6 @@ fn action_dart_binds_shared_runtime_and_retained_codecs() {
         ".toAxtonPrecision().toIso8601String()",
         "class NoteLiveModel extends NoteTxModel",
         "port.submitMutation<SaveOutput>",
-        "withTransaction(FutureOr<SaveInput>",
     ] {
         assert!(dart.contains(expected), "{expected}: {dart}");
     }

@@ -293,7 +293,6 @@ class FetchModels { final Client _client; FetchModels(this._client);
  Future<Todo?> todo(TodoIdentity identity, {bool store = true}) => _client.fetchModel('Todo', 1, identity.toRecord(), Todo.fromRecord, store: store);
 }
 class GeneratedTransaction { final Transaction transaction; late final TxModels models=TxModels(transaction); GeneratedTransaction(this.transaction); }
-class CompanionContext { final TxModels models; CompanionContext(WritePort port) : models = TxModels(port); }
 class TransactionMutations {
  final SubmitMutationPort port; TransactionMutations(this.port);
  late final AddTodoMutation addTodo = AddTodoMutation(port);
@@ -303,13 +302,11 @@ class AddTodoMutation {
  final SubmitMutationPort port; AddTodoMutation(this.port);
  Map<String,dynamic> _encode(AddTodoInput input) => {'todo': _dartActionEncode(input.todo)};
  Future<Call<AddTodoOutput>> call(AddTodoInput input) => port.submitMutation<AddTodoOutput>('AddTodo', 1, _encode(input), (_) {});
- Future<Call<AddTodoOutput>> withTransaction(FutureOr<AddTodoInput> Function(CompanionContext tx) body) => port.submitMutation<AddTodoOutput>('AddTodo', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class SetTodoDoneMutation {
  final SubmitMutationPort port; SetTodoDoneMutation(this.port);
  Map<String,dynamic> _encode(SetTodoDoneInput input) => {'todo': _dartActionEncode(input.todo)};
  Future<Call<SetTodoDoneOutput>> call(SetTodoDoneInput input) => port.submitMutation<SetTodoDoneOutput>('SetTodoDone', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return SetTodoDoneOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
- Future<Call<SetTodoDoneOutput>> withTransaction(FutureOr<SetTodoDoneInput> Function(CompanionContext tx) body) => port.submitMutation<SetTodoDoneOutput>('SetTodoDone', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return SetTodoDoneOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class ApplicationTransaction extends GeneratedTransaction { late final TransactionMutations mutations = TransactionMutations(transaction); late final rejections = transaction.rejections; late final failures = transaction.failures; ApplicationTransaction(super.transaction); }
 class GeneratedClient {

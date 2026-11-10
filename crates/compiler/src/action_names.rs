@@ -59,7 +59,6 @@ fn position(declarations: Option<&Declarations>, owner: &str) -> Option<Pos> {
 /// bind to.
 const TRANSACTION_HELPERS: &[&str] = &[
     "ApplicationTransaction",
-    "CompanionContext",
     "SubmitMutationPort",
     "TransactionMutations",
     "UnsentResolutionPort",

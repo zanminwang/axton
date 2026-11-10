@@ -3,14 +3,16 @@ use axton_compiler::compile;
 const SCHEMA: &str = "model Entry { id String title String @@id(id) } mutation Publish(entry Entry.create, call String) { entry Entry } query Find(id String) { entry Entry? }";
 
 #[test]
-fn typescript_named_mutation_uses_one_input_or_callback_scope() {
+fn typescript_named_mutation_takes_one_typed_input() {
     let schema = compile(SCHEMA).unwrap();
     let output = axton_compiler::typescript(&schema);
     assert!(
-        output.contains(
-            "input:PublishInput | ((tx:CompanionContext) => PublishInput | Promise<PublishInput>)"
-        ),
-        "typed callback missing"
+        output.contains("publish: (input:PublishInput):Promise<Call<PublishOutput>>"),
+        "typed input missing"
+    );
+    assert!(
+        !output.contains("CompanionContext"),
+        "input callback remains"
     );
     assert!(!output.contains(" call: {"), "direct mutation lane remains");
     assert!(
@@ -25,7 +27,7 @@ fn typescript_named_mutation_uses_one_input_or_callback_scope() {
 }
 
 #[test]
-fn dart_named_mutation_preserves_call_field_and_typed_callback() {
+fn dart_named_mutation_preserves_call_field_and_typed_input() {
     let schema = compile(SCHEMA).unwrap();
     let output = axton_compiler::dart(&schema);
     assert!(output.contains("class PublishInput"), "typed input missing");
@@ -38,8 +40,8 @@ fn dart_named_mutation_preserves_call_field_and_typed_callback() {
         "typed input invocation missing"
     );
     assert!(
-        output.contains("withTransaction(FutureOr<PublishInput> Function(CompanionContext tx)"),
-        "typed callback invocation missing"
+        !output.contains("withTransaction"),
+        "input callback invocation remains"
     );
     assert!(!output.contains("class DirectMutations"));
     assert!(!output.contains("class QueuedQueries"));

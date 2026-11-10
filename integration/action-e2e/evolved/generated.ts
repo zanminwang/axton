@@ -176,15 +176,13 @@ export function fetchModels(port:FetchPort):FetchModels { return {
  todo:(identity,options)=>port.fetchModel('Todo',2,encodeTodoIdentity(identity),decodeTodo,options),
 }; }
 export class GeneratedTransaction { readonly transaction:WritePort; readonly models:TxModels; constructor(transaction:WritePort) { this.transaction=transaction; this.models=txModels(transaction); } }
-export interface SubmitMutationPort { submitMutation<T>(name:string,version:number,input:object | ((port:WritePort) => Promise<object>),decode:(value:unknown)=>T):Promise<Call<T>>; }
+export interface SubmitMutationPort { submitMutation<T>(name:string,version:number,input:object,decode:(value:unknown)=>T):Promise<Call<T>>; }
 export interface UnsentResolutionPort { readonly rejections:{ dismiss(id:number):Promise<void> }; readonly failures:{ retry(taskKeys:string[]):Promise<void>; drop(ordinal:number):Promise<void> }; }
-/** Local Model operations owned by one Mutation. */
-export class CompanionContext { readonly models:TxModels; constructor(port:WritePort) { this.models=txModels(port); } }
 export function makeTransactionMutations(port:SubmitMutationPort) { return {
- addTodo: (input:AddTodoInput | ((tx:CompanionContext) => AddTodoInput | Promise<AddTodoInput>)):Promise<Call<AddTodoOutput>> => port.submitMutation('AddTodo',2,typeof input === 'function' ? async (companion:WritePort) => encodeAddTodoInput(await input(new CompanionContext(companion))) : encodeAddTodoInput(input),decodeAddTodoOutput),
- deleteTodo: (input:DeleteTodoInput | ((tx:CompanionContext) => DeleteTodoInput | Promise<DeleteTodoInput>)):Promise<Call<DeleteTodoOutput>> => port.submitMutation('DeleteTodo',1,typeof input === 'function' ? async (companion:WritePort) => encodeDeleteTodoInput(await input(new CompanionContext(companion))) : encodeDeleteTodoInput(input),decodeDeleteTodoOutput),
- retitleTodos: (input:RetitleTodosInput | ((tx:CompanionContext) => RetitleTodosInput | Promise<RetitleTodosInput>)):Promise<Call<RetitleTodosOutput>> => port.submitMutation('RetitleTodos',2,typeof input === 'function' ? async (companion:WritePort) => encodeRetitleTodosInput(await input(new CompanionContext(companion))) : encodeRetitleTodosInput(input),decodeRetitleTodosOutput),
- sendEmail: (input:SendEmailInput | ((tx:CompanionContext) => SendEmailInput | Promise<SendEmailInput>)):Promise<Call<SendEmailOutput>> => port.submitMutation('SendEmail',1,typeof input === 'function' ? async (companion:WritePort) => encodeSendEmailInput(await input(new CompanionContext(companion))) : encodeSendEmailInput(input),decodeSendEmailOutput),
- updateTodo: (input:UpdateTodoInput | ((tx:CompanionContext) => UpdateTodoInput | Promise<UpdateTodoInput>)):Promise<Call<UpdateTodoOutput>> => port.submitMutation('UpdateTodo',2,typeof input === 'function' ? async (companion:WritePort) => encodeUpdateTodoInput(await input(new CompanionContext(companion))) : encodeUpdateTodoInput(input),decodeUpdateTodoOutput),
+ addTodo: (input:AddTodoInput):Promise<Call<AddTodoOutput>> => port.submitMutation('AddTodo',2,encodeAddTodoInput(input),decodeAddTodoOutput),
+ deleteTodo: (input:DeleteTodoInput):Promise<Call<DeleteTodoOutput>> => port.submitMutation('DeleteTodo',1,encodeDeleteTodoInput(input),decodeDeleteTodoOutput),
+ retitleTodos: (input:RetitleTodosInput):Promise<Call<RetitleTodosOutput>> => port.submitMutation('RetitleTodos',2,encodeRetitleTodosInput(input),decodeRetitleTodosOutput),
+ sendEmail: (input:SendEmailInput):Promise<Call<SendEmailOutput>> => port.submitMutation('SendEmail',1,encodeSendEmailInput(input),decodeSendEmailOutput),
+ updateTodo: (input:UpdateTodoInput):Promise<Call<UpdateTodoOutput>> => port.submitMutation('UpdateTodo',2,encodeUpdateTodoInput(input),decodeUpdateTodoOutput),
 }; }
 export class ApplicationTransaction extends GeneratedTransaction { readonly mutations:ReturnType<typeof makeTransactionMutations>; readonly rejections:UnsentResolutionPort['rejections']; readonly failures:UnsentResolutionPort['failures']; constructor(transaction:WritePort & SubmitMutationPort & UnsentResolutionPort) { super(transaction); this.mutations=makeTransactionMutations(transaction); this.rejections=transaction.rejections; this.failures=transaction.failures; } }

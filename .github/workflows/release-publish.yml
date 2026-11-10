@@ -61,7 +61,7 @@ jobs:
       matrix:
         include:
           - target: darwin-arm64
-            runner: macos-14
+            runner: macos-15
             container: ''
             library: libaxton_dart.dylib
           # Debian 12 keeps the Linux artifacts' glibc requirement at 2.36.
@@ -113,7 +113,7 @@ jobs:
 
   build-ios:
     needs: version
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
     permissions:
       contents: read
@@ -241,7 +241,7 @@ jobs:
     needs: [version, pack]
     strategy:
       matrix:
-        os: [macos-14, ubuntu-24.04]
+        os: [macos-15, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
@@ -421,7 +421,7 @@ jobs:
     needs: [version, publish-npm, publish-dart]
     strategy:
       matrix:
-        os: [macos-14, ubuntu-24.04]
+        os: [macos-15, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:

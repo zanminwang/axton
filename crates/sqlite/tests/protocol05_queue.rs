@@ -1426,3 +1426,84 @@ fn settlement_neither_awaits_nor_installs_a_target_that_is_not_shared() {
         }
     }
 }
+/// `Pair` updates `A` and `B`; `Touch` updates `B` and is sequenced after a
+/// `Pair` on the same `B`. `A`'s identity is `identity`.
+fn sequenced_schema(identity: &[&str]) -> Schema {
+    let text =
+        |name: &str| json!({"name":name,"nullable":false,"type":{"kind":"scalar","name":"string"}});
+    let a =
+        json!({"name":"A","identity":identity,"fields":[text("id"),text("code"),text("title")]});
+    let b = json!({"name":"B","identity":["id"],"fields":[text("id"),text("title")]});
+    Schema::from_value(json!({"enums":[],"models":[a,b],"actions":[
+        {"name":"Pair","version":1,"inputs":[
+            {"kind":"model","name":"a","model":"A","operation":"update","cardinality":"single","fields":["title"]},
+            {"kind":"model","name":"b","model":"B","operation":"update","cardinality":"single","fields":["title"]}],"outputs":[]},
+        {"name":"Touch","version":1,"inputs":[
+            {"kind":"model","name":"b","model":"B","operation":"update","cardinality":"single","fields":["title"]}],"outputs":[],
+            "sequence":{"after":[{"name":"Pair","arguments":{"b":"b"}}]}}]}))
+    .unwrap()
+}
+#[test]
+fn an_action_sequenced_after_a_diverged_mutation_can_be_enqueued() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = Client::open05(
+        SqliteStore::open(&p).unwrap(),
+        sequenced_schema(&["id"]),
+        "User:u",
+    )
+    .unwrap();
+    c.initialize_stream05(0, "1").unwrap();
+    c.transaction(|tx| {
+        tx.direct(axton_client::Operation {
+            model: "A".into(),
+            op: axton_client::OperationKind::Create,
+            identity: json!({"id":"a"}),
+            values: Some(json!({"code":"c","title":"A0"})),
+        })?;
+        tx.direct(row("B", "b", json!("B0")))
+    })
+    .unwrap();
+    let pair = c
+        .transaction(|tx| {
+            tx.submit_mutation05(
+                "Pair",
+                1,
+                json!({"a":{"id":"a","title":"A1"},"b":{"id":"b","title":"B1"}}),
+                vec![],
+            )
+        })
+        .unwrap();
+    // Before the upgrade the sequence edge is derived from Pair's input.
+    let first = c
+        .transaction(|tx| {
+            tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B2"}}), vec![])
+        })
+        .unwrap();
+    let raw = rusqlite::Connection::open(&p).unwrap();
+    let edges = |raw: &rusqlite::Connection, ordinal: u64| -> Vec<i64> {
+        let mut s = raw
+            .prepare("SELECT depends_on FROM axton_mutation_dependency WHERE ordinal=? AND kind='sequence'")
+            .unwrap();
+        s.query_map([ordinal as i64], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    assert_eq!(edges(&raw, first.ordinal), vec![pair.ordinal as i64]);
+    drop(c);
+    // `A`'s identity now needs `code`, which Pair's input never carried.
+    let mut c = Client::open05(
+        SqliteStore::open(&p).unwrap(),
+        sequenced_schema(&["id", "code"]),
+        "User:u",
+    )
+    .unwrap();
+    let after = c
+        .transaction(|tx| {
+            tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B3"}}), vec![])
+        })
+        .expect("a prior that is not shared takes no part in sequence derivation");
+    assert!(edges(&raw, after.ordinal).is_empty());
+    assert_eq!(c.read(&pair_key("B", "b")).unwrap().unwrap()["title"], "B3");
+}

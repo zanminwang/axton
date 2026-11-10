@@ -49,7 +49,7 @@ Model rows, before-images, authority evidence and the Mutation queue are not tou
 When the Store is next connected, the existing scheduler does the rest (`crates/client/src/sync05/downlink.rs:692-703`):
 
 - Bootstrap pulls the `@@bootstrap` Models over `(0, S]` in the new contract. The server serves any `through` at or below its head (`crates/server/src/delivery_plan.rs:501-503`), and the client checks only `through <= S` (`delta_applier.rs:124-125`). Each delivered record overwrites the held row (§2.3).
-- Sync continues from `C`. Every change and Remove published after `C` still arrives.
+- Sync continues from `C`. Every change, delete and Remove published after `C` still arrives. A Remove keeps the row's content and releases its protection, as it always has (`crates/core/src/authority.rs`, `remove`).
 
 Setting `S = C` keeps `C >= S`, and keeps settlement rule 3 of stream-only-downlink true: a target at or below `S` in an unmarked Model is never redelivered, so it settles from the receipt.
 
@@ -123,7 +123,7 @@ Across an upgrade, queued Mutations are never deleted and are uploaded, and the 
 
 - "Pulled again" means the records the Store's Stream already tracks. The backend's Bootstrap handler does not run again for an existing Store (`delivery_plan.rs:84-101`), so a Model newly marked `@@bootstrap` brings only its tracked records.
 - A held row stays until something overwrites it. Between the upgrade and the end of Bootstrap the app reads rows in the previous contract's content; an added field is empty or its default.
-- A row of an unmarked Model is cache after an upgrade. It is replaced by a later Stream change or Query result. If a new projection generation hides that record, nothing redelivers it (a Loader null becomes a delete only on redelivery, `delivery_plan.rs:288-292`), and the row stays until the record changes or leaves the Stream.
+- A row of an unmarked Model is cache after an upgrade. It is replaced by a later Stream change or Query result. If a new projection generation hides that record, nothing redelivers it (a Loader null becomes a delete only on redelivery, `delivery_plan.rs:288-292`), and the row stays until a later Stream change replaces or deletes it.
 - Rows of a reset Model are gone until they are delivered or queried again.
 
 ## 3. Changes
@@ -157,7 +157,7 @@ Across an upgrade, queued Mutations are never deleted and are uploaded, and the 
 ## 4. Decisions
 
 - **Overwrite; delete nothing** (user, 2026-11-09). Rejected: clear the server-derived rows and keep the queue. The optimistic view needs base rows, so the clear needs exceptions for every key a Mutation holds. Rejected: a new database per version, which has the same problem and also has to move the queue.
-- **Keep `C`; set `S = C`.** Rejected: nulling all three positions, which forces either a clear or a sweep to find rows the server no longer gives. With `C` kept, Removes after `C` arrive by Sync. Rejected: `S` = the next handshake head, which makes the upgrade wait for the network and breaks `C >= S`.
+- **Keep `C`; set `S = C`.** Rejected: nulling all three positions, which forces either a clear or a sweep to find rows the server no longer gives. With `C` kept, deletes and Removes after `C` arrive by Sync. Rejected: `S` = the next handshake head, which makes the upgrade wait for the network and breaks `C >= S`.
 - **No sweep after Bootstrap** (user, 2026-11-09). A kept row the Stream does not redeliver is cache, the same standing as a row a Query installed. Cost: the hidden-record limit in §2.7.
 - **No migration scripts** (user, 2026-11-09). The server holds the data; a table that cannot be altered in place is emptied and filled again.
 - **Reset an incompatible Model instead of refusing to open.** Rejected: today's refusal, whose only exit is `resetStore` and the loss of the queue.
@@ -184,7 +184,7 @@ Design review (2026-11-09) changed: the upgrade also runs on a Model reset; §2.
 | A return to an earlier materialization (generation A, B, A) overwrites the row each time | `crates/sqlite/tests/protocol05_authority.rs` |
 | A kept row of an unmarked Model is replaced by a Query result after the upgrade, and is not replaced before it | `crates/sqlite/tests/protocol05_cache.rs` |
 | A tombstone from before the upgrade does not block a cache install after it; one written after it does | `crates/sqlite/tests/protocol05_cache.rs` |
-| A Remove published after `C` deletes its kept row after the upgrade | `crates/sqlite/tests/protocol05_downlink.rs` |
+| After the upgrade, a delete delivered after `C` deletes its kept row, and a Remove after `C` arrives and releases the row's protection | `crates/sqlite/tests/protocol05_downlink.rs` |
 | A Batch frozen before the upgrade is sent after it with the same digest and the new context, and the server accepts it | `crates/sqlite/tests/protocol05_queue.rs`, `integration/v05-sdk/client.mjs` |
 | A Batch executed before the upgrade whose receipt was lost: the resend returns outcomes labelled with the old materialization; the client settles them and installs no snapshot | `integration/v05-sdk/client.mjs` |
 | A Batch partly executed before the upgrade returns mixed labels; each outcome follows its own label | `crates/server/tests/`, `crates/sqlite/tests/protocol05_settlement.rs` |

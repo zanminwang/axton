@@ -1842,3 +1842,87 @@ fn already_dispatched_freeze_waits_for_reconciliation_before_push() {
         }
     }
 }
+
+fn handshake_effect(control: &mut axton_client::sync05::Control) -> Option<String> {
+    use axton_client::runtime::{Event, HttpRoute, Operation};
+    control.events().into_iter().find_map(|event| match event {
+        Event::Effect {
+            effect_id,
+            operation:
+                Operation::Http {
+                    route: HttpRoute::Handshake,
+                    ..
+                },
+        } => Some(effect_id),
+        _ => None,
+    })
+}
+fn answer_handshake(
+    control: &mut axton_client::sync05::Control,
+    id: &str,
+    context: &v05::RequestContext,
+    generation: &str,
+) {
+    let body = serde_json::to_string(&v05::HandshakeResponse {
+        protocol: v05::PROTOCOL,
+        store_id: context.store_id.clone(),
+        stream: context.stream.clone(),
+        head: 0,
+        projection_generation: generation.into(),
+    })
+    .unwrap();
+    control
+        .receive(
+            id,
+            axton_client::runtime::EffectOutcome {
+                ok: true,
+                value: Some(serde_json::Value::String(body)),
+                error: None,
+            },
+            1,
+        )
+        .unwrap();
+}
+fn freezes(jobs: &[axton_client::sync05::StoreCommand]) -> bool {
+    use axton_client::sync05::StoreCommand;
+    jobs.iter().any(|job| {
+        matches!(job, StoreCommand::Guarded { command, .. } if matches!(**command, StoreCommand::Freeze))
+    })
+}
+#[test]
+fn freeze_in_flight_across_a_handshake_rollover_does_not_stall_the_uplink() {
+    use axton_client::sync05::{Control, StoreReport};
+    let d = tempfile::tempdir().unwrap();
+    let mut c = client(&d.path().join("db"));
+    c.initialize_stream05(0, "1").unwrap();
+    let old = c.store_status05().unwrap();
+    let mut control = Control::new(old.clone());
+    control.connect().unwrap();
+    let id = handshake_effect(&mut control).unwrap();
+    // The handshake reports generation 2; its Initialize is dispatched.
+    answer_handshake(&mut control, &id, &old.context, "2");
+    control.jobs();
+    // The application commits a Mutation: wake dispatches Freeze in the old context.
+    control
+        .report(StoreReport::Snapshot(old.clone()), 1)
+        .unwrap();
+    control.jobs();
+    control
+        .report(StoreReport::Needs { status: None }, 1)
+        .unwrap();
+    assert!(freezes(&control.jobs()));
+    // Initialize commits the rollover clear with the handshake's head.
+    let mut rolled = old.clone();
+    rolled.context.materialization = "rolled".into();
+    control.report(StoreReport::Snapshot(rolled), 1).unwrap();
+    // The old context's Freeze comes back obsolete; the uplink still wakes.
+    control.report(StoreReport::Obsolete, 1).unwrap();
+    control.jobs();
+    control
+        .report(StoreReport::Needs { status: None }, 1)
+        .unwrap();
+    assert!(
+        freezes(&control.jobs()),
+        "uplink stalled after the rollover"
+    );
+}

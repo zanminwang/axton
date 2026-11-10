@@ -480,20 +480,16 @@ impl Control {
                     if status.context.store_id == self.context.store_id
                         && status.start_cursor.is_some()
                     {
-                        // The clear committed with this connection's handshake
-                        // head: keep the handshake and socket, retire old pulls.
-                        let stale = self
-                            .flights
-                            .iter()
-                            .filter(|(_, f)| matches!(f, Flight::Delta(_)))
-                            .map(|(id, _)| id.clone())
-                            .collect::<Vec<_>>();
-                        for id in stale {
-                            self.flights.remove(&id);
-                            self.events.push(Event::CancelEffect { effect_id: id });
-                        }
+                        // The clear committed with a handshake's head. Handshake
+                        // again in the new context: S is never restamped, and it
+                        // retires the old context's pulls, push, socket and any
+                        // Freeze in flight, whose report returns obsolete.
                         self.jobs
                             .retain(|job| !matches!(job, StoreCommand::Apply { .. }));
+                        self.context = status.context.clone();
+                        if self.connected && !self.paused {
+                            self.handshake()?;
+                        }
                     } else {
                         let reconnect = self.connected;
                         self.stop();

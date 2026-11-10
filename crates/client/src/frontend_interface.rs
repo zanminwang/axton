@@ -599,9 +599,6 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
     pub fn referencing(&mut self, key: &RecordKey, source: &str, name: &str) -> Result<Vec<Value>> {
         query::referencing(&mut self.engine, key, source, name)
     }
-    pub fn direct(&mut self, operation: Operation) -> Result<()> {
-        self.savepoint(|tx| tx.engine.direct(operation))
-    }
     // Make the tasks pending again as part of this transaction; nothing runs
     // them before it commits.
     pub fn retry_tasks(&mut self, keys: &[String]) -> Result<()> {

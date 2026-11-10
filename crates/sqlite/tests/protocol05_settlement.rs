@@ -1,4 +1,4 @@
-use axton_client::{Client, Operation, OperationKind, RecordKey, Schema, v05};
+use axton_client::{Client, RecordKey, Schema, v05};
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 fn schema() -> Schema {
@@ -17,14 +17,6 @@ fn key() -> RecordKey {
     RecordKey {
         model: "Entry".into(),
         identity: json!({"id":"e"}),
-    }
-}
-fn direct(text: &str) -> Operation {
-    Operation {
-        model: "Entry".into(),
-        identity: json!({"id":"e"}),
-        op: OperationKind::Update,
-        values: Some(json!({"text":text})),
     }
 }
 // Later local work on the record: an `Edit` queued after the frozen Batch
@@ -165,33 +157,6 @@ fn install(c: &mut Client<SqliteStore>, id: &str, cursor: u64, text: Option<&str
         None,
     )
     .unwrap();
-}
-#[test]
-fn direct_delete_clears_current_tombstone_but_retains_stream_history() {
-    let d = tempfile::tempdir().unwrap();
-    let mut c = open(&d.path().join("db"));
-    install(&mut c, "e", 7, None);
-    c.transaction(|tx| {
-        tx.direct(Operation {
-            model: "Entry".into(),
-            identity: json!({"id":"e"}),
-            op: OperationKind::Delete,
-            values: None,
-        })
-    })
-    .unwrap();
-    c.install_cache05(
-        &[v05::ReadRecord {
-            key: stream_key("e"),
-            cursor: (),
-            state: state("cache"),
-        }],
-        true,
-    )
-    .unwrap();
-    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "cache");
-    install(&mut c, "e", 7, Some("stale"));
-    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "cache");
 }
 #[test]
 fn newer_stream_supersedes_private_fallback_beneath_a_later_pending_mutation() {

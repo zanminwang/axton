@@ -305,41 +305,58 @@ fn a_file_written_by_0_6_0_opens_without_its_three_dead_columns_and_keeps_digest
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "server");
 }
 
-// A file written while Mutation companion writes existed may still hold a
-// `companion` operation beside its owner's wire operation. Until open purges
-// it, such a row is never read: the Store opens, replays and queues around
-// it, the record it names is untouched, and it is never sent.
+// A file written while Mutation companion writes and direct Model writes
+// existed may hold a queued Mutation with a `companion` operation and an
+// `independent` local write after it, with the rows they wrote. Open purges
+// both and rebuilds the records they touched; the Mutation stays queued and
+// uploads alone. Opening again changes nothing.
 #[test]
-fn a_stored_companion_operation_is_never_read_or_sent() {
+fn an_old_file_s_companion_operations_and_independent_writes_are_purged_at_open() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");
     let mut c = open(&path);
     start_stream(&mut c);
     seed(&mut c, "A");
     cached(&mut c, "Entry", "c", json!({"text":"C","note":null}));
-    offline(&mut c, "Edit", json!({"entry":{"id":"e","text":"B"}}));
+    let call = offline(&mut c, "Edit", json!({"entry":{"id":"e","text":"B"}}));
     drop(c);
+    // What the engine that had them left behind: the companion's row over
+    // a held base on `c`, and the independent write's row on `e`.
     let raw = rusqlite::Connection::open(&path).unwrap();
-    let inserted = raw
-        .execute(
-            "INSERT INTO axton_mutation_queue_operation(mutation_id,step,local_sequence,input_path,kind,model,identity,operation,value,owner_history) \
-             SELECT mutation_id,step+1,local_sequence+1000,NULL,'companion',model,'{\"id\":\"c\"}',operation,'{\"text\":\"companion\"}',owner_history \
-             FROM axton_mutation_queue_operation WHERE kind='wire'",
-            [],
-        )
-        .unwrap();
-    assert_eq!(inserted, 1);
+    raw.execute_batch(
+        "INSERT INTO axton_mutation_queue_operation(mutation_id,step,local_sequence,input_path,kind,model,identity,operation,value,owner_history) \
+         SELECT mutation_id,step+1,local_sequence+1000,NULL,'companion',model,'{\"id\":\"c\"}',operation,'{\"text\":\"companion\"}',owner_history \
+         FROM axton_mutation_queue_operation WHERE kind='wire';
+         INSERT INTO axton_before_Entry SELECT * FROM Entry WHERE id='c';
+         UPDATE Entry SET text='companion' WHERE id='c';
+         INSERT INTO axton_local_write(sequence,ordinal,position,disposition,model,identity,op,\"values\") \
+         VALUES(1000,1,NULL,'independent','Entry','{\"id\":\"e\"}','update','{\"text\":\"independent\"}');
+         UPDATE Entry SET text='independent' WHERE id='e';",
+    )
+    .unwrap();
     drop(raw);
-    let mut c = open(&path);
-    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
     let other = schema().record_key("Entry", &json!({"id":"c"})).unwrap();
-    assert_eq!(c.read(&other).unwrap().unwrap()["text"], "C");
-    assert_eq!(c.record_status(&other).unwrap()["pending"], json!([]));
-    offline(&mut c, "Edit", json!({"entry":{"id":"c","text":"D"}}));
-    assert_eq!(c.read(&other).unwrap().unwrap()["text"], "D");
-    assert_eq!(c.pending_count().unwrap(), 2);
-    let batch = c.freeze_batch05().unwrap().unwrap();
-    assert_eq!(batch.mutations.len(), 2);
-    let body = String::from_utf8(v05::encode(&batch).unwrap()).unwrap();
-    assert!(!body.contains("companion"), "{body}");
+    for _ in 0..2 {
+        let mut c = open(&path);
+        assert_eq!(
+            c.read_sql(
+                "SELECT COUNT(*) AS n FROM axton_mutation_queue_operation WHERE kind<>'wire'",
+                &[]
+            )
+            .unwrap()[0]["n"],
+            0
+        );
+        assert_eq!(table_count(&mut c, "axton_local_write"), 0);
+        assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
+        assert_eq!(c.read(&other).unwrap().unwrap()["text"], "C");
+        assert_eq!(table_count(&mut c, "axton_before_Entry"), 1);
+        assert_eq!(c.record_status(&other).unwrap()["pending"], json!([]));
+        assert_eq!(c.pending_count().unwrap(), 1);
+        let batch = c.freeze_batch05().unwrap().unwrap();
+        assert_eq!(batch.mutations.len(), 1);
+        assert_eq!(batch.mutations[0].id, call.ordinal);
+        let body = String::from_utf8(v05::encode(&batch).unwrap()).unwrap();
+        assert!(!body.contains("companion"), "{body}");
+        assert!(!body.contains("independent"), "{body}");
+    }
 }

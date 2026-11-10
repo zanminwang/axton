@@ -296,6 +296,28 @@ test("the runtime refuses the retired Mutation callback fields", async () => {
   }, carrier);
 });
 
+test("the runtime refuses the retired direct Model write as an unknown command", async () => {
+  // A stale SDK's `direct` fails its own request, as a task and inside a
+  // transaction, and writes nothing.
+  const operation = {
+    model: "Entry",
+    op: "create",
+    identity: { id: "d" },
+    values: { text: "direct", note: null },
+  };
+  await withBridge(async (bridge) => {
+    await assert.rejects(
+      bridge.task({ kind: "direct", operation }),
+      /unknown variant `direct`/,
+    );
+    await assert.rejects(
+      committed(bridge, { kind: "direct", operation }),
+      /unknown variant `direct`/,
+    );
+    assert.equal(await bridge.task(read("d")), null);
+  });
+});
+
 test("a throwing callback rejects with the same value and rolls back", async () => {
   await withBridge(async (bridge) => {
     const thrown = Error("abort");
@@ -526,6 +548,8 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
       case "task":
         assert.equal(typeof input.requestId, "string");
         assert.equal(typeof input.command.kind, "string");
+        // The retired direct Model write.
+        assert.notEqual(input.command.kind, "direct");
         break;
       case "transactionCommand":
         assert.equal(typeof input.requestId, "string");
@@ -534,6 +558,7 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
         // The retired Mutation input callback's capability and flag.
         assert.equal("companionId" in input, false);
         assert.equal(typeof input.command.kind, "string");
+        assert.notEqual(input.command.kind, "direct");
         if (input.command.kind === "submitMutation")
           assert.equal("local" in input.command, false);
         break;

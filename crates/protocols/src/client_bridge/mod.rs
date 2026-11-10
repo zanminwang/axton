@@ -170,10 +170,6 @@ pub enum Command {
     Tasks,
 
     // --- Writes, each in its own local transaction ---
-    // Apply one local-only operation.
-    Direct {
-        operation: model::Operation,
-    },
     // Submit a durable Action call; answers `{callId, ordinal}`. `store` is
     // the call's store policy, beside its arguments, never inside them.
     SubmitAction {
@@ -419,10 +415,6 @@ pub enum TransactionCommand {
         key: RecordKey,
         source: String,
         relation: String,
-    },
-
-    Direct {
-        operation: model::Operation,
     },
 
     // Submit a named durable Mutation as part of the transaction; answers
@@ -1197,5 +1189,34 @@ mod tests {
         }
         let effect = json!({"type":"effect","effectId":"8","operation":{"kind":"mutationLocal","transactionId":"tx7","companionId":"c9","requestId":"50"}});
         assert!(serde_json::from_value::<Event>(effect).is_err());
+    }
+
+    // The retired direct Model write: `direct` is an unknown command, as a
+    // task and inside a transaction. It fails its own request.
+    #[test]
+    fn the_retired_direct_write_is_an_unknown_command() {
+        let operation =
+            json!({"model":"Todo","op":"create","identity":{"id":"t"},"values":{"title":"x"}});
+        match serde_json::from_value(json!({"type":"task","requestId":"60","command":{"kind":"direct","operation":operation}})).unwrap() {
+            Input::Task {
+                request_id,
+                command: Command::Malformed { error },
+            } => {
+                assert_eq!(request_id, "60");
+                assert!(error.contains("unknown variant `direct`"), "{error}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match serde_json::from_value(json!({"type":"transactionCommand","requestId":"61","transactionId":"tx7","command":{"kind":"direct","operation":operation}})).unwrap() {
+            Input::TransactionCommand {
+                request_id,
+                command: TransactionCommand::Malformed { error },
+                ..
+            } => {
+                assert_eq!(request_id, "61");
+                assert!(error.contains("unknown variant `direct`"), "{error}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

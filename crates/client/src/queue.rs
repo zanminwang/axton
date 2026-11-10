@@ -1,4 +1,5 @@
 //! Pending mutations, their operations, dependencies, prerequisites, the push in flight and rejections.
+use crate::authority::Held;
 use crate::engine::{Engine, as_u64};
 use crate::store::ClientStore;
 use crate::{Mutation, Operation, OperationKind};
@@ -20,26 +21,15 @@ pub struct QueuedOp {
     pub kind: OpKind,
     pub op: Operation,
 }
-// Why a settled local write is still retained in the journal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LocalWriteKind {
-    // A direct write made while the record had pending work.
-    Independent,
-    // The receipt-finalized state of a target the server accepted, kept at
-    // its wire operation's position until no earlier pending work on the
-    // record needs it.
-    Accepted,
-}
 // A settled local write retained at its place in a record's local order:
-// an accepted write at its owner's `(ordinal, position)`, an independent
-// write after every operation of the last ordinal allocated before it.
-// `sequence` orders writes that share a place.
+// the receipt-finalized state of a target the server accepted, kept at its
+// wire operation's `(ordinal, position)` until no earlier pending work on
+// the record needs it. `sequence` orders writes that share a place.
 #[derive(Clone, Debug)]
 pub struct LocalWrite {
     pub sequence: u64,
     pub ordinal: u64,
-    pub position: Option<u64>,
-    pub kind: LocalWriteKind,
+    pub position: u64,
     pub op: Operation,
 }
 #[derive(Clone, Debug)]
@@ -57,13 +47,6 @@ type OpsByOrdinal = BTreeMap<u64, Vec<QueuedOp>>;
 
 fn text(value: &Value) -> String {
     value.as_str().unwrap_or("").to_string()
-}
-fn op_text(op: OperationKind) -> &'static str {
-    match op {
-        OperationKind::Create => "create",
-        OperationKind::Update => "update",
-        OperationKind::Delete => "delete",
-    }
 }
 
 fn decode_operation(
@@ -101,27 +84,14 @@ fn decode_op(row: &[Value]) -> Result<QueuedOp> {
 }
 fn decode_local_write(row: &[Value]) -> Result<LocalWrite> {
     // columns: sequence, ordinal, position, disposition, model, identity, op, values
-    let kind = match row[3].as_str() {
-        Some("independent") => LocalWriteKind::Independent,
-        Some("accepted") => LocalWriteKind::Accepted,
-        _ => return Err(invalid("unknown local write disposition")),
-    };
+    if row[3].as_str() != Some("accepted") {
+        return Err(invalid("unknown local write disposition"));
+    }
     Ok(LocalWrite {
         sequence: as_u64(&row[0])?,
         ordinal: as_u64(&row[1])?,
-        position: if row[2].is_null() {
-            None
-        } else {
-            Some(as_u64(&row[2])?)
-        },
-        kind,
+        position: as_u64(&row[2])?,
         op: decode_operation(&row[4], &row[5], &row[6], &row[7])?,
-    })
-}
-fn values_text(op: &Operation) -> Result<Value> {
-    Ok(match &op.values {
-        Some(v) => json!(serde_json::to_string(v)?),
-        None => Value::Null,
     })
 }
 
@@ -162,41 +132,6 @@ impl<S: ClientStore> Engine<'_, S> {
             .flatten()
             .collect())
     }
-    // The last ordinal allocated: every queued operation at or below it was
-    // written before anything written now.
-    pub(crate) fn last_ordinal(&mut self) -> Result<u64> {
-        let next = self
-            .scalar("SELECT next_mutation_id FROM axton_store", &[])?
-            .ok_or_else(|| invalid("Store row missing"))?;
-        Ok(as_u64(&next)?.saturating_sub(1))
-    }
-    // Retain a settled local write at its place in the record's local order.
-    pub(crate) fn insert_local_write(
-        &mut self,
-        ordinal: u64,
-        position: Option<u64>,
-        kind: LocalWriteKind,
-        op: &Operation,
-    ) -> Result<()> {
-        let key = self.schema.record_key(&op.model, &op.identity)?;
-        let disposition = match kind {
-            LocalWriteKind::Independent => "independent",
-            LocalWriteKind::Accepted => "accepted",
-        };
-        let mut parameters = vec![
-            json!(ordinal),
-            position.map_or(Value::Null, |p| json!(p)),
-            json!(disposition),
-            json!(op.model),
-            json!(key.encoded_identity()?),
-            json!(op_text(op.op)),
-            values_text(op)?,
-        ];
-        parameters.insert(0, json!(self.allocate05("next_local_sequence")?));
-        let sql = "INSERT INTO axton_local_write(sequence,ordinal,position,disposition,model,identity,op,\"values\") VALUES(?,?,?,?,?,?,?,?)";
-        self.exec("axton_local_write", sql, &parameters)?;
-        Ok(())
-    }
     // The settled local writes retained for one record, in allocation order.
     pub(crate) fn local_writes_for(&mut self, key: &RecordKey) -> Result<Vec<LocalWrite>> {
         let rows = self.rows(
@@ -223,18 +158,54 @@ impl<S: ClientStore> Engine<'_, S> {
         )?;
         Ok(())
     }
+    // A file written while Mutation companion writes and direct Model writes
+    // existed may hold `companion` queue operations and `independent` local
+    // writes. Open deletes both in its own transaction and rebuilds every
+    // record they touched from its base and what remains; their Mutations
+    // stay queued. A file without them costs two empty reads.
+    pub(crate) fn purge_retired_writes05(&mut self) -> Result<()> {
+        let touched = self.rows(
+            "SELECT model,identity FROM axton_mutation_queue_operation WHERE kind='companion' UNION SELECT model,identity FROM axton_local_write WHERE disposition<>'accepted'",
+            &[],
+        )?;
+        if touched.rows.is_empty() {
+            return Ok(());
+        }
+        self.exec(
+            "axton_mutation_queue_operation",
+            "DELETE FROM axton_mutation_queue_operation WHERE kind='companion'",
+            &[],
+        )?;
+        self.exec(
+            "axton_local_write",
+            "DELETE FROM axton_local_write WHERE disposition<>'accepted'",
+            &[],
+        )?;
+        let mut held = Held::new();
+        for row in &touched.rows {
+            let (Some(model), Some(identity)) = (row[0].as_str(), row[1].as_str()) else {
+                continue;
+            };
+            // A Model the schema no longer has holds no rows to rebuild.
+            if let Ok(key) = self
+                .schema
+                .record_key(model, &serde_json::from_str(identity)?)
+            {
+                held.insert(key.encoded()?, key);
+            }
+        }
+        self.rebuild_held(&held)?;
+        Ok(())
+    }
     // Every reader of a queued Mutation's local operations loads them here.
     // An operation on a Model the Mutation does not share with the current
-    // schema is left out, and its Mutation is returned as diverged. A
-    // `companion` operation, which a file written before Mutation companion
-    // writes were removed may still hold, is never read: the record it
-    // touched rebuilds without it.
+    // schema is left out, and its Mutation is returned as diverged.
     fn ops_by_ordinal(
         &mut self,
         filter: &str,
         params: &[Value],
     ) -> Result<(OpsByOrdinal, BTreeSet<u64>)> {
-        let rows = self.rows(&format!("SELECT o.mutation_id,o.step,o.kind,o.model,o.identity,o.operation,o.value,q.descriptor FROM axton_mutation_queue_operation o JOIN axton_mutation_queue q ON q.id=o.mutation_id WHERE o.model IS NOT NULL AND o.kind<>'companion' AND q.reconciled=0 AND q.rejection_code IS NULL {filter} ORDER BY o.mutation_id,o.step"), params)?;
+        let rows = self.rows(&format!("SELECT o.mutation_id,o.step,o.kind,o.model,o.identity,o.operation,o.value,q.descriptor FROM axton_mutation_queue_operation o JOIN axton_mutation_queue q ON q.id=o.mutation_id WHERE o.model IS NOT NULL AND q.reconciled=0 AND q.rejection_code IS NULL {filter} ORDER BY o.mutation_id,o.step"), params)?;
         let mut result = OpsByOrdinal::new();
         let mut skipped = BTreeSet::new();
         for row in &rows.rows {

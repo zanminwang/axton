@@ -170,9 +170,6 @@ export class Transaction {
       relation,
     });
   }
-  direct(operation: object) {
-    return this.#call({ kind: "direct", operation });
-  }
   savepoint<T>(body: () => Promise<T>): Promise<T> {
     const foreign = this.#foreign();
     if (foreign) return Promise.reject(foreign);

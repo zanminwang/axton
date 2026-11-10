@@ -214,7 +214,6 @@ export function createClient<
     cancel(): void;
     runCallback<T>(body: () => Promise<T>): Promise<T>;
     inCallback(): boolean;
-    direct(operation: object): Promise<void>;
     submitMutation<T>(
       name: string,
       version: number,
@@ -468,17 +467,6 @@ export function createClient<
         key: { model, identity },
         source,
         relation,
-      });
-    }
-    /** One standalone Model write in its own local transaction. */
-    direct(operation: object): Promise<void> {
-      try {
-        this.#guard(true);
-      } catch (error) {
-        return Promise.reject(error);
-      }
-      return this.transaction(async (tx) => {
-        await tx.direct(operation);
       });
     }
     /** Submit durable work and register its observer as soon as it committed. */

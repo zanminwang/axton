@@ -135,7 +135,4 @@ export class Transaction {
       relation,
     });
   }
-  direct(operation: object) {
-    return this.#call({ kind: "direct", operation });
-  }
 }

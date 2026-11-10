@@ -51,14 +51,6 @@ fn open(path: &std::path::Path) -> Client<SqliteStore> {
 fn rows(client: &mut Client<SqliteStore>) -> Vec<Value> {
     client.query("Todo", &json!({})).unwrap()
 }
-fn local_create(values: Value) -> Operation {
-    Operation {
-        model: "Todo".into(),
-        op: OperationKind::Create,
-        identity: json!({}),
-        values: Some(values),
-    }
-}
 /// The durable `Add` of one Todo in its own transaction: optimistic now.
 fn add(client: &mut Client<SqliteStore>, todo: Value) -> Result<SubmittedCall> {
     client.transaction(|tx| tx.submit_mutation05("Add", 1, json!({ "todo": todo })))
@@ -126,19 +118,6 @@ fn optimistic_create_fills_only_omitted_fields_and_each_create_generates_anew() 
     add(&mut client, json!({"id":"mine"})).unwrap();
     assert!(rows(&mut client).iter().any(|r| r["id"] == "mine"));
     assert_eq!(rows(&mut client).len(), 3);
-}
-
-#[test]
-fn a_direct_create_refuses_an_identity_key_in_its_state() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut client = open(&dir.path().join("db"));
-    // An identity key in the state is misplaced, not a reason to generate one.
-    assert!(
-        client
-            .transaction(|tx| tx.direct(local_create(json!({"id":"misplaced"}))))
-            .is_err()
-    );
-    assert!(rows(&mut client).is_empty());
 }
 
 #[test]

@@ -2,11 +2,11 @@
 //! through `authority.rs`.
 use crate::ddl::before_table;
 use crate::engine::Engine;
-use crate::queue::{LocalWrite, LocalWriteKind, OpKind, QueuedOp};
+use crate::queue::{LocalWrite, OpKind, QueuedOp};
 use crate::rows::merge_identity;
 use crate::store::ClientStore;
 use crate::{Operation, OperationKind};
-use axton_core::{RecordKey, Result, Schema, invalid};
+use axton_core::{RecordKey, Result, invalid};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -19,17 +19,11 @@ enum Step {
 }
 impl Step {
     // Committed local order: a call's operations by position, an accepted
-    // write at its wire operation's position, an independent write after
-    // every operation of the ordinal it followed.
-    fn order(&self) -> (u64, u8, u64, u64) {
+    // write at its wire operation's position, after the operations there.
+    fn order(&self) -> (u64, u64, u64) {
         match self {
-            Step::Pending(q) => (q.ordinal, 0, q.position, 0),
-            Step::Settled(w) => match w.kind {
-                LocalWriteKind::Accepted => {
-                    (w.ordinal, 0, w.position.unwrap_or_default(), w.sequence)
-                }
-                LocalWriteKind::Independent => (w.ordinal, 1, 0, w.sequence),
-            },
+            Step::Pending(q) => (q.ordinal, q.position, 0),
+            Step::Settled(w) => (w.ordinal, w.position, w.sequence),
         }
     }
 }
@@ -95,32 +89,6 @@ pub fn apply_to_row(row: &mut Option<Value>, op: &Operation) -> Result<()> {
         }
         OperationKind::Delete => {
             *row = None;
-        }
-    }
-    Ok(())
-}
-
-fn normalize(schema: &Schema, op: &mut Operation) -> Result<()> {
-    op.identity = schema.record_key(&op.model, &op.identity)?.identity;
-    match op.op {
-        OperationKind::Create => {
-            let values = op
-                .values
-                .as_ref()
-                .ok_or_else(|| invalid("create values missing"))?;
-            op.values = Some(schema.normalize_state(&op.model, values)?);
-        }
-        OperationKind::Update => {
-            let values = op
-                .values
-                .as_ref()
-                .ok_or_else(|| invalid("update values missing"))?;
-            op.values = Some(schema.validate_patch(&op.model, values)?);
-        }
-        OperationKind::Delete => {
-            if op.values.is_some() {
-                return Err(invalid("delete cannot contain values"));
-            }
         }
     }
     Ok(())
@@ -303,8 +271,8 @@ impl<S: ClientStore> Engine<'_, S> {
         Ok(result)
     }
     // Whether the last delete of `parent` by call `ordinal` is followed by a
-    // local recreation: a create later in the same call, or a settled local
-    // write (a direct write or an accepted receipt state) after it. A recreation
+    // local recreation: a create later in the same call, or an accepted
+    // receipt state retained after it. A recreation
     // by a later pending call is not one: the server has yet to answer both.
     fn recreated_locally(&mut self, parent: &RecordKey, ordinal: u64) -> Result<bool> {
         let steps = self.history(parent)?;
@@ -396,43 +364,5 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         self.apply_main(op)?;
         record(self, own, op.clone())
-    }
-    // A local write that is never sent: it moves the truth along with the row.
-    pub fn direct(&mut self, mut operation: Operation) -> Result<()> {
-        crate::defaults::fill_operation(self.schema, &mut operation);
-        normalize(self.schema, &mut operation)?;
-        let key = self
-            .schema
-            .record_key(&operation.model, &operation.identity)?;
-        if operation.op == OperationKind::Delete {
-            for child in self.descendants(&key)? {
-                self.direct_one(Operation {
-                    model: child.model,
-                    identity: child.identity,
-                    op: OperationKind::Delete,
-                    values: None,
-                })?;
-            }
-        }
-        self.direct_one(operation)
-    }
-    // On a dirty record the write is retained after everything already
-    // written, so settling earlier work neither undoes nor reorders it; on a
-    // clean record its operation is retained separately for replica release.
-    fn direct_one(&mut self, operation: Operation) -> Result<()> {
-        let key = self
-            .schema
-            .record_key(&operation.model, &operation.identity)?;
-        let is_dirty = self.dirty(&key)?;
-        self.apply_main(&operation)?;
-        self.direct_evidence05(&key)?;
-        if is_dirty {
-            let after = self.last_ordinal()?;
-            self.insert_local_write(after, None, LocalWriteKind::Independent, &operation)?;
-        } else {
-            self.allocate05("next_local_sequence")?;
-            self.retain_local_operation(&key, &operation)?;
-        }
-        Ok(())
     }
 }

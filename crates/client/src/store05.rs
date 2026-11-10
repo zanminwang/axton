@@ -234,6 +234,7 @@ impl<S: ClientStore> Client<S> {
                 .is_empty();
             let mut changes = BTreeSet::new();
             let mut engine = Engine::new(&mut store, &schema, &mut changes, false);
+            engine.purge_retired_writes05()?;
             if !unchanged || !reset.is_empty() {
                 engine.upgrade05(&descriptor.materialization)?;
             } else {

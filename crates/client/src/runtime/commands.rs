@@ -35,12 +35,6 @@ pub(super) fn execute<S: ClientStore + 'static>(
             relation,
         } => serde_json::to_value(client.referencing(key, source, relation)?)?,
 
-        Command::Direct { operation } => {
-            let operation = operation.clone();
-            client.transaction(|tx| tx.direct(operation))?;
-            Value::Null
-        }
-
         Command::SubmitAction {
             name,
             version,
@@ -137,11 +131,6 @@ pub(super) fn execute_in_session<S: ClientStore>(
             source,
             relation,
         } => serde_json::to_value(client.session(|tx| tx.referencing(key, source, relation))?)?,
-        TransactionCommand::Direct { operation } => {
-            let operation = operation.clone();
-            client.session(|tx| tx.direct(operation))?;
-            Value::Null
-        }
 
         TransactionCommand::Malformed { error } => return Err(invalid(error.clone())),
         TransactionCommand::Savepoint

@@ -568,6 +568,44 @@ void main() {
     }
   });
 
+  test('the runtime refuses the retired direct Model write', () async {
+    // A stale SDK's `direct` fails its own request, as a task and inside a
+    // transaction, and writes nothing.
+    final bridge = await fixture.bridge();
+    final unknown = throwsA(
+      predicate((Object e) => '$e'.contains('unknown variant `direct`')),
+    );
+    final direct = {
+      'kind': 'direct',
+      'operation': {
+        'model': 'Entry',
+        'op': 'create',
+        'identity': {'id': 'd'},
+        'values': {'text': 'direct', 'note': null},
+      },
+    };
+    final read = {
+      'kind': 'read',
+      'key': {
+        'model': 'Entry',
+        'identity': {'id': 'd'},
+      },
+    };
+    try {
+      await expectLater(bridge.task(direct), unknown);
+      await expectLater(
+        bridge.transaction(
+          (transactionId) =>
+              bridge.transactionCommand(transactionId, null, direct),
+        ),
+        unknown,
+      );
+      expect(await bridge.task(read), isNull);
+    } finally {
+      await bridge.close();
+    }
+  });
+
   test('a cancelled callback effect never runs its callback', () async {
     // The runtime cancelled the callback before the bridge started it; the
     // task is still pending until the runtime settles it.

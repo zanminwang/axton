@@ -148,15 +148,15 @@ Uses are counted by call site. Routes: *cache* is `common05::cached` (unprotecte
 
 **Files:** `crates/compiler/src/emit.rs`, `validate.rs`; `crates/protocols/src/client_bridge/mod.rs`; `crates/client/src/mutate.rs`, `queue.rs`, `frontend_interface.rs`, `runtime/commands.rs`, `runtime/tasks.rs`; `packages/frontend/client-js/api/local.mts`, `api/runtime.mts`, `api/transaction.mts`; `packages/frontend/client-react-native/api/transaction.mts`; `packages/frontend/dart/lib/src/api/port.dart`, `client.dart`.
 
-- [ ] Test (compiler negative): `create`, `update` and `delete` on a Model facade, at the client and inside a transaction, fail to compile.
-- [ ] Test (bridge): `direct` is refused as an unknown command.
-- [ ] Add the `crates/sim/src/scenario05.rs` invariant: after every step, each Model row equals the rebuild of its key from its base, its pending operations and its accepted writes. It must pass before and after the engine change below.
-- [ ] Delete `WritePort`, `{Model}TxModel` and the write half of the Model facades; `TxModels` is the read-only facade; `LivePort` extends `ReadPort` and `{Model}LiveModel` extends `{Model}Model`.
-- [ ] Delete `Command::Direct`, `TransactionCommand::Direct`, the SDK `direct` methods, Dart `LocalTransaction`.
-- [ ] Delete `direct`, `direct_one`, `insert_local_write`, `LocalWriteKind::Independent` and the `Independent` arm of the rebuild order key. Drop the `disposition` column or keep it single-valued, whichever is the smaller diff; record the choice here.
-- [ ] Rename `direct_evidence05` for its remaining use (a delivered delete cascading to locally created children).
-- [ ] Delete the *subject* tests and the *interaction* tests marked for deletion in Task 1's list. Regenerate checked-in generated files. Update the iOS smoke app and the installed-package check.
-- [ ] Open purges an old file (spec §2.5): one transaction deletes `companion` operations and `independent` local writes and rebuilds the records they touched. Test with a file built from the old DDL that has a queued Mutation carrying both; the Mutation still uploads.
+- [x] Test (compiler negative): `create`, `update` and `delete` on a Model facade, at the client and inside a transaction, fail to compile.
+- [x] Test (bridge): `direct` is refused as an unknown command.
+- [x] Add the `crates/sim/src/scenario05.rs` invariant: after every step, each Model row equals the rebuild of its key from its base, its pending operations and its accepted writes. It must pass before and after the engine change below.
+- [x] Delete `WritePort`, `{Model}TxModel` and the write half of the Model facades; `TxModels` is the read-only facade; `LivePort` extends `ReadPort` and `{Model}LiveModel` extends `{Model}Model`.
+- [x] Delete `Command::Direct`, `TransactionCommand::Direct`, the SDK `direct` methods, Dart `LocalTransaction`.
+- [x] Delete `direct`, `direct_one`, `insert_local_write`, `LocalWriteKind::Independent` and the `Independent` arm of the rebuild order key. Drop the `disposition` column or keep it single-valued, whichever is the smaller diff; record the choice here. Kept single-valued: every row is `accepted`, the decoder refuses any other value, and the DDL and the format-5 open check are unchanged (dropping the column would rebuild the table in every existing file).
+- [x] Rename `direct_evidence05` for its remaining use (a delivered delete cascading to locally created children).
+- [x] Delete the *subject* tests and the *interaction* tests marked for deletion in Task 1's list. Regenerate checked-in generated files. Update the iOS smoke app and the installed-package check.
+- [x] Open purges an old file (spec §2.5): one transaction deletes `companion` operations and `independent` local writes and rebuilds the records they touched. Test with a file built from the old DDL that has a queued Mutation carrying both; the Mutation still uploads. With the purge, `ops_by_ordinal` no longer filters `companion` rows; Task 2's `a_stored_companion_operation_is_never_read_or_sent` is replaced by `an_old_file_s_companion_operations_and_independent_writes_are_purged_at_open` (`crates/sqlite/tests/protocol05_client.rs`).
 
 ## Task 4: Delete `axton_local_replica_layer` (spec §2.3)
 

@@ -23,11 +23,6 @@ abstract interface class ReadPort {
   );
 }
 
-/// Writes available inside a [Transaction].
-abstract interface class WritePort implements ReadPort {
-  Future<void> direct(Map<String, dynamic> operation);
-}
-
 /// Queues a named Mutation inside an application [Transaction]. The call
 /// resolves after the Mutation's optimism ran in the open transaction; the
 /// [Call] is sendable only after the local commit. A caller that reads before

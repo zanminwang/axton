@@ -18,7 +18,7 @@ typedef _Observation<T> = ({
 });
 
 /// Typed generated model APIs delegate to this generic native client.
-class Client implements WritePort, SubmitMutationPort {
+class Client implements ReadPort, SubmitMutationPort {
   /// Initialize the process-wide durable application container before opening
   /// any Store. Android hosts must provide their stable files/support directory.
   /// Reusing the same directory is safe; changing it in a running process is refused.
@@ -279,8 +279,6 @@ class Client implements WritePort, SubmitMutationPort {
               })
               as List)
           .cast<Map<String, dynamic>>();
-  Future<void> direct(Map<String, dynamic> operation) =>
-      transaction((tx) => tx.direct(operation));
 
   /// Execute a fresh Query and decode its committed invocation snapshot.
   Future<T> invokeQuery<T>(
@@ -672,7 +670,7 @@ class Client implements WritePort, SubmitMutationPort {
 /// refusal of a poisoned unit are its own. What stays here is what only the
 /// language sees - which zone issued a command, whether the callback awaited
 /// what it started.
-class Transaction implements WritePort, SubmitMutationPort {
+class Transaction implements ReadPort, SubmitMutationPort {
   final Client _client;
   final String _transactionId;
   bool _open = true;
@@ -854,9 +852,6 @@ class Transaction implements WritePort, SubmitMutationPort {
               })
               as List)
           .cast<Map<String, dynamic>>();
-  Future<void> direct(Map<String, dynamic> operation) async {
-    await _send({'kind': 'direct', 'operation': operation});
-  }
 
   Future<T> savepoint<T>(Future<T> Function() body) {
     final foreign = _foreignRefusal();

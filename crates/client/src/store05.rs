@@ -278,6 +278,7 @@ impl<S: ClientStore> Client<S> {
             last_changed: BTreeSet::new(),
             model_changes: Default::default(),
             last_bootstrap: BTreeSet::new(),
+            shared: Default::default(),
         })
     }
     pub fn request_context05(&mut self) -> Result<v05::RequestContext> {

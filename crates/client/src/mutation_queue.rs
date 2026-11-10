@@ -47,15 +47,15 @@ impl<S: ClientStore> Engine<'_, S> {
     /// current schema. A Model the current schema lacks is not shared.
     pub(crate) fn shared05(&mut self, descriptor: &str, model: &str) -> Result<bool> {
         let key = (descriptor.to_owned(), model.to_owned());
-        if let Some(shared) = self.shared.get(&key) {
-            return Ok(*shared);
+        if let Some(shared) = self.shared.models().get(&key) {
+            return Ok(shared);
         }
         let retained = self.retained_schema05(descriptor)?;
         let shared = !matches!(
             Schema::model_compatibility(&retained, self.schema, model),
             axton_core::Compatibility::Incompatible(_)
         );
-        self.shared.insert(key, shared);
+        self.shared.models().insert(key, shared);
         Ok(shared)
     }
     /// The descriptor context a queued Mutation was enqueued under.

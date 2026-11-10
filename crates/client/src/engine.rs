@@ -4,6 +4,51 @@ use crate::store::{ClientStore, SqlRows};
 use axton_core::{RecordKey, Result, Schema, invalid};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Whether a retained descriptor's Model is shared with the current schema,
+/// by (descriptor context, Model). A retained descriptor is content-addressed
+/// and a Client's schema is fixed, so an answer holds for the Client's
+/// lifetime and each pair is computed once per open.
+#[derive(Debug, Default)]
+pub(crate) struct SharedModels {
+    answers: Mutex<BTreeMap<(String, String), bool>>,
+    /// Retained descriptors parsed to compute an answer.
+    parses: AtomicU64,
+}
+impl SharedModels {
+    pub(crate) fn get(&self, key: &(String, String)) -> Option<bool> {
+        self.answers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(key)
+            .copied()
+    }
+    pub(crate) fn insert(&self, key: (String, String), shared: bool) {
+        self.parses.fetch_add(1, Ordering::Relaxed);
+        self.answers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key, shared);
+    }
+    pub(crate) fn parses(&self) -> u64 {
+        self.parses.load(Ordering::Relaxed)
+    }
+}
+/// The Client's cache, or one of the Engine's own when it has no Client.
+pub(crate) enum SharedCache<'a> {
+    Client(&'a SharedModels),
+    Own(SharedModels),
+}
+impl SharedCache<'_> {
+    pub(crate) fn models(&self) -> &SharedModels {
+        match self {
+            Self::Client(models) => models,
+            Self::Own(models) => models,
+        }
+    }
+}
 
 pub struct Engine<'a, S: ClientStore> {
     pub store: &'a mut S,
@@ -11,10 +56,7 @@ pub struct Engine<'a, S: ClientStore> {
     pub changed: &'a mut BTreeSet<String>,
     pub committed: bool,
     pub(crate) model_changes: Option<&'a mut ModelChanges>,
-    /// Whether a retained descriptor's Model is shared with `schema`, by
-    /// (descriptor context, Model). Descriptors are immutable, so an answer
-    /// holds for the Engine's lifetime.
-    pub(crate) shared: BTreeMap<(String, String), bool>,
+    pub(crate) shared: SharedCache<'a>,
 }
 
 impl<'a, S: ClientStore> Engine<'a, S> {
@@ -30,8 +72,13 @@ impl<'a, S: ClientStore> Engine<'a, S> {
             changed,
             committed,
             model_changes: None,
-            shared: BTreeMap::new(),
+            shared: SharedCache::Own(SharedModels::default()),
         }
+    }
+    /// Answer the shared check from the Client's cache.
+    pub(crate) fn sharing(mut self, shared: &'a SharedModels) -> Self {
+        self.shared = SharedCache::Client(shared);
+        self
     }
     pub(crate) fn tracking(mut self, changes: &'a mut ModelChanges) -> Self {
         self.model_changes = Some(changes);
@@ -44,7 +91,7 @@ impl<'a, S: ClientStore> Engine<'a, S> {
             changed: &mut *self.changed,
             committed: self.committed,
             model_changes: self.model_changes.as_deref_mut(),
-            shared: self.shared.clone(),
+            shared: SharedCache::Client(self.shared.models()),
         }
     }
     pub fn rows(&mut self, sql: &str, parameters: &[Value]) -> Result<SqlRows> {

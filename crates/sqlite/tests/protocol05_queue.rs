@@ -1555,3 +1555,25 @@ fn a_create_queued_before_a_new_required_field_uploads_and_shows_no_optimistic_r
         json!({"entry":{"id":"e","text":"A"}})
     );
 }
+#[test]
+fn the_shared_check_parses_each_retained_descriptor_model_once_per_open() {
+    let (_d, mut c, _) = queued_across(Change::FieldType, false);
+    stream(&mut c, "B", "b", 1, json!("first"));
+    let parsed = c.shared_check_parses();
+    assert!(
+        parsed > 0,
+        "the first rebuild of a dirty row checks sharing"
+    );
+    // Later rebuilds, reads and status run in new Engines on the same Client.
+    stream(&mut c, "B", "b", 2, json!("second"));
+    c.record_status(&pair_key("B", "b")).unwrap();
+    c.transaction(|tx| {
+        tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B2"}}), vec![])
+    })
+    .unwrap();
+    assert_eq!(
+        c.shared_check_parses(),
+        parsed,
+        "a second rebuild parses nothing"
+    );
+}

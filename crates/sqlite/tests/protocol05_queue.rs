@@ -1507,3 +1507,51 @@ fn an_action_sequenced_after_a_diverged_mutation_can_be_enqueued() {
     assert!(edges(&raw, after.ordinal).is_empty());
     assert_eq!(c.read(&pair_key("B", "b")).unwrap().unwrap()["title"], "B3");
 }
+#[test]
+fn a_create_queued_before_a_new_required_field_uploads_and_shows_no_optimistic_row() {
+    // `rank` has a creation default, as `@default` compiles; no storage default.
+    let entry = |rank: bool| {
+        let text = |name: &str| json!({"name":name,"nullable":false,"type":{"kind":"scalar","name":"string"}});
+        let mut fields = vec![text("id"), text("text")];
+        if rank {
+            fields.push(json!({"name":"rank","nullable":false,"type":{"kind":"scalar","name":"int"},"createDefault":{"kind":"literal","value":0}}));
+        }
+        Schema::from_value(json!({"enums":[],"models":[{"name":"Entry","identity":["id"],"fields":fields}],
+            "actions":[{"name":"Add","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"create","cardinality":"single"}],"outputs":[]}]}))
+        .unwrap()
+    };
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), entry(false), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
+    let call = c
+        .transaction(|tx| {
+            tx.submit_mutation05("Add", 1, json!({"entry":{"id":"e","text":"A"}}), vec![])
+        })
+        .unwrap();
+    let key = axton_client::RecordKey {
+        model: "Entry".into(),
+        identity: json!({"id":"e"}),
+    };
+    assert_eq!(c.read(&key).unwrap().unwrap()["text"], "A");
+    let before = c.freeze_batch05().unwrap().unwrap();
+    drop(c);
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), entry(true), "User:u").unwrap();
+    // The Model was reset: its table has the new column and no rows.
+    assert!(
+        c.read_sql("PRAGMA table_info(Entry)", &[])
+            .unwrap()
+            .iter()
+            .any(|r| r["name"] == "rank")
+    );
+    assert!(c.query("Entry", &json!({})).unwrap().is_empty());
+    assert_eq!(c.read(&key).unwrap(), None);
+    // It still uploads as enqueued.
+    let resent = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(resent.digest, before.digest);
+    assert_eq!(resent.mutations[0].id, call.ordinal);
+    assert_eq!(
+        v05::reconstruct_input(&resent.mutations[0].operations).unwrap(),
+        json!({"entry":{"id":"e","text":"A"}})
+    );
+}

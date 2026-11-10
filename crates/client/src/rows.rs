@@ -24,18 +24,11 @@ pub fn identity_where(model: &ModelDescriptor) -> String {
 pub fn identity_params(model: &ModelDescriptor, identity: &Value) -> Vec<Value> {
     model.identity.iter().map(|f| identity[f].clone()).collect()
 }
-// A field the row does not carry holds its declared default: replay of an
-// operation shaped before the field existed still writes a valid row.
 fn row_params(model: &ModelDescriptor, row: &Value) -> Vec<Value> {
     model
         .fields
         .iter()
-        .map(|f| {
-            row.get(&f.name)
-                .or(f.default.as_ref())
-                .cloned()
-                .unwrap_or(Value::Null)
-        })
+        .map(|f| row.get(&f.name).cloned().unwrap_or(Value::Null))
         .collect()
 }
 fn decode_value(value_type: &ValueType, value: &Value) -> Result<Value> {

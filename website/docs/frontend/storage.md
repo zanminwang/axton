@@ -17,7 +17,7 @@ Opening never fails for a schema change; a Model version that goes backwards ref
 
 ## Transactions and pending work
 
-A local transaction commits direct local writes and each named Mutation's input, optimism and companions together. A crash before commit saves none; a crash after commit preserves all. The callback itself is never replayed. Acceptance keeps companions; refusal removes only the original Call's owned work. Later independent local changes retain their order.
+A local transaction commits each named Mutation's input and optimism together. A crash before commit saves none; a crash after commit preserves all. The transaction body itself is never replayed. Refusal removes only the original Call's optimism. Later pending Mutations retain their order.
 
 Retry uses the exact persisted Mutation intent and retained context. A request timeout does not imply server refusal: the handler may already have committed its receipt. An accepted Call remains pending until its required authority or receipt-proved materialization settles locally. Check connection diagnostics, prerequisites and [unsent work](runtime.md#unsent-work); do not edit internal queue, guard, cursor or receipt tables.
 

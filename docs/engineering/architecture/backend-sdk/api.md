@@ -15,7 +15,7 @@ Generated backend types connect application handlers and versioned Model Loaders
 | Bootstrap `{ctx}` | Optional Serializable application enrollment before freezing finite authority; Stream handles track only. The application returns no pages or continuations. |
 | Loader `{ids, tx, userId}` | Current viewer projection for aligned typed identities under the request's application transaction. Exactly one Model row or null per requested identity. |
 
-For each retained operation version, registration uses its own kind under `mutations` or `queries`. A historical name can retain a Mutation version and expose a newer Query version. Version-only v1 registrations may use the bare function; otherwise generated maps have explicit `v<n>` members. Loader omission makes a Model device-only; remote operands/outputs/publication cannot name it.
+For each retained operation version, registration uses its own kind under `mutations` or `queries`. A historical name can retain a Mutation version and expose a newer Query version. Version-only v1 registrations may use the bare function; otherwise generated maps have explicit `v<n>` members. Every Model has a Loader; `createBackend` fails at startup for a Model without one, naming it.
 
 The initiating Stream comes from the authenticated bound request; it is not caller authority to access arbitrary Streams. `authorizeStream` admits the request. Explicit multi-Stream publication uses the application's concrete recipient choices, sharing the backend transaction but not a cross-device local commit.
 

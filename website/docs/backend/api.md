@@ -41,7 +41,7 @@ The generated `Options<Tx>` requires:
 | `authenticate: Authenticate` | Resolve the caller's user identity or reject the request |
 | `mutations: Mutations<Tx>` | Implement each retained Mutation version |
 | `queries: Queries<Tx>` | Implement each retained Query version |
-| `loaders: Loaders<Tx>` | Implement the read function for each supported model version; leave out a [device-only Model](#device-only-models) |
+| `loaders: Loaders<Tx>` | Implement the read function for each supported version of every Model |
 | `protocol5` | Projection generation, retained materializations and transaction-bound Stream authorization |
 | `bootstrap({ctx})` | Optional initial-data preparation with typed track-only handles |
 
@@ -156,7 +156,7 @@ Preparation tracks the complete initial scope, including scopes larger than one 
 ```ts title="action-contract"
 import type { Loaders } from './generated/backend.ts';
 
-const loadTodoV2: NonNullable<Loaders<Tx>['todo']>['v2'] =
+const loadTodoV2: Loaders<Tx>['todo']['v2'] =
   async ({ ids, tx, userId }) =>
     Promise.all(ids.map(id => loadVisibleTodo(tx, userId, id)));
 ```
@@ -198,18 +198,7 @@ A row object must match the generated model type exactly. Include every non-iden
 
 Loaders run during synchronization and calls, not when the app calls local `get`, `query` or `watch`. A malformed result never discharges delivery progress. The call or required delivery unit fails and `onError` receives the diagnostic.
 
-Every member of `Loaders<Tx>` is optional, so a standalone Loader typed from it uses `NonNullable<…>`, as above. A Model that registers a Loader registers every retained version; a key that names no Model is refused at startup.
-
-### Device-only Models
-
-A Model whose Loader you leave out is device-only: a composer's working copy or a cache of signed URLs, written and read only on the client. Whether a Model syncs follows from where it is written; the schema declares nothing extra.
-
-- **On the client** the Model works like any other for local `create`, `update`, `delete`, `get`, `query` and `watch`, and inside transactions and local companions. Those writes stay in local SQLite and are never sent.
-- **At startup** `createBackend` throws when a retained Mutation would carry the Model on the wire, or a Mutation or Query would return it, because each needs its Loader: `Mutation SaveDraft v1 slot draft names Model Draft, which has no Loader; a Model without a Loader is device-only and never on the wire`.
-- **In a handler, `backend.transaction` or `backend.publish`** the Model is never published. `invalidate.draft(…)`, `streams(names).track.draft(…)` and mixed `streams(names).track([...])` naming it throw at the call: `invalidate.draft: Model Draft has no Loader, so it is device-only and cannot be published`. In a handler that is the call's `handler.failed`.
-- **`client.fetch.draft(…)`** fails with `loader.unregistered`.
-
-A backend that registers a Loader for every Model, including one that always answers `null` for a device-only Model, keeps working unchanged.
+Every Model has a Loader, and each Loader registers every retained version. `createBackend` fails at startup for a Model without one, naming it (`Missing loader draft for Draft v1`); a key that names no Model is refused too.
 
 ## Streams
 
@@ -255,7 +244,7 @@ Business deletion and access revocation are authority changes: invalidate affect
 | Mutation or legacy slot handler; `backend.transaction` or `backend.publish` | Multi-stream tracking, global and selected invalidation. |
 | Query or Bootstrap | Initiating and explicitly selected Stream tracking only. |
 | Viewer Loader | No declarations; preparation hooks receive explicit typed `streams` and `invalidate`. |
-| Client transaction or Mutation input callback | Device-only Model CRUD; no server declarations or Stream subscription management. |
+| Client transaction | Local reads and queued Mutations; no server declarations or Stream subscription management. |
 
 See [Bootstrap](../frontend/loads.md), [cache authority](../frontend/sync.md#accounts-and-cache-authority), and [settlement](https://github.com/zanminwang/axton/blob/main/docs/engineering/architecture/server/engine/publish.md).
 

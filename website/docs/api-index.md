@@ -10,10 +10,10 @@ Use this index to find the interface you call or implement. Local Model examples
 | `client.models.<model>` | Read, query, watch and follow relations in local data | [Model APIs](frontend/client-api.md#model-apis) |
 | `client.readSql`, `client.watchSql` | Read local data with SQL once, or keep a SQL answer over several Models current | [Escape-hatch reads](frontend/runtime.md#escape-hatch-reads), [Watch SQL](frontend/runtime.md#watch-sql-over-several-models), [Local table layout](frontend/runtime.md#local-table-layout) |
 | `client.fetch.<model>` | Read one record from the backend through its Loader, stored locally by default | [Fetch a record](frontend/client-api.md#fetch-a-record-from-the-backend) |
-| `client.transaction` | Commit local reads, direct writes and queued Mutations together | [Transactions](frontend/client-api.md#transactions) |
-| `tx.models.<model>` | Create, update or delete local-only records | [Local-only writes](frontend/client-api.md#local-only-writes) |
+| `client.transaction` | Read local data and queue several Mutations in one local transaction | [Transactions](frontend/client-api.md#transactions) |
+| `tx.models.<model>` | Read local data inside a transaction | [Transactions](frontend/client-api.md#transactions) |
 | `client.mutations.<name>`, `Call<Output>` | Accept a Mutation durably with its optimism; inspect `status` or await `wait()` for the final outcome | [Mutations and Queries](frontend/client-api.md#mutations-and-queries) |
-| `tx.mutations.<name>(inputOrCallback)` | Queue a Mutation in a local transaction, with local-only changes that follow its backend outcome | [Queue Mutations in a transaction](frontend/client-api.md#queue-mutations-in-a-transaction) |
+| `tx.mutations.<name>(input)` | Queue a Mutation in a local transaction; its Call keeps its own backend outcome | [Queue Mutations in a transaction](frontend/client-api.md#queue-mutations-in-a-transaction) |
 | `client.queries.<name>` | Read an invocation snapshot with request-level boolean storage policy | [Mutations and Queries](frontend/client-api.md#mutations-and-queries) |
 | `CallOutcome`, `CallError`, `CallOptions`, Dart `CallSuccess` / `CallFailure` | Read a durable outcome, handle failures; Query/Fetch choose a boolean storage policy | [Storing Model results](frontend/client-api.md#storing-model-results) |
 | `client.bootstrap()` | Await finite marked-Model Bootstrap coverage | [Bootstrap](frontend/loads.md) |
@@ -48,7 +48,7 @@ Use this index to find the interface you call or implement. Local Model examples
 | `rejections` (`watch`, `get`, `dismiss`), `failures` (`watch`, `retry`, `drop`), `outbound.watchPending`, `RefusedAct`, `FailedAct`, `FailedTask`, `SubmittedAct`, `ActOperation` | Watch and resolve refused calls, calls stuck on a failed prerequisite and the pending count, account-wide | [Unsent work](frontend/runtime.md#unsent-work) |
 | `tx.rejections.dismiss`, `tx.failures.retry`, `tx.failures.drop` | Resolve unsent work inside a transaction, atomically with a replacement call | [Repair inside a transaction](frontend/runtime.md#repair-inside-a-transaction) |
 | `open({ prerequisites })`, `PrerequisiteRetry`, `pendingTasks`, `setReadiness` | Complete prerequisite I/O before a durable call can be sent | [Prerequisites](frontend/runtime.md#prerequisites) |
-| `ReadPort`, `WritePort`, `LivePort`, `FetchPort`, `FetchOptions`, model factories and codecs | Bind generated facades to a compatible runtime | [Generated extension points](frontend/client-api.md#extension-points) |
+| `ReadPort`, `LivePort`, `FetchPort`, `FetchOptions`, model factories and codecs | Bind generated facades to a compatible runtime | [Generated extension points](frontend/client-api.md#extension-points) |
 | `loaderHooks`, `Native` | Prepare a loader call or supply the native backend binding | [Backend extension points](backend/api.md#extension-points) |
 | Compiler command and `.model` declarations | Generate and evolve the interface contract | [Schema compiler](schema/reference.md) |
 

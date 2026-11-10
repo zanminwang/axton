@@ -97,11 +97,11 @@ The layout SQL sees is a stable contract, so product SQL keeps working across AX
 - Every table AXTON owns is named `axton_*`. Do not read those tables; their layout can change in any release, and `watchSql` refuses them.
 - Changing either rule is a breaking change.
 
-A column holds the field's local value: an `Int` or `Boolean` is an integer (`1` or `0` for a boolean), a `Float` a real, a list JSON text, and a `String`, `Uuid`, enum or `DateTime` text, a `DateTime` as a UTC ISO 8601 instant in milliseconds. The table shows the local view, so rows include optimistic local changes and local-only records.
+A column holds the field's local value: an `Int` or `Boolean` is an integer (`1` or `0` for a boolean), a `Float` a real, a list JSON text, and a `String`, `Uuid`, enum or `DateTime` text, a `DateTime` as a UTC ISO 8601 instant in milliseconds. The table shows the local view, so rows include optimistic local changes.
 
 ## Transactions and savepoints
 
-`client.transaction(callback)` commits the callback's result or rolls back on failure; see [transactions](client-api.md#transactions). Standalone Model CRUD runs in its own local transaction; a durable call privately commits its intent and any inferred optimism together. Inside a transaction, `tx.transaction` is the runtime transaction; on Node and Dart it also offers `savepoint(callback)`, a nested scope that rolls back on failure and returns its callback's result (React Native's does not).
+`client.transaction(callback)` commits the callback's result or rolls back on failure; see [transactions](client-api.md#transactions). A durable call outside a transaction privately commits its intent and any inferred optimism together. Inside a transaction, `tx.transaction` is the runtime transaction; on Node and Dart it also offers `savepoint(callback)`, a nested scope that rolls back on failure and returns its callback's result (React Native's does not).
 
 === "TypeScript"
 
@@ -143,7 +143,7 @@ A column holds the field's local value: an `Int` or `Boolean` is an integer (`1`
     });
     ```
 
-Await every call and nested callback. Savepoints must be properly nested, not run concurrently. An escaped transaction, unfinished operation or overlapping savepoint fails. A Mutation queued with `tx.mutations` inside a savepoint belongs to it: rolling the savepoint back discards that Mutation and its companion changes, and its Call fails with `transaction_rolled_back`, while Mutations queued outside the savepoint are kept. A savepoint cannot start while a Mutation's input callback runs ([named Mutations](client-api.md#mutations-and-queries)). Inside the transaction use `tx` reads; a call on the outer `client` from inside its own callback fails promptly with `transaction_active` on Node and Dart (on React Native, Mutation and Query calls fail and other outer calls wait behind the transaction).
+Await every call and nested callback. Savepoints must be properly nested, not run concurrently. An escaped transaction, unfinished operation or overlapping savepoint fails. A Mutation queued with `tx.mutations` inside a savepoint belongs to it: rolling the savepoint back discards that Mutation and its optimism, and its Call fails with `transaction_rolled_back`, while Mutations queued outside the savepoint are kept. Inside the transaction use `tx` reads; a call on the outer `client` from inside its own callback fails promptly with `transaction_active` on Node and Dart (on React Native, Mutation and Query calls fail and other outer calls wait behind the transaction).
 
 ## Server connection
 
@@ -322,7 +322,7 @@ The earlier `dismissRejection(ordinal)` and `drop(ordinal)` stay; `drop` keeps a
 
 #### Repair inside a transaction
 
-`rejections.dismiss`, `failures.retry` and `failures.drop` are also on the transaction a `client.transaction` callback receives. There, a resolution applies at once for the rest of the callback and commits or rolls back with it. So a repair can drop a failed call and queue its replacement in one step: the replacement is planned without the dropped call's local changes and does not wait for it, and if the callback throws, both are undone and the original call stays as it was. A dropped call's `Call` completes, and a retried task's handler runs, only after the commit. A Mutation's input callback cannot resolve unsent work.
+`rejections.dismiss`, `failures.retry` and `failures.drop` are also on the transaction a `client.transaction` callback receives. There, a resolution applies at once for the rest of the callback and commits or rolls back with it. So a repair can drop a failed call and queue its replacement in one step: the replacement is planned without the dropped call's local changes and does not wait for it, and if the callback throws, both are undone and the original call stays as it was. A dropped call's `Call` completes, and a retried task's handler runs, only after the commit.
 
 === "TypeScript"
 

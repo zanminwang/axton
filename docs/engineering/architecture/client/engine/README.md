@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-The engine retains original Model operations and projects them over authoritative base state. Direct work is device-only; named Mutations queue durable intent and optional companions. Acknowledgment and accepted settlement are separate commits. Authoritative apply, rejection and settlement replay surviving work in original local order before notifying observers.
+The engine retains original Model operations and projects them over authoritative base state. Named Mutations are its only local writes; each queues durable intent. Acknowledgment and accepted settlement are separate commits. Authoritative apply, rejection and settlement replay surviving work in original local order before notifying observers.
 
 ## 5. Building Block View
 

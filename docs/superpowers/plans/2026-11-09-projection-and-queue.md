@@ -178,6 +178,6 @@ Uses are counted by call site. Routes: *cache* is `common05::cached` (unprotecte
 
 **Files:** the list in spec §3 Docs.
 
-- [ ] Guarantees: delete L4 and the Mutation-companion wording; keep A2's "companion" (records in one Stream unit).
-- [ ] API reference: the surface table becomes the three verbs of spec §2.2; delete the companion and device-only sections.
-- [ ] Website: delete "Device-only Models"; add one paragraph saying an app keeps device-only data in its own store.
+- [x] Guarantees: delete L4 and the Mutation-companion wording; keep A2's "companion" (records in one Stream unit).
+- [x] API reference: the surface table becomes the three verbs of spec §2.2; delete the companion and device-only sections.
+- [x] Website: delete "Device-only Models"; add one paragraph saying an app keeps device-only data in its own store (`website/docs/concepts.md`, `frontend/client-api.md` "Device-only data", and `docs/engineering/architecture/frontend-sdk/api.md`). The spec header records the implementation, and spec §4 lists where it changed the design.

@@ -34,7 +34,7 @@ There are two completion boundaries. A committed acknowledgment proves the saved
 
 Authority arrives only through the Stream, by pull or live; the client never fetches a target by key. An accepted receipt raises the delivery head to its `syncCursor`, so a Store whose socket is silent pulls `(C, syncCursor]`. A Stream target at or below S in a Model the active materialization does not Bootstrap can never be delivered to this Store; it finalizes from the receipt fallback as cache, like a Private target. Any other Stream target settles once the Stream has delivered its record at or after the target's position, in whichever materialization; a target delivered before an upgrade does not wait for Bootstrap. Coverage alone settles nothing else: compaction can move a target past `syncCursor`, and its local layer stays until that later position lands.
 
-The Mutation queue is the lifecycle owner. It retains original argument paths and schema artifacts; local companions and derived cascades are distinct from wire input. Direct device writes remain device-only. Reconciliation retains accepted companions at their original operation order and replays later local work.
+The Mutation queue is the lifecycle owner. It retains original argument paths and schema artifacts; derived cascades are distinct from wire input. Reconciliation replays later pending work in its original operation order.
 
 ### Publication and ordinary reads
 

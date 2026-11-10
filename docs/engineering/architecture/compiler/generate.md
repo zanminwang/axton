@@ -12,7 +12,7 @@ Input is `Validated` from [Validate](validate.md). [Descriptor generation](../..
 | --- | --- | --- |
 | `schema.json` | Local Model schema, read versions, requirements, prerequisites and retained compatibility policies | [Client frontend](../client/frontend-interface.md) |
 | `backend.json` | Backend schema, retained operation and Model contracts, Loader names, relations and constraints | [Backend interface](../server/backend-interface.md) |
-| `generated.ts` | Model types, codecs, local Model APIs, typed Mutation input/callback scopes, Query and Fetch facades | [Typed client](../frontend-sdk/api.md) |
+| `generated.ts` | Model types, codecs, local Model read APIs, typed Mutation inputs and transaction scopes, Query and Fetch facades | [Typed client](../frontend-sdk/api.md) |
 | `client.ts` | Bound `GeneratedClient` over the selected runtime | [Typed client](../frontend-sdk/api.md) |
 | `backend.ts` | Versioned Mutation/Query/Loader handlers, typed tracking/publication contexts and `createBackend` | [Typed server](../backend-sdk/api.md) |
 | `generated.dart` | Dart Model types, codecs and bound client/transaction facades | [Typed client](../frontend-sdk/api.md) |
@@ -24,13 +24,13 @@ Load declarations and Load history CLI options are rejected in 0.4. Generated cl
 
 ## 5. Building Block View
 
-[generate.rs](../../../../crates/compiler/src/generate.rs) owns descriptors; [emit.rs](../../../../crates/compiler/src/emit.rs) renders Model/operation types and facades. [current_operations.rs](../../../../crates/compiler/src/current_operations.rs) selects each name's latest retained version once per emitted surface. [emit_transactions.rs](../../../../crates/compiler/src/emit_transactions.rs) uses that selection for typed Mutation callback and transaction scopes. [emit_stream.rs](../../../../crates/compiler/src/emit_stream.rs) renders backend tracking/publication types; retained internal type names such as `LoadStream` do not expose Load jobs.
+[generate.rs](../../../../crates/compiler/src/generate.rs) owns descriptors; [emit.rs](../../../../crates/compiler/src/emit.rs) renders Model/operation types and facades. [current_operations.rs](../../../../crates/compiler/src/current_operations.rs) selects each name's latest retained version once per emitted surface. [emit_transactions.rs](../../../../crates/compiler/src/emit_transactions.rs) uses that selection for typed transaction scopes. [emit_stream.rs](../../../../crates/compiler/src/emit_stream.rs) renders backend tracking/publication types; retained internal type names such as `LoadStream` do not expose Load jobs.
 
 The [CLI](../../../../crates/compiler/src/main.rs) concatenates input `.model` files, reconciles histories, checks the schema fence and stages each output before renaming it into place. Current-kind selection does not discard history: backend handlers retain each version under its own kind, and retained wire contracts remain in descriptors.
 
 ## 6. Runtime View
 
-Generated local Model APIs forward to runtime ports. Named Mutations accept typed input or a callback returning that input; the callback exposes local companion writes. TypeScript supports both invocation forms directly, while Dart uses the typed invoker's `withTransaction`. The same Mutation forms are available inside an outer transaction. Invocation returns a `Call`; `wait()` observes backend outcome and local settlement.
+Generated Model APIs only read and forward to runtime ports. Named Mutations accept typed input, on the client and inside an outer transaction. Invocation returns a `Call`; `wait()` observes backend outcome and local settlement.
 
 Generated Model watches pass a row decoder and a schema-derived snapshot copier
 to the SDK's `watchDecoded` adapter. Only incoming changed rows are decoded.

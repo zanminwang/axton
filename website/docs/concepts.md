@@ -4,15 +4,17 @@ AXTON stores local Models, queues named Mutations and follows one Stream. Genera
 
 ## Models and identities
 
-A Model is the complete client-facing shape returned by its viewer Loader. An identity names one record; generated Create and Patch inputs have distinct field requirements. Nullable record fields remain present in complete snapshots. A Model without a Loader is device-only and cannot be published.
+A Model is the complete client-facing shape returned by its viewer Loader. An identity names one record; generated Create and Patch inputs have distinct field requirements. Nullable record fields remain present in complete snapshots. Every Model has a Loader.
 
-`@@bootstrap` selects initial historical materialization. It does not imply tracking, parent presence or universal cache completeness. Existing reference metadata supports navigation and declared device cascades; it is not a domain foreign-key existence policy.
+`@@bootstrap` selects initial historical materialization. It does not imply tracking, parent presence or universal cache completeness. Existing reference metadata supports navigation and declared local cascades; it is not a domain foreign-key existence policy.
 
 ## Mutations and local transactions
 
-Only named Mutations produce durable remote writes. A first await commits the input and its optimism locally and returns a Call; `Call.wait()` awaits acceptance or refusal and the required local settlement. The callback form receives `tx.models`, performs device-only companion writes, then returns the typed input. Input and companion work commit atomically. Acceptance retains companions; refusal undoes only that Call's owned work, preserving later independent operations.
+A Store holds two things: the server data it has received and a queue of named Mutations. Local reads show that data with the pending Mutations applied. Only named Mutations write: a first await commits the input and its optimism locally and returns a Call; `Call.wait()` awaits acceptance or refusal and the required local settlement. Refusal undoes only that Call's optimism and preserves later pending Mutations.
 
-`client.transaction` is the local atomicity boundary. Direct `tx.models` writes remain local. Several named Mutations in one local transaction retain independent remote fates. Their backend handler, publication and durable receipt commit in one server transaction.
+`client.transaction` is the local atomicity boundary for reads and several named Mutations. `tx.models` only reads. Several named Mutations in one local transaction retain independent remote fates. Their backend handler, publication and durable receipt commit in one server transaction.
+
+An app keeps device-only data, such as drafts, scroll positions or URL caches, in its own store. It orders that write and the Mutation itself and reconciles them by identity: a Call's `callId` and the record identities it sent are stable across retries and reopen.
 
 ## Reads and authority
 

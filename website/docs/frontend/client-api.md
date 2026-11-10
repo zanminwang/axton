@@ -202,7 +202,7 @@ A failure never deletes the local row. `execution` is `rejected` for the backend
     });
     ```
 
-`transaction<T>(callback)` returns the callback's result after local commit. Throwing or a failed operation rolls it back. Await each operation, including nested callbacks; unfinished work is rejected. Inside the callback, use `tx.models` for reads that must see earlier writes in the same transaction. Calling the outer `client` from inside its own transaction callback - a read, a Mutation, a Query or a Fetch - fails with `transaction_active` on Node and Dart (React Native rejects Mutations, Queries and Fetches and lets other outer calls wait behind the transaction) instead of waiting on itself. To send backend work with the transaction, queue it through `tx.mutations` ([queue Mutations in a transaction](#queue-mutations-in-a-transaction)).
+`transaction<T>(callback)` returns the callback's result after local commit. Throwing or a failed operation rolls it back. Await each operation, including nested callbacks; unfinished work is rejected. Inside the callback, use `tx.models` for reads that must see earlier Mutations in the same transaction; `tx.models` only reads. Calling the outer `client` from inside its own transaction callback - a read, a Mutation, a Query or a Fetch - fails with `transaction_active` on Node and Dart (React Native rejects Mutations, Queries and Fetches and lets other outer calls wait behind the transaction) instead of waiting on itself. To send backend work with the transaction, queue it through `tx.mutations` ([queue Mutations in a transaction](#queue-mutations-in-a-transaction)).
 
 The callback receives a generated transaction with `models` and the underlying `transaction`; when the schema declares Mutations it is an `ApplicationTransaction`, which adds `mutations` for queued Mutations. It has no `mutations.call`, `queries`, `fetch`, `loads` or watch method. For nested savepoints, see [transactions and savepoints](runtime.md#transactions-and-savepoints).
 
@@ -246,7 +246,7 @@ The examples use [the typed SDK fixture](https://github.com/zanminwang/axton/tre
     final snapshot = await client.queries.find(id: 'entry-2');
     ```
 
-A Mutation takes its typed input; with nothing to read first, call `client.mutations.publish(input)` directly. A caller that reads before building the input does so in `client.transaction` and then calls `tx.mutations.publish(input)`: the read and the Mutation run in one local transaction and see one snapshot. A business input named `call` retains its name. Refusal undoes only the Mutation's own optimism and preserves later independent work.
+A Mutation takes its typed input; with nothing to read first, call `client.mutations.publish(input)` directly. A caller that reads before building the input does so in `client.transaction` and then calls `tx.mutations.publish(input)`: the read and the Mutation run in one local transaction and see one snapshot. A business input named `call` retains its name. Refusal undoes only the Mutation's own optimism and preserves later pending Mutations.
 
 ### Storing Model results
 
@@ -274,27 +274,19 @@ Each Query invocation has a fresh request and snapshot. There are no `once`, `re
 
 ### Queue Mutations in a transaction
 
-`client.transaction` commits local CRUD and several named Mutation scopes atomically. Each queued Call keeps its own backend fate. Invoke `tx.mutations` with the same typed input as the client.
+`client.transaction` commits several named Mutations atomically, with the local reads they were built from. Each queued Call keeps its own backend fate. Invoke `tx.mutations` with the same typed input as the client.
 
 Calling `Call.wait()` before the outer transaction commits fails promptly with `transaction_uncommitted` without settling the Call. A rolled-back scope's Call fails with `transaction_rolled_back` and is never sent. A failed operation poisons its scope even if caught; leaked or unawaited work prevents commit. Captured cross-client or expired transaction handles fail promptly.
 
 Node uses async context and Dart uses Zones to enforce ownership. React Native lacks async context in Hermes and conservatively refuses overlapping async transaction callbacks across clients. Independent ordinary operations on another Store remain available. Do not use an outer client inside its own callback; use the supplied transaction handle.
 
-## Local-only writes
-
 ### Creation defaults
 
 Generated Model create inputs permit omission only for schema-declared defaults. Dart's `{Model}Create` implements that input contract; a complete Model can also supply it. Omission chooses the declared default once when the named Mutation is accepted locally. Explicit null clears a nullable field; it is not omission. The durable frozen input retains generated values across retries.
 
-### Local writes to synced Models
+## Device-only data
 
-A local write may target a Model that Streams also deliver. For example, an application can store a profile it looked up over REST before any Stream has delivered that person. The write is never sent, and newer server data for that identity replaces it:
-
-- **It is never sent.** A `tx.models` or `client.models` write never becomes a queued call or a backend request, whatever Model it targets.
-- **Newer server data replaces it.** A later Stream authority replaces direct local state. Ordinary Query/Fetch cache writes follow current-protection admission; private receipt settlement can finalize only its owned effects. Nothing restores the local write afterwards, not a later rejection and not a restart. A record that exists only because of a local write has no server version yet, so the first server data for it replaces it.
-- **A rejection does not undo it.** A local write can land on a record that a pending Mutation also changes. If the backend rejects that Mutation, AXTON removes only that Mutation's changes, including its `local` changes, and the local write stays until newer server data replaces it. The exception is a record whose only creation is a pending Mutation: if that create is rejected, the record goes, local writes included.
-
-Stream authority retires preceding direct changes and preserves later pending operation overlays. Ordinary Query and Fetch snapshots never replace current Stream content or tombstones.
+Every Model row comes from the backend or from a pending Mutation's optimism; there is no local-only write. An app keeps device-only data, such as drafts, scroll positions or URL caches, in its own store. It orders that write and the Mutation itself and reconciles them by identity: a Call's `callId` and the record identities it sent are stable across retries and reopen.
 
 ## Bootstrap and Stream delivery
 
@@ -353,8 +345,8 @@ A Dart `DateTime` can carry microseconds and a local time zone. Generated Dart d
 
 ## Extension points
 
-`ReadPort` declares `read`, `querySpec`, `related`, and `referencing`. `WritePort` adds local direct writes; TypeScript `LivePort` adds `watch`. These are forwarding contracts for generated Model facades, not alternate storage engines supplied automatically by the generator.
+`ReadPort` declares `read`, `querySpec`, `related`, and `referencing`. TypeScript `LivePort` adds `watch`. These are forwarding contracts for generated Model facades, not alternate storage engines supplied automatically by the generator.
 
-TypeScript exports Model classes (`EntryModel`, `EntryLiveModel`, `EntryTxModel`), `LiveModels`, `TxModels`, `liveModels(port)`, `txModels(port)` and `GeneratedTransaction`. For Fetch it exports `FetchModels`, `fetchModels(port)` and the `FetchPort` contract, whose `fetchModel(model, version, identity, decode, options)` the runtime `Client` implements. Dart exposes corresponding facades, including `FetchModels`. A schema without Models has no Fetch facade, and the names `FetchModels` and `FetchPort` are reserved only when a schema has Models. Construct these only when adapting a compatible port; normal applications obtain them through `GeneratedClient`.
+TypeScript exports Model classes (`EntryModel`, `EntryLiveModel`), `LiveModels`, `TxModels`, `liveModels(port)`, `txModels(port)` and `GeneratedTransaction`. For Fetch it exports `FetchModels`, `fetchModels(port)` and the `FetchPort` contract, whose `fetchModel(model, version, identity, decode, options)` the runtime `Client` implements. Dart exposes corresponding facades, including `FetchModels`. A schema without Models has no Fetch facade, and the names `FetchModels` and `FetchPort` are reserved only when a schema has Models. Construct these only when adapting a compatible port; normal applications obtain them through `GeneratedClient`.
 
 TypeScript's `encodeEntry`, `decodeEntry`, `encodeEntryIdentity`, `encodeEntryPatch` and `encodeEntryWhere`, and Dart's `toRecord`/`fromRecord`, perform wire conversions. They assume schema-compatible data; casts in generated decoders are not a substitute for validating arbitrary untrusted input. Generated Mutation and Query methods encode arguments, invoke the shared runtime and decode typed results.

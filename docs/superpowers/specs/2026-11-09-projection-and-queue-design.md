@@ -1,6 +1,6 @@
 # AXTON holds a projection and a queue, nothing else
 
-Issue: none yet. Status: draft (2026-11-09), design review applied. Slug: `projection-and-queue`.
+Issue: none yet. Status: implemented on branch codex/projection-and-queue (2026-11-10). Slug: `projection-and-queue`.
 
 A Store holds two things: a partial projection of server data and a queue of Mutations. It holds no device-only data. The client API has three verbs: read local data, send Mutations, read from the server. Direct Model writes, Mutation companion writes and the Mutation input callback are removed, with every table, command and type that served only them. Done means no SDK, bridge command or engine function writes a Model row except optimistic Mutation application and server delivery, and every remaining test passes without a direct write.
 
@@ -131,6 +131,14 @@ Surfaces in landing order. Everything this change leaves unused is deleted in th
 - **An old file's companion operations and independent writes are purged at open.** Rejected: a terminal error naming the reset. A reset discards the queue, and queued Mutations are never deleted (user, 2026-11-09). The purge is about as small as the detection.
 - **Delete `axton_local_replica_layer`.** It has no production reader. Rejected: keeping it for a future use nobody has named.
 - **Wire protocol unchanged; SQLite format 5 kept.** Rejected: a format bump, which would refuse every existing file and discard its queue for a change that only removes tables and row kinds.
+
+Implementation (2026-11-10) changed:
+
+- `submitMutation`, `SubmissionHost` and `MutationPort` moved from `api/local.mts` to a new platform-neutral `packages/frontend/client-js/api/submission.mts`, not into `api/transaction.mts`, because React Native imports them too.
+- `deny_unknown_fields` is on the whole bridge `Input` envelope, not only on the variants that carried `companionId` and `input`.
+- `axton_local_write` keeps its `disposition` column with the single value `accepted`; dropping it would rebuild the table in every existing file.
+- `createBackend` reports a missing Loader through its existing per-version Loader check (`Missing loader <key> for <Model> v<n>`), and keeps refusing a Loader key that names no Model. The generated backend descriptor's `loaders` list goes with `Config.loaders`.
+- Fixture Models that had no Loader (`Composition` in `integration/action-e2e`, `Draft` in `integration/e2e/behavior` and `integration/v05-sdk`) are removed from their schemas and model histories.
 
 ## 5. Verification
 

@@ -124,6 +124,7 @@ dependencies = [
  "axton-client",
  "axton-core",
  "axton-protocols",
+ "axton-sim",
  "chrono",
  "rusqlite",
  "serde_json",

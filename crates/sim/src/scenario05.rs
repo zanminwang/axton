@@ -84,7 +84,8 @@ fn decoded(value: &Value) -> Option<Value> {
 /// committed local order. A record nothing is pending on has no before image
 /// and no retained write: its row is its own base. A pending operation that
 /// no longer replays leaves the base with the accepted writes visible.
-pub fn assert_projection05(client: &mut Client<SqliteStore>) {
+/// `schema` is the one `client` was opened with.
+pub fn assert_projection05(client: &mut Client<SqliteStore>, schema: &Schema) {
     let mut histories: BTreeMap<(String, String), Vec<Step>> = BTreeMap::new();
     for row in client
         .read_sql(
@@ -139,7 +140,7 @@ pub fn assert_projection05(client: &mut Client<SqliteStore>) {
             pending: false,
         });
     }
-    for model in schema().models {
+    for model in &schema.models {
         let identity = |row: &Value| {
             let fields: serde_json::Map<String, Value> = model
                 .identity
@@ -197,14 +198,15 @@ pub fn assert_projection05(client: &mut Client<SqliteStore>) {
 /// Reopen after every durable boundary. `authority_first` permutes the only
 /// two independent sources: the Batch receipt and content authority.
 pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> RecoveryTrace05 {
+    let schema = schema();
     let key = RecordKey {
         model: "Entry".into(),
         identity: json!({"id":"e"}),
     };
     let mut client = open(path);
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     client.initialize_stream05(0, "1").unwrap();
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     let call = client
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -214,18 +216,18 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
             )
         })
         .unwrap();
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     drop(client);
     let mut boundaries = vec![Boundary05::Queued];
     client = open(path);
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     let batch = client.freeze_batch05().unwrap().unwrap();
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     let bytes = v05::encode(&batch).unwrap();
     drop(client);
     boundaries.push(Boundary05::Frozen);
     client = open(path);
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     let exact_retry = v05::encode(&client.freeze_batch05().unwrap().unwrap()).unwrap() == bytes;
     // A later Mutation on the same record, queued after the frozen Batch and
     // never sent: it stays pending on top of whatever settles beneath it.
@@ -234,7 +236,7 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
             tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"later"}}))
         })
         .unwrap();
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     let authority = v05::AuthorityChange::Record {
         key: v05::RecordKey {
             model: key.model.clone(),
@@ -248,7 +250,7 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
         client
             .install_authority05(&context, std::slice::from_ref(&authority), None)
             .unwrap();
-        assert_projection05(&mut client);
+        assert_projection05(&mut client, &schema);
     }
     let receipt = v05::BatchAcknowledgement {
         context: batch.context.clone(),
@@ -292,38 +294,38 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
         }],
     };
     client.acknowledge_batch05(&receipt).unwrap();
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     let unfinished_after_receipt = client.call_completion05(&call.call_id).unwrap().is_none();
     drop(client);
     boundaries.push(Boundary05::SavedAcceptance);
     client = open(path);
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     if !authority_first && !private {
         client
             .install_authority05(&context, std::slice::from_ref(&authority), None)
             .unwrap();
-        assert_projection05(&mut client);
+        assert_projection05(&mut client, &schema);
     }
     client
         .install_authority05(&context, &[], Some((0, 7)))
         .unwrap();
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     drop(client);
     boundaries.push(Boundary05::Covered);
     client = open(path);
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     client.settle_ready05().unwrap();
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     drop(client);
     boundaries.push(Boundary05::Settled);
     client = open(path);
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     let durable_completion = client.call_completion05(&call.call_id).unwrap().is_some();
     let optimistic = client.read(&key).unwrap().unwrap();
     client
         .transaction(|tx| tx.discard_mutation05(later.ordinal))
         .unwrap();
-    assert_projection05(&mut client);
+    assert_projection05(&mut client, &schema);
     RecoveryTrace05 {
         exact_retry,
         unfinished_after_receipt,

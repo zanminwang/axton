@@ -5,6 +5,7 @@ use axton_client::{Client, RecordKey, Schema};
 use axton_protocols::sync as v05;
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug)]
@@ -39,6 +40,160 @@ fn schema() -> Schema {
 fn open(path: &Path) -> Client<SqliteStore> {
     Client::open05(SqliteStore::open(path).unwrap(), schema(), "User:scenario").unwrap()
 }
+// One entry of a record's history above its base, as stored.
+#[derive(Debug)]
+struct Step {
+    // `(ordinal, position, sequence)`: a pending operation at its Mutation's
+    // position, an accepted write at its wire operation's position after
+    // the operations that share it.
+    order: (u64, u64, u64),
+    op: String,
+    values: Option<Value>,
+    pending: bool,
+}
+fn fold(row: &mut Option<Value>, step: &Step) -> bool {
+    match step.op.as_str() {
+        "create" if row.is_some() && step.pending => return false,
+        "create" => {
+            let mut created = row.take().unwrap_or_else(|| json!({}));
+            for (field, value) in step.values.as_ref().unwrap().as_object().unwrap() {
+                created[field] = value.clone();
+            }
+            *row = Some(created);
+        }
+        "update" => match row.as_mut() {
+            Some(current) => {
+                for (field, value) in step.values.as_ref().unwrap().as_object().unwrap() {
+                    current[field] = value.clone();
+                }
+            }
+            None => return !step.pending,
+        },
+        "delete" => *row = None,
+        other => panic!("unknown operation {other}"),
+    }
+    true
+}
+fn decoded(value: &Value) -> Option<Value> {
+    value
+        .as_str()
+        .map(|text| serde_json::from_str(text).unwrap())
+}
+/// The projection invariant: every Model row equals the rebuild of its key
+/// from its base, its pending operations and its accepted writes, in
+/// committed local order. A record nothing is pending on has no before image
+/// and no retained write: its row is its own base. A pending operation that
+/// no longer replays leaves the base with the accepted writes visible.
+pub fn assert_projection05(client: &mut Client<SqliteStore>) {
+    let mut histories: BTreeMap<(String, String), Vec<Step>> = BTreeMap::new();
+    for row in client
+        .read_sql(
+            "SELECT o.mutation_id,o.step,o.kind,o.model,o.identity,o.operation,o.value FROM axton_mutation_queue_operation o JOIN axton_mutation_queue q ON q.id=o.mutation_id WHERE o.model IS NOT NULL AND q.reconciled=0 AND q.rejection_code IS NULL",
+            &[],
+        )
+        .unwrap()
+    {
+        let kind = row["kind"].as_str().unwrap();
+        assert!(matches!(kind, "wire" | "effect"), "operation kind {kind}");
+        histories
+            .entry((
+                row["model"].as_str().unwrap().into(),
+                row["identity"].as_str().unwrap().into(),
+            ))
+            .or_default()
+            .push(Step {
+                order: (
+                    row["mutation_id"].as_u64().unwrap(),
+                    row["step"].as_u64().unwrap(),
+                    0,
+                ),
+                op: row["operation"].as_str().unwrap().into(),
+                values: decoded(&row["value"]),
+                pending: true,
+            });
+    }
+    let accepted = client
+        .read_sql(
+            "SELECT sequence,ordinal,position,disposition,model,identity,op,\"values\" FROM axton_local_write",
+            &[],
+        )
+        .unwrap();
+    for row in accepted {
+        assert_eq!(row["disposition"], "accepted", "{row}");
+        let key = (
+            row["model"].as_str().unwrap().to_string(),
+            row["identity"].as_str().unwrap().to_string(),
+        );
+        assert!(
+            histories.contains_key(&key),
+            "an accepted write outlived the pending work beneath it: {row}"
+        );
+        histories.get_mut(&key).unwrap().push(Step {
+            order: (
+                row["ordinal"].as_u64().unwrap(),
+                row["position"].as_u64().unwrap(),
+                row["sequence"].as_u64().unwrap(),
+            ),
+            op: row["op"].as_str().unwrap().into(),
+            values: decoded(&row["values"]),
+            pending: false,
+        });
+    }
+    for model in schema().models {
+        let identity = |row: &Value| {
+            let fields: serde_json::Map<String, Value> = model
+                .identity
+                .iter()
+                .map(|field| (field.clone(), row[field].clone()))
+                .collect();
+            serde_json::to_string(&Value::Object(fields)).unwrap()
+        };
+        let before: BTreeMap<String, Value> = client
+            .read_sql(
+                &format!("SELECT * FROM \"axton_before_{}\"", model.name),
+                &[],
+            )
+            .unwrap()
+            .into_iter()
+            .map(|row| (identity(&row), row))
+            .collect();
+        let mut keys: Vec<String> = before.keys().cloned().collect();
+        keys.extend(
+            histories
+                .keys()
+                .filter(|(m, _)| *m == model.name)
+                .map(|(_, i)| i.clone()),
+        );
+        keys.sort();
+        keys.dedup();
+        for encoded in keys {
+            let steps = histories.get_mut(&(model.name.clone(), encoded.clone()));
+            let key = RecordKey {
+                model: model.name.clone(),
+                identity: serde_json::from_str(&encoded).unwrap(),
+            };
+            let Some(steps) = steps else {
+                panic!("{key:?} has a before image and nothing pending");
+            };
+            steps.sort_by_key(|step| step.order);
+            let base = before.get(&encoded).cloned();
+            let mut row = base.clone();
+            if !steps.iter().all(|step| fold(&mut row, step)) {
+                row = base;
+                for step in steps.iter().filter(|step| !step.pending) {
+                    fold(&mut row, step);
+                }
+            }
+            let row = row.map(|mut row| {
+                for (field, value) in key.identity.as_object().unwrap() {
+                    row[field] = value.clone();
+                }
+                row
+            });
+            assert_eq!(client.read(&key).unwrap(), row, "{key:?} {steps:?}");
+        }
+    }
+}
 /// Reopen after every durable boundary. `authority_first` permutes the only
 /// two independent sources: the Batch receipt and content authority.
 pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> RecoveryTrace05 {
@@ -47,7 +202,9 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
         identity: json!({"id":"e"}),
     };
     let mut client = open(path);
+    assert_projection05(&mut client);
     client.initialize_stream05(0, "1").unwrap();
+    assert_projection05(&mut client);
     let call = client
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -57,14 +214,18 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
             )
         })
         .unwrap();
+    assert_projection05(&mut client);
     drop(client);
     let mut boundaries = vec![Boundary05::Queued];
     client = open(path);
+    assert_projection05(&mut client);
     let batch = client.freeze_batch05().unwrap().unwrap();
+    assert_projection05(&mut client);
     let bytes = v05::encode(&batch).unwrap();
     drop(client);
     boundaries.push(Boundary05::Frozen);
     client = open(path);
+    assert_projection05(&mut client);
     let exact_retry = v05::encode(&client.freeze_batch05().unwrap().unwrap()).unwrap() == bytes;
     // A later Mutation on the same record, queued after the frozen Batch and
     // never sent: it stays pending on top of whatever settles beneath it.
@@ -73,6 +234,7 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
             tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"later"}}))
         })
         .unwrap();
+    assert_projection05(&mut client);
     let authority = v05::AuthorityChange::Record {
         key: v05::RecordKey {
             model: key.model.clone(),
@@ -86,6 +248,7 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
         client
             .install_authority05(&context, std::slice::from_ref(&authority), None)
             .unwrap();
+        assert_projection05(&mut client);
     }
     let receipt = v05::BatchAcknowledgement {
         context: batch.context.clone(),
@@ -129,30 +292,38 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
         }],
     };
     client.acknowledge_batch05(&receipt).unwrap();
+    assert_projection05(&mut client);
     let unfinished_after_receipt = client.call_completion05(&call.call_id).unwrap().is_none();
     drop(client);
     boundaries.push(Boundary05::SavedAcceptance);
     client = open(path);
+    assert_projection05(&mut client);
     if !authority_first && !private {
         client
             .install_authority05(&context, std::slice::from_ref(&authority), None)
             .unwrap();
+        assert_projection05(&mut client);
     }
     client
         .install_authority05(&context, &[], Some((0, 7)))
         .unwrap();
+    assert_projection05(&mut client);
     drop(client);
     boundaries.push(Boundary05::Covered);
     client = open(path);
+    assert_projection05(&mut client);
     client.settle_ready05().unwrap();
+    assert_projection05(&mut client);
     drop(client);
     boundaries.push(Boundary05::Settled);
     client = open(path);
+    assert_projection05(&mut client);
     let durable_completion = client.call_completion05(&call.call_id).unwrap().is_some();
     let optimistic = client.read(&key).unwrap().unwrap();
     client
         .transaction(|tx| tx.discard_mutation05(later.ordinal))
         .unwrap();
+    assert_projection05(&mut client);
     RecoveryTrace05 {
         exact_retry,
         unfinished_after_receipt,

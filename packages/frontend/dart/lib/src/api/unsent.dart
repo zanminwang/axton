@@ -34,7 +34,7 @@ class ActOperation {
 
 /// A named act as submitted: normalized arguments with fresh-create defaults
 /// already folded in, and its declared Model operations.
-/// Local companions and cascade effects are not part of it.
+/// Cascade effects are not part of it.
 class SubmittedAct {
   final Map<String, dynamic>? args;
   final List<ActOperation> operations;

@@ -296,17 +296,11 @@ fn populated(path: &std::path::Path) {
     )
     .unwrap();
     c.transaction(|tx| {
-        tx.submit_mutation05(
-            "TouchTask",
-            1,
-            json!({"task":{"id":"t","title":"queued"}}),
-            vec![],
-        )?;
+        tx.submit_mutation05("TouchTask", 1, json!({"task":{"id":"t","title":"queued"}}))?;
         tx.submit_mutation05(
             "TouchOther",
             1,
             json!({"other":{"id":"o","title":"queued"}}),
-            vec![],
         )
     })
     .unwrap();
@@ -452,15 +446,8 @@ fn reopen_with_an_added_nullable_field_keeps_rows_and_asks_for_bootstrap_from_c(
         assert_eq!((&row["text"], &row["label"]), (&json!(text), &Value::Null));
     }
     assert_eq!(c.query("Note", &json!({})).unwrap().len(), 2);
-    c.transaction(|tx| {
-        tx.submit_mutation05(
-            "Edit",
-            1,
-            json!({"note":{"id":"n","text":"edited"}}),
-            vec![],
-        )
-    })
-    .unwrap();
+    c.transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"note":{"id":"n","text":"edited"}})))
+        .unwrap();
     let batch = c.freeze_batch05().unwrap().unwrap();
     assert_eq!(batch.context, after.context);
 }

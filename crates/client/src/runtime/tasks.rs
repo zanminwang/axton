@@ -63,7 +63,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 request_id,
                 transaction_id,
                 scope,
-                companion_id,
                 command,
             } => {
                 if self.admit(&request_id) {
@@ -71,7 +70,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                         request_id,
                         transaction_id,
                         scope,
-                        companion_id,
                         command,
                     });
                 }
@@ -79,18 +77,9 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             Input::CallbackResult {
                 effect_id,
                 transaction_id,
-                companion_id,
                 ok,
                 error,
-                input,
-            } => self.callback_result(
-                &effect_id,
-                &transaction_id,
-                companion_id.as_deref(),
-                ok,
-                error,
-                input,
-            ),
+            } => self.callback_result(&effect_id, &transaction_id, ok, error),
             Input::EffectResult { effect_id, outcome } => {
                 self.effect_result(effect_id, outcome, now, entropy);
                 // Inbound work takes its place in the arrival order now, so an
@@ -366,9 +355,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         false
     }
     // Priority close: roll back the open session, cancel every outstanding
-    // effect (a local callback's too), turn the provisional calls
-    // `rolledBack`, fail the parked parent, a submission waiting on its
-    // local callback, its queued commands and every queued task with
+    // effect, turn the provisional calls `rolledBack`, fail the parked
+    // parent, its queued commands and every queued task with
     // `client_closed`, fail direct calls as unavailable, forget the
     // prerequisite handler run, end the lanes and the observers, then
     // announce the end. Nothing is applied after it.
@@ -387,14 +375,10 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             self.call_transitions(calls, CallTransition::RolledBack);
         }
         if let Some(transaction) = transaction {
-            let local = transaction.local;
             match transaction.owner {
                 TransactionOwner::Application { request_id } => {
                     self.complete(request_id, Err("client_closed".into()))
                 }
-            }
-            if let Some(local) = local {
-                self.complete(local.request_id, Err("client_closed".into()));
             }
             for command in transaction.lane {
                 self.complete(command.request_id, Err("client_closed".into()));

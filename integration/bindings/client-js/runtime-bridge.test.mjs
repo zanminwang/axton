@@ -245,6 +245,57 @@ test("admission failure rejects its waiter and leaves the bridge usable; after c
   await closedBridge.close();
 });
 
+test("the runtime refuses the retired Mutation callback fields", async () => {
+  // A stale SDK's `local` flag fails its command and so the transaction; its
+  // `companionId` on a command and `input` on a callback result refuse the
+  // whole envelope with a protocol report.
+  let runtimeId;
+  const carrier = {
+    runtimeOpen: (request, wake) => (runtimeId = native.runtimeOpen(request, wake)),
+    runtimeSubmit: (id, message) => native.runtimeSubmit(id, message),
+    runtimeDrain: (id) => native.runtimeDrain(id),
+    runtimeDetach: (id) => native.runtimeDetach(id),
+  };
+  await withBridge(async (bridge) => {
+    const reports = [];
+    bridge.on("report", (event) => reports.push(event.diagnostic));
+    let refused;
+    await assert.rejects(
+      bridge.transaction(async (transactionId) => {
+        refused = await bridge
+          .transactionCommand(transactionId, undefined, {
+            ...create("p", "A"),
+            local: true,
+          })
+          .catch((error) => error);
+        for (const envelope of [
+          {
+            type: "transactionCommand",
+            requestId: "999999",
+            transactionId,
+            companionId: "c1",
+            command: read("p"),
+          },
+          { type: "callbackResult", effectId: "1", transactionId, ok: true, input: {} },
+        ])
+          native.runtimeSubmit(runtimeId, JSON.stringify(envelope));
+        for (let turn = 0; reports.length < 2 && turn < 200; turn++)
+          await new Promise((resolve) => setTimeout(resolve, 5));
+      }),
+      /unknown field `local`/,
+    );
+    assert.match(refused.message, /unknown field `local`/);
+    assert.deepEqual(
+      reports.map((report) => [report.kind, /unknown field `(\w+)`/.exec(report.message)?.[1]]),
+      [
+        ["protocol", "companionId"],
+        ["protocol", "input"],
+      ],
+    );
+    assert.equal(await bridge.task(read("p")), null);
+  }, carrier);
+});
+
 test("a throwing callback rejects with the same value and rolls back", async () => {
   await withBridge(async (bridge) => {
     const thrown = Error("abort");
@@ -480,25 +531,17 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
         assert.equal(typeof input.requestId, "string");
         assert.equal(typeof input.transactionId, "string");
         assert.ok(input.scope === undefined || typeof input.scope === "string");
-        // A local callback's commands carry its companion capability.
-        assert.ok(
-          input.companionId === undefined ||
-            typeof input.companionId === "string",
-        );
+        // The retired Mutation input callback's capability and flag.
+        assert.equal("companionId" in input, false);
         assert.equal(typeof input.command.kind, "string");
         if (input.command.kind === "submitMutation")
-          assert.ok(
-            input.command.local === undefined ||
-              typeof input.command.local === "boolean",
-          );
+          assert.equal("local" in input.command, false);
         break;
       case "callbackResult":
         assert.equal(typeof input.effectId, "string");
         assert.equal(typeof input.transactionId, "string");
-        assert.ok(
-          input.companionId === undefined ||
-            typeof input.companionId === "string",
-        );
+        assert.equal("companionId" in input, false);
+        assert.equal("input" in input, false);
         assert.equal(typeof input.ok, "boolean");
         assert.ok(
           input.ok ? !("error" in input) : typeof input.error === "string",
@@ -556,11 +599,6 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
         operations.add(event.operation.kind);
         if (event.operation.kind === "callback") {
           assert.equal(typeof event.operation.transactionId, "string");
-          assert.equal(typeof event.operation.requestId, "string");
-        }
-        if (event.operation.kind === "mutationLocal") {
-          assert.equal(typeof event.operation.transactionId, "string");
-          assert.equal(typeof event.operation.companionId, "string");
           assert.equal(typeof event.operation.requestId, "string");
         }
         break;
@@ -641,7 +679,6 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
   assert.deepEqual([...operations].sort(), [
     "callback",
     "http",
-    "mutationLocal",
     "prerequisite",
     "refreshAuth",
     "socket",
@@ -758,14 +795,6 @@ test("the bridge dispatches every fixture event and answers effects it has no ha
         transactionId: "tx7",
         ok: false,
         error: "unknown transaction",
-      },
-      {
-        type: "callbackResult",
-        effectId: "13",
-        transactionId: "tx7",
-        companionId: "c9",
-        ok: false,
-        error: "unknown mutation",
       },
     ],
   );

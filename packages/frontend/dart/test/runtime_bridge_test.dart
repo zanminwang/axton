@@ -493,39 +493,79 @@ void main() {
     );
   });
 
-  test('a local callback effect for an unrouted request is refused', () async {
-    // The same answer as the Node bridge gives, so diagnostics agree.
-    final carrier = FakeCarrier((_) => null);
-    final client = await Client.open(
-      stream: 'User:viewer',
-      connection: offlineStoreConnection(),
-      path: 'unused',
-      schema: const {},
-      carrier: carrier,
-    );
-    carrier.publish([
-      {
-        'type': 'effect',
-        'effectId': '13',
-        'operation': {
-          'kind': 'mutationLocal',
-          'transactionId': 'tx7',
-          'companionId': 'c9',
-          'requestId': 'nobody',
-        },
-      },
-    ]);
-    await pumpEventQueue();
-    expect(carrier.admitted.where((e) => e['type'] == 'callbackResult'), [
-      Bridge.callbackResultEnvelope(
-        '13',
-        'tx7',
-        ok: false,
-        error: 'unknown mutation',
-        companionId: 'c9',
-      ),
-    ]);
-    await client.close();
+  test('the runtime refuses the retired Mutation callback fields', () async {
+    // A stale SDK's `local` flag fails its command and so the transaction;
+    // its `companionId` on a command and `input` on a callback result refuse
+    // the whole envelope with a protocol report.
+    final bridge = await fixture.bridge();
+    try {
+      final reports = <Map<String, dynamic>>[];
+      bridge.reports.listen(reports.add);
+      Object? refused;
+      await expectLater(
+        bridge.transaction((transactionId) async {
+          refused = await bridge
+              .transactionCommand(transactionId, null, {
+                'kind': 'submitMutation',
+                'name': 'CreateEntry',
+                'version': 1,
+                'args': {
+                  'row': {'id': 'p', 'text': 'A', 'note': null},
+                },
+                'local': true,
+              })
+              .then<Object?>((_) => null, onError: (Object error) => error);
+          for (final envelope in [
+            {
+              ...Bridge.transactionCommandEnvelope(
+                '999999',
+                transactionId,
+                null,
+                {
+                  'kind': 'read',
+                  'key': {
+                    'model': 'Entry',
+                    'identity': {'id': 'p'},
+                  },
+                },
+              ),
+              'companionId': 'c1',
+            },
+            {
+              ...Bridge.callbackResultEnvelope('1', transactionId, ok: true),
+              'input': <String, dynamic>{},
+            },
+          ]) {
+            expect(bridge.submitRaw(envelope), isNull);
+          }
+          for (var turn = 0; reports.length < 2 && turn < 200; turn++) {
+            await Future<void>.delayed(const Duration(milliseconds: 5));
+          }
+        }),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown field `local`'),
+          ),
+        ),
+      );
+      expect('$refused', contains('unknown field `local`'));
+      expect(
+        [
+          for (final report in reports)
+            (
+              report['kind'],
+              RegExp(
+                r'unknown field `(\w+)`',
+              ).firstMatch(report['message'] as String)?.group(1),
+            ),
+        ],
+        [('protocol', 'companionId'), ('protocol', 'input')],
+      );
+    } finally {
+      await bridge.close();
+    }
   });
 
   test('a cancelled callback effect never runs its callback', () async {
@@ -590,14 +630,12 @@ void main() {
             input['transactionId'] as String,
             input['scope'] as String?,
             input['command'] as Map<String, dynamic>,
-            companionId: input['companionId'] as String?,
           ),
           'callbackResult' => Bridge.callbackResultEnvelope(
             input['effectId'] as String,
             input['transactionId'] as String,
             ok: input['ok'] as bool,
             error: input['error'] as String?,
-            companionId: input['companionId'] as String?,
           ),
           'effectResult' => Bridge.effectResultEnvelope(
             input['effectId'] as String,
@@ -642,11 +680,7 @@ void main() {
             expect(operation['transactionId'], isA<String>());
             expect(operation['requestId'], isA<String>());
           }
-          if (operation['kind'] == 'mutationLocal') {
-            expect(operation['transactionId'], isA<String>());
-            expect(operation['companionId'], isA<String>());
-            expect(operation['requestId'], isA<String>());
-          }
+          expect(operation['kind'], isNot('mutationLocal'));
         case 'cancelEffect':
           expect(event['effectId'], isA<String>());
         case 'callCompleted':

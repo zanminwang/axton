@@ -14,7 +14,7 @@ fn fixed_batch_restores_input_presence_and_excludes_new_members() {
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     let call = c
-        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     assert_eq!(b.mutations[0].id, call.ordinal);
@@ -22,10 +22,8 @@ fn fixed_batch_restores_input_presence_and_excludes_new_members() {
         v05::reconstruct_input(&b.mutations[0].operations).unwrap(),
         json!({"entries":[]})
     );
-    c.transaction(|tx| {
-        tx.submit_mutation05("Write", 1, json!({"entries":[],"maybe":null}), vec![])
-    })
-    .unwrap();
+    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[],"maybe":null})))
+        .unwrap();
     assert_eq!(c.freeze_batch05().unwrap().unwrap(), b);
     drop(c);
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
@@ -40,7 +38,7 @@ fn frozen_batch_is_resent_with_the_same_digest_in_the_store_context() {
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
-    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     let raw = rusqlite::Connection::open(&p).unwrap();
@@ -57,7 +55,7 @@ fn no_batch_freezes_before_the_handshake_sets_start() {
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
     let call = c
-        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     assert!(c.freeze_batch05().unwrap().is_none());
     drop(c);
@@ -114,7 +112,7 @@ fn nested_rollback_reuses_only_uncommitted_ids_and_nonempty_lists_restore() {
     )
     .unwrap();
     c.initialize_stream05(0, "1").unwrap();
-    let call=c.transaction(|tx|{let rolled:axton_client::Result<()>=tx.savepoint(|tx|{tx.submit_mutation05("Write",1,json!({"entries":[{"id":"bad","text":"discarded","note":null}]}),vec![])?;Err(axton_client::invalid("rollback"))});assert!(rolled.is_err());tx.submit_mutation05("Write",1,json!({"entries":[{"id":"e1","text":"one","note":null},{"id":"e2","text":"two","note":null}],"maybe":null}),vec![])}).unwrap();
+    let call=c.transaction(|tx|{let rolled:axton_client::Result<()>=tx.savepoint(|tx|{tx.submit_mutation05("Write",1,json!({"entries":[{"id":"bad","text":"discarded","note":null}]}))?;Err(axton_client::invalid("rollback"))});assert!(rolled.is_err());tx.submit_mutation05("Write",1,json!({"entries":[{"id":"e1","text":"one","note":null},{"id":"e2","text":"two","note":null}],"maybe":null}))}).unwrap();
     assert_eq!(call.ordinal, 1);
     let b = c.freeze_batch05().unwrap().unwrap();
     assert_eq!(b.mutations[0].operations.len(), 3);
@@ -129,7 +127,7 @@ fn a_changed_materialization_resends_the_frozen_batch_with_its_digest_in_the_new
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
-    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     drop(c);
@@ -162,10 +160,8 @@ fn value_arguments_have_one_entry_and_do_not_create_model_optimism() {
     let mut c =
         Client::open05(SqliteStore::open(d.path().join("db")).unwrap(), s, "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
-    c.transaction(|tx| {
-        tx.submit_mutation05("Arg", 1, json!({"label":null,"tags":["a","b"]}), vec![])
-    })
-    .unwrap();
+    c.transaction(|tx| tx.submit_mutation05("Arg", 1, json!({"label":null,"tags":["a","b"]})))
+        .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     assert_eq!(b.mutations[0].operations.len(), 2);
     assert!(
@@ -195,7 +191,6 @@ fn next_batch_preserves_previous_ownership_until_settlement() {
                 "Write",
                 1,
                 json!({"entries":[{"id":"e","text":"one","note":null}]}),
-                vec![],
             )
         })
         .unwrap();
@@ -206,12 +201,11 @@ fn next_batch_preserves_previous_ownership_until_settlement() {
                 "Write",
                 1,
                 json!({"entries":[],"maybe":{"id":"e","text":"two"}}),
-                vec![],
             )
         })
         .unwrap();
     let independent = c
-        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     let a = v05::BatchAcknowledgement {
         context: b.context.clone(),
@@ -289,7 +283,7 @@ fn descriptor_snapshot_reorder_retains_original_hash_in_identical_read_context()
     s = Schema::from_value(v).unwrap();
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
-    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     drop(c);
@@ -310,7 +304,7 @@ fn discard_refuses_assigned_owner_and_dismiss_retains_completed_outcome() {
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     let call = c
-        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     let report = c
         .transaction(|tx| tx.discard_mutation05(call.ordinal))
@@ -322,7 +316,7 @@ fn discard_refuses_assigned_owner_and_dismiss_retains_completed_outcome() {
         .unwrap();
     assert_eq!(c.call_completion05(&call.call_id).unwrap(), completed);
     let assigned = c
-        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     assert!(
@@ -385,11 +379,11 @@ fn assigned_payload_and_membership_cannot_be_edited_or_cancelled_in_sql() {
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     let first = c
-        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     let later = c
-        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     let db = rusqlite::Connection::open(&p).unwrap();
     db.execute_batch("PRAGMA foreign_keys=ON").unwrap();
@@ -429,14 +423,13 @@ fn same_identity_in_two_slots_keeps_paths_and_binding_failure_is_atomic() {
     )
     .unwrap();
     c.initialize_stream05(0, "1").unwrap();
-    assert!(c.transaction(|tx|tx.submit_mutation05("Pair",1,json!({"first":{"id":"e","text":"one","note":null},"second":{"id":"other","text":"two"}}),vec![])).is_err());
+    assert!(c.transaction(|tx|tx.submit_mutation05("Pair",1,json!({"first":{"id":"e","text":"one","note":null},"second":{"id":"other","text":"two"}}))).is_err());
     assert_eq!(c.store_status05().unwrap().next_mutation_id, 1);
     c.transaction(|tx| {
         tx.submit_mutation05(
             "Pair",
             1,
             json!({"first":{"id":"e","text":"one","note":null},"second":{"id":"e","text":"two"}}),
-            vec![],
         )
     })
     .unwrap();
@@ -465,8 +458,7 @@ fn unsafe_sequence_counter_rolls_back_model_write_and_mutation_id() {
         c.transaction(|tx| tx.submit_mutation05(
             "Write",
             1,
-            json!({"entries":[{"id":"e","text":"one","note":null}]}),
-            vec![]
+            json!({"entries":[{"id":"e","text":"one","note":null}]})
         ))
         .is_err()
     );
@@ -496,7 +488,7 @@ fn late_cascade_discovery_extends_owned_effects_without_changing_frozen_input() 
     c.initialize_stream05(0, "1").unwrap();
     cache_row(&mut c, "Book", "b", json!({"title":"book"}));
     let call = c
-        .transaction(|tx| tx.submit_mutation05("DeleteBook", 1, json!({"book":{"id":"b"}}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("DeleteBook", 1, json!({"book":{"id":"b"}})))
         .unwrap();
     let batch = c.freeze_batch05().unwrap().unwrap();
     c.install_cache05(
@@ -570,14 +562,9 @@ fn offline_create_then_sequenced_update_preserves_lifecycle_dependency() {
                 "Write",
                 1,
                 json!({"entries":[{"id":"e","text":"created","note":null}]}),
-                vec![],
             )?;
-            let edited = tx.submit_mutation05(
-                "Edit",
-                1,
-                json!({"entry":{"id":"e","text":"edited"}}),
-                vec![],
-            )?;
+            let edited =
+                tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"edited"}}))?;
             Ok((created, edited))
         })
         .expect("a lifecycle dependency may also match an explicit sequence predecessor");
@@ -628,18 +615,12 @@ fn offline_sequenced_update_waits_for_creation_settlement_and_survives_reopen() 
                 "Write",
                 1,
                 json!({"entries":[{"id":"e","text":"created","note":null}]}),
-                vec![],
             )
         })
         .unwrap();
     let edited = c
         .transaction(|tx| {
-            tx.submit_mutation05(
-                "Edit",
-                1,
-                json!({"entry":{"id":"e","text":"edited"}}),
-                vec![],
-            )
+            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"edited"}}))
         })
         .unwrap();
     let key = axton_client::RecordKey {
@@ -740,25 +721,15 @@ fn rejected_predecessor_releases_sequence_survivor_and_rolls_back_lifecycle_depe
             identity: json!({"id":"n"}),
         };
         cache_row(&mut c, "Entry", "e", json!({"text":"base","note":null}));
-        let first = c.transaction(|tx| tx.submit_mutation05("Write",1,json!({"entries":[{"id":"n","text":"created","note":null}],"maybe":{"id":"e","text":"first"}}),vec![])).unwrap();
+        let first = c.transaction(|tx| tx.submit_mutation05("Write",1,json!({"entries":[{"id":"n","text":"created","note":null}],"maybe":{"id":"e","text":"first"}}))).unwrap();
         let survivor = c
             .transaction(|tx| {
-                tx.submit_mutation05(
-                    "Edit",
-                    1,
-                    json!({"entry":{"id":"e","text":"survivor"}}),
-                    vec![],
-                )
+                tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"survivor"}}))
             })
             .unwrap();
         let lifecycle = c
             .transaction(|tx| {
-                tx.submit_mutation05(
-                    "Edit",
-                    1,
-                    json!({"entry":{"id":"n","text":"dependent"}}),
-                    vec![],
-                )
+                tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"n","text":"dependent"}}))
             })
             .unwrap();
         let dependencies = c.read_sql("SELECT ordinal,depends_on,kind FROM axton_mutation_dependency ORDER BY ordinal,kind",&[]).unwrap();
@@ -833,7 +804,7 @@ fn fresh_store_uses_only_canonical_tables_without_compatibility_views_or_trigger
     assert!(objects.is_empty(), "retired framework objects: {objects:?}");
     assert_eq!(client.pending_count().unwrap(), 0);
     client
-        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     assert_eq!(client.pending_count().unwrap(), 1);
     drop(client);
@@ -935,12 +906,7 @@ fn an_upgrade_keeps_every_row_and_the_queue_and_freezes_at_once() {
     // Prerequisite-blocked, so never frozen.
     let blocked = c
         .transaction(|tx| {
-            tx.submit_mutation05(
-                "Write",
-                1,
-                json!({"note":{"id":"dirty","blob":"pending"}}),
-                vec![],
-            )
+            tx.submit_mutation05("Write", 1, json!({"note":{"id":"dirty","blob":"pending"}}))
         })
         .unwrap();
     let frozen = c
@@ -949,7 +915,6 @@ fn an_upgrade_keeps_every_row_and_the_queue_and_freezes_at_once() {
                 "Create",
                 1,
                 json!({"note":{"id":"receipt","text":"optimistic","blob":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1036,7 +1001,6 @@ fn an_upgrade_keeps_every_row_and_the_queue_and_freezes_at_once() {
                 "Create",
                 1,
                 json!({"note":{"id":"later","text":"later","blob":null,"label":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1055,7 +1019,7 @@ fn handshake_generation_upgrades_a_fresh_store_and_reopen_keeps_it() {
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
     let opened = c.request_context05().unwrap();
     let call = c
-        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     // A fresh Store has no C: the upgrade adopts the contract and the
     // handshake then commits its head.
@@ -1084,7 +1048,7 @@ fn a_generation_reported_with_a_frozen_batch_upgrades_at_once_and_reopen_keeps_i
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
-    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     let frozen = c.freeze_batch05().unwrap().unwrap();
     c.initialize_stream05(0, "2").unwrap();
@@ -1112,7 +1076,7 @@ fn stale_frozen_digest_halts_the_uplink_once_without_deleting_anything() {
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
-    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
     c.freeze_batch05().unwrap().unwrap();
     drop(c);
@@ -1234,7 +1198,6 @@ fn queued_across(
             "Pair",
             1,
             json!({"a":{"id":"a","title":"A1"},"b":{"id":"b","title":"B1"}}),
-            vec![],
         )
     })
     .unwrap();
@@ -1288,10 +1251,8 @@ fn replay_skips_an_operation_on_a_model_that_is_not_shared_and_marks_the_mutatio
         let batch = c.freeze_batch05().unwrap().unwrap();
         assert_eq!(batch.mutations[0].name, "Pair", "{change:?}");
         // A later Mutation derives its dependencies past the skipped operation.
-        c.transaction(|tx| {
-            tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B2"}}), vec![])
-        })
-        .unwrap_or_else(|e| panic!("{change:?}: {e}"));
+        c.transaction(|tx| tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B2"}})))
+            .unwrap_or_else(|e| panic!("{change:?}: {e}"));
         assert_eq!(c.read(&pair_key("B", "b")).unwrap().unwrap()["title"], "B2");
         if let Change::FieldType = change {
             stream(&mut c, "A", "a", 1, json!(5));
@@ -1345,10 +1306,8 @@ fn acknowledgement_needs_no_target_for_a_model_that_is_not_shared() {
             c.read(&pair_key("B", "b")).unwrap().unwrap()["title"],
             "accepted"
         );
-        c.transaction(|tx| {
-            tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B2"}}), vec![])
-        })
-        .unwrap();
+        c.transaction(|tx| tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B2"}})))
+            .unwrap();
         assert_eq!(
             c.freeze_batch05().unwrap().unwrap().batch_id,
             2,
@@ -1451,15 +1410,12 @@ fn an_action_sequenced_after_a_diverged_mutation_can_be_enqueued() {
                 "Pair",
                 1,
                 json!({"a":{"id":"a","title":"A1"},"b":{"id":"b","title":"B1"}}),
-                vec![],
             )
         })
         .unwrap();
     // Before the upgrade the sequence edge is derived from Pair's input.
     let first = c
-        .transaction(|tx| {
-            tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B2"}}), vec![])
-        })
+        .transaction(|tx| tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B2"}})))
         .unwrap();
     let raw = rusqlite::Connection::open(&p).unwrap();
     let edges = |raw: &rusqlite::Connection, ordinal: u64| -> Vec<i64> {
@@ -1481,9 +1437,7 @@ fn an_action_sequenced_after_a_diverged_mutation_can_be_enqueued() {
     )
     .unwrap();
     let after = c
-        .transaction(|tx| {
-            tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B3"}}), vec![])
-        })
+        .transaction(|tx| tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B3"}})))
         .expect("a prior that is not shared takes no part in sequence derivation");
     assert!(edges(&raw, after.ordinal).is_empty());
     assert_eq!(c.read(&pair_key("B", "b")).unwrap().unwrap()["title"], "B3");
@@ -1506,9 +1460,7 @@ fn a_create_queued_before_a_new_required_field_uploads_and_shows_no_optimistic_r
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), entry(false), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     let call = c
-        .transaction(|tx| {
-            tx.submit_mutation05("Add", 1, json!({"entry":{"id":"e","text":"A"}}), vec![])
-        })
+        .transaction(|tx| tx.submit_mutation05("Add", 1, json!({"entry":{"id":"e","text":"A"}})))
         .unwrap();
     let key = axton_client::RecordKey {
         model: "Entry".into(),
@@ -1548,10 +1500,8 @@ fn the_shared_check_parses_each_retained_descriptor_model_once_per_open() {
     // Later rebuilds, reads and status run in new Engines on the same Client.
     stream(&mut c, "B", "b", 2, json!("second"));
     c.record_status(&pair_key("B", "b")).unwrap();
-    c.transaction(|tx| {
-        tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B2"}}), vec![])
-    })
-    .unwrap();
+    c.transaction(|tx| tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B2"}})))
+        .unwrap();
     assert_eq!(
         c.shared_check_parses(),
         parsed,

@@ -29,17 +29,14 @@ abstract interface class WritePort implements ReadPort {
 }
 
 /// Queues a named Mutation inside an application [Transaction]. The call
-/// resolves after the Mutation's optimism and its [local] callback ran in the
-/// open transaction; the [Call] is sendable only after the local commit.
-/// [local] receives a restricted port whose writes are that Mutation's local
-/// companions; it queues no Mutation and has no Scopes, watch or
-/// savepoints.
+/// resolves after the Mutation's optimism ran in the open transaction; the
+/// [Call] is sendable only after the local commit. A caller that reads before
+/// building [args] does so in the same transaction.
 abstract interface class SubmitMutationPort {
   Future<Call<T>> submitMutation<T>(
     String name,
     int version,
-    Map<String, dynamic>? args,
-    T Function(dynamic) decode, {
-    Future<Map<String, dynamic>> Function(WritePort tx)? input,
-  });
+    Map<String, dynamic> args,
+    T Function(dynamic) decode,
+  );
 }

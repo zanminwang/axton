@@ -21,7 +21,7 @@ export type ActOperation = {
 /**
  * A named act as submitted: normalized arguments with fresh-create defaults
  * already folded in, and its declared Model operations.
- * Local companions and cascade effects are not part of it.
+ * Cascade effects are not part of it.
  */
 export type SubmittedAct = {
   args: RecordValue | null;

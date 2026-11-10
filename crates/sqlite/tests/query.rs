@@ -62,7 +62,7 @@ fn readonly_sql_sees_optimistic_rows_and_refuses_write_statements() {
     let mut c = open(&dir.path().join("db"));
     seed(&mut c, "A");
     c.transaction(|tx| {
-        tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"B"}}), vec![])?;
+        tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"B"}}))?;
         Ok(())
     })
     .unwrap();
@@ -78,7 +78,7 @@ fn readonly_sql_sees_optimistic_rows_and_refuses_write_statements() {
         "duplicate column names need aliases"
     );
     c.begin_session().unwrap();
-    c.session(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"C"}}), vec![]))
+    c.session(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"C"}})))
         .unwrap();
     assert_eq!(
         c.session_sql("SELECT text FROM Entry", &[]).unwrap(),

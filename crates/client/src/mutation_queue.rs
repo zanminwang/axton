@@ -20,7 +20,6 @@ pub(crate) fn decode<T: serde::de::DeserializeOwned>(v: &Value) -> Result<T> {
 fn kind(k: OpKind) -> &'static str {
     match k {
         OpKind::Wire => "wire",
-        OpKind::Companion => "companion",
         OpKind::Effect => "effect",
     }
 }
@@ -92,7 +91,6 @@ impl<S: ClientStore> Engine<'_, S> {
         name: &str,
         version: u64,
         mut input: Value,
-        mut companions: Vec<Operation>,
     ) -> Result<SubmittedCall> {
         let context = self.context05()?;
         let descriptor = self.schema.action(name, version)?.clone();
@@ -133,31 +131,6 @@ impl<S: ClientStore> Engine<'_, S> {
             .ok_or_else(|| invalid("descriptor missing"))?;
         self.exec("axton_mutation_queue","INSERT INTO axton_mutation_queue(id,name,descriptor_version,descriptor) VALUES(?,?,?,?)",&[json!(id),json!(name),json!(version),descriptor_context])?;
         let mut step = 0;
-        for op in &mut companions {
-            crate::defaults::fill_operation(self.schema, op);
-            op.identity = self.schema.record_key(&op.model, &op.identity)?.identity;
-            op.values = match op.op {
-                OperationKind::Create => Some(self.schema.normalize_state(
-                    &op.model,
-                    op.values.as_ref().ok_or_else(|| invalid("missing state"))?,
-                )?),
-                OperationKind::Update => Some(self.schema.validate_patch(
-                    &op.model,
-                    op.values.as_ref().ok_or_else(|| invalid("missing patch"))?,
-                )?),
-                OperationKind::Delete => {
-                    if op.values.is_some() {
-                        return Err(invalid("delete has values"));
-                    }
-                    None
-                }
-            };
-            self.apply_in_order(op, OpKind::Companion, OpKind::Companion, |e, k, op| {
-                e.insert_owned05(id, step, k, None, &op)?;
-                step += 1;
-                Ok(())
-            })?;
-        }
         let mut wire = mutation.operations.iter();
         for slot in &descriptor.inputs {
             let name = slot.name();
@@ -398,12 +371,7 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
         name: &str,
         version: u64,
         input: Value,
-        companions: Vec<Operation>,
     ) -> Result<SubmittedCall> {
-        self.savepoint(|tx| {
-            let call = tx.engine.enqueue05(name, version, input, companions)?;
-            tx.submitted.insert(call.ordinal);
-            Ok(call)
-        })
+        self.savepoint(|tx| tx.engine.enqueue05(name, version, input))
     }
 }

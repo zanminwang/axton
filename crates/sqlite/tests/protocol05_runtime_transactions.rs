@@ -61,12 +61,6 @@ impl ClientStore for FailingCommit {
         self.inner.read_tables(sql)
     }
 }
-struct LocalCallback {
-    effect: String,
-    transaction: String,
-    companion: String,
-    input: Value,
-}
 impl<S: ClientStore + 'static> Harness<S> {
     fn submit(&mut self, input: Value) -> std::result::Result<(), BridgeError> {
         let input: Input = serde_json::from_value(input).unwrap();
@@ -152,51 +146,6 @@ impl<S: ClientStore + 'static> Harness<S> {
     }
 }
 impl<S: ClientStore + 'static> Harness<S> {
-    /// Submit a Mutation asking for a local callback and answer the
-    /// `mutationLocal` effect's identities: the submission itself waits.
-    fn local(
-        &mut self,
-        id: &str,
-        transaction: &str,
-        scope: Option<&str>,
-        command: Value,
-    ) -> LocalCallback {
-        let input = command["args"].clone();
-        self.command(id, transaction, scope, command);
-        let events = self.run();
-        assert_eq!(events.len(), 1, "{events:?}");
-        let effect = &events[0];
-        assert_eq!(effect["type"], "effect", "{effect}");
-        assert_eq!(effect["operation"]["kind"], "mutationLocal", "{effect}");
-        assert_eq!(effect["operation"]["requestId"], id);
-        assert_eq!(effect["operation"]["transactionId"], transaction);
-        LocalCallback {
-            effect: effect["effectId"].as_str().unwrap().to_string(),
-            transaction: transaction.to_string(),
-            input,
-            companion: effect["operation"]["companionId"]
-                .as_str()
-                .unwrap()
-                .to_string(),
-        }
-    }
-    /// A command of the local callback: it carries the companion token.
-    fn companion(&mut self, id: &str, local: &LocalCallback, scope: Option<&str>, command: Value) {
-        let mut input = json!({"type":"transactionCommand","requestId":id,
-            "transactionId":local.transaction,"companionId":local.companion,"command":command});
-        if let Some(scope) = scope {
-            input["scope"] = json!(scope);
-        }
-        self.submit(input).unwrap();
-    }
-    fn finish_local(&mut self, local: &LocalCallback, ok: bool, error: Option<&str>) {
-        let mut input = json!({"type":"callbackResult","effectId":local.effect,
-            "transactionId":local.transaction,"companionId":local.companion,"ok":ok,"input":local.input});
-        if let Some(error) = error {
-            input["error"] = json!(error);
-        }
-        self.submit(input).unwrap();
-    }
     fn entry(&mut self, id: &str) -> Option<Value> {
         let key = RecordKey {
             model: "Entry".into(),
@@ -212,29 +161,6 @@ impl<S: ClientStore + 'static> Harness<S> {
             .unwrap()[0]["n"]
             .as_u64()
             .unwrap()
-    }
-    /// The committed queued operations as `kind model id op`, in order.
-    fn operations(&mut self) -> Vec<String> {
-        self.runtime
-            .client()
-            .read_sql(
-                "SELECT o.kind,o.model,o.identity,o.operation AS op FROM axton_mutation_queue_operation o JOIN axton_mutation_queue q ON q.id=o.mutation_id WHERE o.model IS NOT NULL AND q.reconciled=0 AND q.rejection_code IS NULL ORDER BY o.mutation_id,o.step",
-                &[],
-            )
-            .unwrap()
-            .iter()
-            .map(|row| {
-                let identity: Value =
-                    serde_json::from_str(row["identity"].as_str().unwrap()).unwrap();
-                format!(
-                    "{} {} {} {}",
-                    row["kind"].as_str().unwrap(),
-                    row["model"].as_str().unwrap(),
-                    identity["id"].as_str().unwrap(),
-                    row["op"].as_str().unwrap()
-                )
-            })
-            .collect()
     }
     /// Every committed row a transactional submission can write: the queue,
     /// the local write journal, rejections, record stamps, the client
@@ -291,17 +217,14 @@ fn harness() -> Harness<SqliteStore> {
         _dir: dir,
     }
 }
-fn create(id: &str, text: &str) -> Value {
-    json!({"kind":"direct","operation":{"model":"Entry","op":"create","identity":{"id":id},"values":{"text":text}}})
-}
 /// A transaction command that creates Entry `id`: a Mutation, applied
 /// optimistically and answered with its Call.
 fn write(id: &str, text: &str) -> Value {
-    submit_mutation("CreateEntry", json!({"row":{"id":id,"text":text}}), false)
+    submit_mutation("CreateEntry", json!({"row":{"id":id,"text":text}}))
 }
 /// A transaction command that fails without writing: an unknown Mutation.
 fn failing_write() -> Value {
-    submit_mutation("Nope", json!({}), false)
+    submit_mutation("Nope", json!({}))
 }
 /// The task form of [`failing_write`].
 fn failing_task() -> Value {
@@ -328,9 +251,6 @@ fn calls(events: Vec<Value>) -> Vec<Value> {
 }
 fn read(id: &str) -> Value {
     json!({"kind":"read","key":{"model":"Entry","identity":{"id":id}}})
-}
-fn missing_model() -> Value {
-    json!({"kind":"direct","operation":{"model":"Nope","op":"create","identity":{"id":"x"},"values":{}}})
 }
 fn done(id: &str, value: Value) -> Value {
     json!({"type":"taskCompleted","requestId":id,"ok":true,"value":value})
@@ -372,25 +292,17 @@ fn mutation_harness() -> Harness<SqliteStore> {
         _dir: dir,
     }
 }
-fn submit_mutation(name: &str, args: Value, local: bool) -> Value {
-    let mut command = json!({"kind":"submitMutation","name":name,"version":1,"args":args});
-    if local {
-        command["local"] = json!(true);
-    }
-    command
+fn submit_mutation(name: &str, args: Value) -> Value {
+    json!({"kind":"submitMutation","name":name,"version":1,"args":args})
 }
 fn ping() -> Value {
-    submit_mutation("Ping", json!({}), false)
+    submit_mutation("Ping", json!({}))
 }
 fn publish(id: &str) -> Value {
     submit_mutation(
         "Publish",
         json!({"entry":{"id":id,"text":"published","note":null}}),
-        true,
     )
-}
-fn delete(id: &str) -> Value {
-    json!({"kind":"direct","operation":{"model":"Entry","op":"delete","identity":{"id":id}}})
 }
 fn call_state(call: &Value, state: &str) -> Value {
     json!({"type":"transactionCallState","callId":call,"state":state})
@@ -780,19 +692,19 @@ fn a_named_mutation_submitted_in_a_callback_is_provisional_until_the_commit() {
         "q",
         &b.transaction,
         None,
-        submit_mutation("Find", json!({}), false),
+        submit_mutation("Find", json!({})),
     );
     h.command(
         "bad",
         &b.transaction,
         None,
-        submit_mutation("Ping", json!({"extra":1}), false),
+        submit_mutation("Ping", json!({"extra":1})),
     );
     h.command(
         "flag",
         &b.transaction,
         None,
-        json!({"kind":"submitMutation","name":"Ping","version":1,"args":{},"local":"yes"}),
+        json!({"kind":"submitMutation","name":"Ping","version":1,"args":{},"local":true}),
     );
     let events = h.run();
     for id in ["q", "bad", "flag"] {
@@ -803,7 +715,8 @@ fn a_named_mutation_submitted_in_a_callback_is_provisional_until_the_commit() {
         events[position(&events, |e| e["requestId"] == "flag")]["error"]
             .as_str()
             .unwrap()
-            .contains("local must be a boolean")
+            .contains("unknown field `local`"),
+        "the retired callback flag is refused"
     );
     h.callback(&b, true, None);
     let events = h.run();
@@ -839,7 +752,6 @@ fn a_mutation_built_from_a_read_commits_with_its_transaction_and_a_rollback_disc
             submit_mutation(
                 "Publish",
                 json!({"entry":{"id":"copy","text":text,"note":null}}),
-                false,
             ),
         );
         let events = h.run();
@@ -874,292 +786,6 @@ fn a_mutation_built_from_a_read_commits_with_its_transaction_and_a_rollback_disc
 }
 
 #[test]
-fn a_local_callback_runs_inside_its_submission_and_its_writes_are_companions() {
-    let mut h = mutation_harness();
-    h.task("seed", create("draft", "local"));
-    assert_eq!(h.run(), vec![done("seed", Value::Null)]);
-    let a = h.begin("tx");
-    let local = h.local("s", &a.transaction, None, publish("p"));
-    assert_ne!(local.effect, a.effect);
-    h.companion("r", &local, None, read("p"));
-    h.companion("d", &local, None, delete("draft"));
-    assert_eq!(
-        h.run(),
-        vec![done("r", Value::Null), done("d", Value::Null)]
-    );
-    h.finish_local(&local, true, None);
-    let events = h.run();
-    let call = submitted(&events, "s");
-    assert_eq!(events, vec![done("s", json!({"callId":call,"ordinal":1}))]);
-    // The parent capability is restored; nothing committed yet.
-    h.command("after", &a.transaction, None, read("draft"));
-    assert_eq!(h.run(), vec![done("after", Value::Null)]);
-    assert_eq!(h.entry("draft").unwrap()["text"], "local");
-    assert_eq!(h.pending(), 0);
-    h.callback(&a, true, None);
-    assert_eq!(
-        h.run(),
-        vec![call_state(&call, "committed"), done("tx", Value::Null)]
-    );
-    assert_eq!(h.entry("draft"), None);
-    assert_eq!(h.entry("p").unwrap()["text"], "published");
-    assert_eq!(
-        h.operations(),
-        ["companion Entry draft delete", "wire Entry p create"]
-    );
-    h.runtime.client().initialize_stream05(0, "1").unwrap();
-    let batch = h.runtime.client().freeze_batch05().unwrap().unwrap();
-    let body = String::from_utf8(axton_protocols::sync::encode(&batch).unwrap()).unwrap();
-    assert!(!body.contains("draft"), "a companion is never sent: {body}");
-}
-
-#[test]
-fn a_local_callback_admits_only_its_own_local_commands() {
-    let mut h = mutation_harness();
-    let a = h.begin("tx");
-    let local = h.local("s", &a.transaction, None, publish("p"));
-    // The parent's captured handle.
-    h.command("parent-write", &a.transaction, None, create("x", "x"));
-    h.command("parent-submit", &a.transaction, None, ping());
-    h.command("parent-read", &a.transaction, None, read("p"));
-    // A token that names no open local callback.
-    h.submit(
-        json!({"type":"transactionCommand","requestId":"wrong","transactionId":a.transaction,
-        "companionId":"c999","command":read("p")}),
-    )
-    .unwrap();
-    let events = h.run();
-    for id in ["parent-write", "parent-submit", "parent-read", "wrong"] {
-        assert!(events.contains(&failed(id, CAPABILITY)), "{id}: {events:?}");
-    }
-    // The callback's own commands: local reads and writes only.
-    let enqueue = json!({"kind":"enqueue","mutation":{"name":"Edit","operations":[
-        {"model":"Entry","op":"update","identity":{"id":"p"},"values":{"text":"raw"}}]}});
-    let refused = [
-        ("enqueue", enqueue),
-        ("submit", ping()),
-        (
-            "scope",
-            json!({"kind":"stream","stream":"book","subscribed":true}),
-        ),
-        ("discard", json!({"kind":"discard","ordinal":1})),
-        ("dismiss", json!({"kind":"dismiss","ordinal":1})),
-        ("retry", json!({"kind":"retryTasks","keys":[]})),
-        ("savepoint", json!({"kind":"savepoint"})),
-        ("release", json!({"kind":"release"})),
-    ];
-    for (id, command) in refused.clone() {
-        h.companion(id, &local, None, command);
-    }
-    h.companion(
-        "load",
-        &local,
-        None,
-        json!({"kind":"loadStart","name":"Recent","version":1,"args":{}}),
-    );
-    h.companion("own", &local, None, read("p"));
-    let events = h.run();
-    for (id, _) in &refused {
-        if ["enqueue", "scope"].contains(id) {
-            assert_eq!(
-                events[position(&events, |e| e["requestId"] == *id)]["ok"],
-                false
-            );
-        } else {
-            assert!(events.contains(&failed(id, CAPABILITY)), "{id}: {events:?}");
-        }
-    }
-    assert_eq!(
-        events[position(&events, |e| e["requestId"] == "load")]["ok"],
-        false
-    );
-    assert_eq!(
-        events[position(&events, |e| e["requestId"] == "own")]["ok"],
-        true
-    );
-    h.finish_local(&local, true, None);
-    let failed_local = h.run();
-    assert_eq!(failed_local[0]["ok"], false);
-    assert!(
-        failed_local[0]["error"]
-            .as_str()
-            .unwrap()
-            .starts_with("unknown variant `enqueue`")
-    );
-    // Once it finished, its token has expired.
-    h.companion("expired", &local, None, read("p"));
-    assert_eq!(h.run(), vec![failed("expired", CAPABILITY)]);
-    h.callback(&a, true, None);
-    assert_eq!(h.run(), vec![failed("tx", CAPABILITY)]);
-    assert_eq!(h.pending(), 0);
-    assert_eq!(h.entry("x"), None);
-}
-
-#[test]
-fn a_local_callback_command_outside_its_scope_fails_its_submission_and_the_transaction() {
-    let mut h = mutation_harness();
-    h.task("seed", create("draft", "local"));
-    assert_eq!(h.run(), vec![done("seed", Value::Null)]);
-    let a = h.begin("tx");
-    h.command("sp", &a.transaction, None, json!({"kind":"savepoint"}));
-    let scope = h.run()[0]["value"]["scope"].as_str().unwrap().to_string();
-    let local = h.local("s", &a.transaction, Some(&scope), publish("p"));
-    // The outer scope, then a scope that was never opened.
-    h.companion("outer", &local, None, delete("draft"));
-    h.companion("unknown", &local, Some("sp999"), read("draft"));
-    assert_eq!(
-        h.run(),
-        vec![
-            failed("outer", "invalid transaction scope"),
-            failed("unknown", "invalid transaction scope")
-        ]
-    );
-    h.finish_local(&local, true, None);
-    assert_eq!(h.run(), vec![failed("s", "invalid transaction scope")]);
-    h.command(
-        "rb",
-        &a.transaction,
-        Some(&scope),
-        json!({"kind":"rollbackSavepoint","scope":scope}),
-    );
-    assert_eq!(h.run(), vec![done("rb", Value::Null)]);
-    h.callback(&a, true, None);
-    assert_eq!(h.run(), vec![failed("tx", "invalid transaction scope")]);
-    assert_eq!(h.pending(), 0);
-    assert_eq!(h.entry("draft").unwrap()["text"], "local");
-}
-
-#[test]
-fn local_callback_results_correlate_only_with_their_own_tokens() {
-    let mut h = mutation_harness();
-    let a = h.begin("tx");
-    let local = h.local("s", &a.transaction, None, publish("p"));
-    let mismatched = [
-        // No companion token: the outer result form for the local effect.
-        json!({"type":"callbackResult","effectId":local.effect,"transactionId":a.transaction,"ok":true}),
-        // The outer effect with the companion token.
-        json!({"type":"callbackResult","effectId":a.effect,"transactionId":a.transaction,"companionId":local.companion,"ok":true}),
-        json!({"type":"callbackResult","effectId":local.effect,"transactionId":a.transaction,"companionId":"c999","ok":true}),
-        json!({"type":"callbackResult","effectId":local.effect,"transactionId":"tx999","companionId":local.companion,"ok":true}),
-        // An effect result is not a callback's end either.
-        json!({"type":"effectResult","effectId":local.effect,"outcome":{"ok":true,"value":null}}),
-    ];
-    for input in mismatched {
-        h.submit(input).unwrap();
-        assert_eq!(h.run(), Vec::<Value>::new());
-    }
-    h.companion("own", &local, None, read("p"));
-    assert_eq!(h.run().len(), 1, "the local callback is still open");
-    h.finish_local(&local, true, None);
-    let events = h.run();
-    let call = submitted(&events, "s");
-    // A stale second result changes nothing; the outer transaction is open.
-    h.finish_local(&local, false, Some("late"));
-    assert_eq!(h.run(), Vec::<Value>::new());
-    assert_eq!(h.pending(), 0);
-    h.command("more", &a.transaction, None, create("x", "x"));
-    assert_eq!(h.run(), vec![done("more", Value::Null)]);
-    h.callback(&a, true, None);
-    assert_eq!(
-        h.run(),
-        vec![call_state(&call, "committed"), done("tx", Value::Null)]
-    );
-    assert_eq!(h.pending(), 1);
-}
-
-#[test]
-fn a_failed_local_callback_fails_its_submission_under_the_transaction_rules() {
-    // A thrown callback.
-    let mut h = mutation_harness();
-    h.task("seed", create("draft", "local"));
-    h.run();
-    let a = h.begin("tx");
-    let local = h.local("s", &a.transaction, None, publish("p"));
-    h.companion("d", &local, None, delete("draft"));
-    assert_eq!(h.run(), vec![done("d", Value::Null)]);
-    h.finish_local(&local, false, Some("boom"));
-    assert_eq!(h.run(), vec![failed("s", "boom")]);
-    h.callback(&a, false, Some("boom"));
-    assert_eq!(h.run(), vec![failed("tx", "boom")]);
-    assert_eq!(h.pending(), 0);
-    assert_eq!(h.entry("draft").unwrap()["text"], "local");
-
-    // A failed companion write the callback caught still fails it.
-    let a = h.begin("tx2");
-    let local = h.local("s2", &a.transaction, None, publish("p"));
-    h.companion("bad", &local, None, missing_model());
-    let error = h.run()[0]["error"].as_str().unwrap().to_string();
-    h.finish_local(&local, true, None);
-    assert_eq!(h.run(), vec![failed("s2", &error)]);
-    h.callback(&a, false, Some(&error));
-    assert_eq!(h.run(), vec![failed("tx2", &error)]);
-
-    // Inside a savepoint that rolls back, the rest of the unit commits.
-    let a = h.begin("tx3");
-    h.command("sp", &a.transaction, None, json!({"kind":"savepoint"}));
-    let scope = h.run()[0]["value"]["scope"].as_str().unwrap().to_string();
-    let local = h.local("s3", &a.transaction, Some(&scope), publish("p"));
-    h.companion("d3", &local, Some(&scope), delete("draft"));
-    h.run();
-    h.finish_local(&local, false, Some("boom"));
-    assert_eq!(h.run(), vec![failed("s3", "boom")]);
-    h.command(
-        "rb",
-        &a.transaction,
-        Some(&scope),
-        json!({"kind":"rollbackSavepoint","scope":scope}),
-    );
-    h.command("kept", &a.transaction, None, create("kept", "yes"));
-    assert_eq!(
-        h.run(),
-        vec![done("rb", Value::Null), done("kept", Value::Null)]
-    );
-    h.callback(&a, true, None);
-    assert_eq!(h.run(), vec![done("tx3", Value::Null)]);
-    assert_eq!(h.entry("kept").unwrap()["text"], "yes");
-    assert_eq!(h.entry("draft").unwrap()["text"], "local");
-    assert_eq!(h.pending(), 0);
-
-    // Work the local callback did not await.
-    let a = h.begin("tx4");
-    let local = h.local("s4", &a.transaction, None, publish("p"));
-    h.companion("unawaited", &local, None, delete("draft"));
-    h.finish_local(&local, true, None);
-    assert_eq!(
-        h.run(),
-        vec![
-            failed("unawaited", "transaction_closed"),
-            failed("s4", "unawaited transaction operation")
-        ]
-    );
-    h.callback(&a, false, Some("unawaited transaction operation"));
-    assert_eq!(
-        h.run(),
-        vec![failed("tx4", "unawaited transaction operation")]
-    );
-
-    // The outer callback ends while the local one still runs.
-    let a = h.begin("tx5");
-    let local = h.local("s5", &a.transaction, None, publish("p"));
-    h.callback(&a, true, None);
-    let events = h.run();
-    assert_eq!(
-        events,
-        vec![
-            json!({"type":"cancelEffect","effectId":local.effect}),
-            failed("s5", "transaction_closed"),
-            failed("tx5", "unawaited transaction operation"),
-        ]
-    );
-    // Its late result and commands join nothing.
-    h.finish_local(&local, true, None);
-    h.companion("late", &local, None, read("p"));
-    assert_eq!(h.run(), vec![failed("late", "transaction_closed")]);
-    assert_eq!(h.pending(), 0);
-    assert_eq!(h.entry("draft").unwrap()["text"], "local");
-}
-
-#[test]
 fn savepoint_rollback_rolls_back_only_the_calls_of_its_scope() {
     let mut h = mutation_harness();
     let a = h.begin("tx");
@@ -1171,8 +797,7 @@ fn savepoint_rollback_rolls_back_only_the_calls_of_its_scope() {
     h.command("b", &a.transaction, Some(&scope), ping());
     let events = h.run();
     let second = submitted(&events, "b");
-    let local = h.local("c", &a.transaction, Some(&scope), publish("p"));
-    h.finish_local(&local, true, None);
+    h.command("c", &a.transaction, Some(&scope), publish("p"));
     let third = submitted(&h.run(), "c");
     h.command(
         "rb",
@@ -1267,190 +892,6 @@ fn a_rollback_or_failed_commit_turns_every_provisional_call_rolled_back() {
     assert!(h.runtime.client().freeze_batch05().unwrap().is_none());
 }
 
-#[test]
-fn a_failure_at_any_local_step_leaves_no_call_companion_or_recovery_metadata() {
-    let dir = tempfile::tempdir().unwrap();
-    let armed = Arc::new(AtomicBool::new(false));
-    let store = FailingCommit {
-        inner: SqliteStore::open(dir.path().join("db")).unwrap(),
-        armed: armed.clone(),
-    };
-    let mut h = Harness {
-        runtime: ClientRuntime::new(
-            Client::open05(store, mutation_schema(Value::Null), "User:u").unwrap(),
-        ),
-        _dir: dir,
-    };
-    h.task("seed", create("draft", "local"));
-    assert_eq!(h.run(), vec![done("seed", Value::Null)]);
-    let initial = h.recovery_state();
-    let edit = |id: &str| {
-        json!({"kind":"direct","operation":{"model":"Entry","op":"update",
-            "identity":{"id":id},"values":{"text":"edited"}}})
-    };
-    let steps = [
-        LocalStep::Read,
-        LocalStep::Submit,
-        LocalStep::Companion,
-        LocalStep::Callback,
-        LocalStep::OuterWrite,
-        LocalStep::Commit,
-    ];
-    for fail in steps.into_iter().map(Some).chain([None]) {
-        let at = |step| fail == Some(step);
-        let a = h.begin("tx");
-        let read_command = if at(LocalStep::Read) {
-            json!({"kind":"read","key":{"model":"Nope","identity":{"id":"draft"}}})
-        } else {
-            read("draft")
-        };
-        h.command("read", &a.transaction, None, read_command);
-        let events = h.run();
-        assert_eq!(
-            events[0]["ok"],
-            !at(LocalStep::Read),
-            "{fail:?}: {events:?}"
-        );
-        let mut call = None;
-        if at(LocalStep::Submit) {
-            h.command(
-                "s",
-                &a.transaction,
-                None,
-                submit_mutation("Publish", json!({"entry":{"id":"p","extra":1}}), false),
-            );
-            let events = h.run();
-            assert_eq!(events.len(), 1, "{events:?}");
-            assert_eq!(events[0]["ok"], false, "{events:?}");
-        } else {
-            let local = h.local("s", &a.transaction, None, publish("p"));
-            let companion = if at(LocalStep::Companion) {
-                missing_model()
-            } else {
-                delete("draft")
-            };
-            h.companion("d", &local, None, companion);
-            let events = h.run();
-            assert_eq!(
-                events[0]["ok"],
-                !at(LocalStep::Companion),
-                "{fail:?}: {events:?}"
-            );
-            if at(LocalStep::Callback) {
-                h.finish_local(&local, false, Some("boom"));
-            } else {
-                h.finish_local(&local, true, None);
-            }
-            let events = h.run();
-            if at(LocalStep::Companion) || at(LocalStep::Callback) {
-                assert_eq!(events[0]["ok"], false, "{fail:?}: {events:?}");
-            } else {
-                call = Some(submitted(&events, "s"));
-            }
-        }
-        // The outer write edits the call's Entry, or the Draft when no call
-        // was submitted; either way it is a write the rollback must undo.
-        let write = if at(LocalStep::OuterWrite) {
-            missing_model()
-        } else if call.is_none() {
-            edit("draft")
-        } else {
-            edit("p")
-        };
-        h.command("w", &a.transaction, None, write);
-        let events = h.run();
-        assert_eq!(
-            events[0]["ok"],
-            !at(LocalStep::OuterWrite),
-            "{fail:?}: {events:?}"
-        );
-        armed.store(at(LocalStep::Commit), Ordering::SeqCst);
-        let body_failed = fail.is_some() && !at(LocalStep::Commit);
-        h.callback(&a, !body_failed, body_failed.then_some("boom"));
-        let events = h.run();
-        let outcome = events.last().unwrap();
-        assert_eq!(outcome["requestId"], "tx");
-        let Some(fail) = fail else {
-            assert_eq!(outcome["ok"], true, "{events:?}");
-            assert_eq!(
-                call_states(&events),
-                vec![call_state(call.as_ref().unwrap(), "committed")]
-            );
-            continue;
-        };
-        assert_eq!(outcome["ok"], false, "{fail:?}: {events:?}");
-        // A call that was answered is rolled back; a failed one never had a
-        // Call to announce.
-        let expected: Vec<Value> = call
-            .iter()
-            .map(|call| call_state(call, "rolledBack"))
-            .collect();
-        assert_eq!(call_states(&events), expected, "{fail:?}");
-        assert_eq!(
-            h.recovery_state(),
-            initial,
-            "{fail:?} left part of the unit"
-        );
-        assert!(
-            h.runtime.client().freeze_batch05().unwrap().is_none(),
-            "{fail:?}"
-        );
-    }
-    // The unit without a failure: every piece committed together.
-    let state = h.recovery_state();
-    assert_eq!(state["axton_mutation"].as_array().unwrap().len(), 1);
-    assert_eq!(
-        h.operations(),
-        ["companion Entry draft delete", "wire Entry p create"]
-    );
-    assert_eq!(
-        state["axton_before_Entry"],
-        json!([{"id":"draft","text":"local","note":null}])
-    );
-    let journal = state["axton_local_write"].as_array().unwrap();
-    assert_eq!(journal.len(), 1, "{journal:?}");
-    assert_eq!(journal[0]["disposition"], "independent");
-    assert_eq!(h.entry("draft"), None);
-    assert_eq!(h.entry("p").unwrap()["text"], "edited");
-    assert_ne!(state["axton_client"], initial["axton_client"]);
-}
-
-#[test]
-fn close_during_a_local_callback_rolls_back_and_releases_its_submission() {
-    let mut h = mutation_harness();
-    let a = h.begin("tx");
-    h.command("a", &a.transaction, None, ping());
-    let call = submitted(&h.run(), "a");
-    let local = h.local("s", &a.transaction, None, publish("p"));
-    h.companion("queued", &local, None, read("p"));
-    h.submit(json!({"type":"close"})).unwrap();
-    let events = h.run();
-    for cancelled in [&a.effect, &local.effect] {
-        assert!(
-            events.contains(&json!({"type":"cancelEffect","effectId":cancelled})),
-            "{events:?}"
-        );
-    }
-    let rolled = position(&events, |e| *e == call_state(&call, "rolledBack"));
-    let parent = position(&events, |e| *e == failed("tx", "client_closed"));
-    assert!(rolled < parent, "{events:?}");
-    assert!(events.contains(&failed("s", "client_closed")));
-    assert!(events.contains(&failed("queued", "client_closed")));
-    assert_eq!(events.last(), Some(&json!({"type":"runtimeClosed"})));
-    assert_eq!(call_states(&events).len(), 1);
-}
-const CAPABILITY: &str = "invalid transaction capability";
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum LocalStep {
-    Read,
-    Submit,
-    Companion,
-    Callback,
-    OuterWrite,
-    Commit,
-}
-
 fn recovery_schema() -> Schema {
     let mut raw = serde_json::to_value(mutation_schema(Value::Null)).unwrap();
     raw["actions"].as_array_mut().unwrap().push(json!({"name":"Edit","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"update","cardinality":"single","fields":["text"]}],"outputs":[]}));
@@ -1485,22 +926,16 @@ fn recovery_harness() -> (
                 "Publish",
                 1,
                 json!({"entry":{"id":"e","text":"draft","note":"asset"}}),
-                vec![],
             )
         })
         .unwrap();
     let child = c
         .transaction(|tx| {
-            tx.submit_mutation05(
-                "Edit",
-                1,
-                json!({"entry":{"id":"e","text":"edited"}}),
-                vec![],
-            )
+            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"edited"}}))
         })
         .unwrap();
     let refused = c
-        .transaction(|tx| tx.submit_mutation05("Ping", 1, json!({}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Ping", 1, json!({})))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     assert_eq!(b.mutations.len(), 1);
@@ -2261,7 +1696,7 @@ fn a_watched_statement_refuses_writes_and_engine_tables_and_lives_like_a_watch()
         .unwrap()
         .clone();
     let transaction = callback["operation"]["transactionId"].clone();
-    h.submit(json!({"type":"transactionCommand","requestId":"write","transactionId":transaction,"command":submit_mutation("UpdateEntry", json!({"row":{"id":"e","text":"inside"}}), false)})).unwrap();
+    h.submit(json!({"type":"transactionCommand","requestId":"write","transactionId":transaction,"command":submit_mutation("UpdateEntry", json!({"row":{"id":"e","text":"inside"}}))})).unwrap();
     let events = calls(h.run());
     assert!(events.contains(&wrote("write")));
     assert!(
@@ -2425,7 +1860,7 @@ fn every_commit_path_re_emits_a_watched_statement() {
         "mine",
         &transaction.transaction,
         None,
-        submit_mutation("Edit", json!({"entry":{"id":"e","text":"mine"}}), false),
+        submit_mutation("Edit", json!({"entry":{"id":"e","text":"mine"}})),
     );
     let provisional = h.run();
     assert!(rows(&provisional, &observer).is_empty());

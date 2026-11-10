@@ -383,19 +383,6 @@ impl<S: ClientStore> Engine<'_, S> {
                 }
                 self.retain_owned05(id, position, &op)?;
             }
-            for op in ops.iter().filter(|o| o.kind == OpKind::Companion) {
-                let key = self.schema.record_key(&op.op.model, &op.op.identity)?;
-                if targets
-                    .iter()
-                    .any(|t| t.key().model == key.model && t.key().identity == key.identity)
-                {
-                    continue;
-                }
-                if self.owned05(id, op.position, &key)? {
-                    self.retain_owned05(id, op.position, &op.op)?;
-                    self.direct_evidence05(&key)?;
-                }
-            }
             self.exec(
                 "axton_mutation_queue",
                 "UPDATE axton_mutation_queue SET reconciled=1 WHERE id=?",

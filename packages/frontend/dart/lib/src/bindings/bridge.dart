@@ -296,26 +296,13 @@ class _Abi implements Carrier {
   void detach(int runtime) => _detach(runtime);
 }
 
-/// Runs a Mutation's `local` callback over its capability's commands; throws
-/// its failure.
-typedef LocalRun =
-    Future<Map<String, dynamic>> Function(
-      Future<dynamic> Function(Map<String, dynamic> command) send,
-    );
-
 /// One submitted input awaiting its `taskCompleted`.
 class _Route {
-  _Route({this.run, this.local, this.scope, this.onValue})
-    : zone = Zone.current;
+  _Route({this.run, this.onValue}) : zone = Zone.current;
   final completer = Completer<dynamic>();
 
   /// The transaction callback of a `transaction` task.
   final Future<void> Function(String transactionId)? run;
-
-  /// The `local` callback of a transaction `submitMutation`, and the scope its
-  /// commands carry.
-  final LocalRun? local;
-  final String? scope;
 
   /// Runs with the value of a successful completion while it is dispatched,
   /// before any later event: where an observer is claimed.
@@ -647,30 +634,15 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
       );
 
   /// One command of the open callback transaction [transactionId], in the
-  /// savepoint [scope] (null at the top level).
+  /// savepoint [scope] (null at the top level). [onValue] runs with a
+  /// successful answer while it is dispatched, before any later event.
   Future<dynamic> transactionCommand(
     String transactionId,
     String? scope,
-    Map<String, dynamic> command,
-  ) => _route(
-    _Route(),
-    (id) => transactionCommandEnvelope(id, transactionId, scope, command),
-  );
-
-  /// One Mutation submitted in the open callback transaction [transactionId].
-  /// With [local], the runtime parks the submission and asks for the callback,
-  /// which runs in this zone over commands carrying its companion capability;
-  /// its end is answered, and the submission completes only after it. A
-  /// callback that threw fails the submission with what it threw. [onValue]
-  /// runs with the answer while it is dispatched, before any later event.
-  Future<dynamic> submitMutation(
-    String transactionId,
-    String? scope,
     Map<String, dynamic> command, {
-    LocalRun? local,
     void Function(dynamic value)? onValue,
   }) => _route(
-    _Route(local: local, scope: scope, onValue: onValue),
+    _Route(onValue: onValue),
     (id) => transactionCommandEnvelope(id, transactionId, scope, command),
   );
 
@@ -852,10 +824,6 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
   }
 
   void _effect(String effectId, Map<String, dynamic> operation) {
-    if (operation['kind'] == 'mutationLocal') {
-      _mutationLocal(effectId, operation);
-      return;
-    }
     if (operation['kind'] != 'callback') {
       final effect = Effect(
         effectId,
@@ -919,57 +887,6 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
     });
   }
 
-  /// A `mutationLocal` effect: run the `local` callback of the submission it
-  /// names, like a transaction callback, then answer with its companion id.
-  void _mutationLocal(String effectId, Map<String, dynamic> operation) {
-    final transactionId = operation['transactionId'] as String;
-    final companionId = operation['companionId'] as String;
-    final requestId = operation['requestId'];
-    final route = _routes[requestId];
-    final local = route?.local;
-    void answer({
-      required bool ok,
-      String? error,
-      Map<String, dynamic>? input,
-    }) => _submitQuietly(
-      callbackResultEnvelope(
-        effectId,
-        transactionId,
-        ok: ok,
-        error: error,
-        companionId: companionId,
-        input: input,
-      ),
-    );
-    if (route == null || local == null) {
-      answer(ok: false, error: 'unknown mutation');
-      return;
-    }
-    _callbacks.add(effectId);
-    route.zone.scheduleMicrotask(() {
-      final pending = identical(_routes[requestId], route);
-      if (!_callbacks.remove(effectId) || !pending) return;
-      Future<dynamic> send(Map<String, dynamic> command) => _route(
-        _Route(),
-        (id) => transactionCommandEnvelope(
-          id,
-          transactionId,
-          route.scope,
-          command,
-          companionId: companionId,
-        ),
-      );
-      Future<Map<String, dynamic>>.sync(() => local(send))
-          .then<void>((input) => answer(ok: true, input: input))
-          .catchError((Object error, StackTrace stack) {
-            route
-              ..thrown = error
-              ..stack = stack;
-            answer(ok: false, error: error.toString());
-          });
-    });
-  }
-
   /// `runtimeClosed`: fail what never completed, detach (after which no wake
   /// runs for this id), forget the id and end the report stream.
   void _terminate() {
@@ -1001,38 +918,30 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
     Map<String, dynamic> command,
   ) => {'type': 'task', 'requestId': requestId, 'command': command};
 
-  /// A command of an open callback transaction; [companionId] marks one of a
-  /// `local` callback.
+  /// A command of an open callback transaction.
   static Map<String, dynamic> transactionCommandEnvelope(
     String requestId,
     String transactionId,
     String? scope,
-    Map<String, dynamic> command, {
-    String? companionId,
-    Map<String, dynamic>? input,
-  }) => {
+    Map<String, dynamic> command,
+  ) => {
     'type': 'transactionCommand',
     'requestId': requestId,
     'transactionId': transactionId,
     if (scope != null) 'scope': scope,
-    if (companionId != null) 'companionId': companionId,
     'command': command,
   };
 
-  /// The end of a callback; [companionId] marks a `local` callback's.
+  /// The end of a transaction callback.
   static Map<String, dynamic> callbackResultEnvelope(
     String effectId,
     String transactionId, {
     required bool ok,
     String? error,
-    String? companionId,
-    Map<String, dynamic>? input,
   }) => {
     'type': 'callbackResult',
     'effectId': effectId,
     'transactionId': transactionId,
-    if (companionId != null) 'companionId': companionId,
-    if (input != null) 'input': input,
     'ok': ok,
     if (error != null) 'error': error,
   };

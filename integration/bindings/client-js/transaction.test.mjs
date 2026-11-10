@@ -65,31 +65,19 @@ test('unawaited nested scope poisons transaction without releasing another scope
 test('late savepoint callback after transaction closes cannot issue stack commands',async()=>{
  const calls=[];let release;const gate=new Promise(r=>release=r);const tx=new Transaction(async r=>{calls.push(r.kind);});const scope=tx.savepoint(async()=>{await gate;});await new Promise(r=>setImmediate(r));await assert.rejects(tx.finish(),/unawaited/);release();await assert.rejects(scope,/closed/);assert.deepEqual(calls,['savepoint']);
 });
-test('outer commands are refused without reaching the runtime while a local submission is unfinished',async()=>{
- const sent=[];let answer;
- const tx=new Transaction(async command=>{sent.push(command);return null;},{submit:(command,scope,decode,local)=>{sent.push({...command,scope,run:typeof local});return new Promise(resolve=>{answer=resolve;});}});
- const submission=tx.submitMutation('Publish',1,async()=>({id:'p'}),value=>value);
- for(const refused of [tx.read('Entry',{id:'e'}),tx.direct({}),tx.submitMutation('Ping',1,{},value=>value),tx.savepoint(async()=>{})])
-  await assert.rejects(refused,/invalid transaction capability/);
- answer('call');
- assert.equal(await submission,'call');
- // Settled: the parent handle is admitted again; a submission without a callback blocks nothing.
- const plain=tx.submitMutation('Ping',1,{},value=>value);
+test('a callback is not Mutation input: it is refused before reaching the runtime',async()=>{
+ const sent=[];
+ const tx=new Transaction(async command=>{sent.push(command.kind);return null;},{submit:(command)=>{sent.push(command.kind);return Promise.resolve('call');}});
+ await assert.rejects(tx.submitMutation('Publish',1,async()=>({id:'p'}),value=>value),{code:'action.invalid'});
+ assert.equal(await tx.submitMutation('Ping',1,{},value=>value),'call');
  await tx.read('Entry',{id:'e'});
- answer('plain');
- assert.equal(await plain,'plain');
- assert.deepEqual(sent,[
-  {kind:'submitMutation',name:'Publish',version:1,local:true,scope:undefined,run:'function'},
-  {kind:'submitMutation',name:'Ping',version:1,args:{},scope:undefined,run:'undefined'},
-  {kind:'read',key:{model:'Entry',identity:{id:'e'}}},
- ]);
- // The refusal fails the transaction whatever the callback caught.
- await assert.rejects(tx.finish(),/invalid transaction capability/);
+ await tx.finish();
+ assert.deepEqual(sent,['submitMutation','read']);
 });
 
 // Mutations in a transaction through the native runtime (shared with React Native).
 import { mutationTests } from './mutations-harness.mjs';
-mutationTests(test, Transaction, { savepoints: true, exactGuard: true });
+mutationTests(test, Transaction, { savepoints: true });
 test('a transaction reads a row and submits a Mutation built from it: the commit keeps both, a rollback discards the Call',async()=>{
  const schema=JSON.parse(await readFile(new URL('../../../fixtures/schemas/entry.json',import.meta.url),'utf8'));
  schema.actions=[{name:'Create',version:1,kind:'mutation',inputs:[{kind:'model',name:'entry',model:'Entry',operation:'create',cardinality:'single',allowedFields:['text','note']}],outputs:[]}];

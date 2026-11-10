@@ -5,7 +5,6 @@ export 'src/api/client.dart'
     show
         Client,
         Transaction,
-        LocalTransaction,
         ActOperation,
         RefusedAct,
         FailedAct,

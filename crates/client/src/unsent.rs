@@ -16,7 +16,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 // The normalized named input and declared Model operations as submitted.
-// Local companions and cascade effects are not part of the act.
+// Cascade effects are not part of the act.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubmittedAct {
     pub args: Option<Value>,

@@ -73,18 +73,6 @@ type Callback = {
   cancelled?: true;
   thrown?: { value: unknown };
 };
-/**
- * The `local` callback of one transaction `submitMutation`: the runtime asks
- * for it with a `mutationLocal` effect naming the submission's request, and
- * the submission completes only after it ended.
- */
-type LocalCallbackRoute = {
-  requestId: string;
-  start(effectId: string, transactionId: string, companionId: string): void;
-  effectId?: string;
-  cancelled?: true;
-  thrown?: { value: unknown };
-};
 type Event = { type: string; [field: string]: any };
 /** A task's failure: the runtime's message, and its machine-readable reason when it gave one. */
 export type TaskError = Error & {
@@ -133,8 +121,6 @@ export class Bridge {
   #issued = 0;
   #routes = new Map<string, Route>();
   #callbacks = new Map<string, Callback>();
-  /** `local` callbacks by the request id of their submission. */
-  #locals = new Map<string, LocalCallbackRoute>();
   #listeners = new Map<BridgeEventType, Set<(event: any) => void>>();
   #effects = new Map<string, (effectId: string, operation: any) => void>();
   /**
@@ -257,89 +243,28 @@ export class Bridge {
     return done;
   }
 
-  /** Submit one command of the callback that owns `transactionId`. */
+  /**
+   * Submit one command of the callback that owns `transactionId`.
+   * `hooks.settled` runs with a successful value while the completion is
+   * dispatched, before any later event - a Mutation's Call is routed there,
+   * since the transaction's rollback may follow its answer in one batch.
+   */
   transactionCommand(
     transactionId: string,
     scope: string | undefined,
     command: RecordValue,
-  ): Promise<any> {
-    return this.#submitRouted((requestId) => ({
-      type: "transactionCommand",
-      requestId,
-      transactionId,
-      ...(scope === undefined ? {} : { scope }),
-      command,
-    }));
-  }
-
-  /**
-   * Submit one Mutation in the transaction `transactionId`. With `local`, the
-   * runtime parks the submission and asks for the callback, which runs in the
-   * caller's async context over commands carrying its companion capability;
-   * its end is answered, and the submission settles only after it. A callback
-   * that threw rejects the submission with what it threw. `hooks.settled`
-   * runs with the answer while it is dispatched, before any later event.
-   */
-  submitMutation(
-    transactionId: string,
-    scope: string | undefined,
-    command: RecordValue,
-    local:
-      | ((send: (command: RecordValue) => Promise<any>) => Promise<object>)
-      | undefined,
     hooks: TaskHooks = {},
   ): Promise<any> {
-    const envelope = (requestId: string) => ({
-      type: "transactionCommand",
-      requestId,
-      transactionId,
-      ...(scope === undefined ? {} : { scope }),
-      command,
-    });
-    if (!local) return this.#submitRouted(envelope, hooks.settled);
-    let start!: (effect: { effectId: string; companionId: string }) => void;
-    const started = new Promise<{ effectId: string; companionId: string }>(
-      (resolve) => (start = resolve),
-    );
-    const route: LocalCallbackRoute = {
-      requestId: "",
-      start: (effectId, _transactionId, companionId) =>
-        start({ effectId, companionId }),
-    };
-    const done = this.#submitRouted((requestId) => {
-      route.requestId = requestId;
-      this.#locals.set(requestId, route);
-      return envelope(requestId);
-    }, hooks.settled);
-    // Registered here: the callback runs in the submitter's async context.
-    void started.then(async ({ effectId, companionId }) => {
-      if (route.cancelled || !this.#routes.has(route.requestId)) return;
-      const send = (command: RecordValue) =>
-        this.#submitRouted((requestId) => ({
-          type: "transactionCommand",
-          requestId,
-          transactionId,
-          ...(scope === undefined ? {} : { scope }),
-          companionId,
-          command,
-        }));
-      let result: RecordValue;
-      try {
-        const input = await local(send);
-        result = { ok: true, input };
-      } catch (error) {
-        route.thrown = { value: error };
-        result = { ok: false, error: describe(error) };
-      }
-      this.#answer({
-        type: "callbackResult",
-        effectId,
+    return this.#submitRouted(
+      (requestId) => ({
+        type: "transactionCommand",
+        requestId,
         transactionId,
-        companionId,
-        ...result,
-      });
-    });
-    return done;
+        ...(scope === undefined ? {} : { scope }),
+        command,
+      }),
+      hooks.settled,
+    );
   }
 
   /** Answer one effect. A late answer is fenced in the runtime. */
@@ -437,7 +362,6 @@ export class Bridge {
     } catch (error) {
       this.#settle(requestId)?.reject(error);
       this.#callbacks.delete(requestId);
-      this.#locals.delete(requestId);
     }
     return settled;
   }
@@ -502,11 +426,8 @@ export class Bridge {
     switch (event.type) {
       case "taskCompleted": {
         const route = this.#settle(event.requestId);
-        const callback =
-          this.#callbacks.get(event.requestId) ??
-          this.#locals.get(event.requestId);
+        const callback = this.#callbacks.get(event.requestId);
         this.#callbacks.delete(event.requestId);
-        this.#locals.delete(event.requestId);
         if (!route) return;
         if (event.ok) {
           try {
@@ -586,24 +507,6 @@ export class Bridge {
       callback.effectId = effectId;
       return callback.start(effectId, operation.transactionId);
     }
-    if (operation.kind === "mutationLocal") {
-      const local = this.#locals.get(operation.requestId);
-      if (!local)
-        return this.#answer({
-          type: "callbackResult",
-          effectId,
-          transactionId: operation.transactionId,
-          companionId: operation.companionId,
-          ok: false,
-          error: "unknown mutation",
-        });
-      local.effectId = effectId;
-      return local.start(
-        effectId,
-        operation.transactionId,
-        operation.companionId,
-      );
-    }
     const handler = this.#effects.get(operation.kind);
     if (!handler)
       return this.effectResult(effectId, {
@@ -619,10 +522,7 @@ export class Bridge {
 
   /** A cancelled callback effect: its callback must not start any more. */
   #cancelCallback(effectId: string): void {
-    for (const callback of [
-      ...this.#callbacks.values(),
-      ...this.#locals.values(),
-    ])
+    for (const callback of this.#callbacks.values())
       if (callback.effectId === effectId) callback.cancelled = true;
   }
 
@@ -633,7 +533,6 @@ export class Bridge {
     const routes = [...this.#routes.values()];
     this.#routes.clear();
     this.#callbacks.clear();
-    this.#locals.clear();
     this.#observers.clear();
     for (const route of routes) route.reject(Error("client_closed"));
     this.#native.runtimeDetach(this.#runtimeId);

@@ -96,10 +96,8 @@ fn pending_optimism_does_not_release_base_protection_and_null_reads_never_delete
     let d = tempfile::tempdir().unwrap();
     let mut c = open(&d.path().join("db"));
     stream(&mut c, 57, Some("A"));
-    c.transaction(|tx| {
-        tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"P"}}), vec![])
-    })
-    .unwrap();
+    c.transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"P"}})))
+        .unwrap();
     assert_eq!(
         c.record_evidence05(&key()).unwrap().current.unwrap().cursor,
         57
@@ -178,7 +176,7 @@ fn repeated_clean_direct_updates_retain_one_patch_and_authority_clears_it() {
 
 #[test]
 fn direct_writes_survive_refusal_but_newer_authority_retires_them_before_or_after_refusal() {
-    for order in ["before", "after", "after-companion"] {
+    for order in ["before", "after"] {
         for authority_before_refusal in [false, true] {
             let d = tempfile::tempdir().unwrap();
             let path = d.path().join("db");
@@ -190,16 +188,7 @@ fn direct_writes_survive_refusal_but_newer_authority_retires_them_before_or_afte
                     .unwrap();
             }
             c.transaction(|tx| {
-                tx.submit_mutation05(
-                    "Edit",
-                    1,
-                    json!({"entry":{"id":"e","text":"optimistic"}}),
-                    if order == "after-companion" {
-                        vec![op(OperationKind::Update, Some("companion"))]
-                    } else {
-                        vec![]
-                    },
-                )
+                tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"optimistic"}}))
             })
             .unwrap();
             if order != "before" {

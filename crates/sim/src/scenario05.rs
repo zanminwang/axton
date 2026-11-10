@@ -54,7 +54,6 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -71,12 +70,7 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
     // never sent: it stays pending on top of whatever settles beneath it.
     let later = client
         .transaction(|tx| {
-            tx.submit_mutation05(
-                "Edit",
-                1,
-                json!({"entry":{"id":"e","text":"later"}}),
-                vec![],
-            )
+            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"later"}}))
         })
         .unwrap();
     let authority = v05::AuthorityChange::Record {

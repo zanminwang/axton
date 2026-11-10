@@ -62,10 +62,8 @@ fn cascading_reference_cache_guard_uses_only_current_parent_tombstone() {
         1
     ); // unloaded parent
     parent(&mut c, 57, false);
-    c.transaction(|tx| {
-        tx.submit_mutation05("DeleteParent", 1, json!({"parent":{"id":"p"}}), vec![])
-    })
-    .unwrap();
+    c.transaction(|tx| tx.submit_mutation05("DeleteParent", 1, json!({"parent":{"id":"p"}})))
+        .unwrap();
     assert_eq!(
         c.install_cache05(std::slice::from_ref(&record), true)
             .unwrap()

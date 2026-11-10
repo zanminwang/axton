@@ -61,7 +61,6 @@ fn write(client: &mut Client<SqliteStore>, text: &str, blob: Option<&str>) -> Su
                 "Write",
                 1,
                 json!({"note":{"id":"n","text":text,"blob":blob}}),
-                vec![],
             )
         })
         .unwrap()
@@ -112,7 +111,6 @@ fn a_replacement_in_the_transaction_that_discards_the_original_is_planned_withou
                 "Write",
                 1,
                 json!({"note":{"id":"n","text":"fixed","blob":null}}),
-                vec![],
             )?;
             Ok((seen, replacement))
         })
@@ -148,7 +146,6 @@ fn a_failure_after_the_discard_rolls_both_back_and_the_original_is_intact() {
                 "Write",
                 1,
                 json!({"note":{"id":"n","text":"fixed","blob":null}}),
-                vec![],
             )?;
             tx.dismiss_rejection05(1)?;
             tx.retry_tasks(&[blob("X")])?;
@@ -192,7 +189,6 @@ fn in_one_transaction_a_replacement_submitted_after_the_drop_starts_afresh_but_o
             "Write",
             1,
             json!({"note":{"id":"n","text":text,"blob":"X"}}),
-            vec![],
         )
     };
     // Drop first: the replacement's task is pending, and a handler runs it.
@@ -363,7 +359,6 @@ fn unassigned_prerequisite_work_does_not_hold_the_batch_ownership_window() {
                     "Create",
                     1,
                     json!({"note":{"id":id,"text":"ready","blob":null}}),
-                    vec![],
                 )
             })
             .unwrap()

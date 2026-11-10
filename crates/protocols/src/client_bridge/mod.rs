@@ -15,7 +15,6 @@
 //! | `effectId` | the runtime, unique for its lifetime | correlate one HTTP/timer/callback effect or the lifetime of one socket |
 //! | `transactionId` | the runtime, fresh per callback transaction | admit commands only into the transaction that owns them |
 //! | `scope` | the runtime, fresh per nested savepoint | admit commands only into the innermost open savepoint |
-//! | `companionId` | the runtime, fresh per Mutation local callback | admit that callback's local reads and writes, and correlate its end; distinct from `scope` |
 //! | `callId` | the existing durable call identity | final Call outcomes; never replaced by a request id |
 //! | `observerId` | the runtime, unique for its lifetime | route watch/subscription snapshots ([`Event::ObserverChanged`]) |
 //!
@@ -40,9 +39,11 @@ pub use query::{Direction, QueryOrder, QuerySpec};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
-// What an SDK sends to its runtime.
+// What an SDK sends to its runtime. A field an envelope does not declare is
+// refused with the whole envelope ([`Diagnostic::Protocol`]), so a stale SDK
+// that still sends a retired field is told so instead of silently ignored.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Input {
     // One complete unit of application work. A [`Command::Transaction`]
     // asks for an application callback: the runtime answers with an
@@ -64,21 +65,12 @@ pub enum Input {
     // callback's end. Neither joins the session. These commands are serviced
     // on their own lane, never behind the ordinary queue their parent task is
     // holding.
-    //
-    // `companion_id` names the Mutation local callback the command belongs
-    // to ([`Operation::MutationLocal`]). While a local callback runs, only
-    // its own local reads and `direct` writes are admitted; a command
-    // without its token (the parent's captured handle), with another or an
-    // expired token, or of any other kind fails with `invalid transaction
-    // capability`, a structural failure like a wrong scope.
     #[serde(rename_all = "camelCase")]
     TransactionCommand {
         request_id: String,
         transaction_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scope: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        companion_id: Option<String>,
         #[serde(deserialize_with = "transaction_command")]
         command: TransactionCommand,
     },
@@ -88,24 +80,13 @@ pub enum Input {
     // a failure rolls it back and the parent task fails with `error`, which
     // is the SDK's rendering of the thrown value. A result naming a
     // transaction that is not open is ignored.
-    //
-    // With `companion_id` it ends the Mutation local callback of that
-    // [`Operation::MutationLocal`] effect instead: `ok` answers the waiting
-    // `submitMutation` with its submission, a failure fails it with `error`
-    // (poisoning the transaction like any failed command). It never commits
-    // or closes the transaction. A result whose effect, transaction and
-    // token do not all name the open local callback is ignored.
     #[serde(rename_all = "camelCase")]
     CallbackResult {
         effect_id: String,
         transaction_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        companion_id: Option<String>,
         ok: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        input: Option<Value>,
     },
     // The host's answer to one effect. HTTP, timer, credential and
     // prerequisite effects are single-use: their first result retires the
@@ -446,11 +427,7 @@ pub enum TransactionCommand {
 
     // Submit a named durable Mutation as part of the transaction; answers
     // `{callId, ordinal}`. `store` is the call's store policy, beside its
-    // arguments. `local` must be a boolean when present: `true` asks for
-    // the Mutation's local callback - the runtime issues an
-    // [`Operation::MutationLocal`] effect and answers only once that
-    // callback ended successfully, its writes being the call's local
-    // companions. The call is provisional until the transaction commits
+    // arguments. The call is provisional until the transaction commits
     // ([`Event::TransactionCallState`]). Remote reads are refused.
     SubmitMutation {
         name: String,
@@ -464,19 +441,12 @@ pub enum TransactionCommand {
             skip_serializing_if = "Option::is_none"
         )]
         store: Option<Value>,
-        #[serde(
-            default,
-            deserialize_with = "present",
-            skip_serializing_if = "Option::is_none"
-        )]
-        local: Option<Value>,
     },
     // Resolutions of unsent work as part of the transaction
     // ([#205](https://github.com/zanminwang/axton/issues/205)): each takes
     // effect for the later commands of the transaction and commits or rolls
     // back with it. What they announce - a discarded Call's completion, a
-    // retried task's handler run - waits for the commit. A local callback
-    // cannot issue them.
+    // retried task's handler run - waits for the commit.
     Dismiss {
         #[serde(deserialize_with = "counter")]
         ordinal: u64,
@@ -750,16 +720,6 @@ pub enum Operation {
     #[serde(rename_all = "camelCase")]
     Callback {
         transaction_id: String,
-        request_id: String,
-    },
-    // Run the local callback of the `submitMutation` command `request_id`
-    // inside the open transaction. Its commands carry `transaction_id` and
-    // `companion_id`; its end is an [`Input::CallbackResult`] for this
-    // effect with that `companion_id`.
-    #[serde(rename_all = "camelCase")]
-    MutationLocal {
-        transaction_id: String,
-        companion_id: String,
         request_id: String,
     },
     #[serde(rename_all = "camelCase")]
@@ -1141,52 +1101,19 @@ mod tests {
         );
     }
 
-    // A transaction Mutation and its local callback: the command, the
-    // callback's effect, its commands and its end carry `companionId`
-    // beside - never instead of - the transaction and savepoint tokens, and
-    // an absent token stays absent.
+    // A transaction Mutation round-trips with its store option beside its
+    // arguments; an absent option stays absent.
     #[test]
-    fn transaction_mutations_and_local_callbacks_round_trip() {
-        let wires = [
-            json!({"type":"transactionCommand","requestId":"50","transactionId":"tx7","scope":"sp2","command":{"kind":"submitMutation","name":"PublishEntry","version":1,"args":{"entry":{"title":"t"}},"store":false,"local":true}}),
-            json!({"type":"transactionCommand","requestId":"51","transactionId":"tx7","companionId":"c9","command":{"kind":"direct","operation":{"model":"Composition","op":"delete","identity":{"id":"c"}}}}),
-            json!({"type":"transactionCommand","requestId":"52","transactionId":"tx7","scope":"sp2","companionId":"c9","command":{"kind":"read","key":{"model":"Composition","identity":{"id":"c"}}}}),
-            json!({"type":"callbackResult","effectId":"8","transactionId":"tx7","companionId":"c9","ok":true}),
-            json!({"type":"callbackResult","effectId":"8","transactionId":"tx7","companionId":"c9","ok":false,"error":"boom"}),
-        ];
-        for wire in wires {
-            let typed: Input = serde_json::from_value(wire.clone()).unwrap();
-            assert_eq!(serde_json::to_value(&typed).unwrap(), wire);
-        }
-        match serde_json::from_value(json!({"type":"transactionCommand","requestId":"53","transactionId":"tx7","companionId":"c9","command":{"kind":"submitMutation","name":"P","version":2,"args":{},"local":null}})).unwrap() {
+    fn transaction_mutations_round_trip() {
+        let wire = json!({"type":"transactionCommand","requestId":"50","transactionId":"tx7","scope":"sp2","command":{"kind":"submitMutation","name":"PublishEntry","version":1,"args":{"entry":{"title":"t"}},"store":false}});
+        let typed: Input = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&typed).unwrap(), wire);
+        match serde_json::from_value(json!({"type":"transactionCommand","requestId":"54","transactionId":"tx7","command":{"kind":"submitMutation","name":"P","version":2,"args":{}}})).unwrap() {
             Input::TransactionCommand {
-                companion_id,
-                scope,
-                command: TransactionCommand::SubmitMutation { name, version, store, local, .. },
+                scope: None,
+                command: TransactionCommand::SubmitMutation { name, version, store: None, .. },
                 ..
-            } => {
-                assert_eq!((companion_id.as_deref(), scope), (Some("c9"), None));
-                assert_eq!((name.as_str(), version), ("P", 2));
-                assert_eq!(store, None);
-                assert_eq!(local, Some(Value::Null), "validated by the runtime");
-            }
-            other => panic!("{other:?}"),
-        }
-        // Absent tokens decode as absent and are not written back.
-        match serde_json::from_value(
-            json!({"type":"callbackResult","effectId":"5","transactionId":"tx7","ok":true}),
-        )
-        .unwrap()
-        {
-            Input::CallbackResult { companion_id, .. } => assert_eq!(companion_id, None),
-            other => panic!("{other:?}"),
-        }
-        match serde_json::from_value(json!({"type":"transactionCommand","requestId":"54","transactionId":"tx7","command":{"kind":"submitMutation","name":"P","version":1,"args":{}}})).unwrap() {
-            Input::TransactionCommand {
-                companion_id: None,
-                command: TransactionCommand::SubmitMutation { local: None, store: None, .. },
-                ..
-            } => {}
+            } => assert_eq!((name.as_str(), version), ("P", 2)),
             other => panic!("{other:?}"),
         }
         // A bad counter still routes its request.
@@ -1198,17 +1125,6 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let events = [
-            (
-                json!({"type":"effect","effectId":"8","operation":{"kind":"mutationLocal","transactionId":"tx7","companionId":"c9","requestId":"50"}}),
-                Event::Effect {
-                    effect_id: "8".into(),
-                    operation: Operation::MutationLocal {
-                        transaction_id: "tx7".into(),
-                        companion_id: "c9".into(),
-                        request_id: "50".into(),
-                    },
-                },
-            ),
             (
                 json!({"type":"transactionCallState","callId":"k","state":"committed"}),
                 Event::TransactionCallState {
@@ -1237,5 +1153,49 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    // The retired Mutation input callback: `local` on a transaction
+    // `submitMutation`, `companionId` on a transaction command and `companionId`
+    // or `input` on a callback result are unknown fields, and the
+    // `mutationLocal` effect is an unknown operation. A command field fails
+    // its own request; an envelope field refuses the whole envelope.
+    #[test]
+    fn the_retired_mutation_callback_fields_are_refused() {
+        match serde_json::from_value(json!({"type":"transactionCommand","requestId":"50","transactionId":"tx7","command":{"kind":"submitMutation","name":"P","version":1,"args":{},"local":true}})).unwrap() {
+            Input::TransactionCommand {
+                request_id,
+                command: TransactionCommand::Malformed { error },
+                ..
+            } => {
+                assert_eq!(request_id, "50");
+                assert!(error.contains("unknown field `local`"), "{error}");
+            }
+            other => panic!("{other:?}"),
+        }
+        for (wire, field) in [
+            (
+                json!({"type":"transactionCommand","requestId":"51","transactionId":"tx7","companionId":"c9","command":{"kind":"read","key":{"model":"Todo","identity":{"id":"t"}}}}),
+                "companionId",
+            ),
+            (
+                json!({"type":"callbackResult","effectId":"8","transactionId":"tx7","companionId":"c9","ok":true}),
+                "companionId",
+            ),
+            (
+                json!({"type":"callbackResult","effectId":"8","transactionId":"tx7","ok":true,"input":{}}),
+                "input",
+            ),
+        ] {
+            let error = serde_json::from_value::<Input>(wire)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains(&format!("unknown field `{field}`")),
+                "{error}"
+            );
+        }
+        let effect = json!({"type":"effect","effectId":"8","operation":{"kind":"mutationLocal","transactionId":"tx7","companionId":"c9","requestId":"50"}});
+        assert!(serde_json::from_value::<Event>(effect).is_err());
     }
 }

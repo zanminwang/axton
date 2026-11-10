@@ -8,7 +8,7 @@ import 'package:test/test.dart';
 
 import 'generated.dart';
 
-import 'package:axton/axton.dart' show WritePort, SubmitMutationPort;
+import 'package:axton/axton.dart' show SubmitMutationPort;
 
 import '../../packages/frontend/dart/test/store_fixture.dart';
 import '../../packages/frontend/dart/test/protocol5_transport.dart';
@@ -335,33 +335,17 @@ void main() {
     },
   );
   test(
-    'typed Mutation input callback reads and writes through its companion port',
+    'typed Mutation input is encoded through the one named port',
     () async {
       final port = _ScriptedTransaction();
       final mutations = TransactionMutations(port);
-      CompanionContext? context;
-      final call = await mutations.publishEntry.withTransaction((tx) async {
-        context = tx;
-        final composition = await tx.models.composition.get(
-          const CompositionIdentity(id: id),
-        );
-        expect(composition?.title, 'draft');
-        await tx.models.composition.delete(const CompositionIdentity(id: id));
-        return PublishEntryInput(entry: row, composition: id);
-      });
-      expect(context, isA<CompanionContext>());
-      expect(port.writes, [
-        {
-          'model': 'Composition',
-          'op': 'delete',
-          'identity': {'id': id},
-        },
-      ]);
+      final call = await mutations.publishEntry(
+        PublishEntryInput(entry: row, composition: id),
+      );
       expect(port.submitted.single, {
         'name': 'PublishEntry',
         'version': 1,
         'args': {'entry': row.toRecord(), 'composition': id},
-        'callback': true,
       });
       final result =
           (await call.wait() as CallSuccess<PublishEntryOutput>).result;
@@ -369,7 +353,6 @@ void main() {
       final renamed = await mutations.rename(
         const RenameInput(id: id, title: 'x'),
       );
-      expect(port.submitted.last['callback'], false);
       expect(port.submitted.last['args'], {'id': id, 'title': 'x'});
       expect(renamed.status, CallStatus.pending);
     },
@@ -768,57 +751,19 @@ Future<void> _until(bool Function() predicate, String what) async {
 }
 
 final class _ScriptedTransaction implements SubmitMutationPort {
-  final submitted = <Map<String, Object?>>[], writes = <Map<String, dynamic>>[];
+  final submitted = <Map<String, Object?>>[];
   @override
   Future<Call<T>> submitMutation<T>(
     String name,
     int version,
-    Map<String, dynamic>? args,
-    T Function(dynamic) decode, {
-    Future<Map<String, dynamic>> Function(WritePort tx)? input,
-  }) async {
-    final value = input == null ? args! : await input(_CompanionPort(writes));
-    submitted.add({
-      'name': name,
-      'version': version,
-      'args': value,
-      'callback': input != null,
-    });
+    Map<String, dynamic> args,
+    T Function(dynamic) decode,
+  ) async {
+    submitted.add({'name': name, 'version': version, 'args': args});
     return _ScriptedCall(
       decode(name == 'PublishEntry' ? {'published': row.toRecord()} : null),
     );
   }
-}
-
-final class _CompanionPort implements WritePort {
-  final List<Map<String, dynamic>> writes;
-  _CompanionPort(this.writes);
-  @override
-  Future<void> direct(Map<String, dynamic> operation) async =>
-      writes.add(operation);
-  @override
-  Future<Map<String, dynamic>?> read(
-    String model,
-    Map<String, dynamic> identity,
-  ) async => {'id': identity['id'], 'title': 'draft', 'body': 'text'};
-  @override
-  Future<List<Map<String, dynamic>>> querySpec(
-    String model,
-    Map<String, dynamic> query,
-  ) async => const [];
-  @override
-  Future<Map<String, dynamic>?> related(
-    String model,
-    Map<String, dynamic> identity,
-    String relation,
-  ) async => null;
-  @override
-  Future<List<Map<String, dynamic>>> referencing(
-    String model,
-    Map<String, dynamic> identity,
-    String source,
-    String relation,
-  ) async => const [];
 }
 
 final class _ScriptedCall<T> implements Call<T> {

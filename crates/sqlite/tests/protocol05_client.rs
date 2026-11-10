@@ -35,21 +35,16 @@ fn local_transaction_and_mutation_savepoint_have_independent_fate() {
     seed(&mut c, "A");
     let events = c.watch(BTreeSet::from(["Entry".to_string()]));
     let result: Result<()> = c.transaction(|tx| {
-        tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"B"}}), vec![])?;
+        tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"B"}}))?;
         Err(invalid("rollback"))
     });
     assert!(result.is_err());
     assert_eq!(c.pending_count().unwrap(), 0);
     assert!(events.try_recv().is_err());
     c.transaction(|tx| {
-        tx.submit_mutation05(
-            "Edit",
-            1,
-            json!({"entry":{"id":"e","text":"LOCAL"}}),
-            vec![],
-        )?;
+        tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"LOCAL"}}))?;
         let failed: Result<()> = tx.savepoint(|tx| {
-            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"bad"}}), vec![])?;
+            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"bad"}}))?;
             Err(invalid("refuse"))
         });
         assert!(failed.is_err());
@@ -74,7 +69,7 @@ fn session_reads_own_writes_without_notifying_until_commit_and_blocks_other_writ
     let events = c.watch(BTreeSet::from(["Entry".to_string()]));
     c.begin_session().unwrap();
     c.session(|tx| {
-        tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"B"}}), vec![])?;
+        tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"B"}}))?;
         Ok(())
     })
     .unwrap();
@@ -85,17 +80,12 @@ fn session_reads_own_writes_without_notifying_until_commit_and_blocks_other_writ
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
     assert!(events.try_recv().is_err());
     assert!(
-        c.transaction(|tx| tx.submit_mutation05(
-            "Edit",
-            1,
-            json!({"entry":{"id":"e","text":"X"}}),
-            vec![]
-        ))
-        .is_err(),
+        c.transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"X"}})))
+            .is_err(),
         "no second transaction during a session"
     );
     c.session_savepoint().unwrap();
-    c.session(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"C"}}), vec![]))
+    c.session(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"C"}})))
         .unwrap();
     c.session_rollback_savepoint().unwrap();
     assert_eq!(
@@ -106,7 +96,7 @@ fn session_reads_own_writes_without_notifying_until_commit_and_blocks_other_writ
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
     assert!(events.try_recv().is_ok());
     c.begin_session().unwrap();
-    c.session(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"Z"}}), vec![]))
+    c.session(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"Z"}})))
         .unwrap();
     c.rollback_session().unwrap();
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
@@ -120,9 +110,7 @@ fn stale_writer_cannot_overwrite_committed_database() {
     let mut b = open(&path);
     seed(&mut a, "A");
     let error = b
-        .transaction(|tx| {
-            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"B"}}), vec![])
-        })
+        .transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"B"}})))
         .expect_err("the stale handle must be fenced out");
     assert!(
         error.to_string().contains("stale client writer"),
@@ -187,13 +175,8 @@ fn committing_with_an_unclosed_savepoint_is_refused_and_rolls_back() {
         .unwrap();
     c.session_savepoint().unwrap();
     c.session(|tx| {
-        tx.submit_mutation05(
-            "Edit",
-            1,
-            json!({"entry":{"id":"e","text":"edited"}}),
-            vec![],
-        )
-        .map(|_| ())
+        tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"edited"}}))
+            .map(|_| ())
     })
     .unwrap();
     let err = c.commit_session().unwrap_err();
@@ -224,10 +207,8 @@ fn watch_fires_only_for_declared_tables() {
     assert!(entry.try_recv().is_ok());
     assert!(queue.try_recv().is_err());
     assert!(other.try_recv().is_err());
-    c.transaction(|tx| {
-        tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"B"}}), vec![])
-    })
-    .unwrap();
+    c.transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"B"}})))
+        .unwrap();
     assert!(entry.try_recv().is_ok());
     assert!(queue.try_recv().is_ok());
     assert!(other.try_recv().is_err());
@@ -241,9 +222,7 @@ fn a_file_written_by_0_6_0_opens_without_its_three_dead_columns_and_keeps_digest
     c.initialize_stream05(0, "1").unwrap();
     seed(&mut c, "A");
     let call = c
-        .transaction(|tx| {
-            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"P"}}), vec![])
-        })
+        .transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"P"}})))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     c.acknowledge_batch05(&v05::BatchAcknowledgement {
@@ -324,4 +303,43 @@ fn a_file_written_by_0_6_0_opens_without_its_three_dead_columns_and_keeps_digest
     c.settle_ready05().unwrap();
     assert!(c.call_completion05(&call.call_id).unwrap().is_some());
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "server");
+}
+
+// A file written while Mutation companion writes existed may still hold a
+// `companion` operation beside its owner's wire operation. Until open purges
+// it, such a row is never read: the Store opens, replays and queues around
+// it, the record it names is untouched, and it is never sent.
+#[test]
+fn a_stored_companion_operation_is_never_read_or_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open(&path);
+    start_stream(&mut c);
+    seed(&mut c, "A");
+    cached(&mut c, "Entry", "c", json!({"text":"C","note":null}));
+    offline(&mut c, "Edit", json!({"entry":{"id":"e","text":"B"}}));
+    drop(c);
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    let inserted = raw
+        .execute(
+            "INSERT INTO axton_mutation_queue_operation(mutation_id,step,local_sequence,input_path,kind,model,identity,operation,value,owner_history) \
+             SELECT mutation_id,step+1,local_sequence+1000,NULL,'companion',model,'{\"id\":\"c\"}',operation,'{\"text\":\"companion\"}',owner_history \
+             FROM axton_mutation_queue_operation WHERE kind='wire'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(inserted, 1);
+    drop(raw);
+    let mut c = open(&path);
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
+    let other = schema().record_key("Entry", &json!({"id":"c"})).unwrap();
+    assert_eq!(c.read(&other).unwrap().unwrap()["text"], "C");
+    assert_eq!(c.record_status(&other).unwrap()["pending"], json!([]));
+    offline(&mut c, "Edit", json!({"entry":{"id":"c","text":"D"}}));
+    assert_eq!(c.read(&other).unwrap().unwrap()["text"], "D");
+    assert_eq!(c.pending_count().unwrap(), 2);
+    let batch = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(batch.mutations.len(), 2);
+    let body = String::from_utf8(v05::encode(&batch).unwrap()).unwrap();
+    assert!(!body.contains("companion"), "{body}");
 }

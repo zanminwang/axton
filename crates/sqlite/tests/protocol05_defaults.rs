@@ -61,7 +61,7 @@ fn local_create(values: Value) -> Operation {
 }
 /// The durable `Add` of one Todo in its own transaction: optimistic now.
 fn add(client: &mut Client<SqliteStore>, todo: Value) -> Result<SubmittedCall> {
-    client.transaction(|tx| tx.submit_mutation05("Add", 1, json!({ "todo": todo }), vec![]))
+    client.transaction(|tx| tx.submit_mutation05("Add", 1, json!({ "todo": todo })))
 }
 fn assert_uuid_v4(value: &Value) -> String {
     let text = value.as_str().expect("generated id is text").to_string();
@@ -146,7 +146,7 @@ fn a_rolled_back_transaction_keeps_no_generated_record() {
     let dir = tempfile::tempdir().unwrap();
     let mut client = open(&dir.path().join("db"));
     let result: Result<()> = client.transaction(|tx| {
-        tx.submit_mutation05("Add", 1, json!({"todo":{}}), vec![])?;
+        tx.submit_mutation05("Add", 1, json!({"todo":{}}))?;
         assert_eq!(tx.query("Todo", &json!({}))?.len(), 1, "visible inside");
         Err(axton_core::invalid("abort"))
     });
@@ -155,9 +155,9 @@ fn a_rolled_back_transaction_keeps_no_generated_record() {
     // A failing nested scope rolls back only its own create.
     client
         .transaction(|tx| {
-            tx.submit_mutation05("Add", 1, json!({"todo":{"title":"kept"}}), vec![])?;
+            tx.submit_mutation05("Add", 1, json!({"todo":{"title":"kept"}}))?;
             let nested: Result<()> = tx.savepoint(|inner| {
-                inner.submit_mutation05("Add", 1, json!({"todo":{"title":"dropped"}}), vec![])?;
+                inner.submit_mutation05("Add", 1, json!({"todo":{"title":"dropped"}}))?;
                 Err(axton_core::invalid("abort"))
             });
             assert!(nested.is_err());
@@ -189,9 +189,7 @@ fn update_omission_changes_nothing_and_never_evaluates_defaults() {
         .unwrap();
     assert_eq!(report.applied, 1);
     client
-        .transaction(|tx| {
-            tx.submit_mutation05("Edit", 1, json!({"todo":{"id":"t","title":"b"}}), vec![])
-        })
+        .transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"todo":{"id":"t","title":"b"}})))
         .unwrap();
     let row = &rows(&mut client)[0];
     assert_eq!(
@@ -200,13 +198,11 @@ fn update_omission_changes_nothing_and_never_evaluates_defaults() {
     );
     // An update without identity is refused, never given a generated one.
     let err = client
-        .transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"todo":{"title":"c"}}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"todo":{"title":"c"}})))
         .unwrap_err();
     assert!(err.to_string().contains("identity"), "{err}");
     client
-        .transaction(|tx| {
-            tx.submit_mutation05("Edit", 1, json!({"todo":{"id":"t","title":"d"}}), vec![])
-        })
+        .transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"todo":{"id":"t","title":"d"}})))
         .unwrap();
     let batch = client.freeze_batch05().unwrap().unwrap();
     assert_eq!(
@@ -224,7 +220,7 @@ fn prepared(name: &str, args: Value) -> Result<Value> {
     let d = tempfile::tempdir().unwrap();
     let mut c = open(&d.path().join("db"));
     c.initialize_stream05(0, "1").unwrap();
-    c.transaction(|tx| tx.submit_mutation05(name, 1, args, vec![]))?;
+    c.transaction(|tx| tx.submit_mutation05(name, 1, args))?;
     let b = c.freeze_batch05()?.unwrap();
     v05::reconstruct_input(&b.mutations[0].operations)
 }
@@ -250,44 +246,32 @@ fn optional_and_list_create_defaults_preserve_input_presence() {
     assert!(prepared("Add", json!({})).is_err());
 }
 #[test]
-fn durable_create_and_local_companion_defaults_expand_once_before_freeze() {
+fn durable_create_defaults_expand_once_before_freeze_and_survive_reopen() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = open(&p);
     c.initialize_stream05(0, "1").unwrap();
-    c.transaction(|tx| {
-        tx.submit_mutation05(
-            "Add",
-            1,
-            json!({"todo":{"title":"sent"}}),
-            vec![local_create(json!({"title":"local"}))],
-        )
-    })
-    .unwrap();
+    add(&mut c, json!({"title":"sent"})).unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     let args = v05::reconstruct_input(&b.mutations[0].operations).unwrap();
-    let sent = assert_uuid_v4(&args["todo"]["id"]);
+    assert_uuid_v4(&args["todo"]["id"]);
     assert_client_millis(&args["todo"]["createdAt"]);
     assert_eq!(args["todo"]["done"], false);
-    let mut visible = rows(&mut c);
-    visible.sort_by_key(|r| r["title"].as_str().unwrap().to_string());
-    let local = assert_uuid_v4(&visible[0]["id"]);
-    assert_ne!(local, sent);
-    assert_client_millis(&visible[0]["createdAt"]);
-    assert_eq!(visible[1], args["todo"]);
-    assert!(
-        !String::from_utf8(v05::encode(&b).unwrap())
-            .unwrap()
-            .contains(&local)
+    let visible = rows(&mut c);
+    assert_eq!(
+        visible,
+        vec![args["todo"].clone()],
+        "the row is what is sent"
     );
     drop(c);
     let mut c = open(&p);
-    assert_eq!(c.freeze_batch05().unwrap().unwrap(), b);
-    let mut reopened = rows(&mut c);
-    reopened.sort_by_key(|r| r["title"].as_str().unwrap().to_string());
-    assert_eq!(reopened, visible);
+    assert_eq!(
+        c.freeze_batch05().unwrap().unwrap(),
+        b,
+        "nothing expands again"
+    );
+    assert_eq!(rows(&mut c), visible);
 }
-
 #[test]
 fn servers_and_loaders_never_synthesize_creation_defaults() {
     let schema = schema();
@@ -308,8 +292,8 @@ fn a_default_only_change_opens_in_place_and_rewrites_nothing() {
     let mut c = open(&path);
     c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| {
-        tx.submit_mutation05("Add", 1, json!({"todo":{"title":"queued"}}), vec![])?;
-        tx.submit_mutation05("Add", 1, json!({"todo":{"title":"local"}}), vec![])
+        tx.submit_mutation05("Add", 1, json!({"todo":{"title":"queued"}}))?;
+        tx.submit_mutation05("Add", 1, json!({"todo":{"title":"local"}}))
     })
     .unwrap();
     let before = rows(&mut c);

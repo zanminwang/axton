@@ -135,14 +135,14 @@ Uses are counted by call site. Routes: *cache* is `common05::cached` (unprotecte
 
 **Files:** `crates/compiler/src/emit_transactions.rs`; `crates/protocols/src/client_bridge/mod.rs`; `crates/client/src/runtime/transactions.rs`, `runtime/tasks.rs`, `runtime/commands.rs`, `mutate.rs`, `queue.rs`, `mutation_queue.rs`, `settlement05.rs`, `frontend_interface.rs`; `packages/frontend/client-js/bindings/bridge.mts`, `api/transaction.mts`; `packages/frontend/client-react-native/api/transaction.mts`; `packages/frontend/dart/lib/src/api/client.dart`, `bindings/bridge.dart`.
 
-- [ ] Test (compiler negative): `mutations.<name>((tx) => input)` and Dart `withTransaction` fail to compile against generated code.
-- [ ] Test (bridge): `local` on `SubmitMutation`, `companionId` on a transaction command and `input` on a callback result are refused as unknown fields. Add `deny_unknown_fields` to the `Input` variants that carried them.
-- [ ] Test (each SDK): the same read-then-submit transaction through `integration/bindings/client-js/transaction.test.mjs` and Dart `client_test.dart`.
-- [ ] Test (runtime): a transaction that reads a row and submits a Mutation built from it commits both; a rollback discards the Call. This is the replacement for the callback and must pass before the callback is deleted.
-- [ ] Delete `CompanionContext` and the callback overloads; `SubmitMutationPort.submitMutation` takes an input object.
-- [ ] Delete `Operation::MutationLocal`, `companion_id`, `CallbackResult.input`, `SubmitMutation.local`, the runtime's `LocalCallback`, `DeferredMutation`, `finish_local`, and the SDK `mutationLocal` routes. In `client-js/api/local.mts` delete the callback half and move `submitMutation`, `SubmissionHost` and `MutationPort` into `api/transaction.mts`. In React Native, delete the callback guards that have no caller left.
-- [ ] Delete `OpKind::Companion`, `append_companion`, `preview_callback`, `independent_writes_after` (its only caller is `append_companion`; Clippy runs with `-D warnings`), `Session.submitted` and its savepoint copy, the `companions` parameter of `enqueue05` and `submit_mutation05`, the companion branch of `refresh_pending`, and the companion settlement loop.
-- [ ] Delete `protocol05_companions.rs`, `protocol05_companion_cascade.rs`, `protocol05_callback.rs` and the companion contracts in `integration/action-contract`. Regenerate checked-in generated files.
+- [x] Test (compiler negative): `mutations.<name>((tx) => input)` and Dart `withTransaction` fail to compile against generated code.
+- [x] Test (bridge): `local` on `SubmitMutation`, `companionId` on a transaction command and `input` on a callback result are refused as unknown fields. Add `deny_unknown_fields` to the `Input` variants that carried them.
+- [x] Test (each SDK): the same read-then-submit transaction through `integration/bindings/client-js/transaction.test.mjs` and Dart `client_test.dart`.
+- [x] Test (runtime): a transaction that reads a row and submits a Mutation built from it commits both; a rollback discards the Call. This is the replacement for the callback and must pass before the callback is deleted.
+- [x] Delete `CompanionContext` and the callback overloads; `SubmitMutationPort.submitMutation` takes an input object.
+- [x] Delete `Operation::MutationLocal`, `companion_id`, `CallbackResult.input`, `SubmitMutation.local`, the runtime's `LocalCallback`, `DeferredMutation`, `finish_local`, and the SDK `mutationLocal` routes. In `client-js/api/local.mts` delete the callback half and move `submitMutation`, `SubmissionHost` and `MutationPort` into `api/transaction.mts`. In React Native, delete the callback guards that have no caller left.
+- [x] Delete `OpKind::Companion`, `append_companion`, `preview_callback`, `independent_writes_after` (its only caller is `append_companion`; Clippy runs with `-D warnings`), `Session.submitted` and its savepoint copy, the `companions` parameter of `enqueue05` and `submit_mutation05`, the companion branch of `refresh_pending`, and the companion settlement loop.
+- [x] Delete `protocol05_companions.rs`, `protocol05_companion_cascade.rs`, `protocol05_callback.rs` and the companion contracts in `integration/action-contract`. Regenerate checked-in generated files.
 
 ## Task 3: Remove direct Model writes (spec §2.2, §2.3)
 

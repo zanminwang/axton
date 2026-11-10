@@ -6,19 +6,6 @@ import { Transaction as MobileTransaction } from '../client-react-native/api/tra
 const adapters = [
   ['Node', (send, body) => runTransaction(NodeTransaction, send, body)],
   ['RN', (send, body) => runTransaction(MobileTransaction, send, body)],
-  ['local companion', async (send, body) => {
-    const parent = new NodeTransaction(async () => undefined, {
-      submit: async (_command, _scope, _decode, local) => {
-        await local(send);
-        return {};
-      },
-    });
-    await parent.submitMutation('Publish', 1, async local => {
-      await body(local);
-      return {};
-    }, value => value);
-    await parent.finish();
-  }],
 ];
 
 async function runTransaction(Type, send, body) {

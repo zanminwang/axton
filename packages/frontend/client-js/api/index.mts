@@ -2,13 +2,7 @@ import { native } from "../bindings/native.mts";
 import { createClient } from "./runtime.mts";
 import { Transaction } from "./transaction.mts";
 import { createServerConnection } from "../bindings/live.mts";
-export {
-  Transaction,
-  LocalTransaction,
-  type LocalCallback,
-  type MutationInput,
-  type QuerySpec,
-} from "./transaction.mts";
+export { Transaction, type QuerySpec } from "./transaction.mts";
 export {
   CallError,
   type Call,

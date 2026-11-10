@@ -41,12 +41,6 @@ schema.actions = ["Edit", "Create"].map((name) => ({
   ],
   outputs: [],
 }));
-const write = (id, text, op = "create") => ({
-  model: "Entry",
-  op,
-  identity: { id },
-  values: { text, note: null },
-});
 /** The seed: an offline Mutation that writes one Entry and stays pending. */
 const put = (tx, id, text, op = "create") =>
   tx.submitMutation(
@@ -214,33 +208,6 @@ test("mobile Bootstrap awaited inside its own callback refuses instead of parkin
         "transaction_active",
       );
     });
-  });
-});
-
-test("mobile callback-before-input and optimism roll back together when typed input is invalid", async () => {
-  await fixture(async (client) => {
-    await assert.rejects(
-      client.submitMutation(
-        "Create",
-        1,
-        async (tx) => {
-          await tx.direct(write("companion", "local"));
-          return { entry: { id: "failed", unknown: "invalid" } };
-        },
-        (value) => value,
-      ),
-    );
-    assert.equal((await client.syncState()).pending, 0);
-    assert.equal(await client.read("Entry", { id: "companion" }), null);
-    assert.equal(await client.read("Entry", { id: "failed" }), null);
-    const call = await client.submitMutation(
-      "Create",
-      1,
-      { entry: { id: "good", text: "written", note: null } },
-      (value) => value,
-    );
-    assert.equal(call.status, "pending");
-    assert.equal((await client.read("Entry", { id: "good" })).text, "written");
   });
 });
 

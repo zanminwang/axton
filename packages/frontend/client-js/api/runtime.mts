@@ -69,7 +69,7 @@ import {
   type CallOptions,
   type QueryOptions,
 } from "./actions.mts";
-import type { MutationPort } from "./local.mts";
+import type { MutationPort } from "./submission.mts";
 import {
   unsentClient,
   type ClientFailures,
@@ -218,11 +218,7 @@ export function createClient<
     submitMutation<T>(
       name: string,
       version: number,
-      input:
-        | object
-        | ((
-            port: import("./local.mts").LocalTransaction,
-          ) => object | Promise<object>),
+      input: object,
       decode: (value: unknown) => T,
     ): Promise<Call<T>>;
   },
@@ -407,11 +403,11 @@ export function createClient<
         (command, scope) =>
           this.#bridge.transactionCommand(transactionId, scope, command),
         {
-          submit: (command, scope, decode, local) => {
+          submit: (command, scope, decode) => {
             this.#actions.assertSupported();
             let call!: Call<any>;
             return this.#bridge
-              .submitMutation(transactionId, scope, command, local, {
+              .transactionCommand(transactionId, scope, command, {
                 // Routed while the answer is dispatched: the transaction's
                 // rollback may follow it in the same batch.
                 settled: ({ callId }: { callId: string }) => {
@@ -490,7 +486,7 @@ export function createClient<
     async submitMutation<T>(
       name: string,
       version: number,
-      input: import("./local.mts").MutationInput,
+      input: object,
       decode: (value: unknown) => T,
     ): Promise<Call<T>> {
       this.#guard(true);

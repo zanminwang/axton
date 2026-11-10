@@ -113,9 +113,7 @@ fn mixed_batch(unsupported_name: &str, unsupported_version: u64) {
         ] {
             calls.push(
                 client
-                    .transaction(|tx| {
-                        tx.submit_mutation05(name, version, json!({"text":text}), vec![])
-                    })
+                    .transaction(|tx| tx.submit_mutation05(name, version, json!({"text":text})))
                     .unwrap(),
             );
         }
@@ -169,7 +167,7 @@ fn mixed_batch(unsupported_name: &str, unsupported_version: u64) {
                 .is_some()
         );
         client
-            .transaction(|tx| tx.submit_mutation05("Say", 1, json!({"text":"next"}), vec![]))
+            .transaction(|tx| tx.submit_mutation05("Say", 1, json!({"text":"next"})))
             .unwrap();
         let next = client.freeze_batch05().unwrap().unwrap();
         assert_eq!(next.batch_id, batch.batch_id + 1);
@@ -218,7 +216,6 @@ fn malformed_wire_bound_slot_and_forbidden_patch_remain_structural_request_error
                 "Pair",
                 1,
                 json!({"first":{"id":"e","text":"before"},"second":{"id":"e","text":"after"}}),
-                vec![],
             )
         })
         .unwrap();
@@ -289,7 +286,7 @@ fn retained_query_cannot_enter_a_mutation_batch() {
     .unwrap();
     client.initialize_stream05(0, "1").unwrap();
     client
-        .transaction(|tx| tx.submit_mutation05("Say", 1, json!({"text":"intent"}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Say", 1, json!({"text":"intent"})))
         .unwrap();
     let batch = client.freeze_batch05().unwrap().unwrap();
     let mut query = action(1);

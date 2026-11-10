@@ -108,7 +108,7 @@ fn submit<S: ClientStore>(
     model: &str,
     row: Value,
 ) -> Result<()> {
-    tx.submit_mutation05(&format!("{verb}{model}"), 1, json!({ "row": row }), vec![])
+    tx.submit_mutation05(&format!("{verb}{model}"), 1, json!({ "row": row }))
         .map(|_| ())
 }
 fn publish(h: &mut Harness<MeasuredStore>) -> Vec<Value> {
@@ -358,7 +358,7 @@ fn authority_replay_rejection_cache_and_reset_refresh_the_committed_projection()
     h.runtime
         .client()
         .transaction(|tx| {
-            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"mine"}}), vec![])
+            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"mine"}}))
         })
         .unwrap();
     assert_eq!(rows(&publish(&mut h), &observer), [json!([row("mine")])]);

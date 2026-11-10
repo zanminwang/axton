@@ -2,12 +2,7 @@ import { carrier, native } from "../bindings/native.mts";
 import { createClient } from "../../client-js/api/runtime.mts";
 import { Transaction } from "./transaction.mts";
 import { createServerConnection } from "../bindings/live.mts";
-export {
-  Transaction,
-  LocalTransaction,
-  type LocalCallback,
-  type MutationInput,
-} from "./transaction.mts";
+export { Transaction } from "./transaction.mts";
 export {
   CallError,
   type Call,

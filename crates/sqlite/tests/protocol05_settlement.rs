@@ -47,7 +47,6 @@ fn rejected_owner_preserves_later_direct_and_completion_after_reopen() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -80,7 +79,6 @@ fn accepted_private_result_waits_for_coverage_then_settles_later_direct() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -184,7 +182,6 @@ fn newer_stream_supersedes_private_fallback_even_after_direct_releases_protectio
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -225,9 +222,7 @@ fn rejected_update_preserves_later_direct_b_and_historical_evidence() {
     c.initialize_stream05(0, "1").unwrap();
     install(&mut c, "e", 3, Some("base"));
     let call = c
-        .transaction(|tx| {
-            tx.submit_mutation05("Write", 1, json!({"entry":{"id":"e","text":"A"}}), vec![])
-        })
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entry":{"id":"e","text":"A"}})))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     c.transaction(|tx| tx.direct(direct("B"))).unwrap();
@@ -259,7 +254,6 @@ fn private_acceptance_finalizes_at_original_position_and_retains_result_after_cl
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -381,7 +375,6 @@ fn commit_failure_rolls_back_assignment_and_acknowledgement() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -416,7 +409,6 @@ fn partial_duplicate_or_foreign_acknowledgement_changes_nothing() {
             "Write",
             1,
             json!({"entry":{"id":"e","text":"A","note":null}}),
-            vec![],
         )
     })
     .unwrap();
@@ -485,9 +477,7 @@ fn abrupt_process_exit_before_ack_commit_restores_exact_batch_and_later_direct()
     )
     .unwrap();
     let call = c
-        .transaction(|tx| {
-            tx.submit_mutation05("Write", 1, json!({"entry":{"id":"e","text":"A"}}), vec![])
-        })
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entry":{"id":"e","text":"A"}})))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     c.transaction(|tx| tx.direct(direct("B"))).unwrap();
@@ -537,12 +527,7 @@ fn pending_optimism_keeps_authoritative_base_protection() {
     )
     .unwrap();
     c.transaction(|tx| {
-        tx.submit_mutation05(
-            "Write",
-            1,
-            json!({"entry":{"id":"e","text":"optimistic"}}),
-            vec![],
-        )
+        tx.submit_mutation05("Write", 1, json!({"entry":{"id":"e","text":"optimistic"}}))
     })
     .unwrap();
     assert_eq!(
@@ -571,7 +556,6 @@ fn target_moved_past_sync_cursor_keeps_local_layer_until_newer_position_lands() 
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -627,13 +611,12 @@ fn lifecycle_dependents_are_rejected_atomically_and_retained_but_not_replayed() 
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
     let second = c
         .transaction(|tx| {
-            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"edit"}}), vec![])
+            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"edit"}}))
         })
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
@@ -673,96 +656,6 @@ fn lifecycle_dependents_are_rejected_atomically_and_retained_but_not_replayed() 
     );
 }
 #[test]
-fn accepted_companion_keeps_original_order_and_later_authority_supersedes_it() {
-    let d = tempfile::tempdir().unwrap();
-    let mut c = Client::open05(
-        SqliteStore::open(d.path().join("db")).unwrap(),
-        update_schema(),
-        "User:u",
-    )
-    .unwrap();
-    c.initialize_stream05(0, "1").unwrap();
-    let ctx = c.request_context05().unwrap();
-    c.install_authority05(
-        &ctx,
-        &[
-            v05::AuthorityChange::Record {
-                key: stream_key("e"),
-                cursor: 1,
-                state: state("base"),
-            },
-            v05::AuthorityChange::Record {
-                key: stream_key("other"),
-                cursor: 1,
-                state: state("other"),
-            },
-        ],
-        None,
-    )
-    .unwrap();
-    let companion = Operation {
-        model: "Entry".into(),
-        identity: json!({"id":"other"}),
-        op: OperationKind::Update,
-        values: Some(json!({"text":"companion"})),
-    };
-    c.transaction(|tx| {
-        tx.submit_mutation05(
-            "Write",
-            1,
-            json!({"entry":{"id":"e","text":"A"}}),
-            vec![companion],
-        )
-    })
-    .unwrap();
-    let b = c.freeze_batch05().unwrap().unwrap();
-    c.install_authority05(
-        &ctx,
-        &[
-            v05::AuthorityChange::Record {
-                key: stream_key("other"),
-                cursor: 2,
-                state: state("new-authority"),
-            },
-            v05::AuthorityChange::Record {
-                key: stream_key("e"),
-                cursor: 2,
-                state: state("accepted"),
-            },
-        ],
-        Some((0, 2)),
-    )
-    .unwrap();
-    let a = ack(
-        &b,
-        v05::MutationOutcome::Accepted {
-            sync_cursor: 2,
-            materialization: b.context.materialization.clone(),
-            result: Value::Null,
-            targets: vec![v05::SettlementTarget::Stream {
-                key: stream_key("e"),
-                cursor: 2,
-                fallback: v05::ReadRecord {
-                    key: stream_key("e"),
-                    cursor: (),
-                    state: state("accepted"),
-                },
-            }],
-        },
-    );
-    c.acknowledge_batch05(&a).unwrap();
-    c.settle_ready05().unwrap();
-    let key = RecordKey {
-        model: "Entry".into(),
-        identity: json!({"id":"other"}),
-    };
-    assert_eq!(c.read(&key).unwrap().unwrap()["text"], "new-authority");
-    assert_eq!(
-        c.record_evidence05(&key).unwrap().current.unwrap().cursor,
-        2
-    );
-}
-#[test]
 fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
@@ -777,7 +670,6 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -843,7 +735,6 @@ fn abrupt_assignment_commit_boundaries_preserve_canonical_retry() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -926,18 +817,12 @@ fn discarded_mutation_and_lifecycle_dependent_keep_public_codes_after_reopen() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"created","note":null}}),
-                vec![],
             )
         })
         .unwrap();
     let dependent = client
         .transaction(|tx| {
-            tx.submit_mutation05(
-                "Edit",
-                1,
-                json!({"entry":{"id":"e","text":"dependent"}}),
-                vec![],
-            )
+            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"dependent"}}))
         })
         .unwrap();
     let report = client
@@ -990,7 +875,6 @@ fn dismissed_rejection_keeps_durable_completion_but_retires_input_after_reopen()
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"denied","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1050,7 +934,6 @@ fn incomplete_format5_is_refused_without_upgrade_or_file_changes() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"unsent","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1114,7 +997,6 @@ fn legacy_drop_retains_own_refusal_until_explicit_acknowledgement() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"drop","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1172,7 +1054,7 @@ fn dismiss_missing_is_noop_but_pending_and_accepted_outcomes_are_protected() {
     client.initialize_stream05(0, "1").unwrap();
     client.transaction(|tx| tx.dismiss_rejection05(99)).unwrap();
     let call = client
-        .transaction(|tx| tx.submit_mutation05("Ping", 1, json!({}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Ping", 1, json!({})))
         .unwrap();
     assert!(
         client
@@ -1279,7 +1161,6 @@ fn retained_private_snapshot_never_evaluates_new_creation_defaults() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"queued","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1372,7 +1253,6 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
                     "Write",
                     1,
                     json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                    vec![],
                 )
             })
             .unwrap();
@@ -1476,7 +1356,6 @@ fn historical_target_finalizes_from_receipt_unless_bootstrap_will_deliver_it() {
                     "Write",
                     1,
                     json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                    vec![],
                 )
             })
             .unwrap();
@@ -1572,7 +1451,6 @@ fn failed_local_settlement_retains_previous_batch_window_after_reopen() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1599,7 +1477,6 @@ fn failed_local_settlement_retains_previous_batch_window_after_reopen() {
                 "Write",
                 1,
                 json!({"entry":{"id":"other","text":"independent","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1640,7 +1517,6 @@ fn receipt_snapshot_installs_only_when_labelled_with_the_store_materialization()
                         "Write",
                         1,
                         json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                        vec![],
                     )
                 })
                 .unwrap();
@@ -1707,7 +1583,6 @@ fn a_batch_partly_executed_before_an_upgrade_settles_each_outcome_by_its_own_lab
                 "Write",
                 1,
                 json!({"entry":{"id":id,"text":"optimistic","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1776,12 +1651,7 @@ fn a_target_protected_only_under_the_previous_materialization_finalizes_from_the
         install(&mut c, "e", 57, Some("stream"));
         let call = c
             .transaction(|tx| {
-                tx.submit_mutation05(
-                    "Edit",
-                    1,
-                    json!({"entry":{"id":"e","text":"edited"}}),
-                    vec![],
-                )
+                tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"edited"}}))
             })
             .unwrap();
         c.freeze_batch05().unwrap().unwrap();
@@ -1848,12 +1718,7 @@ fn a_target_the_stream_delivered_before_an_upgrade_settles_after_it_without_boot
             .unwrap();
         let call = c
             .transaction(|tx| {
-                tx.submit_mutation05(
-                    "Edit",
-                    1,
-                    json!({"entry":{"id":"e","text":"edited"}}),
-                    vec![],
-                )
+                tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"edited"}}))
             })
             .unwrap();
         let b = c.freeze_batch05().unwrap().unwrap();
@@ -1917,10 +1782,8 @@ fn a_noncanonical_target_identity_is_refused_whatever_the_outcome_label() {
         )
         .unwrap();
         c.initialize_stream05(0, "1").unwrap();
-        c.transaction(|tx| {
-            tx.submit_mutation05("Add", 1, json!({"tally":{"n":1,"text":"one"}}), vec![])
-        })
-        .unwrap();
+        c.transaction(|tx| tx.submit_mutation05("Add", 1, json!({"tally":{"n":1,"text":"one"}})))
+            .unwrap();
         let b = c.freeze_batch05().unwrap().unwrap();
         let target = |n: Value| v05::SettlementTarget::Private {
             record: v05::ReadRecord {

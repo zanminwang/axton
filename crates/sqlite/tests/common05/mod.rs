@@ -196,7 +196,7 @@ pub fn cached(c: &mut Client<SqliteStore>, model: &str, id: &str, state: Value) 
 /// An offline Mutation: queued and applied optimistically, never sent while
 /// the test holds no connection.
 pub fn offline(c: &mut Client<SqliteStore>, name: &str, input: Value) -> SubmittedCall {
-    c.transaction(|tx| tx.submit_mutation05(name, 1, input, vec![]))
+    c.transaction(|tx| tx.submit_mutation05(name, 1, input))
         .unwrap()
 }
 /// `schema` with `Create<Model>`, `Update<Model>` and `Delete<Model>`
@@ -235,7 +235,7 @@ pub fn create_call<S: ClientStore>(
     id: &str,
     values: Value,
 ) -> Result<SubmittedCall> {
-    tx.submit_mutation05(&format!("Create{model}"), 1, row(id, values), vec![])
+    tx.submit_mutation05(&format!("Create{model}"), 1, row(id, values))
 }
 /// Inside a transaction, the `with_crud` Mutation updating `model` row `id`.
 pub fn update_call<S: ClientStore>(
@@ -244,7 +244,7 @@ pub fn update_call<S: ClientStore>(
     id: &str,
     values: Value,
 ) -> Result<SubmittedCall> {
-    tx.submit_mutation05(&format!("Update{model}"), 1, row(id, values), vec![])
+    tx.submit_mutation05(&format!("Update{model}"), 1, row(id, values))
 }
 /// Inside a transaction, the `with_crud` Mutation deleting `model` row `id`.
 pub fn delete_call<S: ClientStore>(
@@ -252,5 +252,5 @@ pub fn delete_call<S: ClientStore>(
     model: &str,
     id: &str,
 ) -> Result<SubmittedCall> {
-    tx.submit_mutation05(&format!("Delete{model}"), 1, row(id, json!({})), vec![])
+    tx.submit_mutation05(&format!("Delete{model}"), 1, row(id, json!({})))
 }

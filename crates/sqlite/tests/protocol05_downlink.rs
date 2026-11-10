@@ -983,7 +983,6 @@ fn crash_after_commit_before_dequeue_reopens_without_reapplying_under_later_opti
             "Edit",
             1,
             serde_json::json!({"entry":{"id":"a","text":"later"}}),
-            vec![],
         )
     })
     .unwrap();
@@ -1233,7 +1232,6 @@ fn explicit_reset_retires_frozen_batch_and_reused_ids_have_new_store_owner() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"old","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1276,7 +1274,6 @@ fn explicit_reset_retires_frozen_batch_and_reused_ids_have_new_store_owner() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"new","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1347,7 +1344,7 @@ fn stopped_control_ignores_already_dispatched_freeze_report() {
         "User:u",
     )
     .unwrap();
-    c.transaction(|tx| tx.submit_mutation05("Write", 1, serde_json::json!({}), vec![]))
+    c.transaction(|tx| tx.submit_mutation05("Write", 1, serde_json::json!({})))
         .unwrap();
     let mut control = Control::new(c.store_status05().unwrap());
     control.connect().unwrap();
@@ -1635,7 +1632,6 @@ fn pending_settlement_control(
                 "Write",
                 1,
                 serde_json::json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1748,7 +1744,6 @@ fn already_dispatched_freeze_waits_for_reconciliation_before_push() {
                 "Write",
                 1,
                 serde_json::json!({"entry":{"id":"next","text":"next","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -2141,12 +2136,7 @@ fn a_handshake_reporting_a_new_generation_upgrades_in_its_commit_and_a_push_sent
     .unwrap();
     let call = c
         .transaction(|tx| {
-            tx.submit_mutation05(
-                "Edit",
-                1,
-                json!({"note":{"id":"n","text":"edited"}}),
-                vec![],
-            )
+            tx.submit_mutation05("Edit", 1, json!({"note":{"id":"n","text":"edited"}}))
         })
         .unwrap();
     let sent = c.freeze_batch05().unwrap().unwrap();
@@ -2357,7 +2347,6 @@ fn a_push_answered_after_a_generation_upgrade_is_acknowledged_through_the_sync_w
                     "Write",
                     1,
                     json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                    vec![],
                 )
             })
             .unwrap();

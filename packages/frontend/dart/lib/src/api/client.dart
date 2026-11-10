@@ -188,12 +188,9 @@ class Client implements WritePort, SubmitMutationPort {
   Future<Call<T>> submitMutation<T>(
     String name,
     int version,
-    Map<String, dynamic>? args,
-    T Function(dynamic) decode, {
-    Future<Map<String, dynamic>> Function(WritePort tx)? input,
-  }) => transaction(
-    (tx) => tx.submitMutation(name, version, args, decode, input: input),
-  );
+    Map<String, dynamic> args,
+    T Function(dynamic) decode,
+  ) => transaction((tx) => tx.submitMutation(name, version, args, decode));
 
   Future<T> transaction<T>(Future<T> Function(Transaction tx) body) async {
     if (_inTransaction) throw StateError('transaction_active');
@@ -668,26 +665,17 @@ class Client implements WritePort, SubmitMutationPort {
   }
 }
 
-/// The runtime's refusal of an outer transaction command issued while a
-/// `local` callback runs. A [Transaction] gives it to every command issued
-/// while a submission with a callback is unfinished, so it never depends on
-/// when the runtime received the command.
-const _capability = 'invalid transaction capability';
-
 /// The application callback's handle on the local transaction Rust owns.
 /// Its commands carry the runtime's transaction id and the savepoint scope of
 /// the zone they are issued from; Rust runs them in submission order and
 /// decides commit or rollback: scope checks, failure accounting and the
 /// refusal of a poisoned unit are its own. What stays here is what only the
 /// language sees - which zone issued a command, whether the callback awaited
-/// what it started, and which submissions still run a `local` callback.
+/// what it started.
 class Transaction implements WritePort, SubmitMutationPort {
   final Client _client;
   final String _transactionId;
   bool _open = true;
-
-  /// Submissions with a `local` callback that have not completed.
-  int _locals = 0;
   Transaction._(this._client, this._transactionId);
 
   /// Dismiss a refusal as part of this transaction.
@@ -759,8 +747,6 @@ class Transaction implements WritePort, SubmitMutationPort {
     // The callback's Future ended: a late command must not reach the runtime
     // before the callback's result does.
     if (!_open) return Future.error(StateError('transaction_closed'));
-    // A `local` callback owns the transaction until its submission completes:
-    // a captured or pipelined parent command is refused as the runtime would.
     if (_active != null && Zone.current[_zoneKey] != _active) {
       _structural = StateError('overlapping savepoint work');
       return Future.error(_structural!);
@@ -768,56 +754,30 @@ class Transaction implements WritePort, SubmitMutationPort {
     return null;
   }
 
-  /// The refusal of a parent command while a submission with a `local`
-  /// callback is unfinished, recorded as structural so the transaction fails
-  /// whatever the callback catches.
-  Future<Never>? _callbackRefusal() {
-    if (_locals == 0) return null;
-    _structural ??= StateError(_capability);
-    return Future.error(StateError(_capability));
-  }
-
-  /// The refusal of a command sent through an expired `local` handle. While
-  /// this transaction is open it is the runtime's answer to a stale
-  /// capability and poisons the transaction; afterwards the handle is simply
-  /// closed.
-  StateError _expired() {
-    if (!_open) return StateError('transaction_closed');
-    _structural ??= StateError(_capability);
-    return StateError(_capability);
-  }
-
   /// Queue a named Mutation in this transaction. It completes after the
-  /// Mutation's optimism and its [local] callback ran, with a [Call] that
-  /// stays provisional until the transaction commits: its `wait` fails with
-  /// `transaction_uncommitted` before, and with `transaction_rolled_back` once
-  /// a rollback discarded it. [local] runs in this zone; its writes are the
-  /// call's local companions. Outer commands are refused until the
-  /// submission completed.
+  /// Mutation's optimism ran, with a [Call] that stays provisional until the
+  /// transaction commits: its `wait` fails with `transaction_uncommitted`
+  /// before, and with `transaction_rolled_back` once a rollback discarded it.
   @override
   Future<Call<T>> submitMutation<T>(
     String name,
     int version,
-    Map<String, dynamic>? args,
-    T Function(dynamic) decode, {
-    Future<Map<String, dynamic>> Function(WritePort tx)? input,
-  }) {
+    Map<String, dynamic> args,
+    T Function(dynamic) decode,
+  ) {
     final refused = _refusal();
     if (refused != null) return refused;
     late final Call<T> call;
-    if (input != null) _locals++;
-    final work = _track(
-      _client._bridge.submitMutation(
+    return _track(
+      _client._bridge.transactionCommand(
         _transactionId,
         _scopeOf(Zone.current),
         {
           'kind': 'submitMutation',
           'name': name,
           'version': version,
-          if (input == null) 'args': args,
-          if (input != null) 'local': true,
+          'args': args,
         },
-        local: input == null ? null : LocalTransaction._run(input, _expired),
         // Routed while the answer is dispatched: the transaction's rollback
         // may follow it in the same batch.
         onValue: (value) => call = _client._actionObservers.register<T>(
@@ -826,14 +786,7 @@ class Transaction implements WritePort, SubmitMutationPort {
           provisional: true,
         ),
       ),
-    );
-    if (input != null) {
-      work.then<void>(
-        (_) => _locals--,
-        onError: (Object _, StackTrace _) => _locals--,
-      );
-    }
-    return work.then((_) => call);
+    ).then((_) => call);
   }
 
   /// The callback returned. A command it did not await fails the unit even
@@ -909,8 +862,6 @@ class Transaction implements WritePort, SubmitMutationPort {
     final foreign = _foreignRefusal();
     if (foreign != null) return foreign;
     if (!_open) return Future.error(StateError('transaction_closed'));
-    final refused = _callbackRefusal();
-    if (refused != null) return refused;
     if (_active != null && Zone.current[_zoneKey] != _active) {
       _structural = StateError('overlapping savepoints');
       return Future.error(_structural!);
@@ -972,139 +923,6 @@ class Transaction implements WritePort, SubmitMutationPort {
       ),
     );
     return run;
-  }
-}
-
-/// The handle a Mutation's `local` callback receives: local Model reads and
-/// direct writes through the callback's own capability, nothing else - no
-/// Mutation, Stream, watch or savepoint. Its writes are the submitting call's
-/// local companions. It expires when the callback returns: a later command is
-/// refused, and poisons the transaction while it is still open. The
-/// unawaited-work rule is the transaction's, and a failed command it caught
-/// is the runtime's to refuse with the submission.
-class LocalTransaction implements WritePort {
-  LocalTransaction._(this._submit, this._expired)
-    : _owner = Zone.current[_callbackOwnerKey];
-  final Object? _owner;
-  final Future<dynamic> Function(Map<String, dynamic> command) _submit;
-
-  /// The refusal of a command sent after the callback returned.
-  final StateError Function() _expired;
-  bool _open = true;
-  Future<void> _tail = Future<void>.value();
-  int _pending = 0;
-
-  /// Run [callback] as a `local` callback, then apply the transaction's
-  /// checks to it. [expired] answers a command sent through its handle after
-  /// it returned.
-  static LocalRun _run(
-    Future<Map<String, dynamic>> Function(WritePort tx) callback,
-    StateError Function() expired,
-  ) => (send) async {
-    final local = LocalTransaction._(send, expired);
-    try {
-      final input = await callback(local);
-      await local._finish();
-      return input;
-    } catch (error, stack) {
-      try {
-        await local._finish();
-      } catch (_) {}
-      Error.throwWithStackTrace(error, stack);
-    }
-  };
-
-  Future<dynamic> _send(Map<String, dynamic> command) {
-    if (!_open) return Future.error(_expired());
-    if (Zone.current[_callbackOwnerKey] != null &&
-        !identical(Zone.current[_callbackOwnerKey], _owner)) {
-      _expired();
-      return Future.error(StateError('foreign transaction scope'));
-    }
-    _pending++;
-    final work = _submit(command);
-    final settled = work.then<void>(
-      (_) {
-        _pending--;
-      },
-      onError: (Object _, StackTrace __) {
-        _pending--;
-      },
-    );
-    _tail = _tail.then((_) => settled);
-    return work;
-  }
-
-  Future<void> _finish() async {
-    final outstanding = _pending > 0;
-    _open = false;
-    await _tail;
-    if (outstanding) throw StateError('unawaited transaction operation');
-  }
-
-  @override
-  Future<Map<String, dynamic>?> read(
-    String model,
-    Map<String, dynamic> identity,
-  ) async =>
-      (await _send({
-            'kind': 'read',
-            'key': {'model': model, 'identity': identity},
-          }))
-          as Map<String, dynamic>?;
-  Future<List<Map<String, dynamic>>> query(
-    String model, {
-    Map<String, dynamic> where = const {},
-  }) async =>
-      (await _send({'kind': 'query', 'model': model, 'filter': where}) as List)
-          .cast<Map<String, dynamic>>();
-  Future<List<Map<String, dynamic>>> readSql(
-    String sql, {
-    List<dynamic> parameters = const [],
-  }) async =>
-      (await _send({'kind': 'sql', 'sql': sql, 'parameters': parameters})
-              as List)
-          .cast<Map<String, dynamic>>();
-  @override
-  Future<List<Map<String, dynamic>>> querySpec(
-    String model,
-    Map<String, dynamic> query,
-  ) async =>
-      (await _send({'kind': 'querySpec', 'model': model, 'query': query})
-              as List)
-          .cast<Map<String, dynamic>>();
-  @override
-  Future<Map<String, dynamic>?> related(
-    String model,
-    Map<String, dynamic> identity,
-    String relation,
-  ) async =>
-      await _send({
-            'kind': 'related',
-            'key': {'model': model, 'identity': identity},
-            'relation': relation,
-          })
-          as Map<String, dynamic>?;
-  @override
-  Future<List<Map<String, dynamic>>> referencing(
-    String model,
-    Map<String, dynamic> identity,
-    String source,
-    String relation,
-  ) async =>
-      (await _send({
-                'kind': 'referencing',
-                'key': {'model': model, 'identity': identity},
-                'source': source,
-                'relation': relation,
-              })
-              as List)
-          .cast<Map<String, dynamic>>();
-
-  /// A Model write recorded as a local companion of the submitting call.
-  @override
-  Future<void> direct(Map<String, dynamic> operation) async {
-    await _send({'kind': 'direct', 'operation': operation});
   }
 }
 

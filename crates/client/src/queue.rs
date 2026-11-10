@@ -11,7 +11,6 @@ use std::collections::{BTreeMap, BTreeSet};
 #[serde(rename_all = "lowercase")]
 pub enum OpKind {
     Wire,
-    Companion,
     Effect,
 }
 #[derive(Clone, Debug)]
@@ -26,14 +25,15 @@ pub struct QueuedOp {
 pub enum LocalWriteKind {
     // A direct write made while the record had pending work.
     Independent,
-    // The companion of a call the server accepted, kept at its position
-    // until no earlier pending work on the record needs it.
+    // The receipt-finalized state of a target the server accepted, kept at
+    // its wire operation's position until no earlier pending work on the
+    // record needs it.
     Accepted,
 }
 // A settled local write retained at its place in a record's local order:
-// an accepted companion at its owner's `(ordinal, position)`, an
-// independent write after every operation of the last ordinal allocated
-// before it. `sequence` orders writes that share a place.
+// an accepted write at its owner's `(ordinal, position)`, an independent
+// write after every operation of the last ordinal allocated before it.
+// `sequence` orders writes that share a place.
 #[derive(Clone, Debug)]
 pub struct LocalWrite {
     pub sequence: u64,
@@ -89,7 +89,6 @@ fn decode_op(row: &[Value]) -> Result<QueuedOp> {
     // columns: ordinal, position, kind, model, identity, op, values
     let kind = match row[2].as_str() {
         Some("wire") => OpKind::Wire,
-        Some("companion") => OpKind::Companion,
         Some("effect") => OpKind::Effect,
         _ => return Err(invalid("unknown operation kind")),
     };
@@ -145,8 +144,7 @@ impl<S: ClientStore> Engine<'_, S> {
     }
     // Store `op` at the next position of queued call `ordinal`: after every
     // operation the call already holds. A cascade delete appended later is
-    // an effect of a wire delete, or a companion when the delete it extends
-    // is the call's companion.
+    // an effect of a wire delete.
     pub(crate) fn append_op(&mut self, ordinal: u64, kind: OpKind, op: &Operation) -> Result<()> {
         let next = self.scalar(
             "SELECT COALESCE(MAX(step), -1) + 1 FROM axton_mutation_queue_operation WHERE mutation_id=?",
@@ -154,16 +152,6 @@ impl<S: ClientStore> Engine<'_, S> {
         )?;
         let position = as_u64(&next.unwrap_or(json!(0)))?;
         self.insert_op(ordinal, position, kind, op)
-    }
-    // Whether an independent direct write was journaled after call
-    // `ordinal`, i.e. placed after every operation of that call.
-    pub(crate) fn independent_writes_after(&mut self, ordinal: u64) -> Result<bool> {
-        Ok(self
-            .scalar(
-                "SELECT 1 FROM axton_local_write WHERE disposition='independent' AND ordinal>=? LIMIT 1",
-                &[json!(ordinal)],
-            )?
-            .is_some())
     }
     // The operations of one queued call with their positions and kinds.
     pub(crate) fn call_ops(&mut self, ordinal: u64) -> Result<Vec<QueuedOp>> {
@@ -237,13 +225,16 @@ impl<S: ClientStore> Engine<'_, S> {
     }
     // Every reader of a queued Mutation's local operations loads them here.
     // An operation on a Model the Mutation does not share with the current
-    // schema is left out, and its Mutation is returned as diverged.
+    // schema is left out, and its Mutation is returned as diverged. A
+    // `companion` operation, which a file written before Mutation companion
+    // writes were removed may still hold, is never read: the record it
+    // touched rebuilds without it.
     fn ops_by_ordinal(
         &mut self,
         filter: &str,
         params: &[Value],
     ) -> Result<(OpsByOrdinal, BTreeSet<u64>)> {
-        let rows = self.rows(&format!("SELECT o.mutation_id,o.step,o.kind,o.model,o.identity,o.operation,o.value,q.descriptor FROM axton_mutation_queue_operation o JOIN axton_mutation_queue q ON q.id=o.mutation_id WHERE o.model IS NOT NULL AND q.reconciled=0 AND q.rejection_code IS NULL {filter} ORDER BY o.mutation_id,o.step"), params)?;
+        let rows = self.rows(&format!("SELECT o.mutation_id,o.step,o.kind,o.model,o.identity,o.operation,o.value,q.descriptor FROM axton_mutation_queue_operation o JOIN axton_mutation_queue q ON q.id=o.mutation_id WHERE o.model IS NOT NULL AND o.kind<>'companion' AND q.reconciled=0 AND q.rejection_code IS NULL {filter} ORDER BY o.mutation_id,o.step"), params)?;
         let mut result = OpsByOrdinal::new();
         let mut skipped = BTreeSet::new();
         for row in &rows.rows {
@@ -292,7 +283,6 @@ impl<S: ClientStore> Engine<'_, S> {
             for op in ops.get(&ordinal).into_iter().flatten() {
                 match op.kind {
                     OpKind::Wire => mutation.operations.push(op.op.clone()),
-                    OpKind::Companion => mutation.companion.push(op.op.clone()),
                     OpKind::Effect => mutation.effects.push(op.op.clone()),
                 }
             }
@@ -326,12 +316,6 @@ impl<S: ClientStore> Engine<'_, S> {
     }
     pub fn queued(&mut self) -> Result<Vec<Queued>> {
         self.queued_where("", &[])
-    }
-    pub fn queued_one(&mut self, ordinal: u64) -> Result<Option<Queued>> {
-        Ok(self
-            .queued_where("AND q.id=?", &[json!(ordinal)])?
-            .into_iter()
-            .next())
     }
     pub fn ops_for(&mut self, key: &RecordKey) -> Result<Vec<QueuedOp>> {
         Ok(self

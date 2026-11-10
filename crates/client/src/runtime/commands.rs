@@ -50,8 +50,8 @@ pub(super) fn execute<S: ClientStore + 'static>(
             if store.is_some() {
                 return Err(invalid("Mutation does not accept store"));
             }
-            let submitted = client
-                .transaction(|tx| tx.submit_mutation05(name, *version, args.clone(), vec![]))?;
+            let submitted =
+                client.transaction(|tx| tx.submit_mutation05(name, *version, args.clone()))?;
             json!({"callId":submitted.call_id,"ordinal":submitted.ordinal})
         }
         // The Stream commands behind the SDK subscription handles: each owns its
@@ -109,8 +109,8 @@ pub(super) fn execute<S: ClientStore + 'static>(
 }
 
 // Execute one read or write of the open application transaction inside its
-// session. The savepoint commands and `submitMutation`, which may start a
-// local callback, are the transaction's own.
+// session. The savepoint commands, `submitMutation` and the resolutions of
+// unsent work are the transaction's own.
 pub(super) fn execute_in_session<S: ClientStore>(
     client: &mut Client<S>,
     command: &TransactionCommand,

@@ -97,7 +97,7 @@ class Queries {
 class LiveModels { final Client port; LiveModels(this.port);
 
 }
-class TxModels { final WritePort port; TxModels(this.port);
+class TxModels { final ReadPort port; TxModels(this.port);
 
 }
 class GeneratedTransaction { final Transaction transaction; late final TxModels models=TxModels(transaction); GeneratedTransaction(this.transaction); }

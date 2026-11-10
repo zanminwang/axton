@@ -762,7 +762,6 @@ const GENERATED_NAMES: &[&str] = &[
     "SyncState",
     "Transaction",
     "TxModels",
-    "WritePort",
 ];
 
 /// Top-level type names the generated TypeScript backend declares for handler

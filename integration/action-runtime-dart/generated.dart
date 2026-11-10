@@ -41,17 +41,6 @@ class NoteIdentity {
  id: row['id'] as String,
  );
 }
-class NotePatch {
- final Present<DateTime>? at;
- final Present<Mood>? mood;
- final Present<String?>? label;
- const NotePatch({this.at,this.mood,this.label});
- Map<String,dynamic> toRecord() => {
- if (at != null) 'at': at!.value.toAxtonPrecision().toIso8601String(),
- if (mood != null) 'mood': mood!.value.name,
- if (label != null) 'label': label!.value == null ? null : label!.value!,
- };
-}
 class NoteCreate implements NoteCreateInput {
  final String id;
  final DateTime at;
@@ -86,15 +75,10 @@ class NoteModel { final ReadPort port; NoteModel(this.port);
  Future<Note?> get(NoteIdentity identity) async { final row=await port.read('Note',identity.toRecord()); return row == null ? null : Note.fromRecord(row); }
  Future<List<Note>> query({NoteFilter? where,List<NoteOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Note',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Note.fromRecord).toList();
 }
-class NoteLiveModel extends NoteTxModel { final Client client; NoteLiveModel(this.client) : super(client);
+class NoteLiveModel extends NoteModel { final Client client; NoteLiveModel(this.client) : super(client);
  Stream<List<Note>> watch({NoteFilter? where}) => client.watchDecoded<Note>('Note', where:where?.toRecord()??{},decode:Note.fromRecord,copy:_copyNoteWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(NoteIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Note', identity.toRecord()));
-}
-class NoteTxModel extends NoteModel { final WritePort writer; NoteTxModel(this.writer) : super(writer);
- Future<void> create(NoteCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Note','op':'create','identity':identity,'values':state}); }
- Future<void> update(NoteIdentity identity, NotePatch patch) => writer.direct({'model':'Note','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(NoteIdentity identity) => writer.direct({'model':'Note','op':'delete','identity':identity.toRecord()});
 }
 /// Public Action lifecycle types are owned by the SDK.
 typedef NoteDelete = NoteIdentity;
@@ -320,8 +304,8 @@ class Queries {
 class LiveModels { final Client port; LiveModels(this.port);
  late final NoteLiveModel note = NoteLiveModel(port);
 }
-class TxModels { final WritePort port; TxModels(this.port);
- late final NoteTxModel note = NoteTxModel(port);
+class TxModels { final ReadPort port; TxModels(this.port);
+ late final NoteModel note = NoteModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);

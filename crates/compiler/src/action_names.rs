@@ -121,7 +121,6 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
             "OrderField",
             "Model",
             "LiveModel",
-            "TxModel",
         ] {
             add(format!("{n}{suffix}"), owner.clone())?;
         }

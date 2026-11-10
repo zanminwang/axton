@@ -37,15 +37,6 @@ class EntryIdentity {
  id: row['id'] as String,
  );
 }
-class EntryPatch {
- final Present<String>? text;
- final Present<String?>? note;
- const EntryPatch({this.text,this.note});
- Map<String,dynamic> toRecord() => {
- if (text != null) 'text': text!.value,
- if (note != null) 'note': note!.value == null ? null : note!.value!,
- };
-}
 class EntryCreate implements EntryCreateInput {
  final String id;
  final String text;
@@ -76,15 +67,10 @@ class EntryModel { final ReadPort port; EntryModel(this.port);
  Future<Entry?> get(EntryIdentity identity) async { final row=await port.read('Entry',identity.toRecord()); return row == null ? null : Entry.fromRecord(row); }
  Future<List<Entry>> query({EntryFilter? where,List<EntryOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Entry',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Entry.fromRecord).toList();
 }
-class EntryLiveModel extends EntryTxModel { final Client client; EntryLiveModel(this.client) : super(client);
+class EntryLiveModel extends EntryModel { final Client client; EntryLiveModel(this.client) : super(client);
  Stream<List<Entry>> watch({EntryFilter? where}) => client.watchDecoded<Entry>('Entry', where:where?.toRecord()??{},decode:Entry.fromRecord,copy:_copyEntryWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(EntryIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Entry', identity.toRecord()));
-}
-class EntryTxModel extends EntryModel { final WritePort writer; EntryTxModel(this.writer) : super(writer);
- Future<void> create(EntryCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Entry','op':'create','identity':identity,'values':state}); }
- Future<void> update(EntryIdentity identity, EntryPatch patch) => writer.direct({'model':'Entry','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(EntryIdentity identity) => writer.direct({'model':'Entry','op':'delete','identity':identity.toRecord()});
 }
 /// Public Action lifecycle types are owned by the SDK.
 typedef EntryDelete = EntryIdentity;
@@ -201,8 +187,8 @@ class Queries {
 class LiveModels { final Client port; LiveModels(this.port);
  late final EntryLiveModel entry = EntryLiveModel(port);
 }
-class TxModels { final WritePort port; TxModels(this.port);
- late final EntryTxModel entry = EntryTxModel(port);
+class TxModels { final ReadPort port; TxModels(this.port);
+ late final EntryModel entry = EntryModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);

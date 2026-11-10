@@ -41,17 +41,6 @@ class TodoIdentity {
  id: row['id'] as String,
  );
 }
-class TodoPatch {
- final Present<String>? title;
- final Present<Status>? state;
- final Present<String?>? note;
- const TodoPatch({this.title,this.state,this.note});
- Map<String,dynamic> toRecord() => {
- if (title != null) 'title': title!.value,
- if (state != null) 'state': state!.value.name,
- if (note != null) 'note': note!.value == null ? null : note!.value!,
- };
-}
 /// What a fresh create of Project accepts: a complete [Project], or a [ProjectCreate] that may omit fields with creation defaults.
 abstract interface class ProjectCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Project implements ProjectCreateInput {
@@ -85,13 +74,6 @@ class ProjectIdentity {
  tenantId: row['tenantId'] as String,
  id: row['id'] as String,
  );
-}
-class ProjectPatch {
- final Present<String>? title;
- const ProjectPatch({this.title});
- Map<String,dynamic> toRecord() => {
- if (title != null) 'title': title!.value,
- };
 }
 /// What a fresh create of Note accepts: a complete [Note], or a [NoteCreate] that may omit fields with creation defaults.
 abstract interface class NoteCreateInput { Map<String,dynamic> toCreateRecord(); }
@@ -132,21 +114,6 @@ class NoteIdentity {
  factory NoteIdentity.fromRecord(Map<String,dynamic> row) => NoteIdentity(
  id: row['id'] as String,
  );
-}
-class NotePatch {
- final Present<String>? body;
- final Present<bool>? pinned;
- final Present<DateTime>? at;
- final Present<String?>? tag;
- final Present<String?>? memo;
- const NotePatch({this.body,this.pinned,this.at,this.tag,this.memo});
- Map<String,dynamic> toRecord() => {
- if (body != null) 'body': body!.value,
- if (pinned != null) 'pinned': pinned!.value,
- if (at != null) 'at': at!.value.toAxtonPrecision().toIso8601String(),
- if (tag != null) 'tag': tag!.value == null ? null : tag!.value!,
- if (memo != null) 'memo': memo!.value == null ? null : memo!.value!,
- };
 }
 class TodoCreate implements TodoCreateInput {
  final String id;
@@ -244,45 +211,30 @@ class TodoModel { final ReadPort port; TodoModel(this.port);
  Future<Todo?> get(TodoIdentity identity) async { final row=await port.read('Todo',identity.toRecord()); return row == null ? null : Todo.fromRecord(row); }
  Future<List<Todo>> query({TodoFilter? where,List<TodoOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Todo',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Todo.fromRecord).toList();
 }
-class TodoLiveModel extends TodoTxModel { final Client client; TodoLiveModel(this.client) : super(client);
+class TodoLiveModel extends TodoModel { final Client client; TodoLiveModel(this.client) : super(client);
  Stream<List<Todo>> watch({TodoFilter? where}) => client.watchDecoded<Todo>('Todo', where:where?.toRecord()??{},decode:Todo.fromRecord,copy:_copyTodoWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(TodoIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Todo', identity.toRecord()));
-}
-class TodoTxModel extends TodoModel { final WritePort writer; TodoTxModel(this.writer) : super(writer);
- Future<void> create(TodoCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Todo','op':'create','identity':identity,'values':state}); }
- Future<void> update(TodoIdentity identity, TodoPatch patch) => writer.direct({'model':'Todo','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(TodoIdentity identity) => writer.direct({'model':'Todo','op':'delete','identity':identity.toRecord()});
 }
 Project _copyProjectWatch(Project value) => value;
 class ProjectModel { final ReadPort port; ProjectModel(this.port);
  Future<Project?> get(ProjectIdentity identity) async { final row=await port.read('Project',identity.toRecord()); return row == null ? null : Project.fromRecord(row); }
  Future<List<Project>> query({ProjectFilter? where,List<ProjectOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Project',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Project.fromRecord).toList();
 }
-class ProjectLiveModel extends ProjectTxModel { final Client client; ProjectLiveModel(this.client) : super(client);
+class ProjectLiveModel extends ProjectModel { final Client client; ProjectLiveModel(this.client) : super(client);
  Stream<List<Project>> watch({ProjectFilter? where}) => client.watchDecoded<Project>('Project', where:where?.toRecord()??{},decode:Project.fromRecord,copy:_copyProjectWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(ProjectIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Project', identity.toRecord()));
-}
-class ProjectTxModel extends ProjectModel { final WritePort writer; ProjectTxModel(this.writer) : super(writer);
- Future<void> create(ProjectCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['tenantId','id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Project','op':'create','identity':identity,'values':state}); }
- Future<void> update(ProjectIdentity identity, ProjectPatch patch) => writer.direct({'model':'Project','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(ProjectIdentity identity) => writer.direct({'model':'Project','op':'delete','identity':identity.toRecord()});
 }
 Note _copyNoteWatch(Note value) => value;
 class NoteModel { final ReadPort port; NoteModel(this.port);
  Future<Note?> get(NoteIdentity identity) async { final row=await port.read('Note',identity.toRecord()); return row == null ? null : Note.fromRecord(row); }
  Future<List<Note>> query({NoteFilter? where,List<NoteOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Note',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Note.fromRecord).toList();
 }
-class NoteLiveModel extends NoteTxModel { final Client client; NoteLiveModel(this.client) : super(client);
+class NoteLiveModel extends NoteModel { final Client client; NoteLiveModel(this.client) : super(client);
  Stream<List<Note>> watch({NoteFilter? where}) => client.watchDecoded<Note>('Note', where:where?.toRecord()??{},decode:Note.fromRecord,copy:_copyNoteWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(NoteIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Note', identity.toRecord()));
-}
-class NoteTxModel extends NoteModel { final WritePort writer; NoteTxModel(this.writer) : super(writer);
- Future<void> create(NoteCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Note','op':'create','identity':identity,'values':state}); }
- Future<void> update(NoteIdentity identity, NotePatch patch) => writer.direct({'model':'Note','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(NoteIdentity identity) => writer.direct({'model':'Note','op':'delete','identity':identity.toRecord()});
 }
 /// Public Action lifecycle types are owned by the SDK.
 typedef TodoDelete = TodoIdentity;
@@ -1111,10 +1063,10 @@ class LiveModels { final Client port; LiveModels(this.port);
  late final ProjectLiveModel project = ProjectLiveModel(port);
  late final NoteLiveModel note = NoteLiveModel(port);
 }
-class TxModels { final WritePort port; TxModels(this.port);
- late final TodoTxModel todo = TodoTxModel(port);
- late final ProjectTxModel project = ProjectTxModel(port);
- late final NoteTxModel note = NoteTxModel(port);
+class TxModels { final ReadPort port; TxModels(this.port);
+ late final TodoModel todo = TodoModel(port);
+ late final ProjectModel project = ProjectModel(port);
+ late final NoteModel note = NoteModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);

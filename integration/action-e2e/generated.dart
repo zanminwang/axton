@@ -35,13 +35,6 @@ class TodoIdentity {
  id: row['id'] as String,
  );
 }
-class TodoPatch {
- final Present<String>? title;
- const TodoPatch({this.title});
- Map<String,dynamic> toRecord() => {
- if (title != null) 'title': title!.value,
- };
-}
 /// What a fresh create of Note accepts: a complete [Note], or a [NoteCreate] that may omit fields with creation defaults.
 abstract interface class NoteCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Note implements NoteCreateInput {
@@ -79,19 +72,6 @@ class NoteIdentity {
  id: row['id'] as String,
  );
 }
-class NotePatch {
- final Present<String>? body;
- final Present<Mood>? mood;
- final Present<DateTime>? createdAt;
- final Present<String?>? tag;
- const NotePatch({this.body,this.mood,this.createdAt,this.tag});
- Map<String,dynamic> toRecord() => {
- if (body != null) 'body': body!.value,
- if (mood != null) 'mood': mood!.value.name,
- if (createdAt != null) 'createdAt': createdAt!.value.toAxtonPrecision().toIso8601String(),
- if (tag != null) 'tag': tag!.value == null ? null : tag!.value!,
- };
-}
 /// What a fresh create of Composition accepts: a complete [Composition], or a [CompositionCreate] that may omit fields with creation defaults.
 abstract interface class CompositionCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Composition implements CompositionCreateInput {
@@ -122,15 +102,6 @@ class CompositionIdentity {
  factory CompositionIdentity.fromRecord(Map<String,dynamic> row) => CompositionIdentity(
  id: row['id'] as String,
  );
-}
-class CompositionPatch {
- final Present<String>? title;
- final Present<String>? body;
- const CompositionPatch({this.title,this.body});
- Map<String,dynamic> toRecord() => {
- if (title != null) 'title': title!.value,
- if (body != null) 'body': body!.value,
- };
 }
 /// What a fresh create of Entry accepts: a complete [Entry], or a [EntryCreate] that may omit fields with creation defaults.
 abstract interface class EntryCreateInput { Map<String,dynamic> toCreateRecord(); }
@@ -163,15 +134,6 @@ class EntryIdentity {
  id: row['id'] as String,
  );
 }
-class EntryPatch {
- final Present<String>? title;
- final Present<String>? body;
- const EntryPatch({this.title,this.body});
- Map<String,dynamic> toRecord() => {
- if (title != null) 'title': title!.value,
- if (body != null) 'body': body!.value,
- };
-}
 /// What a fresh create of Media accepts: a complete [Media], or a [MediaCreate] that may omit fields with creation defaults.
 abstract interface class MediaCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Media implements MediaCreateInput {
@@ -202,15 +164,6 @@ class MediaIdentity {
  factory MediaIdentity.fromRecord(Map<String,dynamic> row) => MediaIdentity(
  id: row['id'] as String,
  );
-}
-class MediaPatch {
- final Present<String>? entryId;
- final Present<String>? url;
- const MediaPatch({this.entryId,this.url});
- Map<String,dynamic> toRecord() => {
- if (entryId != null) 'entryId': entryId!.value,
- if (url != null) 'url': url!.value,
- };
 }
 /// What a fresh create of Placement accepts: a complete [Placement], or a [PlacementCreate] that may omit fields with creation defaults.
 abstract interface class PlacementCreateInput { Map<String,dynamic> toCreateRecord(); }
@@ -245,17 +198,6 @@ class PlacementIdentity {
  factory PlacementIdentity.fromRecord(Map<String,dynamic> row) => PlacementIdentity(
  id: row['id'] as String,
  );
-}
-class PlacementPatch {
- final Present<String>? entryId;
- final Present<String>? journal;
- final Present<int>? position;
- const PlacementPatch({this.entryId,this.journal,this.position});
- Map<String,dynamic> toRecord() => {
- if (entryId != null) 'entryId': entryId!.value,
- if (journal != null) 'journal': journal!.value,
- if (position != null) 'position': position!.value,
- };
 }
 class TodoCreate implements TodoCreateInput {
  final String id;
@@ -420,90 +362,60 @@ class TodoModel { final ReadPort port; TodoModel(this.port);
  Future<Todo?> get(TodoIdentity identity) async { final row=await port.read('Todo',identity.toRecord()); return row == null ? null : Todo.fromRecord(row); }
  Future<List<Todo>> query({TodoFilter? where,List<TodoOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Todo',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Todo.fromRecord).toList();
 }
-class TodoLiveModel extends TodoTxModel { final Client client; TodoLiveModel(this.client) : super(client);
+class TodoLiveModel extends TodoModel { final Client client; TodoLiveModel(this.client) : super(client);
  Stream<List<Todo>> watch({TodoFilter? where}) => client.watchDecoded<Todo>('Todo', where:where?.toRecord()??{},decode:Todo.fromRecord,copy:_copyTodoWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(TodoIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Todo', identity.toRecord()));
-}
-class TodoTxModel extends TodoModel { final WritePort writer; TodoTxModel(this.writer) : super(writer);
- Future<void> create(TodoCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Todo','op':'create','identity':identity,'values':state}); }
- Future<void> update(TodoIdentity identity, TodoPatch patch) => writer.direct({'model':'Todo','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(TodoIdentity identity) => writer.direct({'model':'Todo','op':'delete','identity':identity.toRecord()});
 }
 Note _copyNoteWatch(Note value) => value;
 class NoteModel { final ReadPort port; NoteModel(this.port);
  Future<Note?> get(NoteIdentity identity) async { final row=await port.read('Note',identity.toRecord()); return row == null ? null : Note.fromRecord(row); }
  Future<List<Note>> query({NoteFilter? where,List<NoteOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Note',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Note.fromRecord).toList();
 }
-class NoteLiveModel extends NoteTxModel { final Client client; NoteLiveModel(this.client) : super(client);
+class NoteLiveModel extends NoteModel { final Client client; NoteLiveModel(this.client) : super(client);
  Stream<List<Note>> watch({NoteFilter? where}) => client.watchDecoded<Note>('Note', where:where?.toRecord()??{},decode:Note.fromRecord,copy:_copyNoteWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(NoteIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Note', identity.toRecord()));
-}
-class NoteTxModel extends NoteModel { final WritePort writer; NoteTxModel(this.writer) : super(writer);
- Future<void> create(NoteCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Note','op':'create','identity':identity,'values':state}); }
- Future<void> update(NoteIdentity identity, NotePatch patch) => writer.direct({'model':'Note','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(NoteIdentity identity) => writer.direct({'model':'Note','op':'delete','identity':identity.toRecord()});
 }
 Composition _copyCompositionWatch(Composition value) => value;
 class CompositionModel { final ReadPort port; CompositionModel(this.port);
  Future<Composition?> get(CompositionIdentity identity) async { final row=await port.read('Composition',identity.toRecord()); return row == null ? null : Composition.fromRecord(row); }
  Future<List<Composition>> query({CompositionFilter? where,List<CompositionOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Composition',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Composition.fromRecord).toList();
 }
-class CompositionLiveModel extends CompositionTxModel { final Client client; CompositionLiveModel(this.client) : super(client);
+class CompositionLiveModel extends CompositionModel { final Client client; CompositionLiveModel(this.client) : super(client);
  Stream<List<Composition>> watch({CompositionFilter? where}) => client.watchDecoded<Composition>('Composition', where:where?.toRecord()??{},decode:Composition.fromRecord,copy:_copyCompositionWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(CompositionIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Composition', identity.toRecord()));
-}
-class CompositionTxModel extends CompositionModel { final WritePort writer; CompositionTxModel(this.writer) : super(writer);
- Future<void> create(CompositionCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Composition','op':'create','identity':identity,'values':state}); }
- Future<void> update(CompositionIdentity identity, CompositionPatch patch) => writer.direct({'model':'Composition','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(CompositionIdentity identity) => writer.direct({'model':'Composition','op':'delete','identity':identity.toRecord()});
 }
 Entry _copyEntryWatch(Entry value) => value;
 class EntryModel { final ReadPort port; EntryModel(this.port);
  Future<Entry?> get(EntryIdentity identity) async { final row=await port.read('Entry',identity.toRecord()); return row == null ? null : Entry.fromRecord(row); }
  Future<List<Entry>> query({EntryFilter? where,List<EntryOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Entry',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Entry.fromRecord).toList();
 }
-class EntryLiveModel extends EntryTxModel { final Client client; EntryLiveModel(this.client) : super(client);
+class EntryLiveModel extends EntryModel { final Client client; EntryLiveModel(this.client) : super(client);
  Stream<List<Entry>> watch({EntryFilter? where}) => client.watchDecoded<Entry>('Entry', where:where?.toRecord()??{},decode:Entry.fromRecord,copy:_copyEntryWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(EntryIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Entry', identity.toRecord()));
-}
-class EntryTxModel extends EntryModel { final WritePort writer; EntryTxModel(this.writer) : super(writer);
- Future<void> create(EntryCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Entry','op':'create','identity':identity,'values':state}); }
- Future<void> update(EntryIdentity identity, EntryPatch patch) => writer.direct({'model':'Entry','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(EntryIdentity identity) => writer.direct({'model':'Entry','op':'delete','identity':identity.toRecord()});
 }
 Media _copyMediaWatch(Media value) => value;
 class MediaModel { final ReadPort port; MediaModel(this.port);
  Future<Media?> get(MediaIdentity identity) async { final row=await port.read('Media',identity.toRecord()); return row == null ? null : Media.fromRecord(row); }
  Future<List<Media>> query({MediaFilter? where,List<MediaOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Media',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Media.fromRecord).toList();
 }
-class MediaLiveModel extends MediaTxModel { final Client client; MediaLiveModel(this.client) : super(client);
+class MediaLiveModel extends MediaModel { final Client client; MediaLiveModel(this.client) : super(client);
  Stream<List<Media>> watch({MediaFilter? where}) => client.watchDecoded<Media>('Media', where:where?.toRecord()??{},decode:Media.fromRecord,copy:_copyMediaWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(MediaIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Media', identity.toRecord()));
-}
-class MediaTxModel extends MediaModel { final WritePort writer; MediaTxModel(this.writer) : super(writer);
- Future<void> create(MediaCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Media','op':'create','identity':identity,'values':state}); }
- Future<void> update(MediaIdentity identity, MediaPatch patch) => writer.direct({'model':'Media','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(MediaIdentity identity) => writer.direct({'model':'Media','op':'delete','identity':identity.toRecord()});
 }
 Placement _copyPlacementWatch(Placement value) => value;
 class PlacementModel { final ReadPort port; PlacementModel(this.port);
  Future<Placement?> get(PlacementIdentity identity) async { final row=await port.read('Placement',identity.toRecord()); return row == null ? null : Placement.fromRecord(row); }
  Future<List<Placement>> query({PlacementFilter? where,List<PlacementOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Placement',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Placement.fromRecord).toList();
 }
-class PlacementLiveModel extends PlacementTxModel { final Client client; PlacementLiveModel(this.client) : super(client);
+class PlacementLiveModel extends PlacementModel { final Client client; PlacementLiveModel(this.client) : super(client);
  Stream<List<Placement>> watch({PlacementFilter? where}) => client.watchDecoded<Placement>('Placement', where:where?.toRecord()??{},decode:Placement.fromRecord,copy:_copyPlacementWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(PlacementIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Placement', identity.toRecord()));
-}
-class PlacementTxModel extends PlacementModel { final WritePort writer; PlacementTxModel(this.writer) : super(writer);
- Future<void> create(PlacementCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Placement','op':'create','identity':identity,'values':state}); }
- Future<void> update(PlacementIdentity identity, PlacementPatch patch) => writer.direct({'model':'Placement','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(PlacementIdentity identity) => writer.direct({'model':'Placement','op':'delete','identity':identity.toRecord()});
 }
 /// Public Action lifecycle types are owned by the SDK.
 typedef TodoDelete = TodoIdentity;
@@ -1113,13 +1025,13 @@ class LiveModels { final Client port; LiveModels(this.port);
  late final MediaLiveModel media = MediaLiveModel(port);
  late final PlacementLiveModel placement = PlacementLiveModel(port);
 }
-class TxModels { final WritePort port; TxModels(this.port);
- late final TodoTxModel todo = TodoTxModel(port);
- late final NoteTxModel note = NoteTxModel(port);
- late final CompositionTxModel composition = CompositionTxModel(port);
- late final EntryTxModel entry = EntryTxModel(port);
- late final MediaTxModel media = MediaTxModel(port);
- late final PlacementTxModel placement = PlacementTxModel(port);
+class TxModels { final ReadPort port; TxModels(this.port);
+ late final TodoModel todo = TodoModel(port);
+ late final NoteModel note = NoteModel(port);
+ late final CompositionModel composition = CompositionModel(port);
+ late final EntryModel entry = EntryModel(port);
+ late final MediaModel media = MediaModel(port);
+ late final PlacementModel placement = PlacementModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);

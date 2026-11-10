@@ -48,6 +48,53 @@ fn dart_application_transactions_queue_typed_mutations() {
         assert!(!dart.contains(retired), "{retired}");
     }
 }
+// Model facades only read: every row change is a Mutation. There is no
+// write port, no transaction Model facade with writes, and no create,
+// update or delete on a client or transaction Model.
+#[test]
+fn model_facades_are_read_only_in_both_languages() {
+    let v = compile(SCHEMA).unwrap();
+    let ts = axton_compiler::typescript(&v);
+    for expected in [
+        "export interface LivePort extends ReadPort {",
+        "export class EntryLiveModel extends EntryModel<LivePort> {",
+        "export interface TxModels { draft:DraftModel; entry:EntryModel; }",
+        "export function txModels(port:ReadPort):TxModels { return { draft:new DraftModel(port), entry:new EntryModel(port) }; }",
+        "export class GeneratedTransaction { readonly transaction:ReadPort; readonly models:TxModels; constructor(transaction:ReadPort) {",
+    ] {
+        assert!(ts.contains(expected), "{expected}");
+    }
+    for retired in [
+        "WritePort",
+        "TxModel<",
+        "direct(",
+        " create(value:",
+        " update(identity:",
+        " delete(identity:",
+        "CreateIdentity",
+    ] {
+        assert!(!ts.contains(retired), "{retired}");
+    }
+    let dart = axton_compiler::dart(&v);
+    for expected in [
+        "class EntryLiveModel extends EntryModel {",
+        "class TxModels { final ReadPort port; TxModels(this.port);",
+        " late final EntryModel entry = EntryModel(port);",
+    ] {
+        assert!(dart.contains(expected), "{expected}");
+    }
+    for retired in [
+        "WritePort",
+        "TxModel extends",
+        "direct(",
+        "Future<void> create(",
+        "Future<void> update(",
+        "Future<void> delete(",
+        "class EntryPatch",
+    ] {
+        assert!(!dart.contains(retired), "{retired}");
+    }
+}
 #[test]
 fn dart_controls_never_collide_with_business_inputs() {
     let v = compile("mutation Mark(local Boolean, store String, call String)").unwrap();

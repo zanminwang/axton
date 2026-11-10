@@ -296,8 +296,11 @@ void main() {
   );
   test('source codecs distinguish absent patch fields from explicit null', () {
     expect(Entry.fromRecord(row.toRecord()).at, row.at);
-    expect(const EntryPatch(note: Present(null)).toRecord(), {'note': null});
-    expect(const EntryPatch().toRecord(), isEmpty);
+    expect(const EntryUpdate(id: id, note: Present(null)).toRecord(), {
+      'id': id,
+      'note': null,
+    });
+    expect(const EntryUpdate(id: id).toRecord(), {'id': id});
     expect(
       PublishEntryInput(entry: row, composition: id).toRecord()['entry'],
       row.toRecord(),

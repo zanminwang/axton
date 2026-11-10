@@ -33,9 +33,17 @@ client.transaction(async tx=>tx.queries.findTodos({text:'x',cursor:null}));
 // @ts-expect-error the Mutation input callback is retired inside a transaction too
 client.transaction(async tx=>tx.mutations.addTodo(async()=>input));
 // @ts-expect-error defaulted nullable memo remains required
-client.models.note.create({});
+client.mutations.addNotes({note:{},many:[]});
 // @ts-expect-error explicit nonnullable default cannot be null
-client.models.note.create({memo:null,id:null});
+client.mutations.addNotes({note:{memo:null,id:null},many:[]});
+// @ts-expect-error a Model facade has no create; rows change through Mutations
+client.models.note.create({memo:null});
+// @ts-expect-error a Model facade has no delete
+client.models.todo.delete({id:'t'});
+// @ts-expect-error a transaction Model facade has no create
+client.transaction(async tx=>tx.models.todo.create(todo));
+// @ts-expect-error a transaction Model facade has no update
+client.transaction(async tx=>tx.models.todo.update({id:'t'},{title:'x'}));
 // @ts-expect-error named update field list excludes the existing state field
 const patch:TodoUpdate<'title'>={id:'t',state:'closed'};
 // @ts-expect-error composite identity requires every component
@@ -59,8 +67,8 @@ m.streams('User:b');
 b.stream.track.todo('t');
 // @ts-expect-error complete identity required
 m.stream.track.project({id:'p'});
-// @ts-expect-error unsupported Model field
-client.models.todo.update({id:'t'},{unknown:true});
+// @ts-expect-error a Model facade has no update
+client.models.todo.update({id:'t'},{title:'x'});
 void [patch,identity,old,output,states];
 
 // @ts-expect-error EditMany restricts its named update slot to title

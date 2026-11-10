@@ -10,7 +10,7 @@ import type {EntryIdentity, Placement, Status, PublishEntryOutput, RenameOutput,
 import {ApplicationTransaction,makeTransactionMutations} from './generated.ts';
 import type {Transaction as RawTransaction} from '../../packages/frontend/client-js/index.mts';
 import {Client as RawClient} from '../../packages/frontend/client-js/index.mts';
-import {decodeEntry,encodeEntry,EntryModel,EntryLiveModel,GeneratedTransaction,type Entry,type ReadPort,type LivePort,type WritePort,type MutationName,type SyncState} from './generated.ts';
+import {decodeEntry,encodeEntry,EntryModel,EntryLiveModel,GeneratedTransaction,type Entry,type ReadPort,type LivePort,type MutationName,type SyncState} from './generated.ts';
 const row:Entry={id:'123e4567-e89b-42d3-a456-426614174000',title:'hello',note:null,at:new Date('2026-01-01T00:00:00Z'),tags:['x'],status:'active'};
 const shared: import('./generated.ts').EntryFields = row;
 const identified: import('./generated.ts').IdentifiedFields = shared;
@@ -31,7 +31,7 @@ if(false){
  entries.query({orderBy:[{field:'status',direction:'ascending'}]});
  // @ts-expect-error date filter must be a Date
  entries.query({where:{at:'2026-01-01'}});
- const live:LivePort={...reads,async direct(){},watch(){return ()=>{}},watchDecoded(){return ()=>{}},async syncState(){return {pending:[],rejections:[]}}};
+ const live:LivePort={...reads,watch(){return ()=>{}},watchDecoded(){return ()=>{}},async syncState(){return {pending:[],rejections:[]}}};
  new EntryLiveModel(live).watch({},(rows)=>rows[0]?.at.getTime());
  // A record's sync state is typed by model: the identity is the model's, pending names are the schema's mutations.
  const state:Promise<SyncState>=new EntryLiveModel(live).syncState({id:row.id});
@@ -42,15 +42,14 @@ if(false){
  const unknown:SyncState['pending'][number]={ordinal:1,name:'NoSuchMutation',phase:'queued',prerequisites:[]};
  // @ts-expect-error anonymous remote mutation facade is retired
  void ({} as GeneratedClient).mutate;
- const writes:WritePort={...reads,async direct(){}};
  // @ts-expect-error watch is not available inside a transaction
- new GeneratedTransaction(writes).models.entry.watch({},()=>{});
+ new GeneratedTransaction(reads).models.entry.watch({},()=>{});
  // @ts-expect-error named mutations are unavailable in local transactions
- new GeneratedTransaction(writes).mutate;
+ new GeneratedTransaction(reads).mutate;
  // @ts-expect-error actions are unavailable in local transactions
- new GeneratedTransaction(writes).actions;
+ new GeneratedTransaction(reads).actions;
  // @ts-expect-error Fetch is unavailable in local transactions
- new GeneratedTransaction(writes).fetch;
+ new GeneratedTransaction(reads).fetch;
  const rawTx={} as RawTransaction;
  // @ts-expect-error raw transactions cannot enqueue named mutations
  rawTx.mutate;
@@ -147,9 +146,9 @@ if(false){
  const extra:EntryV1={...v1Row,tags:[]};
 }
 
-const tx=new GeneratedTransaction({...reads,async direct(op){check(JSON.stringify(op)===JSON.stringify({model:'Entry',op:'delete',identity:{id:row.id}}),'local write');}});
+const tx=new GeneratedTransaction(reads);
 check((await tx.models.entry.get({id:row.id}))?.at instanceof Date,'read decode');
-check((await tx.models.entry.query()).length===1,'query facade');await tx.models.entry.delete({id:row.id});
+check((await tx.models.entry.query()).length===1,'query facade');
 // The generated adapter encodes typed input through one named port.
 const submissions:{name:string;version:number;args:object}[]=[];
 const registry=new (await import('../../packages/frontend/client-js/api/actions.mts')).ActionRegistry();

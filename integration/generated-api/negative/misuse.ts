@@ -96,6 +96,30 @@ export async function transactionMisuse(client:GeneratedClient,tx:ApplicationTra
  return [wrong,call];
 }
 
+// Model facades only read: a Model row changes through a Mutation, never a
+// direct write, at the client and inside a transaction.
+export async function directWriteMisuse(client:GeneratedClient,tx:GeneratedTransaction,row:Entry){
+ // @ts-expect-error a client Model facade has no create
+ await client.models.entry.create(row);
+ // @ts-expect-error a client Model facade has no update
+ await client.models.entry.update({id:row.id},{title:'t'});
+ // @ts-expect-error a client Model facade has no delete
+ await client.models.entry.delete({id:row.id});
+ // @ts-expect-error a transaction Model facade has no create
+ await tx.models.entry.create(row);
+ // @ts-expect-error a transaction Model facade has no update
+ await tx.models.entry.update({id:row.id},{title:'t'});
+ // @ts-expect-error a transaction Model facade has no delete
+ await tx.models.entry.delete({id:row.id});
+ // @ts-expect-error the transaction port has no direct write
+ void tx.transaction.direct;
+ // @ts-expect-error the client has no direct write
+ void client.client.direct;
+}
+// @ts-expect-error there is no write port
+type RetiredWritePort=import('../generated.ts').WritePort;
+void (null as unknown as RetiredWritePort);
+
 async function retiredScopeAliases(client:GeneratedClient,tx:GeneratedTransaction):Promise<void>{
  // @ts-expect-error the generated client exposes scopes only
  void client.channels;

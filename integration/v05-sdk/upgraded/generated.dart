@@ -34,13 +34,6 @@ class DraftIdentity {
  id: row['id'] as String,
  );
 }
-class DraftPatch {
- final Present<String>? text;
- const DraftPatch({this.text});
- Map<String,dynamic> toRecord() => {
- if (text != null) 'text': text!.value,
- };
-}
 /// What a fresh create of Entry accepts: a complete [Entry], or a [EntryCreate] that may omit fields with creation defaults.
 abstract interface class EntryCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Entry implements EntryCreateInput {
@@ -69,13 +62,6 @@ class EntryIdentity {
  id: row['id'] as String,
  );
 }
-class EntryPatch {
- final Present<String>? text;
- const EntryPatch({this.text});
- Map<String,dynamic> toRecord() => {
- if (text != null) 'text': text!.value,
- };
-}
 /// What a fresh create of Snapshot accepts: a complete [Snapshot], or a [SnapshotCreate] that may omit fields with creation defaults.
 abstract interface class SnapshotCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Snapshot implements SnapshotCreateInput {
@@ -103,13 +89,6 @@ class SnapshotIdentity {
  factory SnapshotIdentity.fromRecord(Map<String,dynamic> row) => SnapshotIdentity(
  id: row['id'] as String,
  );
-}
-class SnapshotPatch {
- final Present<String>? text;
- const SnapshotPatch({this.text});
- Map<String,dynamic> toRecord() => {
- if (text != null) 'text': text!.value,
- };
 }
 class DraftCreate implements DraftCreateInput {
  final String id;
@@ -179,45 +158,30 @@ class DraftModel { final ReadPort port; DraftModel(this.port);
  Future<Draft?> get(DraftIdentity identity) async { final row=await port.read('Draft',identity.toRecord()); return row == null ? null : Draft.fromRecord(row); }
  Future<List<Draft>> query({DraftFilter? where,List<DraftOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Draft',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Draft.fromRecord).toList();
 }
-class DraftLiveModel extends DraftTxModel { final Client client; DraftLiveModel(this.client) : super(client);
+class DraftLiveModel extends DraftModel { final Client client; DraftLiveModel(this.client) : super(client);
  Stream<List<Draft>> watch({DraftFilter? where}) => client.watchDecoded<Draft>('Draft', where:where?.toRecord()??{},decode:Draft.fromRecord,copy:_copyDraftWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(DraftIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Draft', identity.toRecord()));
-}
-class DraftTxModel extends DraftModel { final WritePort writer; DraftTxModel(this.writer) : super(writer);
- Future<void> create(DraftCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Draft','op':'create','identity':identity,'values':state}); }
- Future<void> update(DraftIdentity identity, DraftPatch patch) => writer.direct({'model':'Draft','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(DraftIdentity identity) => writer.direct({'model':'Draft','op':'delete','identity':identity.toRecord()});
 }
 Entry _copyEntryWatch(Entry value) => value;
 class EntryModel { final ReadPort port; EntryModel(this.port);
  Future<Entry?> get(EntryIdentity identity) async { final row=await port.read('Entry',identity.toRecord()); return row == null ? null : Entry.fromRecord(row); }
  Future<List<Entry>> query({EntryFilter? where,List<EntryOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Entry',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Entry.fromRecord).toList();
 }
-class EntryLiveModel extends EntryTxModel { final Client client; EntryLiveModel(this.client) : super(client);
+class EntryLiveModel extends EntryModel { final Client client; EntryLiveModel(this.client) : super(client);
  Stream<List<Entry>> watch({EntryFilter? where}) => client.watchDecoded<Entry>('Entry', where:where?.toRecord()??{},decode:Entry.fromRecord,copy:_copyEntryWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(EntryIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Entry', identity.toRecord()));
-}
-class EntryTxModel extends EntryModel { final WritePort writer; EntryTxModel(this.writer) : super(writer);
- Future<void> create(EntryCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Entry','op':'create','identity':identity,'values':state}); }
- Future<void> update(EntryIdentity identity, EntryPatch patch) => writer.direct({'model':'Entry','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(EntryIdentity identity) => writer.direct({'model':'Entry','op':'delete','identity':identity.toRecord()});
 }
 Snapshot _copySnapshotWatch(Snapshot value) => value;
 class SnapshotModel { final ReadPort port; SnapshotModel(this.port);
  Future<Snapshot?> get(SnapshotIdentity identity) async { final row=await port.read('Snapshot',identity.toRecord()); return row == null ? null : Snapshot.fromRecord(row); }
  Future<List<Snapshot>> query({SnapshotFilter? where,List<SnapshotOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Snapshot',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Snapshot.fromRecord).toList();
 }
-class SnapshotLiveModel extends SnapshotTxModel { final Client client; SnapshotLiveModel(this.client) : super(client);
+class SnapshotLiveModel extends SnapshotModel { final Client client; SnapshotLiveModel(this.client) : super(client);
  Stream<List<Snapshot>> watch({SnapshotFilter? where}) => client.watchDecoded<Snapshot>('Snapshot', where:where?.toRecord()??{},decode:Snapshot.fromRecord,copy:_copySnapshotWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(SnapshotIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Snapshot', identity.toRecord()));
-}
-class SnapshotTxModel extends SnapshotModel { final WritePort writer; SnapshotTxModel(this.writer) : super(writer);
- Future<void> create(SnapshotCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Snapshot','op':'create','identity':identity,'values':state}); }
- Future<void> update(SnapshotIdentity identity, SnapshotPatch patch) => writer.direct({'model':'Snapshot','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(SnapshotIdentity identity) => writer.direct({'model':'Snapshot','op':'delete','identity':identity.toRecord()});
 }
 /// Public Action lifecycle types are owned by the SDK.
 typedef DraftDelete = DraftIdentity;
@@ -386,10 +350,10 @@ class LiveModels { final Client port; LiveModels(this.port);
  late final EntryLiveModel entry = EntryLiveModel(port);
  late final SnapshotLiveModel snapshot = SnapshotLiveModel(port);
 }
-class TxModels { final WritePort port; TxModels(this.port);
- late final DraftTxModel draft = DraftTxModel(port);
- late final EntryTxModel entry = EntryTxModel(port);
- late final SnapshotTxModel snapshot = SnapshotTxModel(port);
+class TxModels { final ReadPort port; TxModels(this.port);
+ late final DraftModel draft = DraftModel(port);
+ late final EntryModel entry = EntryModel(port);
+ late final SnapshotModel snapshot = SnapshotModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);

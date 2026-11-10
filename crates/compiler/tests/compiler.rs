@@ -436,7 +436,11 @@ fn emitters_include_typed_conversion() {
     assert!(ts.contains("new Date("));
     assert!(ts.contains("EditEntry"));
     let dart = axton_compiler::dart(&v);
-    assert!(dart.contains("class EntryPatch"));
+    assert!(dart.contains("class EntryIdentity"));
+    assert!(
+        !dart.contains("class EntryPatch"),
+        "Dart has no direct update"
+    );
     assert!(dart.contains("DateTime.parse("));
 }
 #[test]
@@ -1117,12 +1121,6 @@ fn deprecations_reach_every_generated_surface_and_leave_the_descriptors_alone() 
         "{dart}"
     );
     assert!(dart.contains("class Task implements TaskCreateInput {\n final String id;\n @Deprecated('renamed to title')\n final String name;\n final String title;\n @Deprecated('')\n final int? legacy;\n"), "{dart}");
-    assert!(
-        dart.contains(
-            "class TaskPatch {\n @Deprecated('renamed to title')\n final Present<String>? name;\n"
-        ),
-        "{dart}"
-    );
     assert!(dart.contains("class TaskFilter {\n final Present<String>? id;\n @Deprecated('renamed to title')\n final Present<String>? name;\n"), "{dart}");
 }
 #[test]
@@ -1344,11 +1342,11 @@ fn action_dart_emits_concrete_client_and_versioned_handler_contracts() {
 }
 
 #[test]
-fn model_only_dart_keeps_local_crud_without_action_symbols() {
+fn model_only_dart_reads_without_action_symbols() {
     let v = compile("model Note { id String label String @@id(id) }").unwrap();
     let dart = axton_compiler::dart(&v);
     assert!(
-        dart.contains("class NoteLiveModel extends NoteTxModel"),
+        dart.contains("class NoteLiveModel extends NoteModel"),
         "{dart}"
     );
     assert!(!dart.contains("late final Mutations mutations"), "{dart}");
@@ -1378,7 +1376,7 @@ fn action_dart_binds_shared_runtime_and_retained_codecs() {
         "StoreConnection",
         "DateTime.parse(",
         ".toAxtonPrecision().toIso8601String()",
-        "class NoteLiveModel extends NoteTxModel",
+        "class NoteLiveModel extends NoteModel",
         "port.submitMutation<SaveOutput>",
     ] {
         assert!(dart.contains(expected), "{expected}: {dart}");
@@ -1396,7 +1394,6 @@ fn dart_encodes_every_date_time_at_axton_precision() {
     for expected in [
         "'at': at.toAxtonPrecision().toIso8601String(),",
         "'moved': moved == null ? null : moved!.toAxtonPrecision().toIso8601String(),",
-        "if (moved != null) 'moved': moved!.value == null ? null : moved!.value!.toAxtonPrecision().toIso8601String(),",
         "if(at!=null)'at':at!.value.toAxtonPrecision().toIso8601String(),",
         "if (value is DateTime) return value.toAxtonPrecision().toIso8601String();",
         "'at': _dartActionEncode(at)",
@@ -1865,12 +1862,11 @@ fn model_fetch_generates_one_typed_method_per_model_in_both_languages() {
         .find(|line| line.starts_with("export class GeneratedTransaction "))
         .unwrap();
     assert!(!ts_transaction.contains("etch"), "{ts_transaction}");
-    assert!(
-        !ts.contains(
-            "interface WritePort extends ReadPort { direct(operation:object):Promise<void>; fetch"
-        ),
-        "{ts}"
-    );
+    let read_port = ts
+        .lines()
+        .find(|line| line.starts_with("export interface ReadPort "))
+        .unwrap();
+    assert!(!read_port.contains("fetch"), "{read_port}");
     let client = axton_compiler::client_typescript(&v, "@axtonjs/client");
     for line in [
         "fetchModels",

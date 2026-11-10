@@ -23,8 +23,15 @@ Future<void> misuse(GeneratedClient client,Call<AddTodoOutput> call) async {
   await tx.mutations.addTodo.withTransaction((owned) async => input); // error: undefined_method
   await tx.mutations.addTodo((owned) async => input); // error: argument_type_not_assignable
  });
- await client.models.note.create(const NoteCreate()); // error: missing_required_argument
- await client.models.todo.update(const TodoIdentity(id:'t'),const TodoPatch(id:'changed')); // error: undefined_named_parameter
+ await client.mutations.addNotes(const AddNotesInput(note:NoteCreate(),many:[])); // error: missing_required_argument
+ await client.models.note.create(const NoteCreate(memo:null)); // error: undefined_method
+ await client.models.todo.update(const TodoIdentity(id:'t'),created); // error: undefined_method
+ await client.models.todo.delete(const TodoIdentity(id:'t')); // error: undefined_method
+ await client.transaction((tx) async {
+  await tx.models.todo.create(created); // error: undefined_method
+  await tx.models.todo.update(const TodoIdentity(id:'t'),created); // error: undefined_method
+  await tx.models.todo.delete(const TodoIdentity(id:'t')); // error: undefined_method
+ });
 }
 const wrongComposite=ProjectIdentity(id:'p'); // error: missing_required_argument
 const wrongEnum=AddTodoV1Input(todo:AddTodoV1TodoCreate(id:'t',title:'t',state:Status.archived),gone:[],status:null,tags:[]); // error: argument_type_not_assignable

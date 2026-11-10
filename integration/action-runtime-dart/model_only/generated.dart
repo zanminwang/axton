@@ -33,13 +33,6 @@ class ItemIdentity {
  id: row['id'] as String,
  );
 }
-class ItemPatch {
- final Present<String>? label;
- const ItemPatch({this.label});
- Map<String,dynamic> toRecord() => {
- if (label != null) 'label': label!.value,
- };
-}
 class ItemCreate implements ItemCreateInput {
  final String id;
  final String label;
@@ -66,21 +59,16 @@ class ItemModel { final ReadPort port; ItemModel(this.port);
  Future<Item?> get(ItemIdentity identity) async { final row=await port.read('Item',identity.toRecord()); return row == null ? null : Item.fromRecord(row); }
  Future<List<Item>> query({ItemFilter? where,List<ItemOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Item',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Item.fromRecord).toList();
 }
-class ItemLiveModel extends ItemTxModel { final Client client; ItemLiveModel(this.client) : super(client);
+class ItemLiveModel extends ItemModel { final Client client; ItemLiveModel(this.client) : super(client);
  Stream<List<Item>> watch({ItemFilter? where}) => client.watchDecoded<Item>('Item', where:where?.toRecord()??{},decode:Item.fromRecord,copy:_copyItemWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(ItemIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Item', identity.toRecord()));
 }
-class ItemTxModel extends ItemModel { final WritePort writer; ItemTxModel(this.writer) : super(writer);
- Future<void> create(ItemCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Item','op':'create','identity':identity,'values':state}); }
- Future<void> update(ItemIdentity identity, ItemPatch patch) => writer.direct({'model':'Item','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(ItemIdentity identity) => writer.direct({'model':'Item','op':'delete','identity':identity.toRecord()});
-}
 class LiveModels { final Client port; LiveModels(this.port);
  late final ItemLiveModel item = ItemLiveModel(port);
 }
-class TxModels { final WritePort port; TxModels(this.port);
- late final ItemTxModel item = ItemTxModel(port);
+class TxModels { final ReadPort port; TxModels(this.port);
+ late final ItemModel item = ItemModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);

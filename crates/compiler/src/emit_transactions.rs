@@ -29,7 +29,7 @@ pub(crate) fn ts_generated(current: &CurrentOperations<'_>, o: &mut String) {
         writeln!(o, " {}: (input:{name}Input):Promise<Call<{name}Output>> => port.submitMutation('{name}',{version},encode{name}Input(input),decode{name}Output),", lower(name)).unwrap();
     }
     o.push_str("}; }\n");
-    o.push_str("export class ApplicationTransaction extends GeneratedTransaction { readonly mutations:ReturnType<typeof makeTransactionMutations>; readonly rejections:UnsentResolutionPort['rejections']; readonly failures:UnsentResolutionPort['failures']; constructor(transaction:WritePort & SubmitMutationPort & UnsentResolutionPort) { super(transaction); this.mutations=makeTransactionMutations(transaction); this.rejections=transaction.rejections; this.failures=transaction.failures; } }\n");
+    o.push_str("export class ApplicationTransaction extends GeneratedTransaction { readonly mutations:ReturnType<typeof makeTransactionMutations>; readonly rejections:UnsentResolutionPort['rejections']; readonly failures:UnsentResolutionPort['failures']; constructor(transaction:ReadPort & SubmitMutationPort & UnsentResolutionPort) { super(transaction); this.mutations=makeTransactionMutations(transaction); this.rejections=transaction.rejections; this.failures=transaction.failures; } }\n");
 }
 
 /// The Dart twin of [`ts_generated`]. `SubmitMutationPort` is the runtime's

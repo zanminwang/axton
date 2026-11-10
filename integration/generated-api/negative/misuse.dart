@@ -19,9 +19,9 @@ Future<void> misuse(GeneratedClient client, ApplicationTransaction tx, Entry row
  tx.actions; // reject: UNDEFINED_GETTER
  tx.transaction.mutate; // reject: UNDEFINED_GETTER
  tx.transaction.actions; // reject: UNDEFINED_GETTER
- EntryPatch(id:'bad'); // reject: UNDEFINED_NAMED_PARAMETER
+ const EntryIdentity(id:'id',title:'t'); // reject: UNDEFINED_NAMED_PARAMETER
  const RenameInput(id:'id',title:'title',tags:[]); // reject: UNDEFINED_NAMED_PARAMETER
- const EntryPatch(title:Present(null)); // reject: ARGUMENT_TYPE_NOT_ASSIGNABLE
+ const EntryUpdate(id:'id',title:Present(null)); // reject: ARGUMENT_TYPE_NOT_ASSIGNABLE
  Entry(id:row.id,title:row.title,note:row.note,at:row.at,tags:row.tags,status:Status.typo); // reject: UNDEFINED_ENUM_CONSTANT
  const DraftCreate(); // reject: MISSING_REQUIRED_ARGUMENT
  const DraftCreate(memo:null,note:'plain'); // reject: ARGUMENT_TYPE_NOT_ASSIGNABLE
@@ -43,6 +43,14 @@ Future<void> misuse(GeneratedClient client, ApplicationTransaction tx, Entry row
  tx.mutations.rename.withTransaction((tx)async=>const RenameInput(id:'id',title:'t')); // reject: UNDEFINED_METHOD
  tx.mutations.rename((tx)async=>const RenameInput(id:'id',title:'t')); // reject: ARGUMENT_TYPE_NOT_ASSIGNABLE
  CompanionContext; // reject: UNDEFINED_IDENTIFIER
+ client.models.entry.create(row); // reject: UNDEFINED_METHOD
+ client.models.entry.update(row.identity,row); // reject: UNDEFINED_METHOD
+ client.models.entry.delete(row.identity); // reject: UNDEFINED_METHOD
+ tx.models.entry.create(row); // reject: UNDEFINED_METHOD
+ tx.models.entry.update(row.identity,row); // reject: UNDEFINED_METHOD
+ tx.models.entry.delete(row.identity); // reject: UNDEFINED_METHOD
+ tx.transaction.direct; // reject: UNDEFINED_GETTER
+ client.client.direct; // reject: UNDEFINED_GETTER
  final Call<String> wrong=await client.mutations.publishEntry(PublishEntryInput(entry:row,composition:row.id)); // reject: INVALID_ASSIGNMENT
  client.streams; // reject: UNDEFINED_GETTER
  client.channels; // reject: UNDEFINED_GETTER

@@ -34,13 +34,6 @@ class ParentIdentity {
  id: row['id'] as String,
  );
 }
-class ParentPatch {
- final Present<String>? title;
- const ParentPatch({this.title});
- Map<String,dynamic> toRecord() => {
- if (title != null) 'title': title!.value,
- };
-}
 /// What a fresh create of Child accepts: a complete [Child], or a [ChildCreate] that may omit fields with creation defaults.
 abstract interface class ChildCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Child implements ChildCreateInput {
@@ -71,15 +64,6 @@ class ChildIdentity {
  factory ChildIdentity.fromRecord(Map<String,dynamic> row) => ChildIdentity(
  id: row['id'] as String,
  );
-}
-class ChildPatch {
- final Present<String>? parentId;
- final Present<String>? title;
- const ChildPatch({this.parentId,this.title});
- Map<String,dynamic> toRecord() => {
- if (parentId != null) 'parentId': parentId!.value,
- if (title != null) 'title': title!.value,
- };
 }
 /// What a fresh create of Item accepts: a complete [Item], or a [ItemCreate] that may omit fields with creation defaults.
 abstract interface class ItemCreateInput { Map<String,dynamic> toCreateRecord(); }
@@ -112,15 +96,6 @@ class ItemIdentity {
  id: row['id'] as String,
  );
 }
-class ItemPatch {
- final Present<String>? project;
- final Present<String>? title;
- const ItemPatch({this.project,this.title});
- Map<String,dynamic> toRecord() => {
- if (project != null) 'project': project!.value,
- if (title != null) 'title': title!.value,
- };
-}
 /// What a fresh create of Tag accepts: a complete [Tag], or a [TagCreate] that may omit fields with creation defaults.
 abstract interface class TagCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Tag implements TagCreateInput {
@@ -152,15 +127,6 @@ class TagIdentity {
  id: row['id'] as String,
  );
 }
-class TagPatch {
- final Present<String>? project;
- final Present<String>? label;
- const TagPatch({this.project,this.label});
- Map<String,dynamic> toRecord() => {
- if (project != null) 'project': project!.value,
- if (label != null) 'label': label!.value,
- };
-}
 /// What a fresh create of Draft accepts: a complete [Draft], or a [DraftCreate] that may omit fields with creation defaults.
 abstract interface class DraftCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Draft implements DraftCreateInput {
@@ -188,13 +154,6 @@ class DraftIdentity {
  factory DraftIdentity.fromRecord(Map<String,dynamic> row) => DraftIdentity(
  id: row['id'] as String,
  );
-}
-class DraftPatch {
- final Present<String>? title;
- const DraftPatch({this.title});
- Map<String,dynamic> toRecord() => {
- if (title != null) 'title': title!.value,
- };
 }
 class ParentCreate implements ParentCreateInput {
  final String id;
@@ -318,15 +277,10 @@ class ParentModel { final ReadPort port; ParentModel(this.port);
  Future<Parent?> get(ParentIdentity identity) async { final row=await port.read('Parent',identity.toRecord()); return row == null ? null : Parent.fromRecord(row); }
  Future<List<Parent>> query({ParentFilter? where,List<ParentOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Parent',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Parent.fromRecord).toList();
 }
-class ParentLiveModel extends ParentTxModel { final Client client; ParentLiveModel(this.client) : super(client);
+class ParentLiveModel extends ParentModel { final Client client; ParentLiveModel(this.client) : super(client);
  Stream<List<Parent>> watch({ParentFilter? where}) => client.watchDecoded<Parent>('Parent', where:where?.toRecord()??{},decode:Parent.fromRecord,copy:_copyParentWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(ParentIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Parent', identity.toRecord()));
-}
-class ParentTxModel extends ParentModel { final WritePort writer; ParentTxModel(this.writer) : super(writer);
- Future<void> create(ParentCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Parent','op':'create','identity':identity,'values':state}); }
- Future<void> update(ParentIdentity identity, ParentPatch patch) => writer.direct({'model':'Parent','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(ParentIdentity identity) => writer.direct({'model':'Parent','op':'delete','identity':identity.toRecord()});
 }
 Child _copyChildWatch(Child value) => value;
 class ChildModel { final ReadPort port; ChildModel(this.port);
@@ -334,60 +288,40 @@ class ChildModel { final ReadPort port; ChildModel(this.port);
  Future<List<Child>> query({ChildFilter? where,List<ChildOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Child',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Child.fromRecord).toList();
  Future<Parent?> parent(ChildIdentity identity) async { final row=await port.related('Child',identity.toRecord(),'parent');return row==null?null:Parent.fromRecord(row); }
 }
-class ChildLiveModel extends ChildTxModel { final Client client; ChildLiveModel(this.client) : super(client);
+class ChildLiveModel extends ChildModel { final Client client; ChildLiveModel(this.client) : super(client);
  Stream<List<Child>> watch({ChildFilter? where}) => client.watchDecoded<Child>('Child', where:where?.toRecord()??{},decode:Child.fromRecord,copy:_copyChildWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(ChildIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Child', identity.toRecord()));
-}
-class ChildTxModel extends ChildModel { final WritePort writer; ChildTxModel(this.writer) : super(writer);
- Future<void> create(ChildCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Child','op':'create','identity':identity,'values':state}); }
- Future<void> update(ChildIdentity identity, ChildPatch patch) => writer.direct({'model':'Child','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(ChildIdentity identity) => writer.direct({'model':'Child','op':'delete','identity':identity.toRecord()});
 }
 Item _copyItemWatch(Item value) => value;
 class ItemModel { final ReadPort port; ItemModel(this.port);
  Future<Item?> get(ItemIdentity identity) async { final row=await port.read('Item',identity.toRecord()); return row == null ? null : Item.fromRecord(row); }
  Future<List<Item>> query({ItemFilter? where,List<ItemOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Item',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Item.fromRecord).toList();
 }
-class ItemLiveModel extends ItemTxModel { final Client client; ItemLiveModel(this.client) : super(client);
+class ItemLiveModel extends ItemModel { final Client client; ItemLiveModel(this.client) : super(client);
  Stream<List<Item>> watch({ItemFilter? where}) => client.watchDecoded<Item>('Item', where:where?.toRecord()??{},decode:Item.fromRecord,copy:_copyItemWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(ItemIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Item', identity.toRecord()));
-}
-class ItemTxModel extends ItemModel { final WritePort writer; ItemTxModel(this.writer) : super(writer);
- Future<void> create(ItemCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Item','op':'create','identity':identity,'values':state}); }
- Future<void> update(ItemIdentity identity, ItemPatch patch) => writer.direct({'model':'Item','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(ItemIdentity identity) => writer.direct({'model':'Item','op':'delete','identity':identity.toRecord()});
 }
 Tag _copyTagWatch(Tag value) => value;
 class TagModel { final ReadPort port; TagModel(this.port);
  Future<Tag?> get(TagIdentity identity) async { final row=await port.read('Tag',identity.toRecord()); return row == null ? null : Tag.fromRecord(row); }
  Future<List<Tag>> query({TagFilter? where,List<TagOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Tag',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Tag.fromRecord).toList();
 }
-class TagLiveModel extends TagTxModel { final Client client; TagLiveModel(this.client) : super(client);
+class TagLiveModel extends TagModel { final Client client; TagLiveModel(this.client) : super(client);
  Stream<List<Tag>> watch({TagFilter? where}) => client.watchDecoded<Tag>('Tag', where:where?.toRecord()??{},decode:Tag.fromRecord,copy:_copyTagWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(TagIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Tag', identity.toRecord()));
-}
-class TagTxModel extends TagModel { final WritePort writer; TagTxModel(this.writer) : super(writer);
- Future<void> create(TagCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Tag','op':'create','identity':identity,'values':state}); }
- Future<void> update(TagIdentity identity, TagPatch patch) => writer.direct({'model':'Tag','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(TagIdentity identity) => writer.direct({'model':'Tag','op':'delete','identity':identity.toRecord()});
 }
 Draft _copyDraftWatch(Draft value) => value;
 class DraftModel { final ReadPort port; DraftModel(this.port);
  Future<Draft?> get(DraftIdentity identity) async { final row=await port.read('Draft',identity.toRecord()); return row == null ? null : Draft.fromRecord(row); }
  Future<List<Draft>> query({DraftFilter? where,List<DraftOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Draft',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Draft.fromRecord).toList();
 }
-class DraftLiveModel extends DraftTxModel { final Client client; DraftLiveModel(this.client) : super(client);
+class DraftLiveModel extends DraftModel { final Client client; DraftLiveModel(this.client) : super(client);
  Stream<List<Draft>> watch({DraftFilter? where}) => client.watchDecoded<Draft>('Draft', where:where?.toRecord()??{},decode:Draft.fromRecord,copy:_copyDraftWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(DraftIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Draft', identity.toRecord()));
-}
-class DraftTxModel extends DraftModel { final WritePort writer; DraftTxModel(this.writer) : super(writer);
- Future<void> create(DraftCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Draft','op':'create','identity':identity,'values':state}); }
- Future<void> update(DraftIdentity identity, DraftPatch patch) => writer.direct({'model':'Draft','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(DraftIdentity identity) => writer.direct({'model':'Draft','op':'delete','identity':identity.toRecord()});
 }
 /// Public Action lifecycle types are owned by the SDK.
 typedef ParentDelete = ParentIdentity;
@@ -635,12 +569,12 @@ class LiveModels { final Client port; LiveModels(this.port);
  late final TagLiveModel tag = TagLiveModel(port);
  late final DraftLiveModel draft = DraftLiveModel(port);
 }
-class TxModels { final WritePort port; TxModels(this.port);
- late final ParentTxModel parent = ParentTxModel(port);
- late final ChildTxModel child = ChildTxModel(port);
- late final ItemTxModel item = ItemTxModel(port);
- late final TagTxModel tag = TagTxModel(port);
- late final DraftTxModel draft = DraftTxModel(port);
+class TxModels { final ReadPort port; TxModels(this.port);
+ late final ParentModel parent = ParentModel(port);
+ late final ChildModel child = ChildModel(port);
+ late final ItemModel item = ItemModel(port);
+ late final TagModel tag = TagModel(port);
+ late final DraftModel draft = DraftModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);

@@ -34,13 +34,6 @@ class UserIdentity {
  id: row['id'] as String,
  );
 }
-class UserPatch {
- final Present<String>? name;
- const UserPatch({this.name});
- Map<String,dynamic> toRecord() => {
- if (name != null) 'name': name!.value,
- };
-}
 /// What a fresh create of Todo accepts: a complete [Todo], or a [TodoCreate] that may omit fields with creation defaults.
 abstract interface class TodoCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Todo implements TodoCreateInput {
@@ -74,17 +67,6 @@ class TodoIdentity {
  factory TodoIdentity.fromRecord(Map<String,dynamic> row) => TodoIdentity(
  id: row['id'] as String,
  );
-}
-class TodoPatch {
- final Present<String>? title;
- final Present<bool>? done;
- final Present<String>? createdById;
- const TodoPatch({this.title,this.done,this.createdById});
- Map<String,dynamic> toRecord() => {
- if (title != null) 'title': title!.value,
- if (done != null) 'done': done!.value,
- if (createdById != null) 'createdById': createdById!.value,
- };
 }
 class UserCreate implements UserCreateInput {
  final String id;
@@ -141,15 +123,10 @@ class UserModel { final ReadPort port; UserModel(this.port);
  Future<User?> get(UserIdentity identity) async { final row=await port.read('User',identity.toRecord()); return row == null ? null : User.fromRecord(row); }
  Future<List<User>> query({UserFilter? where,List<UserOrder> orderBy=const [],int? limit}) async => (await port.querySpec('User',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(User.fromRecord).toList();
 }
-class UserLiveModel extends UserTxModel { final Client client; UserLiveModel(this.client) : super(client);
+class UserLiveModel extends UserModel { final Client client; UserLiveModel(this.client) : super(client);
  Stream<List<User>> watch({UserFilter? where}) => client.watchDecoded<User>('User', where:where?.toRecord()??{},decode:User.fromRecord,copy:_copyUserWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(UserIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('User', identity.toRecord()));
-}
-class UserTxModel extends UserModel { final WritePort writer; UserTxModel(this.writer) : super(writer);
- Future<void> create(UserCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'User','op':'create','identity':identity,'values':state}); }
- Future<void> update(UserIdentity identity, UserPatch patch) => writer.direct({'model':'User','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(UserIdentity identity) => writer.direct({'model':'User','op':'delete','identity':identity.toRecord()});
 }
 Todo _copyTodoWatch(Todo value) => value;
 class TodoModel { final ReadPort port; TodoModel(this.port);
@@ -157,15 +134,10 @@ class TodoModel { final ReadPort port; TodoModel(this.port);
  Future<List<Todo>> query({TodoFilter? where,List<TodoOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Todo',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Todo.fromRecord).toList();
  Future<User?> createdBy(TodoIdentity identity) async { final row=await port.related('Todo',identity.toRecord(),'createdBy');return row==null?null:User.fromRecord(row); }
 }
-class TodoLiveModel extends TodoTxModel { final Client client; TodoLiveModel(this.client) : super(client);
+class TodoLiveModel extends TodoModel { final Client client; TodoLiveModel(this.client) : super(client);
  Stream<List<Todo>> watch({TodoFilter? where}) => client.watchDecoded<Todo>('Todo', where:where?.toRecord()??{},decode:Todo.fromRecord,copy:_copyTodoWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(TodoIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Todo', identity.toRecord()));
-}
-class TodoTxModel extends TodoModel { final WritePort writer; TodoTxModel(this.writer) : super(writer);
- Future<void> create(TodoCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Todo','op':'create','identity':identity,'values':state}); }
- Future<void> update(TodoIdentity identity, TodoPatch patch) => writer.direct({'model':'Todo','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(TodoIdentity identity) => writer.direct({'model':'Todo','op':'delete','identity':identity.toRecord()});
 }
 /// Public Action lifecycle types are owned by the SDK.
 typedef UserDelete = UserIdentity;
@@ -283,9 +255,9 @@ class LiveModels { final Client port; LiveModels(this.port);
  late final UserLiveModel user = UserLiveModel(port);
  late final TodoLiveModel todo = TodoLiveModel(port);
 }
-class TxModels { final WritePort port; TxModels(this.port);
- late final UserTxModel user = UserTxModel(port);
- late final TodoTxModel todo = TodoTxModel(port);
+class TxModels { final ReadPort port; TxModels(this.port);
+ late final UserModel user = UserModel(port);
+ late final TodoModel todo = TodoModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);

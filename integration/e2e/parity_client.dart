@@ -28,11 +28,6 @@ Future<void> main(List<String> args) async {
     );
     if (await no.wait() is! CallFailure<EditEntryOutput>)
       throw StateError('rejection');
-    await client.transaction((tx) async {
-      await tx.models.entry.create(
-        const EntryCreate(id: 'local', text: 'device-only', note: null),
-      );
-    });
     final rows =
         (await client.models.entry.query())
             .map((row) => {'id': row.id, 'text': row.text, 'note': row.note})

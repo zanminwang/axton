@@ -107,10 +107,10 @@ A column holds the field's local value: an `Int` or `Boolean` is an integer (`1`
 
     ```ts
     await client.transaction(async tx => {
-      await tx.models.entry.update({ id: 'entry-1' }, { text: 'Draft' });
+      await tx.mutations.editEntry({ entry: { id: 'entry-1', text: 'Draft' } });
       try {
         await (tx.transaction as Transaction).savepoint(async () => {
-          await tx.models.entry.update({ id: 'entry-1' }, { note: 'Temporary' });
+          await tx.mutations.editEntry({ entry: { id: 'entry-1', note: 'Temporary' } });
           throw new Error('Discard this note');
         });
       } catch {
@@ -123,15 +123,17 @@ A column holds the field's local value: an `Int` or `Boolean` is an integer (`1`
 
     ```dart
     await client.transaction((tx) async {
-      await tx.models.entry.update(
-        const EntryIdentity(id: 'entry-1'),
-        const EntryPatch(text: Present('Draft')),
+      await tx.mutations.editEntry(
+        const EditEntryInput(
+          entry: EditEntryEntryUpdate(id: 'entry-1', text: Present('Draft')),
+        ),
       );
       try {
         await tx.transaction.savepoint(() async {
-          await tx.models.entry.update(
-            const EntryIdentity(id: 'entry-1'),
-            const EntryPatch(note: Present('Temporary')),
+          await tx.mutations.editEntry(
+            const EditEntryInput(
+              entry: EditEntryEntryUpdate(id: 'entry-1', note: Present('Temporary')),
+            ),
           );
           throw StateError('Discard this note');
         });

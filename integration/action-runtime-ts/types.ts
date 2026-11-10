@@ -51,7 +51,6 @@ const sharedCall: Promise<
 const sharedOutcome: Promise<
   SdkCallOutcome<{ todo: Todo; echoed: Date; status: "open" | "closed" }>
 > = outcome;
-const local: Promise<void> = client.models.todo.create(todo);
 const optional = client.mutations.change({ at: new Date() });
 const identity = client.mutations.mark({
   moment: { at: new Date(), title: "changed" },
@@ -64,7 +63,6 @@ void [
   outcome,
   sharedCall,
   sharedOutcome,
-  local,
   optional,
   identity,
   removed,

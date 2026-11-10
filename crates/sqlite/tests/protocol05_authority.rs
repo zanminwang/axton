@@ -91,6 +91,42 @@ fn direct_content_has_null_cursor_but_stream_history_survives_and_tombstone_guar
         59
     );
 }
+// Stream evidence orders deliveries and guards cache installs: an older or
+// equal cursor is a duplicate, a newer one replaces the row, and a delivered
+// tombstone keeps every later cache install out, across reopen.
+#[test]
+fn stream_history_orders_deliveries_and_a_tombstone_guards_later_cache_installs() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = open(&p);
+    let context = c.request_context05().unwrap().clone();
+    stream(&mut c, 57, Some("A"));
+    stream(&mut c, 56, Some("old"));
+    stream(&mut c, 57, Some("equal but different"));
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
+    cache(&mut c, Some("cache"), true);
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
+    stream(&mut c, 58, Some("new"));
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "new");
+    stream(&mut c, 59, None);
+    cache(&mut c, Some("late"), true);
+    assert!(c.read(&key()).unwrap().is_none());
+    assert!(
+        c.record_evidence05(&key())
+            .unwrap()
+            .current
+            .unwrap()
+            .deleted
+    );
+    drop(c);
+    let mut c = open(&p);
+    cache(&mut c, Some("after-reopen"), true);
+    assert!(c.read(&key()).unwrap().is_none());
+    assert_eq!(
+        c.record_evidence05(&key()).unwrap().history[&context.materialization],
+        59
+    );
+}
 #[test]
 fn pending_optimism_does_not_release_base_protection_and_null_reads_never_delete() {
     let d = tempfile::tempdir().unwrap();

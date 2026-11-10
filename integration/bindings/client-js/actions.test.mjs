@@ -329,26 +329,6 @@ test("close fails a durable handle before wait is called", async () => {
     assert.equal((await call.wait()).error.code, "client.closed");
   });
 });
-test("standalone writes stay out of the queue and reach reads and watch", async () => {
-  await withClient(async (client) => {
-    const observed = [];
-    const stop = client.watch("Entry", {}, (rows) => observed.push(rows));
-    try {
-      await client.direct({
-        model: "Entry",
-        op: "create",
-        identity: { id: "one" },
-        values: { text: "A" },
-      });
-      assert.equal((await client.read("Entry", { id: "one" })).text, "A");
-      assert.equal((await client.syncState()).pending, 0);
-      await new Promise((resolve) => setImmediate(resolve));
-      assert.ok(observed.some((rows) => rows.some((row) => row.text === "A")));
-    } finally {
-      stop();
-    }
-  });
-});
 test("Query decodes its committed response and maps unavailable transport", async () => {
   await withClient(
     async (client) => {
@@ -522,18 +502,9 @@ test("Query request store flag stays separate from a legal input named store", a
     },
   );
 });
-test("standalone named mutations and local writes reject inside an active callback", async () => {
+test("standalone named mutations reject inside an active callback", async () => {
   await withClient(async (client) => {
     await client.transaction(async () => {
-      await assert.rejects(
-        client.direct({
-          model: "Entry",
-          op: "create",
-          identity: { id: "bad" },
-          values: { text: "bad" },
-        }),
-        /transaction_active/,
-      );
       await assert.rejects(
         client.submitMutation("Ping", 1, {}, (x) => x),
         /transaction_active/,

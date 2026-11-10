@@ -30,8 +30,8 @@ SDK recovery through a successful handshake and one named Mutation execution.
 Existing adapter/native tests own retry classification and rollback internals.
 
 The tests assert exact Batch retry, refusal isolation, private settlement,
-later local ownership, independent Store identities, zero-cursor Bootstrap,
-fresh read snapshots, Store modes, direct-delete refill, physical file aliases,
+receipt settlement beneath a later pending Mutation, independent Store identities, zero-cursor Bootstrap,
+fresh read snapshots, Store modes, physical file aliases,
 stale Query protection, initial-start ordering, durable completion lookup, and
 Dart's typed completion across the same actual host. The upgraded fixture marks
 another Model `@@bootstrap`. Against it, an upgrade commits at open with every

@@ -24,7 +24,6 @@ async function clientContract(client:GeneratedClient) {
  const found:FindTodosOutput=await client.queries.findTodos({text:'design',cursor:null},{store:false});
  await client.queries.findTodos({text:'design',cursor:found.nextCursor},{store:true});
  await client.fetch.todo(identity,{store:false});
- await client.models.note.create(defaulted);
  await client.mutations.addNotes({note:defaulted,many:[]});
  await client.queries.projectTodos({projectId:'p',status:null,tags:[]});
  await client.bootstrap();

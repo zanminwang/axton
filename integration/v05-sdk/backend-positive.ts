@@ -9,6 +9,7 @@ const options: Options<object> = {
   },
   mutations: {
     publish: async ({ args }) => ({ entry: { id: args.entry.id } }),
+    retext: async ({ args }) => ({ entry: { id: args.entry.id } }),
   },
   queries: {
     find: async ({ ctx, args }) => {

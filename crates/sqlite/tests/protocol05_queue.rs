@@ -852,7 +852,6 @@ fn wire(model: &str, id: &str) -> v05::RecordKey {
 }
 #[test]
 fn an_upgrade_keeps_every_row_and_the_queue_and_freezes_at_once() {
-    use axton_client::{Operation, OperationKind};
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(
@@ -863,15 +862,6 @@ fn an_upgrade_keeps_every_row_and_the_queue_and_freezes_at_once() {
     .unwrap();
     c.initialize_stream05(10, "1").unwrap();
     let old = c.request_context05().unwrap();
-    c.transaction(|tx| {
-        tx.direct(Operation {
-            model: "Note".into(),
-            identity: json!({"id":"device"}),
-            op: OperationKind::Create,
-            values: Some(json!({"text":"device","blob":null})),
-        })
-    })
-    .unwrap();
     c.install_cache05(
         &[v05::ReadRecord {
             key: wire("Note", "cached"),
@@ -954,7 +944,7 @@ fn an_upgrade_keeps_every_row_and_the_queue_and_freezes_at_once() {
     let text = |c: &mut Client<SqliteStore>, key: &axton_client::RecordKey| {
         c.read(key).unwrap().map(|row| row["text"].clone())
     };
-    for id in ["device", "cached", "stream", "receipt"] {
+    for id in ["cached", "stream", "receipt"] {
         assert!(text(&mut c, &note(id)).is_some(), "{id}");
     }
     let marked = axton_client::RecordKey {

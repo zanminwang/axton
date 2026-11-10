@@ -5,7 +5,7 @@ import 'package:axton/axton.dart';
 export 'package:axton/axton.dart' show AxtonDiagnostics, AxtonTraceRecord, RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
 class Present<T> { final T value; const Present(this.value); }
 abstract interface class _DartActionRecord { Map<String,dynamic> toRecord(); }
-final Map<String,dynamic> schema = jsonDecode('{"actions":[{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Find","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Peek","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Snapshot"},"kind":"model","model":"Snapshot","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"call","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"Publish","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","relations":[],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","version":1}]}') as Map<String,dynamic>;
+final Map<String,dynamic> schema = jsonDecode('{"actions":[{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Find","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Peek","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Snapshot"},"kind":"model","model":"Snapshot","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"call","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"Publish","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"allowedPatchFields":["text"],"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"update"}],"kind":"mutation","name":"Retext","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","relations":[],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","version":1}]}') as Map<String,dynamic>;
 /// What a fresh create of Draft accepts: a complete [Draft], or a [DraftCreate] that may omit fields with creation defaults.
 abstract interface class DraftCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Draft implements DraftCreateInput {
@@ -338,12 +338,53 @@ class PublishHandlerOutput implements _DartActionRecord {
  'entry': _dartActionEncode(entry),
  };
 }
+class RetextEntryUpdate implements _DartActionRecord {
+ final String id;
+ final Present<String>? text;
+ const RetextEntryUpdate({required this.id,this.text});
+ Map<String,dynamic> toRecord() => {
+ 'id': _dartActionEncode(id),
+ if (text != null) 'text': _dartActionEncode(text!.value),
+ };
+}
+class RetextHandlerInput implements _DartActionRecord {
+ final RetextEntryUpdate entry;
+ const RetextHandlerInput({required this.entry});
+ Map<String,dynamic> toRecord() => {
+ 'entry': _dartActionEncode(entry),
+ };
+}
+class RetextInput implements _DartActionRecord {
+ final RetextEntryUpdate entry;
+ const RetextInput({required this.entry});
+ Map<String,dynamic> toRecord() => {
+ 'entry': _dartActionEncode(entry),
+ };
+}
+class RetextOutput implements _DartActionRecord {
+ final Entry entry;
+ const RetextOutput({required this.entry});
+ Map<String,dynamic> toRecord() => {
+ 'entry': _dartActionEncode(entry),
+ };
+}
+class RetextHandlerOutput implements _DartActionRecord {
+ final EntryIdentity entry;
+ const RetextHandlerOutput({required this.entry});
+ Map<String,dynamic> toRecord() => {
+ 'entry': _dartActionEncode(entry),
+ };
+}
 abstract interface class MutationHandlerCall<Ctx, Args> { Ctx get ctx; Args get args; }
 abstract interface class MutationHandlers<Ctx> {
  MutationPublishHandlers<Ctx> get publish;
+ MutationRetextHandlers<Ctx> get retext;
 }
 abstract interface class MutationPublishHandlers<Ctx> {
  Future<PublishHandlerOutput> v1(MutationHandlerCall<Ctx, PublishHandlerInput> call);
+}
+abstract interface class MutationRetextHandlers<Ctx> {
+ Future<RetextHandlerOutput> v1(MutationHandlerCall<Ctx, RetextHandlerInput> call);
 }
 abstract interface class QueryHandlerCall<Ctx, Args> { Ctx get ctx; Args get args; }
 abstract interface class QueryHandlers<Ctx> {
@@ -401,11 +442,17 @@ class GeneratedTransaction { final Transaction transaction; late final TxModels 
 class TransactionMutations {
  final SubmitMutationPort port; TransactionMutations(this.port);
  late final PublishMutation publish = PublishMutation(port);
+ late final RetextMutation retext = RetextMutation(port);
 }
 class PublishMutation {
  final SubmitMutationPort port; PublishMutation(this.port);
  Map<String,dynamic> _encode(PublishInput input) => {'entry': _dartActionEncode(input.entry), 'call': _dartActionEncode(input.call)};
  Future<Call<PublishOutput>> call(PublishInput input) => port.submitMutation<PublishOutput>('Publish', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return PublishOutput(entry: Entry.fromRecord((row['entry'] as Map).cast<String,dynamic>())); });
+}
+class RetextMutation {
+ final SubmitMutationPort port; RetextMutation(this.port);
+ Map<String,dynamic> _encode(RetextInput input) => {'entry': _dartActionEncode(input.entry)};
+ Future<Call<RetextOutput>> call(RetextInput input) => port.submitMutation<RetextOutput>('Retext', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return RetextOutput(entry: Entry.fromRecord((row['entry'] as Map).cast<String,dynamic>())); });
 }
 class ApplicationTransaction extends GeneratedTransaction { late final TransactionMutations mutations = TransactionMutations(transaction); late final rejections = transaction.rejections; late final failures = transaction.failures; ApplicationTransaction(super.transaction); }
 class GeneratedClient {

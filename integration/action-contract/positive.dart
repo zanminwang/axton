@@ -21,7 +21,6 @@ Future<void> clientContract(GeneratedClient client) async {
  final FindTodosOutput found=await client.queries.findTodos(text:'x',cursor:null,store:false);
  await client.queries.findTodos(text:'x',cursor:found.nextCursor,store:true);
  await client.fetch.todo(identity,store:false);
- await client.models.note.create(defaulted);
  await client.mutations.addNotes(const AddNotesInput(note:defaulted,many:[]));
  await client.queries.projectTodos(projectId:'p',status:null,tags:[]);
  await client.bootstrap();

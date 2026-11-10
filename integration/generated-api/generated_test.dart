@@ -129,8 +129,8 @@ void main() {
     expect(draft.body, 'draft');
   });
   test(
-    'create defaults fill omitted fields and round-trip escaped strings',
-    () async {
+    'create inputs omit defaulted fields and the schema keeps escaped defaults',
+    () {
       final draft = (schema['models'] as List)
           .cast<Map<String, dynamic>>()
           .singleWhere((m) => m['name'] == 'Draft');
@@ -145,68 +145,6 @@ void main() {
         const DraftCreate(memo: null, note: Present(null)).toCreateRecord(),
         {'note': null, 'memo': null},
       );
-      final temp = await Directory.systemTemp.createTemp(
-        'generated-api-defaults-',
-      );
-      final client = await _open(temp);
-      try {
-        final before = DateTime.now().toUtc().subtract(
-          const Duration(seconds: 5),
-        );
-        await client.transaction((tx) async {
-          await tx.models.draft.create(const DraftCreate(memo: null));
-          await tx.models.draft.create(
-            const DraftCreate(
-              memo: 'explicit',
-              body: 'mine',
-              note: Present(null),
-            ),
-          );
-        });
-        await client.models.draft.create(const DraftCreate(memo: 'direct'));
-        final rows = await client.models.draft.query();
-        expect(rows.length, 3);
-        final uuid = RegExp(
-          r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
-        );
-        expect(
-          rows.map((r) => r.id).toSet().length,
-          3,
-          reason: 'each create generates its own id',
-        );
-        for (final row in rows) {
-          expect(uuid.hasMatch(row.id), isTrue, reason: row.id);
-          expect(row.created.isAfter(before), isTrue);
-          expect(row.mood, Mood.busy);
-        }
-        final defaulted = rows.singleWhere((r) => r.memo == null);
-        expect(defaulted.body, tricky);
-        expect(defaulted.note, 'n');
-        final explicit = rows.singleWhere((r) => r.memo == 'explicit');
-        expect(explicit.body, 'mine');
-        expect(
-          explicit.note,
-          isNull,
-          reason: 'an explicit null is kept, not defaulted',
-        );
-        // A complete record remains a valid create input.
-        final copy = Draft(
-          id: '123e4567-e89b-42d3-a456-426614174001',
-          body: 'full',
-          mood: Mood.calm,
-          created: DateTime.utc(2020),
-          note: null,
-          memo: null,
-        );
-        await client.transaction((tx) => tx.models.draft.create(copy));
-        expect(
-          (await client.models.draft.get(DraftIdentity(id: copy.id)))?.body,
-          'full',
-        );
-      } finally {
-        await client.close();
-        await temp.delete(recursive: true);
-      }
     },
   );
   test(
@@ -229,10 +167,6 @@ void main() {
         '2026-09-28T12:34:56.789Z',
       );
       expect(
-        EntryPatch(at: Present(micro)).toRecord()['at'],
-        '2026-09-28T12:34:56.789Z',
-      );
-      expect(
         EntryFilter(at: Present(micro)).toRecord()['at'],
         '2026-09-28T12:34:56.789Z',
       );
@@ -250,21 +184,6 @@ void main() {
             'state': {'label': 'utc'},
           },
         ]);
-        await client.transaction((tx) async {
-          await tx.mutations.publishEntry(
-            PublishEntryInput(
-              entry: Entry(
-                id: id,
-                title: 't',
-                note: null,
-                at: local,
-                tags: const [],
-                status: Status.active,
-              ),
-              composition: id,
-            ),
-          );
-        });
         // A DateTime identity: the microsecond value and its truncation name one record.
         final placed = await client.models.placement.get(
           PlacementIdentity(shelf: 's', at: micro),
@@ -283,15 +202,33 @@ void main() {
           )).single.label,
           'utc',
         );
-        await client.models.placement.update(
-          PlacementIdentity(shelf: 's', at: micro),
-          const PlacementPatch(label: Present('moved')),
-        );
+        await deliverRecords(client.client, [
+          {
+            'model': 'Placement',
+            'identity': PlacementIdentity(shelf: 's', at: micro).toRecord(),
+            'state': {'label': 'moved'},
+          },
+        ], after: 1);
         expect(
           (await client.models.placement.query()).single.label,
           'moved',
-          reason: 'the update found the same record',
+          reason: 'the delivery found the same record',
         );
+        await client.transaction((tx) async {
+          await tx.mutations.publishEntry(
+            PublishEntryInput(
+              entry: Entry(
+                id: id,
+                title: 't',
+                note: null,
+                at: local,
+                tags: const [],
+                status: Status.active,
+              ),
+              composition: id,
+            ),
+          );
+        });
         // A local DateTime reads back as the same instant in UTC.
         final entry = await client.models.entry.get(
           const EntryIdentity(id: id),
@@ -424,14 +361,6 @@ void main() {
       expect(
         (await client.models.entry.get(const EntryIdentity(id: id)))?.title,
         'hello',
-      );
-      await client.models.entry.update(
-        const EntryIdentity(id: id),
-        const EntryPatch(note: Present('changed')),
-      );
-      await client.models.entry.update(
-        const EntryIdentity(id: id),
-        const EntryPatch(note: Present(null)),
       );
       expect(
         (await client.models.entry.query(

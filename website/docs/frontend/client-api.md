@@ -181,7 +181,7 @@ A failure never deletes the local row. `execution` is `rejected` for the backend
 
     ```ts
     await client.transaction(async tx => {
-      await tx.models.entry.update({ id: 'entry-1' }, { text: 'Draft' });
+      await tx.mutations.editEntry({ entry: { id: 'entry-1', text: 'Draft' } });
       const draft = await tx.models.entry.get({ id: 'entry-1' });
       if (draft?.text !== 'Draft') throw Error('local update missing');
     });
@@ -192,7 +192,11 @@ A failure never deletes the local row. `execution` is `rejected` for the backend
     ```dart
     await client.transaction((tx) async {
       const id = EntryIdentity(id: 'entry-1');
-      await tx.models.entry.update(id, const EntryPatch(text: Present('Draft')));
+      await tx.mutations.editEntry(
+        const EditEntryInput(
+          entry: EditEntryEntryUpdate(id: 'entry-1', text: Present('Draft')),
+        ),
+      );
       final draft = await tx.models.entry.get(id);
       if (draft?.text != 'Draft') throw StateError('local update missing');
     });
@@ -277,29 +281,6 @@ Calling `Call.wait()` before the outer transaction commits fails promptly with `
 Node uses async context and Dart uses Zones to enforce ownership. React Native lacks async context in Hermes and conservatively refuses overlapping async transaction callbacks across clients. Independent ordinary operations on another Store remain available. Do not use an outer client inside its own callback; use the supplied transaction handle.
 
 ## Local-only writes
-
-=== "TypeScript"
-
-    ```ts
-    await client.transaction(async tx => {
-      await tx.models.entry.create({ id: 'draft', text: 'Only here', note: null });
-      await tx.models.entry.update({ id: 'draft' }, { note: 'Remember this' });
-      await tx.models.entry.delete({ id: 'draft' });
-    });
-    ```
-
-=== "Flutter"
-
-    ```dart
-    await client.transaction((tx) async {
-      const id = EntryIdentity(id: 'draft');
-      await tx.models.entry.create(
-        const Entry(id: 'draft', text: 'Only here', note: null),
-      );
-      await tx.models.entry.update(id, const EntryPatch(note: Present('Remember this')));
-      await tx.models.entry.delete(id);
-    });
-    ```
 
 ### Creation defaults
 

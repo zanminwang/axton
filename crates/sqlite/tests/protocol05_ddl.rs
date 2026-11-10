@@ -1,6 +1,6 @@
 pub mod common05;
 use axton_client::ddl::reconcile;
-use axton_client::{Client, ClientStore, Operation, OperationKind, RecordKey, v05};
+use axton_client::{Client, ClientStore, RecordKey, v05};
 use axton_core::Schema;
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
@@ -262,9 +262,8 @@ fn queue(path: &std::path::Path) -> Vec<Vec<Value>> {
     }
     rows
 }
-/// A Store holding Stream rows of both Models, a cache install on `Task`,
-/// queued Mutations on each Model, and direct writes on a dirty and a clean
-/// `Task` row.
+/// A Store holding Stream rows of both Models, a cache install on `Task` and
+/// queued Mutations on each Model.
 fn populated(path: &std::path::Path) {
     let mut c = Client::open05(SqliteStore::open(path).unwrap(), pair(None), "User:u").unwrap();
     c.initialize_stream05(10, "1").unwrap();
@@ -305,21 +304,6 @@ fn populated(path: &std::path::Path) {
     })
     .unwrap();
     c.freeze_batch05().unwrap().unwrap();
-    c.transaction(|tx| {
-        tx.direct(Operation {
-            model: "Task".into(),
-            identity: json!({"id":"t"}),
-            op: OperationKind::Update,
-            values: Some(json!({"mood":"busy"})),
-        })?;
-        tx.direct(Operation {
-            model: "Task".into(),
-            identity: json!({"id":"device"}),
-            op: OperationKind::Create,
-            values: Some(json!({"title":"device","mood":null,"otherId":null})),
-        })
-    })
-    .unwrap();
 }
 #[test]
 fn reopen_resets_only_the_model_whose_storage_changed() {
@@ -328,7 +312,7 @@ fn reopen_resets_only_the_model_whose_storage_changed() {
         let path = dir.path().join("db");
         populated(&path);
         let task = state(&path, "Task");
-        assert!(task.iter().all(|n| *n > 0), "{reset:?}: {task:?}");
+        assert!(task[..3].iter().all(|n| *n > 0), "{reset:?}: {task:?}");
         let other = state(&path, "Other");
         let queued = queue(&path);
         let mut c = Client::open05(

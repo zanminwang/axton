@@ -133,7 +133,7 @@ test("generated operation codecs retain null, lists, omitted patches and DateTim
   assert.equal("put" in queries, false);
 });
 
-test("generated bound native Store keeps local CRUD and named optimism durable offline", async () => {
+test("generated bound native Store keeps named optimism durable offline", async () => {
   const directory = await mkdtemp(join(tmpdir(), "axton-generated-actions-"));
   let client: GeneratedClient | undefined;
   const at = new Date("2026-01-01T00:00:00.000Z");
@@ -150,22 +150,20 @@ test("generated bound native Store keeps local CRUD and named optimism durable o
       stream: "User:alice",
       connection: { url: "http://127.0.0.1:1", token: "offline" },
     });
-    await client.models.todo.create(row);
-    await client.models.todo.update({ id: "one" }, { title: "edited" });
-    assert.equal(
-      (await client.models.todo.get({ id: "one" }))?.title,
-      "edited",
-    );
-    assert.equal((await client.syncState()).pending, 0);
     const seen: string[] = [];
     const stop = client.models.todo.watch({}, (rows) =>
       seen.push(rows[0]?.title ?? "empty"),
     );
-    await client.models.todo.delete({ id: "one" });
-    await client.models.todo.create(row);
+    await client.mutations.put({
+      todo: row,
+      when: at,
+      statuses: [],
+      note: null,
+    });
     await new Promise((resolve) => setTimeout(resolve, 15));
     stop();
     assert.ok(seen.includes("empty") && seen.includes("local"));
+    assert.equal((await client.syncState()).pending, 1);
     const pending: Call<{ todo: Todo | null; echoed: Date }> =
       await client.transaction(async (tx) => {
         const read = await tx.models.todo.get({ id: "one" });
@@ -180,7 +178,7 @@ test("generated bound native Store keeps local CRUD and named optimism durable o
       (await client.models.todo.get({ id: "one" }))?.title,
       "optimistic local",
     );
-    assert.equal((await client.syncState()).pending, 1);
+    assert.equal((await client.syncState()).pending, 2);
     await client.close();
     assert.equal((await pending.wait()).error?.code, "client.closed");
     client = await GeneratedClient.open({
@@ -188,7 +186,7 @@ test("generated bound native Store keeps local CRUD and named optimism durable o
       stream: "User:alice",
       connection: { url: "http://127.0.0.1:1", token: "offline" },
     });
-    assert.equal((await client.syncState()).pending, 1);
+    assert.equal((await client.syncState()).pending, 2);
     assert.equal(
       (await client.models.todo.get({ id: "one" }))?.title,
       "optimistic local",

@@ -2285,3 +2285,210 @@ fn an_upgrade_drops_staging_of_the_old_context_and_pulls_bootstrap_without_a_han
         .is_none()
     );
 }
+/// Run Store work until the worker is idle, answering every push with the
+/// receipt `answer` gives its request. Returns the pushes sent.
+fn run_worker(
+    runtime: &mut axton_client::runtime::ClientRuntime<SqliteStore>,
+    control: &mut axton_client::sync05::Control,
+    answer: impl Fn(&v05::MutationRequest) -> v05::BatchAcknowledgement,
+) -> Vec<v05::MutationRequest> {
+    use axton_client::runtime::{EffectOutcome, Event, HttpRoute, Operation};
+    let mut pushes = vec![];
+    for _ in 0..32 {
+        let jobs = control.jobs();
+        let sent: Vec<(String, v05::MutationRequest)> = control
+            .events()
+            .into_iter()
+            .filter_map(|event| match event {
+                Event::Effect {
+                    effect_id,
+                    operation:
+                        Operation::Http {
+                            route: HttpRoute::Push,
+                            body,
+                        },
+                } => Some((effect_id, serde_json::from_str(&body).unwrap())),
+                _ => None,
+            })
+            .collect();
+        if jobs.is_empty() && sent.is_empty() {
+            return pushes;
+        }
+        for job in jobs {
+            let report = runtime.store_worker05(job).unwrap();
+            control.report(report, 1).unwrap();
+        }
+        for (id, request) in sent {
+            let body = serde_json::to_string(&answer(&request)).unwrap();
+            control
+                .receive(
+                    &id,
+                    EffectOutcome {
+                        ok: true,
+                        value: Some(serde_json::Value::String(body)),
+                        error: None,
+                    },
+                    1,
+                )
+                .unwrap();
+            pushes.push(request);
+        }
+    }
+    panic!("Store work did not become idle");
+}
+#[test]
+fn a_push_answered_after_a_generation_upgrade_is_acknowledged_through_the_sync_worker() {
+    use axton_client::{
+        runtime::{ClientRuntime, EffectOutcome},
+        sync05::StoreReport,
+    };
+    use serde_json::json;
+    let mut schema: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
+    schema["actions"] = json!([{"name":"Write","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"create","cardinality":"single"}],"outputs":[]}]);
+    let schema = Schema::from_value(schema).unwrap();
+    // `late`: the receipt arrives after the upgrade committed but before the
+    // worker reported it, so its Acknowledge is fenced with the old context.
+    for late in [false, true] {
+        let d = tempfile::tempdir().unwrap();
+        let mut c = Client::open05(
+            SqliteStore::open(d.path().join("db")).unwrap(),
+            schema.clone(),
+            "User:u",
+        )
+        .unwrap();
+        let (mut control, socket) = connected_control(&mut c);
+        let call = c
+            .transaction(|tx| {
+                tx.submit_mutation05(
+                    "Write",
+                    1,
+                    json!({"entry":{"id":"e","text":"optimistic","note":null}}),
+                    vec![],
+                )
+            })
+            .unwrap();
+        let mut runtime = ClientRuntime::new(c);
+        control.wake();
+        let receipt = |request: &v05::MutationRequest, label: &str| v05::BatchAcknowledgement {
+            context: request.context.clone(),
+            batch_id: request.batch_id,
+            digest: request.digest.clone(),
+            results: vec![v05::MutationResult {
+                mutation_id: call.ordinal,
+                outcome: v05::MutationOutcome::Accepted {
+                    sync_cursor: 0,
+                    materialization: label.into(),
+                    result: serde_json::Value::Null,
+                    targets: vec![v05::SettlementTarget::Private {
+                        record: v05::ReadRecord {
+                            key: v05::RecordKey {
+                                model: "Entry".into(),
+                                identity: json!({"id":"e"}),
+                            },
+                            cursor: (),
+                            state: json!({"text":"accepted","note":null}),
+                        },
+                    }],
+                },
+            }],
+        };
+        // Freeze and send; the receipt is held back.
+        let mut held = None;
+        let jobs = control.jobs();
+        for job in jobs {
+            let report = runtime.store_worker05(job).unwrap();
+            control.report(report, 1).unwrap();
+        }
+        for event in control.events() {
+            if let axton_client::runtime::Event::Effect {
+                effect_id,
+                operation:
+                    axton_client::runtime::Operation::Http {
+                        route: axton_client::runtime::HttpRoute::Push,
+                        body,
+                    },
+            } = event
+            {
+                held = Some((
+                    effect_id,
+                    serde_json::from_str::<v05::MutationRequest>(&body).unwrap(),
+                ));
+            }
+        }
+        let (push, sent) = held.expect("the frozen Batch is pushed");
+        let old = sent.context.clone();
+        // A socket handshake reports generation 2; its Initialize upgrades.
+        let handshake = serde_json::to_string(&v05::HandshakeResponse {
+            protocol: v05::PROTOCOL,
+            store_id: old.store_id.clone(),
+            stream: old.stream.clone(),
+            head: 0,
+            projection_generation: "2".into(),
+        })
+        .unwrap();
+        control
+            .receive(
+                &socket,
+                EffectOutcome {
+                    ok: true,
+                    value: Some(json!({"event":"message","body":handshake})),
+                    error: None,
+                },
+                1,
+            )
+            .unwrap();
+        let initialize = control.jobs();
+        let reports: Vec<StoreReport> = initialize
+            .into_iter()
+            .map(|job| runtime.store_worker05(job).unwrap())
+            .collect();
+        let upgraded = runtime.client().request_context05().unwrap();
+        assert_ne!(upgraded.materialization, old.materialization);
+        let answer = EffectOutcome {
+            ok: true,
+            value: Some(serde_json::Value::String(
+                serde_json::to_string(&receipt(&sent, &old.materialization)).unwrap(),
+            )),
+            error: None,
+        };
+        if late {
+            control.receive(&push, answer, 1).unwrap();
+            let acknowledge = control.jobs();
+            for report in reports {
+                control.report(report, 1).unwrap();
+            }
+            for job in acknowledge {
+                let report = runtime.store_worker05(job).unwrap();
+                assert!(matches!(report, StoreReport::Obsolete), "{late}");
+                control.report(report, 1).unwrap();
+            }
+        } else {
+            for report in reports {
+                control.report(report, 1).unwrap();
+            }
+            control.receive(&push, answer, 1).unwrap();
+        }
+        // No further trigger: the worker acknowledges, or resends once.
+        let resent = run_worker(&mut runtime, &mut control, |request| {
+            receipt(request, &old.materialization)
+        });
+        if late {
+            assert_eq!(resent.len(), 1, "one resend");
+            assert_eq!(resent[0].digest, sent.digest);
+            assert_eq!(resent[0].context, upgraded);
+        } else {
+            assert!(resent.is_empty(), "acknowledged directly");
+        }
+        let client = runtime.client();
+        assert_eq!(
+            client.store_status05().unwrap().last_acknowledged_batch_id,
+            1,
+            "{late}"
+        );
+        assert!(
+            client.call_completion05(&call.call_id).unwrap().is_some(),
+            "{late}"
+        );
+    }
+}

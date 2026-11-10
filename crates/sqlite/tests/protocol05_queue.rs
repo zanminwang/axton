@@ -35,6 +35,23 @@ fn fixed_batch_restores_input_presence_and_excludes_new_members() {
     );
 }
 #[test]
+fn frozen_batch_is_resent_with_the_same_digest_in_the_store_context() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
+    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .unwrap();
+    let b = c.freeze_batch05().unwrap().unwrap();
+    let raw = rusqlite::Connection::open(&p).unwrap();
+    raw.execute("UPDATE axton_store SET materialization='upgraded'", [])
+        .unwrap();
+    let resent = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(resent.digest, b.digest);
+    assert_eq!(resent.context.materialization, "upgraded");
+    assert_eq!(resent.mutations, b.mutations);
+}
+#[test]
 fn no_batch_freezes_before_the_handshake_sets_start() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
@@ -199,6 +216,7 @@ fn next_batch_preserves_previous_ownership_until_settlement() {
             mutation_id: first.ordinal,
             outcome: v05::MutationOutcome::Accepted {
                 sync_cursor: 9,
+                materialization: b.context.materialization.clone(),
                 result: Value::Null,
                 targets: vec![v05::SettlementTarget::Stream {
                     key: v05::RecordKey {
@@ -386,8 +404,8 @@ fn assigned_payload_and_membership_cannot_be_edited_or_cancelled_in_sql() {
     );
     assert!(
         db.execute(
-            "UPDATE axton_mutation_queue SET batch_id=1,batch_materialization=? WHERE id=?",
-            rusqlite::params![b.context.materialization, later.ordinal as i64]
+            "UPDATE axton_mutation_queue SET batch_id=1 WHERE id=?",
+            [later.ordinal as i64]
         )
         .is_err()
     );
@@ -629,6 +647,7 @@ fn offline_sequenced_update_waits_for_creation_settlement_and_survives_reopen() 
             mutation_id: created.ordinal,
             outcome: v05::MutationOutcome::Accepted {
                 sync_cursor: 9,
+                materialization: batch.context.materialization.clone(),
                 result: Value::Null,
                 targets: vec![v05::SettlementTarget::Stream {
                     key: v05::RecordKey {
@@ -968,6 +987,7 @@ fn rollover_drains_frozen_batches_then_clears_only_server_derived_rows() {
             mutation_id: frozen.ordinal,
             outcome: v05::MutationOutcome::Accepted {
                 sync_cursor: 10,
+                materialization: batch.context.materialization.clone(),
                 result: Value::Null,
                 targets: vec![v05::SettlementTarget::Stream {
                     key: wire("Note", "receipt"),

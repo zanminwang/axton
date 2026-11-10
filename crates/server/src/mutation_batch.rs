@@ -282,7 +282,12 @@ pub(crate) async fn execute_claimed(
             let result = axton_core::validate_action_result(&config.schema, action, &result)
                 .map_err(internal)?;
             let sync_cursor = crate::head(&host, &request.context.stream).await?;
-            Ok(v05::MutationOutcome::Accepted {sync_cursor,result,targets})
+            Ok(v05::MutationOutcome::Accepted {
+                sync_cursor,
+                materialization: request.context.materialization.clone(),
+                result,
+                targets,
+            })
             }.await;
             match accepted {
                 Ok(outcome) => outcome,

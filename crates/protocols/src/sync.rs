@@ -280,6 +280,10 @@ impl Validate for MutationRequest {
 pub enum MutationOutcome {
     Accepted {
         sync_cursor: u64,
+        /// The contract the target snapshots were loaded in: the request's
+        /// materialization when the Mutation first executed. A replayed
+        /// result keeps the label of its first execution.
+        materialization: String,
         result: Value,
         targets: Vec<SettlementTarget>,
     },
@@ -318,10 +322,12 @@ impl Validate for BatchAcknowledgement {
             match &result.outcome {
                 MutationOutcome::Accepted {
                     sync_cursor,
+                    materialization,
                     targets,
                     ..
                 } => {
                     counter(*sync_cursor)?;
+                    text(materialization)?;
                     let mut keys = BTreeSet::new();
                     for target in targets {
                         target.validate()?;

@@ -22,7 +22,7 @@ fn request() -> MutationRequest {
 }
 fn ack(request: &MutationRequest) -> BatchAcknowledgement {
     serde_json::from_value(wire(json!({"context":request.context,"batchId":1,"digest":request.digest,"results":[
-        {"mutationId":1,"outcome":{"kind":"accepted","syncCursor":0,"result":{"appOpaque":[1,null]},"targets":[]}}
+        {"mutationId":1,"outcome":{"kind":"accepted","syncCursor":0,"materialization":"schema1","result":{"appOpaque":[1,null]},"targets":[]}}
     ]}))).unwrap()
 }
 fn wire(mut value: Value) -> Value {
@@ -52,12 +52,11 @@ fn a1_canonical_batch_binds_exact_order_context_and_descriptor() {
     assert!(validate_batch(&changed).is_err());
     changed.digest = batch_digest(&changed).unwrap();
     assert_ne!(changed.digest, request.digest);
-    for modify in [0, 1, 2, 3] {
+    for modify in [0, 1, 2] {
         let mut changed = request.clone();
         match modify {
             0 => changed.context.stream = "User:b".into(),
             1 => changed.context.store_id = "new".into(),
-            2 => changed.context.materialization = "schema2".into(),
             _ => changed.mutations[0].descriptor = "retained2".into(),
         }
         assert_ne!(batch_digest(&changed).unwrap(), request.digest);
@@ -112,7 +111,7 @@ fn exact_ack_and_owned_target_envelopes() {
     let request = request();
     let acknowledgement = ack(&request);
     validate_acknowledgement(&request, &acknowledgement).unwrap();
-    for variant in 0..7 {
+    for variant in 0..6 {
         let mut bad = acknowledgement.clone();
         match variant {
             0 => bad.results.clear(),
@@ -120,11 +119,15 @@ fn exact_ack_and_owned_target_envelopes() {
             2 => bad.results[0].mutation_id = 2,
             3 => bad.context.stream = "User:b".into(),
             4 => bad.context.store_id = "new".into(),
-            5 => bad.context.materialization = "new".into(),
             _ => bad.digest = "0".repeat(64),
         }
         assert!(validate_acknowledgement(&request, &bad).is_err());
     }
+    // A receipt is correlated by Store, Stream, Batch and digest: one that
+    // answers in another materialization still acknowledges the Batch.
+    let mut moved = acknowledgement.clone();
+    moved.context.materialization = "schema2".into();
+    validate_acknowledgement(&request, &moved).unwrap();
     let base = json!({"kind":"stream","key":{"model":"Entry","identity":{"id":"e"}},"cursor":2,"fallback":{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"a"}}});
     let target = decode::<SettlementTarget>(&serde_json::to_vec(&base).unwrap()).unwrap();
     assert_eq!(serde_json::to_value(target).unwrap(), base);
@@ -145,7 +148,13 @@ fn exact_ack_and_owned_target_envelopes() {
         rejects::<SettlementTarget>(bad);
     }
     rejects::<BatchAcknowledgement>(wire(
-        json!({"context":ctx(),"batchId":1,"digest":request.digest,"results":[{"mutationId":1,"outcome":{"kind":"accepted","syncCursor":0,"result":null,"targets":[],"extra":true}}]}),
+        json!({"context":ctx(),"batchId":1,"digest":request.digest,"results":[{"mutationId":1,"outcome":{"kind":"accepted","syncCursor":0,"materialization":"schema1","result":null,"targets":[],"extra":true}}]}),
+    ));
+    rejects::<BatchAcknowledgement>(wire(
+        json!({"context":ctx(),"batchId":1,"digest":request.digest,"results":[{"mutationId":1,"outcome":{"kind":"accepted","syncCursor":0,"result":null,"targets":[]}}]}),
+    ));
+    rejects::<BatchAcknowledgement>(wire(
+        json!({"context":ctx(),"batchId":1,"digest":request.digest,"results":[{"mutationId":1,"outcome":{"kind":"accepted","syncCursor":0,"materialization":"","result":null,"targets":[]}}]}),
     ));
 }
 #[test]
@@ -533,6 +542,7 @@ fn receipt_stream_target_cannot_exceed_its_fenced_sync_head() {
     let mut a = ack(&r);
     a.results[0].outcome = MutationOutcome::Accepted {
         sync_cursor: 10,
+        materialization: "schema1".into(),
         result: Value::Null,
         targets: vec![SettlementTarget::Stream {
             key: RecordKey {
@@ -601,5 +611,18 @@ fn protocol05_materialization_preserves_read_semantics_with_distinct_domain() {
     assert_ne!(
         a,
         axton_protocols::sync::materialization_id(&s, "1").unwrap()
+    );
+}
+#[test]
+fn batch_digest_excludes_the_materialization() {
+    // The materialization is transport: it shapes the receipt, not the intent.
+    let request = request();
+    let mut moved = request.clone();
+    moved.context.materialization = "schema2".into();
+    assert_eq!(batch_digest(&moved).unwrap(), request.digest);
+    validate_batch(&moved).unwrap();
+    assert_ne!(
+        request.digest, "2ecc56bed16fa22a88b260c91ad7e226998e86c8c5f97202afe460b7f923198c",
+        "the axton:batch-intent:1 digest of this request"
     );
 }

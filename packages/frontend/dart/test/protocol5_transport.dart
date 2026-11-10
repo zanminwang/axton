@@ -105,6 +105,7 @@ Map<String, Object?> emptyMutation(Map body) => {
         'outcome': {
           'kind': 'accepted',
           'syncCursor': 0,
+          'materialization': body['materialization'],
           'result': null,
           'targets': <Object>[],
         },

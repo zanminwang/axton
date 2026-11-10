@@ -90,6 +90,7 @@ fn accepted_private_result_waits_for_coverage_then_settles_later_direct() {
         &b,
         v05::MutationOutcome::Accepted {
             sync_cursor: 1,
+            materialization: b.context.materialization.clone(),
             result: Value::Null,
             targets: vec![v05::SettlementTarget::Private {
                 record: v05::ReadRecord {
@@ -178,6 +179,7 @@ fn newer_stream_supersedes_private_fallback_even_after_direct_releases_protectio
         &b,
         v05::MutationOutcome::Accepted {
             sync_cursor: 5,
+            materialization: b.context.materialization.clone(),
             result: Value::Null,
             targets: vec![v05::SettlementTarget::Private {
                 record: v05::ReadRecord {
@@ -251,6 +253,7 @@ fn private_acceptance_finalizes_at_original_position_and_retains_result_after_cl
         &b,
         v05::MutationOutcome::Accepted {
             sync_cursor: 0,
+            materialization: b.context.materialization.clone(),
             result: Value::Null,
             targets: vec![v05::SettlementTarget::Private {
                 record: v05::ReadRecord {
@@ -561,6 +564,7 @@ fn target_moved_past_sync_cursor_keeps_local_layer_until_newer_position_lands() 
         &b,
         v05::MutationOutcome::Accepted {
             sync_cursor: 5,
+            materialization: b.context.materialization.clone(),
             result: Value::Null,
             targets: vec![v05::SettlementTarget::Stream {
                 key: stream_key("e"),
@@ -717,6 +721,7 @@ fn accepted_companion_keeps_original_order_and_later_authority_supersedes_it() {
         &b,
         v05::MutationOutcome::Accepted {
             sync_cursor: 2,
+            materialization: b.context.materialization.clone(),
             result: Value::Null,
             targets: vec![v05::SettlementTarget::Stream {
                 key: stream_key("e"),
@@ -773,6 +778,7 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
         &b,
         v05::MutationOutcome::Accepted {
             sync_cursor: 1,
+            materialization: b.context.materialization.clone(),
             result: Value::Null,
             targets: vec![v05::SettlementTarget::Private {
                 record: v05::ReadRecord {
@@ -1179,6 +1185,7 @@ fn dismiss_missing_is_noop_but_pending_and_accepted_outcomes_are_protected() {
             &batch,
             v05::MutationOutcome::Accepted {
                 sync_cursor: 0,
+                materialization: batch.context.materialization.clone(),
                 result: Value::Null,
                 targets: vec![],
             },
@@ -1295,6 +1302,7 @@ fn retained_private_snapshot_never_evaluates_new_creation_defaults() {
         &batch,
         v05::MutationOutcome::Accepted {
             sync_cursor: 0,
+            materialization: batch.context.materialization.clone(),
             result: Value::Null,
             targets: vec![v05::SettlementTarget::Private {
                 record: v05::ReadRecord {
@@ -1367,6 +1375,7 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
             &b,
             v05::MutationOutcome::Accepted {
                 sync_cursor: 2,
+                materialization: b.context.materialization.clone(),
                 result: Value::Null,
                 targets: vec![v05::SettlementTarget::Stream {
                     key: stream_key("e"),
@@ -1470,6 +1479,7 @@ fn historical_target_finalizes_from_receipt_unless_bootstrap_will_deliver_it() {
             &b,
             v05::MutationOutcome::Accepted {
                 sync_cursor: 80,
+                materialization: b.context.materialization.clone(),
                 result: Value::Null,
                 targets: vec![v05::SettlementTarget::Stream {
                     key: stream_key("e"),
@@ -1565,6 +1575,7 @@ fn failed_local_settlement_retains_previous_batch_window_after_reopen() {
         &batch,
         v05::MutationOutcome::Accepted {
             sync_cursor: 0,
+            materialization: batch.context.materialization.clone(),
             result: Value::Null,
             targets: vec![v05::SettlementTarget::Private {
                 record: v05::ReadRecord {
@@ -1604,4 +1615,66 @@ fn failed_local_settlement_retains_previous_batch_window_after_reopen() {
         batch.mutations.iter().map(|m| m.id).collect::<Vec<_>>(),
         vec![next.ordinal]
     );
+}
+
+#[test]
+fn receipt_snapshot_installs_only_when_labelled_with_the_store_materialization() {
+    for private in [true, false] {
+        for same in [true, false] {
+            let d = tempfile::tempdir().unwrap();
+            let p = d.path().join("db");
+            let mut s = serde_json::to_value(schema()).unwrap();
+            s["models"][0]["bootstrap"] = json!(false);
+            let schema = Schema::from_value(s).unwrap();
+            let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema, "User:u").unwrap();
+            c.initialize_stream05(80, "1").unwrap();
+            let call = c
+                .transaction(|tx| {
+                    tx.submit_mutation05(
+                        "Write",
+                        1,
+                        json!({"entry":{"id":"e","text":"optimistic","note":null}}),
+                        vec![],
+                    )
+                })
+                .unwrap();
+            let b = c.freeze_batch05().unwrap().unwrap();
+            let snapshot = v05::ReadRecord {
+                key: stream_key("e"),
+                cursor: (),
+                state: state("snapshot"),
+            };
+            c.acknowledge_batch05(&ack(
+                &b,
+                v05::MutationOutcome::Accepted {
+                    sync_cursor: 80,
+                    materialization: if same {
+                        b.context.materialization.clone()
+                    } else {
+                        "earlier".into()
+                    },
+                    result: Value::Null,
+                    targets: vec![if private {
+                        v05::SettlementTarget::Private { record: snapshot }
+                    } else {
+                        // A historical target of an unmarked Model.
+                        v05::SettlementTarget::Stream {
+                            key: stream_key("e"),
+                            cursor: 57,
+                            fallback: snapshot,
+                        }
+                    }],
+                },
+            ))
+            .unwrap();
+            assert_eq!(c.settle_ready05().unwrap().completions.len(), 1);
+            assert!(c.call_completion05(&call.call_id).unwrap().is_some());
+            let row = c.read(&key()).unwrap();
+            if same {
+                assert_eq!(row.unwrap()["text"], "snapshot", "{private}");
+            } else {
+                assert_eq!(row, None, "{private}");
+            }
+        }
+    }
 }

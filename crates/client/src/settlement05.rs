@@ -32,12 +32,12 @@ use axton_protocols::sync::{self as v05, Validate};
 use std::collections::BTreeMap;
 impl<S: ClientStore> Engine<'_, S> {
     fn outcome05(&mut self, id: u64) -> Result<Option<v05::MutationOutcome>> {
-        let r=self.rows("SELECT sync_cursor,result,targets,rejection_code,rejection_message FROM axton_mutation_queue WHERE id=?",&[json!(id)])?.rows;
+        let r=self.rows("SELECT sync_cursor,outcome_materialization,result,targets,rejection_code,rejection_message FROM axton_mutation_queue WHERE id=?",&[json!(id)])?.rows;
         let Some(r) = r.first() else { return Ok(None) };
-        if let Some(code) = r[3].as_str() {
+        if let Some(code) = r[4].as_str() {
             return Ok(Some(v05::MutationOutcome::Rejected {
                 code: code.into(),
-                message: r[4].as_str().map(str::to_owned),
+                message: r[5].as_str().map(str::to_owned),
             }));
         }
         if r[0].is_null() {
@@ -45,8 +45,12 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         Ok(Some(v05::MutationOutcome::Accepted {
             sync_cursor: as_u64(&r[0])?,
-            result: decode(&r[1])?,
-            targets: decode(&r[2])?,
+            materialization: r[1]
+                .as_str()
+                .ok_or_else(|| invalid("outcome materialization missing"))?
+                .into(),
+            result: decode(&r[2])?,
+            targets: decode(&r[3])?,
         }))
     }
     fn completion05(&mut self, id: u64) -> Result<CallCompletion> {
@@ -74,7 +78,12 @@ impl<S: ClientStore> Engine<'_, S> {
                 .unwrap(),
         )?;
         if ack.batch_id <= last {
-            let rows=self.rows("SELECT id,batch_digest,batch_materialization FROM axton_mutation_queue WHERE batch_id=? ORDER BY id",&[json!(ack.batch_id)])?.rows;
+            let rows = self
+                .rows(
+                    "SELECT id,batch_digest FROM axton_mutation_queue WHERE batch_id=? ORDER BY id",
+                    &[json!(ack.batch_id)],
+                )?
+                .rows;
             if rows.len() != ack.results.len() || rows.is_empty() {
                 return Err(invalid("unknown acknowledged Batch"));
             }
@@ -85,10 +94,7 @@ impl<S: ClientStore> Engine<'_, S> {
                     .iter()
                     .find(|r| r.mutation_id == id)
                     .ok_or_else(|| invalid("acknowledgement membership mismatch"))?;
-                if r[1] != ack.digest
-                    || r[2] != ack.context.materialization
-                    || self.outcome05(id)?.as_ref() != Some(&result.outcome)
-                {
+                if r[1] != ack.digest || self.outcome05(id)?.as_ref() != Some(&result.outcome) {
                     return Err(invalid("acknowledgement replay differs"));
                 }
             }
@@ -133,10 +139,11 @@ impl<S: ClientStore> Engine<'_, S> {
             match &result.outcome {
                 v05::MutationOutcome::Accepted {
                     sync_cursor,
+                    materialization,
                     result,
                     targets,
                 } => {
-                    self.exec("axton_mutation_queue","UPDATE axton_mutation_queue SET sync_cursor=?,result=?,targets=? WHERE id=?",&[json!(sync_cursor),text(result)?,text(targets)?,json!(id)])?;
+                    self.exec("axton_mutation_queue","UPDATE axton_mutation_queue SET sync_cursor=?,outcome_materialization=?,result=?,targets=? WHERE id=?",&[json!(sync_cursor),json!(materialization),text(result)?,text(targets)?,json!(id)])?;
                 }
                 v05::MutationOutcome::Rejected { code, message } => {
                     rejected.insert(id, (code.clone(), message.clone()));
@@ -255,6 +262,7 @@ impl<S: ClientStore> Engine<'_, S> {
             let id = as_u64(&row[0])?;
             let Some(v05::MutationOutcome::Accepted {
                 sync_cursor,
+                materialization,
                 targets,
                 ..
             }) = self.outcome05(id)?
@@ -314,7 +322,11 @@ impl<S: ClientStore> Engine<'_, S> {
                 else {
                     return Err(invalid("unowned private target"));
                 };
-                if !self.owned05(id, position, &key)? {
+                // A snapshot loaded in another contract is not installed; the
+                // target settles without it.
+                if materialization != context.materialization
+                    || !self.owned05(id, position, &key)?
+                {
                     continue;
                 }
                 let op = Operation {

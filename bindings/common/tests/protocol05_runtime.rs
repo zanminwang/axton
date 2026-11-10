@@ -302,13 +302,14 @@ fn mutation_local_acceptance_precedes_backend_settlement_and_survives_reopen() {
                 Some("push") => {
                     let request: v05::MutationRequest = serde_json::from_value(b).unwrap();
                     json!(v05::BatchAcknowledgement {
-                        context: request.context,
+                        context: request.context.clone(),
                         batch_id: request.batch_id,
                         digest: request.digest,
                         results: vec![v05::MutationResult {
                             mutation_id: request.mutations[0].id,
                             outcome: v05::MutationOutcome::Accepted {
                                 sync_cursor: 0,
+                                materialization: request.context.materialization,
                                 result: Value::Null,
                                 targets: vec![v05::SettlementTarget::Private {
                                     record: v05::ReadRecord {
@@ -1187,13 +1188,14 @@ fn accepted_create_settlement_wakes_lifecycle_dependent_update() {
                     batches.push(request.batch_id);
                     assert_eq!(request.mutations.len(), 1);
                     json!(v05::BatchAcknowledgement {
-                        context: request.context,
+                        context: request.context.clone(),
                         batch_id: request.batch_id,
                         digest: request.digest,
                         results: vec![v05::MutationResult {
                             mutation_id: request.mutations[0].id,
                             outcome: v05::MutationOutcome::Accepted {
                                 sync_cursor: 0,
+                                materialization: request.context.materialization,
                                 result: Value::Null,
                                 targets: vec![v05::SettlementTarget::Private {
                                     record: v05::ReadRecord {

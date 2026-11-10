@@ -200,15 +200,13 @@ impl<S: ClientStore> Engine<'_, S> {
         })
     }
     pub(crate) fn reconstruct_batch05(&mut self, batch: u64) -> Result<v05::MutationRequest> {
-        let rows=self.rows("SELECT id,name,descriptor_version,descriptor,batch_materialization,batch_digest FROM axton_mutation_queue WHERE batch_id=? ORDER BY id",&[json!(batch)])?.rows;
+        let rows=self.rows("SELECT id,name,descriptor_version,descriptor,batch_digest FROM axton_mutation_queue WHERE batch_id=? ORDER BY id",&[json!(batch)])?.rows;
         if rows.is_empty() {
             return Err(invalid("unknown Batch"));
         }
-        let mut context = self.context05()?;
-        context.materialization = rows[0][4]
-            .as_str()
-            .ok_or_else(|| invalid("Batch context missing"))?
-            .into();
+        // The materialization is transport: a Batch is sent in the Store's
+        // current contract, whichever one it was frozen under.
+        let context = self.context05()?;
         let mut mutations = vec![];
         for r in &rows {
             let id = as_u64(&r[0])?;
@@ -297,9 +295,9 @@ impl<S: ClientStore> Engine<'_, S> {
         request.validate()?;
         if rows
             .iter()
-            .any(|r| !r[5].is_null() && r[5] != request.digest)
+            .any(|r| !r[4].is_null() && r[4] != request.digest)
         {
-            // Includes Batches frozen under the protocol-5 digest definition.
+            // Includes Batches frozen under an earlier digest definition.
             return Err(axton_core::Error::Terminal(format!(
                 "frozen Batch {batch} no longer matches its saved digest and cannot be resent; reset the Store to discard it"
             )));
@@ -352,12 +350,11 @@ impl<S: ClientStore> Engine<'_, S> {
             .checked_add(1)
             .filter(|v| *v <= axton_core::MAX_SAFE_INTEGER)
             .ok_or_else(|| invalid("Batch counter exhausted"))?;
-        let context = self.context05()?;
         for r in rows {
             self.exec(
                 "axton_mutation_queue",
-                "UPDATE axton_mutation_queue SET batch_id=?,batch_materialization=? WHERE id=?",
-                &[json!(batch), json!(context.materialization), r[0].clone()],
+                "UPDATE axton_mutation_queue SET batch_id=? WHERE id=?",
+                &[json!(batch), r[0].clone()],
             )?;
         }
         let request = self.reconstruct_batch05(batch)?;

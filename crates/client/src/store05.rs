@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 pub(crate) const DDL: &str = r#"
 CREATE TABLE axton_store(singleton INTEGER PRIMARY KEY CHECK(singleton=1), format INTEGER NOT NULL CHECK(format=5), id TEXT NOT NULL, stream TEXT NOT NULL, materialization TEXT NOT NULL, desired_materialization TEXT NOT NULL, schema_descriptor TEXT NOT NULL, enabled_descriptor TEXT NOT NULL, next_mutation_id INTEGER NOT NULL DEFAULT 1, next_local_sequence INTEGER NOT NULL DEFAULT 1, last_acknowledged_batch_id INTEGER NOT NULL DEFAULT 0, start_cursor INTEGER, bootstrap_cursor INTEGER, cursor INTEGER, generation INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE axton_descriptor(context TEXT PRIMARY KEY, materialization TEXT NOT NULL, descriptor TEXT NOT NULL, projection_generation TEXT NOT NULL);
-CREATE TABLE axton_mutation_queue(id INTEGER PRIMARY KEY, name TEXT NOT NULL, descriptor_version INTEGER NOT NULL, descriptor TEXT NOT NULL REFERENCES axton_descriptor(context), batch_id INTEGER, batch_materialization TEXT, batch_digest TEXT, sync_cursor INTEGER, result TEXT, targets TEXT, rejection_code TEXT, rejection_message TEXT, rejection_acknowledged INTEGER NOT NULL DEFAULT 0, reconciled INTEGER NOT NULL DEFAULT 0, diverged INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE axton_mutation_queue(id INTEGER PRIMARY KEY, name TEXT NOT NULL, descriptor_version INTEGER NOT NULL, descriptor TEXT NOT NULL REFERENCES axton_descriptor(context), batch_id INTEGER, batch_digest TEXT, sync_cursor INTEGER, outcome_materialization TEXT, result TEXT, targets TEXT, rejection_code TEXT, rejection_message TEXT, rejection_acknowledged INTEGER NOT NULL DEFAULT 0, reconciled INTEGER NOT NULL DEFAULT 0, diverged INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE axton_mutation_queue_operation(mutation_id INTEGER NOT NULL REFERENCES axton_mutation_queue(id) ON DELETE CASCADE, step INTEGER NOT NULL, local_sequence INTEGER NOT NULL UNIQUE, input_path TEXT, kind TEXT NOT NULL, model TEXT, identity TEXT, operation TEXT NOT NULL, value TEXT, owner_history TEXT NOT NULL, PRIMARY KEY(mutation_id,step));
 CREATE TABLE axton_mutation_dependency(ordinal INTEGER NOT NULL REFERENCES axton_mutation_queue(id) ON DELETE CASCADE, depends_on INTEGER NOT NULL REFERENCES axton_mutation_queue(id), kind TEXT NOT NULL, PRIMARY KEY(ordinal,depends_on), CHECK(depends_on<ordinal));
 CREATE TABLE axton_mutation_prerequisite(ordinal INTEGER NOT NULL REFERENCES axton_mutation_queue(id) ON DELETE CASCADE,key TEXT NOT NULL,error TEXT,PRIMARY KEY(ordinal,key));
@@ -30,8 +30,14 @@ CREATE TRIGGER axton_operation_frozen_insert BEFORE INSERT ON axton_mutation_que
 CREATE TRIGGER axton_queue_frozen_delete BEFORE DELETE ON axton_mutation_queue WHEN OLD.batch_id>(SELECT last_acknowledged_batch_id FROM axton_store) BEGIN SELECT RAISE(ABORT,'possibly sent Mutation cannot be cancelled'); END;
 CREATE TRIGGER axton_operation_frozen_delete BEFORE DELETE ON axton_mutation_queue_operation WHEN OLD.input_path IS NOT NULL AND EXISTS(SELECT 1 FROM axton_mutation_queue WHERE id=OLD.mutation_id AND batch_id IS NOT NULL AND reconciled=0) BEGIN SELECT RAISE(ABORT,'assigned input is immutable'); END;
 CREATE TRIGGER axton_queue_assignment BEFORE UPDATE OF batch_id ON axton_mutation_queue WHEN OLD.batch_id IS NULL AND NEW.batch_id IS NOT NULL AND (NEW.batch_id<>(SELECT last_acknowledged_batch_id+1 FROM axton_store) OR EXISTS(SELECT 1 FROM axton_mutation_queue WHERE batch_id>(SELECT last_acknowledged_batch_id FROM axton_store) AND (batch_id<>NEW.batch_id OR batch_digest IS NOT NULL))) BEGIN SELECT RAISE(ABORT,'Batch membership is fixed'); END;
-CREATE TRIGGER axton_queue_envelope BEFORE UPDATE OF batch_materialization,batch_digest ON axton_mutation_queue WHEN OLD.batch_digest IS NOT NULL AND (NEW.batch_digest IS NOT OLD.batch_digest OR NEW.batch_materialization IS NOT OLD.batch_materialization) BEGIN SELECT RAISE(ABORT,'Batch envelope is immutable'); END;
 "#;
+/// A frozen Batch's digest never changes. Created with `DDL` and again when
+/// open removes `batch_materialization` from an earlier file.
+const QUEUE_ENVELOPE: &str = "CREATE TRIGGER axton_queue_envelope BEFORE UPDATE OF batch_digest ON axton_mutation_queue WHEN OLD.batch_digest IS NOT NULL AND NEW.batch_digest IS NOT OLD.batch_digest BEGIN SELECT RAISE(ABORT,'Batch envelope is immutable'); END;";
+/// Files written before the Batch stopped carrying the schema version keep it
+/// in `batch_materialization`. That was also the contract each saved outcome's
+/// snapshots were loaded in, so it becomes the outcome's label.
+const DROP_BATCH_MATERIALIZATION: &str = "DROP TRIGGER axton_queue_envelope; ALTER TABLE axton_mutation_queue ADD COLUMN outcome_materialization TEXT; UPDATE axton_mutation_queue SET outcome_materialization=batch_materialization WHERE sync_cursor IS NOT NULL; ALTER TABLE axton_mutation_queue DROP COLUMN batch_materialization;";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoreStatus05 {
@@ -179,7 +185,19 @@ impl<S: ClientStore> Client<S> {
         let opened = (|| {
             if !existing {
                 store.execute_batch(DDL)?;
+                store.execute_batch(QUEUE_ENVELOPE)?;
                 store.execute("INSERT INTO axton_store(singleton,format,id,stream,materialization,desired_materialization,schema_descriptor,enabled_descriptor) VALUES(1,5,?,?,?,?,?,?)",&[json!(uuid::Uuid::new_v4().to_string()),json!(stream),json!(descriptor.materialization),json!(descriptor.materialization),json!(descriptor.context),json!(descriptor.context)])?;
+            }
+            if !store
+                .query(
+                    "SELECT 1 FROM pragma_table_info('axton_mutation_queue') WHERE name='batch_materialization'",
+                    &[],
+                )?
+                .rows
+                .is_empty()
+            {
+                store.execute_batch(DROP_BATCH_MATERIALIZATION)?;
+                store.execute_batch(QUEUE_ENVELOPE)?;
             }
             ddl::reconcile(&mut store, &schema)?;
             // Network plans do not survive a reopen.

@@ -51,6 +51,7 @@ fn settle(c: &mut Client<SqliteStore>, accepted: bool, owner: bool) {
     let outcome = if accepted {
         v05::MutationOutcome::Accepted {
             sync_cursor: 0,
+            materialization: b.context.materialization.clone(),
             result: Value::Null,
             targets: if owner {
                 vec![v05::SettlementTarget::Private {

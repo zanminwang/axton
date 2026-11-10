@@ -30,11 +30,14 @@ const canonical = (v) =>
       : JSON.stringify(v);
 const digest = (r) =>
   createHash("sha256")
-    .update("axton:batch-intent:1\0")
+    .update("axton:batch-intent:2\0")
     .update(
       canonical(
         Object.fromEntries(
-          Object.entries(r).filter(([k]) => k !== "digest" && k !== "protocol"),
+          Object.entries(r).filter(
+            ([k]) =>
+              k !== "digest" && k !== "protocol" && k !== "materialization",
+          ),
         ),
       ),
     )
@@ -676,6 +679,7 @@ test("no-op with no Model targets accepts at head zero and replays without busin
   assert.deepEqual(JSON.parse(wire).results[0].outcome, {
     kind: "accepted",
     syncCursor: 0,
+    materialization: r.materialization,
     result: null,
     targets: [],
   });

@@ -31,13 +31,13 @@
 
 **Files:** `crates/protocols/src/sync.rs`, `src/sync/mutation.rs`, `fixtures/protocol/0.5.json`; `crates/server/src/mutation_batch.rs`; `crates/client/src/mutation_queue.rs`, `settlement05.rs`, `store05.rs`; tests in `crates/protocols/tests/`, `crates/server/tests/`, `crates/sqlite/tests/protocol05_queue.rs`, `protocol05_settlement.rs`, `protocol05_client.rs`; every caller that builds a `MutationRequest` or an `Accepted` outcome by hand.
 
-- [ ] Test (protocols): two requests that differ only in `context.materialization` have the same digest; the digest differs from the `axton:batch-intent:1` value.
-- [ ] `batch_body` removes `materialization`; domain `axton:batch-intent:2`; `validate_acknowledgement` compares Store ID and Stream.
-- [ ] `MutationOutcome::Accepted.materialization` (required). The server sets it from `request.context.materialization` when the member executes; the saved result carries it. Tests (server): a replay under another request materialization returns the saved label; a Batch whose first member ran under `m1` and is resent under `m2` returns `m1` for the first member and `m2` for the second.
-- [ ] Test (client): freeze a Batch, change the Store's materialization directly in the test, reconstruct: same digest, new context. Fails today on the stored `batch_materialization`.
-- [ ] Delete the `batch_materialization` column from `DDL`, `freeze05`, `reconstruct_batch05` and the acknowledgement replay comparison; `axton_queue_envelope` guards `batch_digest` only. `open05` drops the column and recreates the trigger when an existing file has it. Test: a file created with the old DDL opens and the trigger still rejects a changed digest.
-- [ ] Settlement installs a receipt snapshot only when the outcome's materialization is the Store's; otherwise the target settles with no install. Acknowledgement validation stays on the Mutation's retained schema in this task; Task 5 moves it. Tests in `protocol05_settlement.rs` for a matching and a non-matching label, for a `Private` and a historical unmarked target.
-- [ ] Regenerate `fixtures/protocol/0.5.json`; fix hand-built requests and outcomes across tests, `crates/sim`, `integration/`.
+- [x] Test (protocols): two requests that differ only in `context.materialization` have the same digest; the digest differs from the `axton:batch-intent:1` value.
+- [x] `batch_body` removes `materialization`; domain `axton:batch-intent:2`; `validate_acknowledgement` compares Store ID and Stream.
+- [x] `MutationOutcome::Accepted.materialization` (required). The server sets it from `request.context.materialization` when the member executes; the saved result carries it. Tests (server): a replay under another request materialization returns the saved label; a Batch whose first member ran under `m1` and is resent under `m2` returns `m1` for the first member and `m2` for the second.
+- [x] Test (client): freeze a Batch, change the Store's materialization directly in the test, reconstruct: same digest, new context. Fails today on the stored `batch_materialization`.
+- [x] Delete the `batch_materialization` column from `DDL`, `freeze05`, `reconstruct_batch05` and the acknowledgement replay comparison; `axton_queue_envelope` guards `batch_digest` only. `open05` drops the column and recreates the trigger when an existing file has it. Test: a file created with the old DDL opens and the trigger still rejects a changed digest.
+- [x] Settlement installs a receipt snapshot only when the outcome's materialization is the Store's; otherwise the target settles with no install. Acknowledgement validation stays on the Mutation's retained schema in this task; Task 5 moves it. Tests in `protocol05_settlement.rs` for a matching and a non-matching label, for a `Private` and a historical unmarked target.
+- [x] Regenerate `fixtures/protocol/0.5.json`; fix hand-built requests and outcomes across tests, `crates/sim`, `integration/`.
 
 ## Task 3: Pieces from another contract are skipped (spec §2.5)
 

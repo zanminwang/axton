@@ -57,6 +57,7 @@ impl Scenario {
                 mutation_id: call.ordinal,
                 outcome: v05::MutationOutcome::Accepted {
                     sync_cursor: 2,
+                    materialization: batch.context.materialization.clone(),
                     result: serde_json::Value::Null,
                     targets: vec![v05::SettlementTarget::Stream {
                         key: key.clone(),

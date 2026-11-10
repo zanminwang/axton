@@ -533,7 +533,7 @@ fn provisional_mutation_rolls_back_and_watch_never_publishes_optimism_before_com
 }
 
 #[test]
-fn handshake_generation_change_rolls_over_before_the_first_stored_read() {
+fn handshake_generation_change_upgrades_before_the_first_stored_read() {
     use axton_client::v05;
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("db");
@@ -580,10 +580,82 @@ fn handshake_generation_change_rolls_over_before_the_first_stored_read() {
         std::thread::sleep(Duration::from_millis(2));
     };
     let body: Value = serde_json::from_str(read["operation"]["body"].as_str().unwrap()).unwrap();
-    // The backend reported generation 2. Nothing was frozen, so the clear
-    // committed with the handshake head and the read runs in the new context.
+    // The backend reported generation 2. The upgrade committed with the
+    // handshake, so the parked read runs in the new context.
     assert_ne!(body["materialization"], json!(old.materialization));
     assert_eq!(body["invocation"]["name"], "Lookup");
+    actor::detach(id);
+    assert!(actor::wait_closed(id, Duration::from_secs(5)));
+}
+
+fn until_effect(id: u64, found: impl Fn(&Value) -> bool) -> Value {
+    let start = Instant::now();
+    loop {
+        if let Some(e) = actor::drain(id).into_iter().find(|e| found(e)) {
+            return e;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+#[test]
+fn a_query_in_flight_across_an_upgrade_returns_its_result_and_installs_nothing() {
+    use axton_client::v05;
+    let d = tempfile::tempdir().unwrap();
+    let id = open(&d.path().join("db"));
+    let opened = wait(id);
+    let old: v05::RequestContext =
+        serde_json::from_value(opened[0]["value"]["context"].clone()).unwrap();
+    actor::submit(
+        id,
+        json!({"type":"task","requestId":"connect","command":{"kind":"connect"}}),
+    )
+    .unwrap();
+    let handshake = until_effect(id, |e| e["operation"]["route"] == "handshake");
+    let answer = |generation: &str| {
+        serde_json::to_string(&v05::HandshakeResponse {
+            protocol: v05::PROTOCOL,
+            store_id: old.store_id.clone(),
+            stream: old.stream.clone(),
+            head: 0,
+            projection_generation: generation.into(),
+        })
+        .unwrap()
+    };
+    actor::submit(id,json!({"type":"effectResult","effectId":handshake["effectId"],"outcome":{"ok":true,"value":answer("1")}})).unwrap();
+    let socket = until_effect(id, |e| e["operation"]["kind"] == "socket");
+    actor::submit(id,json!({"type":"task","requestId":"query","command":{"kind":"invoke","name":"Lookup","version":1,"args":{}}})).unwrap();
+    let read = until_effect(id, |e| e["operation"]["route"] == "action");
+    let body: Value = serde_json::from_str(read["operation"]["body"].as_str().unwrap()).unwrap();
+    assert_eq!(body["materialization"], json!(old.materialization));
+    // The socket handshake reports generation 2 while the read is in flight.
+    actor::submit(id,json!({"type":"effectResult","effectId":socket["effectId"],"outcome":{"ok":true,"value":{"event":"message","body":answer("2")}}})).unwrap();
+    let start = Instant::now();
+    loop {
+        actor::submit(
+            id,
+            json!({"type":"task","requestId":"status","command":{"kind":"status"}}),
+        )
+        .unwrap();
+        let status = until_effect(id, |e| e["requestId"] == "status");
+        if status["value"]["context"]["materialization"] != json!(old.materialization) {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+    let response = json!({"protocol":v05::PROTOCOL,"storeId":body["storeId"],"stream":body["stream"],"materialization":body["materialization"],"requestId":body["requestId"],"outcome":{"kind":"succeeded","result":["found"]},"records":[{"key":{"model":"Entry","identity":{"id":"q"}},"cursor":null,"state":{"text":"old contract","note":null}}]});
+    actor::submit(id,json!({"type":"effectResult","effectId":read["effectId"],"outcome":{"ok":true,"value":response.to_string()}})).unwrap();
+    let done = until_effect(id, |e| e["requestId"] == "query");
+    assert_eq!(done["ok"], true, "{done}");
+    assert_eq!(done["value"]["outcome"]["result"], json!(["found"]));
+    actor::submit(id,json!({"type":"task","requestId":"read","command":{"kind":"read","key":{"model":"Entry","identity":{"id":"q"}}}})).unwrap();
+    let row = until_effect(id, |e| e["requestId"] == "read");
+    assert_eq!(row["ok"], true, "{row}");
+    assert_eq!(
+        row["value"],
+        Value::Null,
+        "a read of the previous context installed"
+    );
     actor::detach(id);
     assert!(actor::wait_closed(id, Duration::from_secs(5)));
 }

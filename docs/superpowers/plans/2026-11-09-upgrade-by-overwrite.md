@@ -68,17 +68,17 @@
 
 **Files:** `crates/client/src/store05.rs`, `mutation_queue.rs`, `settlement05.rs`, `runtime/mod.rs`, `runtime/tasks.rs`, `runtime/direct.rs`, `sync05/downlink.rs`, `sync05/delta_applier.rs`, `sync05/reset.rs`; `crates/protocols/src/client_bridge/mod.rs`, `src/sync.rs` (read correlation); SDK error tables; tests in `crates/sqlite/tests/protocol05_ddl.rs`, `protocol05_downlink.rs`, `protocol05_queue.rs`, `stream_upgrade.rs`; `integration/v05-sdk/` (`client.mjs`, `rollover/`, `server.mjs:12-16`, `:196`, `run-host.sh:9`, both READMEs).
 
-- [ ] Test: reopen with an added nullable field on a Store with rows, `C = 40`, `B = S = 25`. After open: all rows present, `C = 40`, `B` null, `S = 40`, `materialization` is the new ID, a stored read and a Query both succeed with no connection, and a new Batch freezes.
-- [ ] Test: after that reopen, a Bootstrap unit over `(0, 40]` in the new context overwrites a held `@@bootstrap` row at its unchanged position and fills the new field; a Sync unit after 40 carrying a Remove deletes its kept row.
-- [ ] Test: a changed unique constraint resets the Model, the materialization is unchanged, and `B` is null with `S = C` after open.
-- [ ] Test: a handshake reporting a new projection generation commits the same upgrade. No second handshake is sent; the delivery queue is empty; an acknowledgement for a push sent before it is accepted; a Query response in the previous context is returned to the caller and installs nothing.
-- [ ] `open05` and `adopt_generation05` share one function: set `materialization`, `bootstrap_cursor = NULL`, `start_cursor = cursor`, clear delivery staging. It runs when the materialization changes or `reconcile` reset a Model.
-- [ ] Sync worker: on a context change with the same Store ID, empty the delivery queue, drop pending apply jobs, adopt the context and schedule. Keep the reset path's branch at `downlink.rs:475`; delete only the rollover part (`:479-497`).
-- [ ] A Query or Fetch response in another context (`crates/protocols/src/sync.rs:660`) is returned and not installed.
-- [ ] Acknowledgement validates a receipt snapshot against the current schema, and only when its Model is shared and the outcome's materialization is the Store's (moved from Task 2). `reconcile_ready05` reads bootstrap flags from the current schema.
-- [ ] Delete `rollover05`, `rollover_pending05`, `desired_materialization`, `enabled_descriptor` (DDL, `DESIRE_DESCRIPTOR`, `admit05`, `reset.rs`; open drops the two columns from an existing file), the freeze hold, the `Needs` and `Initialize` rollover branches, the parked-read condition, `read.schema_pending` and `fetch.schema_pending`.
-- [ ] Replace the rollover cases in `protocol05_queue.rs` and `integration/v05-sdk/` (drain, clear fixture, generation `"2"` fresh file) with the spec §5 checks. Add the lost-receipt case to `client.mjs`.
-- [ ] Run the spec §5 `git grep` and record its output for the PR.
+- [x] Test: reopen with an added nullable field on a Store with rows, `C = 40`, `B = S = 25`. After open: all rows present, `C = 40`, `B` null, `S = 40`, `materialization` is the new ID, a stored read and a Query both succeed with no connection, and a new Batch freezes.
+- [x] Test: after that reopen, a Bootstrap unit over `(0, 40]` in the new context overwrites a held `@@bootstrap` row at its unchanged position and fills the new field; a Sync unit after 40 carrying a Remove deletes its kept row.
+- [x] Test: a changed unique constraint resets the Model, the materialization is unchanged, and `B` is null with `S = C` after open.
+- [x] Test: a handshake reporting a new projection generation commits the same upgrade. No second handshake is sent; the delivery queue is empty; an acknowledgement for a push sent before it is accepted; a Query response in the previous context is returned to the caller and installs nothing.
+- [x] `open05` and `adopt_generation05` share one function: set `materialization`, `bootstrap_cursor = NULL`, `start_cursor = cursor`, clear delivery staging. It runs when the materialization changes or `reconcile` reset a Model.
+- [x] Sync worker: on a context change with the same Store ID, empty the delivery queue, drop pending apply jobs, adopt the context and schedule. Keep the reset path's branch at `downlink.rs:475`; delete only the rollover part (`:479-497`).
+- [x] A Query or Fetch response in another context (`crates/protocols/src/sync.rs:660`) is returned and not installed.
+- [x] Acknowledgement validates a receipt snapshot against the current schema, and only when its Model is shared and the outcome's materialization is the Store's (moved from Task 2). `reconcile_ready05` reads bootstrap flags from the current schema.
+- [x] Delete `rollover05`, `rollover_pending05`, `desired_materialization`, `enabled_descriptor` (DDL, `DESIRE_DESCRIPTOR`, `admit05`, `reset.rs`; open drops the two columns from an existing file), the freeze hold, the `Needs` and `Initialize` rollover branches, the parked-read condition, `read.schema_pending` and `fetch.schema_pending`.
+- [x] Replace the rollover cases in `protocol05_queue.rs` and `integration/v05-sdk/` (drain, clear fixture, generation `"2"` fresh file) with the spec §5 checks. Add the lost-receipt case to `client.mjs`.
+- [x] Run the spec §5 `git grep` and record its output for the PR.
 
 ## Task 6: Docs
 

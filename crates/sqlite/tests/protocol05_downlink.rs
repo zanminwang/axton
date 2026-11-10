@@ -1,5 +1,6 @@
 use axton_client::{Client, Schema, sync05::DeliveryQueue, v05};
 use axton_sqlite::SqliteStore;
+pub mod common05;
 #[path = "protocol05_downlink/prefetch.rs"]
 mod prefetch;
 #[path = "protocol05_downlink/receipts.rs"]
@@ -1892,7 +1893,7 @@ fn freezes(jobs: &[axton_client::sync05::StoreCommand]) -> bool {
     })
 }
 #[test]
-fn freeze_in_flight_across_a_handshake_rollover_does_not_stall_the_uplink() {
+fn freeze_in_flight_across_a_generation_upgrade_does_not_stall_the_uplink() {
     use axton_client::sync05::{Control, StoreReport};
     let d = tempfile::tempdir().unwrap();
     let mut c = client(&d.path().join("db"));
@@ -1913,23 +1914,26 @@ fn freeze_in_flight_across_a_handshake_rollover_does_not_stall_the_uplink() {
         .report(StoreReport::Needs { status: None }, 1)
         .unwrap();
     assert!(freezes(&control.jobs()));
-    // Initialize commits the rollover clear with the handshake's head.
-    let mut rolled = old.clone();
-    rolled.context.materialization = "rolled".into();
-    control.report(StoreReport::Snapshot(rolled), 1).unwrap();
+    // Initialize commits the upgrade: same Store, new materialization.
+    let mut upgraded = old.clone();
+    upgraded.context.materialization = "upgraded".into();
+    control
+        .report(StoreReport::Snapshot(upgraded.clone()), 1)
+        .unwrap();
+    assert!(
+        handshake_effect(&mut control).is_none(),
+        "an upgrade sends no second handshake"
+    );
     // The old context's Freeze comes back obsolete; the uplink still wakes.
     control.report(StoreReport::Obsolete, 1).unwrap();
     control.jobs();
     control
         .report(StoreReport::Needs { status: None }, 1)
         .unwrap();
-    assert!(
-        freezes(&control.jobs()),
-        "uplink stalled after the rollover"
-    );
+    assert!(freezes(&control.jobs()), "uplink stalled after the upgrade");
 }
 #[test]
-fn pull_parked_for_auth_refresh_is_not_resent_after_a_rollover() {
+fn pull_parked_for_auth_refresh_is_not_resent_after_a_generation_upgrade() {
     use axton_client::{
         runtime::{EffectError, EffectOutcome, Event, HttpRoute, Operation},
         sync05::{Control, StoreReport},
@@ -1976,11 +1980,11 @@ fn pull_parked_for_auth_refresh_is_not_resent_after_a_rollover() {
             _ => None,
         })
         .unwrap();
-    // A handshake-time rollover commits while the pull waits for the refresh.
-    let mut rolled = old.clone();
-    rolled.context.materialization = "rolled".into();
+    // A handshake-time upgrade commits while the pull waits for the refresh.
+    let mut upgraded = old.clone();
+    upgraded.context.materialization = "upgraded".into();
     control
-        .report(StoreReport::Snapshot(rolled.clone()), 1)
+        .report(StoreReport::Snapshot(upgraded.clone()), 1)
         .unwrap();
     control.events();
     control
@@ -2008,7 +2012,276 @@ fn pull_parked_for_auth_refresh_is_not_resent_after_a_rollover() {
             } => Some(serde_json::from_str::<v05::DeltaRequest>(&body).unwrap()),
             _ => None,
         })
-        .filter(|request| request.context != rolled.context)
+        .filter(|request| request.context != upgraded.context)
         .collect();
     assert!(stale.is_empty(), "old-context pull resent: {stale:?}");
+}
+
+fn upgrade_read(c: &mut Client<SqliteStore>, model: &str, id: &str) -> Option<serde_json::Value> {
+    c.read(&axton_client::RecordKey {
+        model: model.into(),
+        identity: serde_json::json!({ "id": id }),
+    })
+    .unwrap()
+}
+#[test]
+fn bootstrap_after_an_upgrade_overwrites_held_rows_and_sync_from_c_deletes_and_removes_kept_rows() {
+    use common05::{before_upgrade, deliver, upgrade_key, upgrade_record, upgrade_schema};
+    use serde_json::json;
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    before_upgrade(&p);
+    let mut c = Client::open05(
+        SqliteStore::open(&p).unwrap(),
+        upgrade_schema(true, false),
+        "User:u",
+    )
+    .unwrap();
+    let upgraded = c.request_context05().unwrap().materialization;
+    // Bootstrap over (0, S] in the new contract, at the row's unchanged position.
+    deliver(
+        &mut c,
+        true,
+        0,
+        40,
+        vec![upgrade_record(
+            "Marked",
+            "m",
+            10,
+            json!({"text":"marked","label":"filled"}),
+        )],
+    );
+    assert_eq!(
+        upgrade_read(&mut c, "Marked", "m").unwrap()["label"],
+        "filled"
+    );
+    let key = upgrade_key("Marked", "m");
+    let evidence = c
+        .record_evidence05(&axton_client::RecordKey {
+            model: key.model,
+            identity: key.identity,
+        })
+        .unwrap();
+    assert_eq!(
+        evidence.history.into_iter().collect::<Vec<_>>(),
+        vec![(upgraded, 10)]
+    );
+    let status = c.store_status05().unwrap();
+    assert_eq!(
+        (status.bootstrap_cursor, status.start_cursor),
+        (Some(40), Some(40))
+    );
+    // Sync continues from C: a deletion after it deletes a kept row, and a
+    // Remove after it releases the other kept row as cache.
+    deliver(
+        &mut c,
+        false,
+        40,
+        45,
+        vec![
+            upgrade_record("Note", "gone", 44, serde_json::Value::Null),
+            v05::AuthorityChange::Remove {
+                key: upgrade_key("Note", "n"),
+                cursor: 45,
+            },
+        ],
+    );
+    assert!(upgrade_read(&mut c, "Note", "gone").is_none());
+    assert_eq!(upgrade_read(&mut c, "Note", "n").unwrap()["text"], "note");
+    let key = upgrade_key("Note", "n");
+    let removed = c
+        .record_evidence05(&axton_client::RecordKey {
+            model: key.model,
+            identity: key.identity,
+        })
+        .unwrap()
+        .membership
+        .unwrap();
+    assert_eq!((removed.cursor, removed.live), (45, false));
+}
+#[test]
+fn a_unique_change_resets_the_model_and_bootstrap_fills_it_again() {
+    use common05::{before_upgrade, deliver, upgrade_record, upgrade_schema};
+    use serde_json::json;
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let before = before_upgrade(&p);
+    let mut c = Client::open05(
+        SqliteStore::open(&p).unwrap(),
+        upgrade_schema(false, true),
+        "User:u",
+    )
+    .unwrap();
+    let status = c.store_status05().unwrap();
+    assert_eq!(status.context, before.context);
+    assert_eq!(
+        (status.start_cursor, status.bootstrap_cursor, status.cursor),
+        (Some(40), None, Some(40))
+    );
+    assert!(upgrade_read(&mut c, "Marked", "m").is_none());
+    assert_eq!(upgrade_read(&mut c, "Note", "n").unwrap()["text"], "note");
+    deliver(
+        &mut c,
+        true,
+        0,
+        40,
+        vec![upgrade_record("Marked", "m", 10, json!({"text":"marked"}))],
+    );
+    assert_eq!(
+        upgrade_read(&mut c, "Marked", "m").unwrap()["text"],
+        "marked"
+    );
+}
+#[test]
+fn a_handshake_reporting_a_new_generation_upgrades_in_its_commit_and_a_push_sent_before_it_acknowledges()
+ {
+    use common05::{before_upgrade, upgrade_key, upgrade_schema};
+    use serde_json::json;
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let before = before_upgrade(&p);
+    let mut c = Client::open05(
+        SqliteStore::open(&p).unwrap(),
+        upgrade_schema(false, false),
+        "User:u",
+    )
+    .unwrap();
+    let call = c
+        .transaction(|tx| {
+            tx.submit_mutation05(
+                "Edit",
+                1,
+                json!({"note":{"id":"n","text":"edited"}}),
+                vec![],
+            )
+        })
+        .unwrap();
+    let sent = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(sent.context, before.context);
+    c.initialize_stream05(50, "2").unwrap();
+    let status = c.store_status05().unwrap();
+    assert_eq!(
+        status.context.materialization,
+        v05::materialization_id(&upgrade_schema(false, false), "2").unwrap()
+    );
+    assert_eq!(
+        (status.start_cursor, status.bootstrap_cursor, status.cursor),
+        (Some(40), None, Some(40))
+    );
+    assert_eq!(
+        upgrade_read(&mut c, "Marked", "m").unwrap()["text"],
+        "marked"
+    );
+    assert_eq!(upgrade_read(&mut c, "Note", "n").unwrap()["text"], "edited");
+    // The receipt of the push sent before the upgrade answers in its context.
+    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+        context: sent.context.clone(),
+        batch_id: sent.batch_id,
+        digest: sent.digest.clone(),
+        results: vec![v05::MutationResult {
+            mutation_id: call.ordinal,
+            outcome: v05::MutationOutcome::Accepted {
+                sync_cursor: 45,
+                materialization: sent.context.materialization.clone(),
+                result: serde_json::Value::Null,
+                targets: vec![v05::SettlementTarget::Private {
+                    record: v05::ReadRecord {
+                        key: upgrade_key("Note", "n"),
+                        cursor: (),
+                        state: json!({"text":"old contract"}),
+                    },
+                }],
+            },
+        }],
+    })
+    .unwrap();
+    assert_eq!(c.store_status05().unwrap().last_acknowledged_batch_id, 1);
+    let context = c.request_context05().unwrap();
+    let settled = c
+        .install_authority05(&context, &[], Some((40, 45)))
+        .unwrap();
+    assert_eq!(settled.completions.len(), 1);
+    // The snapshot was loaded in the previous contract and is not installed.
+    assert_ne!(
+        upgrade_read(&mut c, "Note", "n").unwrap()["text"],
+        "old contract"
+    );
+}
+#[test]
+fn an_upgrade_drops_staging_of_the_old_context_and_pulls_bootstrap_without_a_handshake() {
+    use axton_client::sync05::{StoreCommand, StoreReport};
+    let d = tempfile::tempdir().unwrap();
+    let mut c = client(&d.path().join("db"));
+    let (mut control, socket) = connected_control(&mut c);
+    control
+        .report(StoreReport::Snapshot(c.store_status05().unwrap()), 1)
+        .unwrap();
+    control.jobs();
+    control.events();
+    let context = c.request_context05().unwrap();
+    let offer = v05::freeze_delivery(
+        context.clone(),
+        "old".into(),
+        v05::DeliveryPurpose::Sync,
+        0,
+        3,
+        3,
+        10000,
+        vec![v05::DeliveryUnit {
+            index: 0,
+            through: Some(3),
+            changes: vec![change("a", 3)],
+        }],
+        100000,
+    )
+    .unwrap();
+    socket_offer(&mut control, &socket, &offer).unwrap();
+    // The handshake's Initialize commits the upgrade before that Apply runs.
+    c.initialize_stream05(3, "2").unwrap();
+    let upgraded = c.store_status05().unwrap();
+    assert_ne!(upgraded.context, context);
+    control
+        .report(StoreReport::Snapshot(upgraded.clone()), 1)
+        .unwrap();
+    assert!(
+        !control.jobs().into_iter().any(|job| matches!(
+            job,
+            StoreCommand::Guarded { command, .. } if matches!(*command, StoreCommand::Apply { .. })
+        )),
+        "an Apply of the old context survived the upgrade"
+    );
+    use axton_client::runtime::{Event, HttpRoute, Operation};
+    let requests: Vec<(HttpRoute, String)> = control
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::Effect {
+                operation: Operation::Http { route, body },
+                ..
+            } => Some((route, body)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !requests
+            .iter()
+            .any(|(route, _)| matches!(route, HttpRoute::Handshake)),
+        "an upgrade sends no second handshake"
+    );
+    let pulls: Vec<v05::DeltaRequest> = requests
+        .iter()
+        .filter(|(route, _)| matches!(route, HttpRoute::Pull))
+        .map(|(_, body)| serde_json::from_str(body).unwrap())
+        .collect();
+    assert_eq!(pulls.len(), 1, "{pulls:?}");
+    assert_eq!(pulls[0].context, upgraded.context);
+    assert!(pulls[0].bootstrap);
+    assert!(
+        c.read(&axton_client::RecordKey {
+            model: "Entry".into(),
+            identity: serde_json::json!({"id":"a"}),
+        })
+        .unwrap()
+        .is_none()
+    );
 }

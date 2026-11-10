@@ -660,10 +660,13 @@ impl Validate for ReadRequest {
     }
 }
 impl ReadResponse {
+    /// Correlate the response with its request. The request must belong to
+    /// the active Store and Stream; its materialization may be an earlier one,
+    /// and the caller then returns the result without installing records.
     pub fn admit_correlation(&self, request: &ReadRequest, active: &RequestContext) -> Result<()> {
         self.validate()?;
         request.validate()?;
-        request.context.admit(active)?;
+        request.context.admit_store(active)?;
         if self.context != request.context || self.request_id != request.request_id {
             return Err(invalid("read correlation mismatch"));
         }

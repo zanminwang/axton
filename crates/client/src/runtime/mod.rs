@@ -251,8 +251,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 return Ok(StoreReport::Snapshot(self.client.store_status05()?));
             }
             StoreCommand::Initialize(handshake) => {
-                // A rollover with nothing frozen clears in the same commit
-                // that starts the fresh Store at this handshake's head.
+                // A changed projection generation upgrades the Store in the
+                // commit that adopts this handshake.
                 self.client
                     .initialize_stream05(handshake.head, &handshake.projection_generation)?;
                 self.release_initial_reads05(true);
@@ -263,17 +263,12 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 // remains accepted and is retried independently of the wire.
                 let report = self.client.settle_ready05()?;
                 self.settled(&report);
-                if self.client.rollover05()? {
-                    // Drained: the Store is now a fresh device to Bootstrap.
-                    StoreReport::Snapshot(self.client.store_status05()?)
-                } else {
-                    StoreReport::Needs {
-                        status: if report.completions.is_empty() {
-                            None
-                        } else {
-                            Some(self.client.store_status05()?)
-                        },
-                    }
+                StoreReport::Needs {
+                    status: if report.completions.is_empty() {
+                        None
+                    } else {
+                        Some(self.client.store_status05()?)
+                    },
                 }
             }
             StoreCommand::Cleanup(now) => {
@@ -307,9 +302,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                     .unwrap_or_default();
                 let next = queue.plans.get(&plan_id).map_or(u64::MAX, |p| p.next);
                 self.settled(&report);
-                if !self.client.rollover_pending05()? {
-                    self.release_initial_reads05(true);
-                }
                 StoreReport::Committed {
                     status: self.client.store_status05()?,
                     report,

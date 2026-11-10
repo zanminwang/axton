@@ -122,19 +122,28 @@ impl<S: ClientStore> Engine<'_, S> {
         v05::validate_acknowledgement(&request, ack, |id, model| {
             !unshared.contains(&(id, model.to_owned()))
         })?;
-        // Validate every result and snapshot before changing any durable outcome.
+        // Validate every result and snapshot before changing any durable
+        // outcome. The result follows the Mutation's own contract. A snapshot
+        // is used only on a shared Model and in the Store's materialization,
+        // so it is validated against the current schema.
+        let active = self.context05()?.materialization;
         for result in &ack.results {
             if let v05::MutationOutcome::Accepted {
                 result: value,
+                materialization,
                 targets,
                 ..
             } = &result.outcome
             {
                 let row=self.rows("SELECT name,descriptor_version,descriptor FROM axton_mutation_queue WHERE id=?",&[json!(result.mutation_id)])?.rows.remove(0);
                 let descriptor = row[2].as_str().unwrap();
-                let schema = self.retained_schema05(descriptor)?;
-                let action = schema.action(row[0].as_str().unwrap(), as_u64(&row[1])?)?;
-                axton_core::validate_action_result(&schema, action, value)?;
+                let retained = self.retained_schema05(descriptor)?;
+                let action = retained.action(row[0].as_str().unwrap(), as_u64(&row[1])?)?;
+                axton_core::validate_action_result(&retained, action, value)?;
+                if *materialization != active {
+                    continue;
+                }
+                let schema = self.schema;
                 for target in targets {
                     let k = target.key();
                     if !self.shared05(descriptor, &k.model)? {
@@ -249,10 +258,7 @@ impl<S: ClientStore> Engine<'_, S> {
     pub fn reconcile_ready05(&mut self, held: &mut Held) -> Result<Vec<CallCompletion>> {
         let context = self.context05()?;
         let row = self
-            .rows(
-                "SELECT cursor,start_cursor,enabled_descriptor FROM axton_store",
-                &[],
-            )?
+            .rows("SELECT cursor,start_cursor FROM axton_store", &[])?
             .rows
             .remove(0);
         let (cursor, start_cursor) = (row[0].as_u64(), row[1].as_u64());
@@ -266,18 +272,12 @@ impl<S: ClientStore> Engine<'_, S> {
         if pending.is_empty() {
             return Ok(completions);
         }
-        // Bootstrap flags come from the active materialization: a rollover
-        // drain settles under the previous contract's selection.
         let bootstrap_models = self
-            .retained_schema05(
-                row[2]
-                    .as_str()
-                    .ok_or_else(|| invalid("descriptor missing"))?,
-            )?
+            .schema
             .models
-            .into_iter()
+            .iter()
             .filter(|m| m.bootstrap)
-            .map(|m| m.name)
+            .map(|m| m.name.clone())
             .collect::<std::collections::BTreeSet<_>>();
         for row in pending {
             let id = as_u64(&row[0])?;
@@ -373,8 +373,8 @@ impl<S: ClientStore> Engine<'_, S> {
                     } else {
                         // The receipt is authority, not a new create. Project
                         // omitted current nullable fields to null without
-                        // evaluating creation defaults. Retained descriptor
-                        // validation already admitted this snapshot at ack.
+                        // evaluating creation defaults. Acknowledgement
+                        // already validated it against the current schema.
                         Some(self.schema.normalize_state(&key.model, &record.state)?)
                     },
                 };

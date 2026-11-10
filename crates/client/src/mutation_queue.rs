@@ -360,11 +360,6 @@ impl<S: ClientStore> Engine<'_, S> {
         )?.is_some() {
             return Ok(None);
         }
-        // Rollover hold: frozen work drains under the previous context;
-        // new work waits for the fresh Store.
-        if self.rollover_pending05()? {
-            return Ok(None);
-        }
         // A terminal refusal finishes sequence ordering. Lifecycle edges
         // still refuse their dependents; accepted predecessors wait for settlement.
         let rows=self.rows("SELECT id FROM axton_mutation_queue q WHERE batch_id IS NULL AND reconciled=0 AND rejection_code IS NULL AND NOT EXISTS(SELECT 1 FROM axton_mutation_prerequisite p WHERE p.ordinal=q.id) AND NOT EXISTS(SELECT 1 FROM axton_mutation_dependency d JOIN axton_mutation_queue p ON p.id=d.depends_on WHERE d.ordinal=q.id AND (p.reconciled=0 OR (d.kind='lifecycle' AND p.rejection_code IS NOT NULL))) ORDER BY id",&[])?.rows;

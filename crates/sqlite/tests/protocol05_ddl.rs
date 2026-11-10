@@ -1,3 +1,4 @@
+pub mod common05;
 use axton_client::ddl::reconcile;
 use axton_client::{Client, ClientStore, Operation, OperationKind, RecordKey, v05};
 use axton_core::Schema;
@@ -406,4 +407,60 @@ fn a_model_version_that_goes_backwards_still_refuses_to_open() {
         error.to_string().contains("Model version regressed"),
         "{error}"
     );
+}
+
+#[test]
+fn reopen_with_an_added_nullable_field_keeps_rows_and_asks_for_bootstrap_from_c() {
+    use common05::{before_upgrade, upgrade_key, upgrade_schema};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let before = before_upgrade(&path);
+    let mut c = Client::open05(
+        SqliteStore::open(&path).unwrap(),
+        upgrade_schema(true, false),
+        "User:u",
+    )
+    .unwrap();
+    let after = c.store_status05().unwrap();
+    assert_eq!(
+        (after.start_cursor, after.bootstrap_cursor, after.cursor),
+        (Some(40), None, Some(40))
+    );
+    assert_ne!(
+        after.context.materialization,
+        before.context.materialization
+    );
+    assert_eq!(
+        after.context.materialization,
+        v05::materialization_id(&upgrade_schema(true, false), "1").unwrap()
+    );
+    assert_eq!(after.context.store_id, before.context.store_id);
+    // No connection: stored reads answer from the kept rows.
+    for (model, id, text) in [
+        ("Marked", "m", "marked"),
+        ("Note", "n", "note"),
+        ("Note", "gone", "gone"),
+    ] {
+        let key = upgrade_key(model, id);
+        let row = c
+            .read(&RecordKey {
+                model: key.model,
+                identity: key.identity,
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!((&row["text"], &row["label"]), (&json!(text), &Value::Null));
+    }
+    assert_eq!(c.query("Note", &json!({})).unwrap().len(), 2);
+    c.transaction(|tx| {
+        tx.submit_mutation05(
+            "Edit",
+            1,
+            json!({"note":{"id":"n","text":"edited"}}),
+            vec![],
+        )
+    })
+    .unwrap();
+    let batch = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(batch.context, after.context);
 }

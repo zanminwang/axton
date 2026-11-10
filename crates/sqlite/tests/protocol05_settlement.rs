@@ -1296,13 +1296,19 @@ fn retained_private_snapshot_never_evaluates_new_creation_defaults() {
     ]);
     let desired = Schema::from_value(desired).unwrap();
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), desired.clone(), "User:u").unwrap();
-    assert!(c.rollover_pending05().unwrap());
-    assert_eq!(c.freeze_batch05().unwrap().unwrap(), batch);
+    // The upgrade sends the same Batch in the new contract, and the receipt
+    // answers in it.
+    let resent = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(
+        (&resent.digest, &resent.mutations),
+        (&batch.digest, &batch.mutations)
+    );
+    assert_ne!(resent.context, batch.context);
     let receipt = ack(
-        &batch,
+        &resent,
         v05::MutationOutcome::Accepted {
             sync_cursor: 0,
-            materialization: batch.context.materialization.clone(),
+            materialization: resent.context.materialization.clone(),
             result: Value::Null,
             targets: vec![v05::SettlementTarget::Private {
                 record: v05::ReadRecord {
@@ -1676,5 +1682,135 @@ fn receipt_snapshot_installs_only_when_labelled_with_the_store_materialization()
                 assert_eq!(row, None, "{private}");
             }
         }
+    }
+}
+
+/// `Entry` with a nullable `label`, which changes the materialization.
+fn labelled() -> Schema {
+    let mut s = serde_json::to_value(schema()).unwrap();
+    s["models"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"label","nullable":true,"type":{"kind":"scalar","name":"string"}}));
+    Schema::from_value(s).unwrap()
+}
+#[test]
+fn a_batch_partly_executed_before_an_upgrade_settles_each_outcome_by_its_own_label() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = open(&p);
+    c.initialize_stream05(0, "1").unwrap();
+    let ids = ["first", "second"];
+    for id in ids {
+        c.transaction(|tx| {
+            tx.submit_mutation05(
+                "Write",
+                1,
+                json!({"entry":{"id":id,"text":"optimistic","note":null}}),
+                vec![],
+            )
+        })
+        .unwrap();
+    }
+    let before = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(before.mutations.len(), 2);
+    drop(c);
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), labelled(), "User:u").unwrap();
+    let resent = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(resent.digest, before.digest);
+    // The first member ran before the upgrade and replays its saved label.
+    let labels = [
+        before.context.materialization.clone(),
+        resent.context.materialization.clone(),
+    ];
+    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+        context: resent.context.clone(),
+        batch_id: resent.batch_id,
+        digest: resent.digest.clone(),
+        results: resent
+            .mutations
+            .iter()
+            .zip(ids.iter().zip(labels))
+            .map(|(m, (id, materialization))| v05::MutationResult {
+                mutation_id: m.id,
+                outcome: v05::MutationOutcome::Accepted {
+                    sync_cursor: 0,
+                    materialization,
+                    result: Value::Null,
+                    targets: vec![v05::SettlementTarget::Private {
+                        record: v05::ReadRecord {
+                            key: stream_key(id),
+                            cursor: (),
+                            state: state("receipt"),
+                        },
+                    }],
+                },
+            })
+            .collect(),
+    })
+    .unwrap();
+    assert_eq!(c.settle_ready05().unwrap().completions.len(), 2);
+    let read = |c: &mut Client<SqliteStore>, id: &str| {
+        c.read(&RecordKey {
+            model: "Entry".into(),
+            identity: json!({ "id": id }),
+        })
+        .unwrap()
+    };
+    assert_eq!(read(&mut c, "first"), None);
+    assert_eq!(read(&mut c, "second").unwrap()["text"], "receipt");
+}
+#[test]
+fn a_target_protected_only_under_the_previous_materialization_finalizes_from_the_receipt() {
+    for upgrade in [false, true] {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("db");
+        let edit = |schema: Schema| {
+            let mut s = serde_json::to_value(schema).unwrap();
+            s["actions"] = json!([{"name":"Edit","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"update","cardinality":"single","fields":["text"]}],"outputs":[]}]);
+            Schema::from_value(s).unwrap()
+        };
+        let mut c =
+            Client::open05(SqliteStore::open(&p).unwrap(), edit(schema()), "User:u").unwrap();
+        c.initialize_stream05(80, "1").unwrap();
+        install(&mut c, "e", 57, Some("stream"));
+        let call = c
+            .transaction(|tx| {
+                tx.submit_mutation05(
+                    "Edit",
+                    1,
+                    json!({"entry":{"id":"e","text":"edited"}}),
+                    vec![],
+                )
+            })
+            .unwrap();
+        c.freeze_batch05().unwrap().unwrap();
+        drop(c);
+        let after = edit(if upgrade { labelled() } else { schema() });
+        let mut c = Client::open05(SqliteStore::open(&p).unwrap(), after, "User:u").unwrap();
+        let resent = c.freeze_batch05().unwrap().unwrap();
+        c.acknowledge_batch05(&ack(
+            &resent,
+            v05::MutationOutcome::Accepted {
+                sync_cursor: 80,
+                materialization: resent.context.materialization.clone(),
+                result: Value::Null,
+                targets: vec![v05::SettlementTarget::Stream {
+                    key: stream_key("e"),
+                    cursor: 57,
+                    fallback: v05::ReadRecord {
+                        key: stream_key("e"),
+                        cursor: (),
+                        state: state("fallback"),
+                    },
+                }],
+            },
+        ))
+        .unwrap();
+        assert_eq!(c.settle_ready05().unwrap().completions.len(), 1);
+        assert!(c.call_completion05(&call.call_id).unwrap().is_some());
+        // Current protection holds only in the contract that installed it.
+        let text = if upgrade { "fallback" } else { "stream" };
+        assert_eq!(c.read(&key()).unwrap().unwrap()["text"], text);
     }
 }

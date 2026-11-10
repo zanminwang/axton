@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 pub(crate) const DDL: &str = r#"
-CREATE TABLE axton_store(singleton INTEGER PRIMARY KEY CHECK(singleton=1), format INTEGER NOT NULL CHECK(format=5), id TEXT NOT NULL, stream TEXT NOT NULL, materialization TEXT NOT NULL, desired_materialization TEXT NOT NULL, schema_descriptor TEXT NOT NULL, enabled_descriptor TEXT NOT NULL, next_mutation_id INTEGER NOT NULL DEFAULT 1, next_local_sequence INTEGER NOT NULL DEFAULT 1, last_acknowledged_batch_id INTEGER NOT NULL DEFAULT 0, start_cursor INTEGER, bootstrap_cursor INTEGER, cursor INTEGER, generation INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE axton_store(singleton INTEGER PRIMARY KEY CHECK(singleton=1), format INTEGER NOT NULL CHECK(format=5), id TEXT NOT NULL, stream TEXT NOT NULL, materialization TEXT NOT NULL, schema_descriptor TEXT NOT NULL, next_mutation_id INTEGER NOT NULL DEFAULT 1, next_local_sequence INTEGER NOT NULL DEFAULT 1, last_acknowledged_batch_id INTEGER NOT NULL DEFAULT 0, start_cursor INTEGER, bootstrap_cursor INTEGER, cursor INTEGER, generation INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE axton_descriptor(context TEXT PRIMARY KEY, materialization TEXT NOT NULL, descriptor TEXT NOT NULL, projection_generation TEXT NOT NULL);
 CREATE TABLE axton_mutation_queue(id INTEGER PRIMARY KEY, name TEXT NOT NULL, descriptor_version INTEGER NOT NULL, descriptor TEXT NOT NULL REFERENCES axton_descriptor(context), batch_id INTEGER, batch_digest TEXT, sync_cursor INTEGER, outcome_materialization TEXT, result TEXT, targets TEXT, rejection_code TEXT, rejection_message TEXT, rejection_acknowledged INTEGER NOT NULL DEFAULT 0, reconciled INTEGER NOT NULL DEFAULT 0, diverged INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE axton_mutation_queue_operation(mutation_id INTEGER NOT NULL REFERENCES axton_mutation_queue(id) ON DELETE CASCADE, step INTEGER NOT NULL, local_sequence INTEGER NOT NULL UNIQUE, input_path TEXT, kind TEXT NOT NULL, model TEXT, identity TEXT, operation TEXT NOT NULL, value TEXT, owner_history TEXT NOT NULL, PRIMARY KEY(mutation_id,step));
@@ -38,6 +38,10 @@ const QUEUE_ENVELOPE: &str = "CREATE TRIGGER axton_queue_envelope BEFORE UPDATE 
 /// in `batch_materialization`. That was also the contract each saved outcome's
 /// snapshots were loaded in, so it becomes the outcome's label.
 const DROP_BATCH_MATERIALIZATION: &str = "DROP TRIGGER axton_queue_envelope; ALTER TABLE axton_mutation_queue ADD COLUMN outcome_materialization TEXT; UPDATE axton_mutation_queue SET outcome_materialization=batch_materialization WHERE sync_cursor IS NOT NULL; ALTER TABLE axton_mutation_queue DROP COLUMN batch_materialization;";
+/// Files written by 0.6.0 also keep a desired materialization and an enabled
+/// descriptor in `axton_store`. Open compares the schema with
+/// `materialization` alone, so they carry nothing.
+const DROP_DESIRED_MATERIALIZATION: &str = "ALTER TABLE axton_store DROP COLUMN desired_materialization; ALTER TABLE axton_store DROP COLUMN enabled_descriptor;";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoreStatus05 {
@@ -106,7 +110,6 @@ pub fn admit05<S: ClientStore>(store: &mut S, stream: &str) -> Result<bool> {
         "SELECT mutation_id,step,local_sequence,input_path,model,identity,operation,value,owner_history FROM axton_mutation_queue_operation LIMIT 0",
         "SELECT sequence,ordinal,position,disposition,model,identity,op,\"values\" FROM axton_local_write LIMIT 0",
         "SELECT model,identity,evidence,base FROM axton_authority LIMIT 0",
-        "SELECT desired_materialization,enabled_descriptor FROM axton_store LIMIT 0",
     ] {
         store.query(sql, &[])?;
     }
@@ -135,9 +138,7 @@ impl Descriptor05 {
     }
 }
 const INSERT_DESCRIPTOR: &str = "INSERT OR IGNORE INTO axton_descriptor(context,materialization,descriptor,projection_generation) VALUES(?,?,?,?)";
-/// The desired materialization follows the schema descriptor; the enabled
-/// descriptor follows only while the materialization is unchanged.
-const DESIRE_DESCRIPTOR: &str = "UPDATE axton_store SET desired_materialization=?,schema_descriptor=?,enabled_descriptor=CASE WHEN materialization=? THEN ? ELSE enabled_descriptor END";
+const SET_DESCRIPTOR: &str = "UPDATE axton_store SET schema_descriptor=?";
 const SCHEMA_GENERATION: &str = "SELECT projection_generation FROM axton_descriptor WHERE context=(SELECT schema_descriptor FROM axton_store)";
 impl<S: ClientStore> Client<S> {
     /// Open the Store. The projection generation is the one the backend last
@@ -182,7 +183,17 @@ impl<S: ClientStore> Client<S> {
             if !existing {
                 store.execute_batch(DDL)?;
                 store.execute_batch(QUEUE_ENVELOPE)?;
-                store.execute("INSERT INTO axton_store(singleton,format,id,stream,materialization,desired_materialization,schema_descriptor,enabled_descriptor) VALUES(1,5,?,?,?,?,?,?)",&[json!(uuid::Uuid::new_v4().to_string()),json!(stream),json!(descriptor.materialization),json!(descriptor.materialization),json!(descriptor.context),json!(descriptor.context)])?;
+                store.execute("INSERT INTO axton_store(singleton,format,id,stream,materialization,schema_descriptor) VALUES(1,5,?,?,?,?)",&[json!(uuid::Uuid::new_v4().to_string()),json!(stream),json!(descriptor.materialization),json!(descriptor.context)])?;
+            }
+            if !store
+                .query(
+                    "SELECT 1 FROM pragma_table_info('axton_store') WHERE name='desired_materialization'",
+                    &[],
+                )?
+                .rows
+                .is_empty()
+            {
+                store.execute_batch(DROP_DESIRED_MATERIALIZATION)?;
             }
             if !store
                 .query(
@@ -204,17 +215,6 @@ impl<S: ClientStore> Client<S> {
                     )?;
                 }
             }
-            // A reset Model is filled again by Bootstrap. A changed
-            // materialization asks for it through the rollover.
-            if !reset.is_empty() {
-                store.execute(
-                    "UPDATE axton_store SET bootstrap_cursor=NULL,start_cursor=cursor WHERE materialization=?",
-                    &[json!(descriptor.materialization)],
-                )?;
-            }
-            // Network plans do not survive a reopen.
-            Engine::new(&mut store, &schema, &mut BTreeSet::new(), false)
-                .clear_delivery_staging05()?;
             store.execute(
                 INSERT_DESCRIPTOR,
                 &[
@@ -224,15 +224,22 @@ impl<S: ClientStore> Client<S> {
                     json!(projection),
                 ],
             )?;
-            store.execute(
-                DESIRE_DESCRIPTOR,
-                &[
-                    json!(descriptor.materialization),
-                    json!(descriptor.context),
-                    json!(descriptor.materialization),
-                    json!(descriptor.context),
-                ],
-            )?;
+            store.execute(SET_DESCRIPTOR, &[json!(descriptor.context)])?;
+            let unchanged = store
+                .query(
+                    "SELECT 1 FROM axton_store WHERE materialization<>?",
+                    &[json!(descriptor.materialization)],
+                )?
+                .rows
+                .is_empty();
+            let mut changes = BTreeSet::new();
+            let mut engine = Engine::new(&mut store, &schema, &mut changes, false);
+            if !unchanged || !reset.is_empty() {
+                engine.upgrade05(&descriptor.materialization)?;
+            } else {
+                // Network plans do not survive a reopen.
+                engine.clear_delivery_staging05()?;
+            }
             let rows = store
                 .query("SELECT id,generation,materialization FROM axton_store", &[])?
                 .rows;
@@ -242,7 +249,7 @@ impl<S: ClientStore> Client<S> {
                 rows[0][2].as_str().unwrap().to_owned(),
             ))
         })();
-        let (client_id, generation, enabled_materialization) = match opened {
+        let (client_id, generation, materialization) = match opened {
             Ok(v) => v,
             Err(e) => {
                 store.rollback()?;
@@ -257,7 +264,7 @@ impl<S: ClientStore> Client<S> {
             protocol: v05::PROTOCOL,
             store_id: client_id.clone(),
             stream: stream.into(),
-            materialization: enabled_materialization,
+            materialization,
         });
         Ok(Self {
             store,
@@ -322,26 +329,6 @@ const RECORD_STATE: [&str; 3] = [
     "axton_authority",
 ];
 impl<S: ClientStore> Engine<'_, S> {
-    fn delete_record_state05(
-        &mut self,
-        key: &axton_core::RecordKey,
-        tables: &[&str],
-    ) -> Result<()> {
-        for table in tables {
-            self.exec(
-                table,
-                &format!("DELETE FROM {table} WHERE model=? AND identity=?"),
-                &[json!(key.model), json!(key.encoded_identity()?)],
-            )?;
-        }
-        Ok(())
-    }
-    /// Delete one record: its Model row, before-image and engine state.
-    pub(crate) fn delete_record05(&mut self, key: &axton_core::RecordKey) -> Result<()> {
-        self.main_set(key, None)?;
-        self.before_set(key, None)?;
-        self.delete_record_state05(key, &RECORD_STATE)
-    }
     /// Delete every record: all Model rows, before-images and engine state.
     pub(crate) fn delete_records05(&mut self) -> Result<()> {
         for model in self.schema.models.clone() {
@@ -355,8 +342,8 @@ impl<S: ClientStore> Engine<'_, S> {
         Ok(())
     }
     /// Adopt the projection generation a handshake reported. A change writes
-    /// the descriptor for the app schema under it and makes that the desired
-    /// materialization; the rollover then runs as for a schema change.
+    /// the descriptor for the app schema under it and upgrades the Store to
+    /// its materialization in the handshake's transaction.
     pub(crate) fn adopt_generation05(&mut self, projection_generation: &str) -> Result<()> {
         if self
             .scalar(SCHEMA_GENERATION, &[])?
@@ -377,80 +364,18 @@ impl<S: ClientStore> Engine<'_, S> {
                 json!(projection_generation),
             ],
         )?;
+        self.exec("axton_store", SET_DESCRIPTOR, &[json!(d.context)])?;
+        self.upgrade05(&d.materialization)
+    }
+    /// The upgrade: adopt `materialization` and ask for Bootstrap again from
+    /// the Sync position (`B` absent, `S = C`), dropping network plans. Rows,
+    /// evidence and the queue stay; a Store without `C` keeps no positions.
+    fn upgrade05(&mut self, materialization: &str) -> Result<()> {
         self.exec(
             "axton_store",
-            DESIRE_DESCRIPTOR,
-            &[
-                json!(d.materialization),
-                json!(d.context),
-                json!(d.materialization),
-                json!(d.context),
-            ],
+            "UPDATE axton_store SET materialization=?,bootstrap_cursor=NULL,start_cursor=cursor",
+            &[json!(materialization)],
         )?;
-        Ok(())
-    }
-    /// The Store's materialization differs from the one the schema and the
-    /// backend's projection generation now require.
-    pub fn rollover_pending05(&mut self) -> Result<bool> {
-        Ok(self
-            .scalar(
-                "SELECT 1 FROM axton_store WHERE materialization<>desired_materialization",
-                &[],
-            )?
-            .is_some())
-    }
-    /// Rollover: once every frozen Batch has settled under the previous
-    /// materialization, the Store becomes a fresh device in the desired one.
-    /// Server-derived rows (Stream evidence) are cleared; direct writes, cache
-    /// installs, receipt-finalized rows, the queue and its counters stay.
-    /// Keys held dirty by unfrozen Mutations keep their rows and lose only
-    /// their evidence, so the next delivery re-bases them as Newer.
-    pub(crate) fn rollover05(&mut self) -> Result<bool> {
-        if !self.rollover_pending05()?
-            || self
-                .scalar(
-                    "SELECT 1 FROM axton_mutation_queue WHERE batch_id IS NOT NULL AND reconciled=0 LIMIT 1",
-                    &[],
-                )?
-                .is_some()
-        {
-            return Ok(false);
-        }
-        let rows = self
-            .rows("SELECT model,identity,evidence FROM axton_authority", &[])?
-            .rows;
-        for row in rows {
-            let evidence: axton_core::authority::RecordEvidence =
-                crate::mutation_queue::decode(&row[2])?;
-            if evidence.history.is_empty() && evidence.membership.is_none() {
-                continue;
-            }
-            let key = axton_core::RecordKey {
-                model: row[0]
-                    .as_str()
-                    .ok_or_else(|| invalid("authority model"))?
-                    .into(),
-                identity: crate::mutation_queue::decode(&row[1])?,
-            };
-            if self.dirty(&key)? {
-                self.delete_record_state05(&key, &["axton_authority"])?;
-            } else {
-                self.delete_record05(&key)?;
-            }
-        }
-        self.clear_delivery_staging05()?;
-        self.exec("axton_store","UPDATE axton_store SET materialization=desired_materialization,enabled_descriptor=schema_descriptor,start_cursor=NULL,bootstrap_cursor=NULL,cursor=NULL",&[])?;
-        Ok(true)
-    }
-}
-impl<S: ClientStore> Client<S> {
-    pub fn rollover_pending05(&mut self) -> Result<bool> {
-        self.request_context05()?;
-        self.view(|e| e.rollover_pending05())
-    }
-    /// Run the rollover clear when it is due; true when the Store was cleared.
-    pub fn rollover05(&mut self) -> Result<bool> {
-        self.request_context05()?;
-        self.write(|e| e.rollover05())
+        self.clear_delivery_staging05()
     }
 }

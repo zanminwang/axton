@@ -214,7 +214,8 @@ fn watch_fires_only_for_declared_tables() {
     assert!(other.try_recv().is_err());
 }
 #[test]
-fn file_with_batch_materialization_opens_and_keeps_digest_and_outcome_labels() {
+fn a_file_written_by_0_6_0_opens_without_its_three_dead_columns_and_keeps_digest_and_outcome_labels()
+ {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");
     let mut c = open(&path);
@@ -251,11 +252,13 @@ fn file_with_batch_materialization_opens_and_keeps_digest_and_outcome_labels() {
     })
     .unwrap();
     drop(c);
-    // The queue table and envelope trigger as files written before the Batch
-    // stopped carrying the schema version have them.
+    // The Store and queue tables and the envelope trigger as 0.6.0 wrote them.
     let raw = rusqlite::Connection::open(&path).unwrap();
     raw.execute_batch(
-        "DROP TRIGGER axton_queue_envelope;
+        "ALTER TABLE axton_store ADD COLUMN desired_materialization TEXT NOT NULL DEFAULT '';
+         ALTER TABLE axton_store ADD COLUMN enabled_descriptor TEXT NOT NULL DEFAULT '';
+         UPDATE axton_store SET desired_materialization=materialization,enabled_descriptor=schema_descriptor;
+         DROP TRIGGER axton_queue_envelope;
          ALTER TABLE axton_mutation_queue ADD COLUMN batch_materialization TEXT;
          UPDATE axton_mutation_queue SET batch_materialization=outcome_materialization;
          ALTER TABLE axton_mutation_queue DROP COLUMN outcome_materialization;
@@ -274,6 +277,18 @@ fn file_with_batch_materialization_opens_and_keeps_digest_and_outcome_labels() {
         .map(|r| r["name"].as_str().unwrap().to_owned())
         .collect();
     assert!(!columns.iter().any(|n| n == "batch_materialization"));
+    let store: Vec<String> = c
+        .read_sql("SELECT name FROM pragma_table_info('axton_store')", &[])
+        .unwrap()
+        .into_iter()
+        .map(|r| r["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(
+        !store
+            .iter()
+            .any(|n| n == "desired_materialization" || n == "enabled_descriptor"),
+        "{store:?}"
+    );
     drop(c);
     let raw = rusqlite::Connection::open(&path).unwrap();
     let error = raw

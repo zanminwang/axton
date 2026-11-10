@@ -11,7 +11,7 @@ Use a writable application directory and one active client per physical file. A 
 
 ## Change the schema
 
-Compatible changes, including a new Model or nullable field, adapt local tables without dropping pending operations. The Store retains full prior descriptors for durable frozen Mutation contracts. A changed read contract rolls over: frozen Mutations drain in their original context, rows that came from the Stream are cleared, and Bootstrap runs again. Rows the device wrote or cached and all queued Mutations survive; unmarked Models return through later Stream changes or Queries.
+Compatible changes, including a new Model or nullable field, adapt local tables without dropping pending operations. The Store retains full prior descriptors for durable frozen Mutation contracts. A changed read contract rolls over: frozen Mutations drain in their original context, rows that came from the Stream are cleared, and Bootstrap runs again. Queued Mutations are never deleted and still upload. Rows that never came from the Stream survive, as do rows a queued Mutation still holds; a local change to a Stream-delivered row is cleared otherwise. Unmarked Models return through later Stream changes or Queries.
 
 Unsupported changes fail without silently discarding pending work. Explicit `resetStore` changes incarnation, rebuilds the Store and ends old handles. Pending work prevents reset unless `discardPending` is explicitly chosen. Update backend business tables through your own forward migrations. See [opening and schema changes](runtime.md#opening-and-schema-changes).
 

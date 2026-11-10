@@ -333,7 +333,7 @@ fn a_default_only_change_opens_in_place_and_rewrites_nothing() {
         "User:u",
     )
     .unwrap();
-    assert!(!c.rollover_pending05().unwrap());
+    assert_eq!(c.request_context05().unwrap(), batch.context);
     assert_eq!(rows(&mut c), before);
     assert_eq!(c.freeze_batch05().unwrap().unwrap(), batch);
     assert!(
@@ -360,22 +360,19 @@ fn a_creation_default_never_backfills_a_new_required_column() {
     let mut c = open(&path);
     c.transaction(|tx| tx.direct(local_create(json!({"title":"old"}))))
         .unwrap();
-    let before = rows(&mut c);
     drop(c);
     let mut changed = serde_json::to_value(schema()).unwrap();
     changed["models"][0]["fields"].as_array_mut().unwrap().push(json!({"name":"rank","nullable":false,"type":{"kind":"scalar","name":"int"},"createDefault":{"kind":"literal","value":3}}));
+    // The column has no storage default, so the Model is reset, not filled.
+    let mut c = Client::open05(
+        SqliteStore::open(&path).unwrap(),
+        Schema::from_value(changed).unwrap(),
+        "User:u",
+    )
+    .unwrap();
+    assert!(rows(&mut c).is_empty());
     assert!(
-        Client::open05(
-            SqliteStore::open(&path).unwrap(),
-            Schema::from_value(changed).unwrap(),
-            "User:u"
-        )
-        .is_err()
-    );
-    let mut c = open(&path);
-    assert_eq!(rows(&mut c), before);
-    assert!(
-        !c.read_sql("PRAGMA table_info(Todo)", &[])
+        c.read_sql("PRAGMA table_info(Todo)", &[])
             .unwrap()
             .iter()
             .any(|r| r["name"] == "rank")

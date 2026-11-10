@@ -194,12 +194,13 @@ for (const [name, base] of adapters)
       })),
     };
     r.digest = createHash("sha256")
-      .update("axton:batch-intent:1\0")
+      .update("axton:batch-intent:2\0")
       .update(
         canonical(
           Object.fromEntries(
             Object.entries(r).filter(
-              ([k]) => k !== "digest" && k !== "protocol",
+              ([k]) =>
+                k !== "digest" && k !== "protocol" && k !== "materialization",
             ),
           ),
         ),

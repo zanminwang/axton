@@ -113,6 +113,8 @@ pub struct Client<S: ClientStore> {
     // Union of successful commits not yet consumed by Model observers.
     pub(crate) model_changes: ModelChanges,
     pub(crate) last_bootstrap: BTreeSet<String>,
+    // The shared check's answers, kept across Engines for the Client's lifetime.
+    pub(crate) shared: crate::engine::SharedModels,
 }
 
 // Call completions canceled by an explicit Store05 reset.
@@ -182,6 +184,11 @@ impl<S: ClientStore> Client<S> {
     pub fn watcher_count(&self) -> usize {
         self.watchers.len()
     }
+    // Retained descriptors this Client has parsed for the shared check.
+    #[doc(hidden)]
+    pub fn shared_check_parses(&self) -> u64 {
+        self.shared.parses()
+    }
     fn notify(&mut self, mut changed: BTreeSet<String>) {
         self.last_bootstrap = strip_marks(&mut changed, BOOTSTRAP_MARK);
         self.watchers.retain(|(_, tables, sender)| {
@@ -216,7 +223,8 @@ impl<S: ClientStore> Client<S> {
         let mut model_changes = ModelChanges::default();
         let applied = body(
             &mut Engine::new(&mut self.store, &self.schema, &mut changed, false)
-                .tracking(&mut model_changes),
+                .tracking(&mut model_changes)
+                .sharing(&self.shared),
         );
         match applied.and_then(|value| self.fence().map(|()| value)) {
             Ok(value) => {
@@ -243,12 +251,10 @@ impl<S: ClientStore> Client<S> {
         body: impl FnOnce(&mut Engine<'_, S>) -> Result<T>,
     ) -> Result<T> {
         let mut changed = BTreeSet::new();
-        body(&mut Engine::new(
-            &mut self.store,
-            &self.schema,
-            &mut changed,
-            true,
-        ))
+        body(
+            &mut Engine::new(&mut self.store, &self.schema, &mut changed, true)
+                .sharing(&self.shared),
+        )
     }
     pub fn transaction<T>(
         &mut self,
@@ -286,6 +292,7 @@ impl<S: ClientStore> Client<S> {
             store,
             schema,
             session,
+            shared,
             ..
         } = self;
         let session = session
@@ -293,7 +300,8 @@ impl<S: ClientStore> Client<S> {
             .ok_or_else(|| invalid("no active transaction"))?;
         let mut tx = ClientTransaction {
             engine: Engine::new(store, schema, &mut session.changed, false)
-                .tracking(&mut session.model_changes),
+                .tracking(&mut session.model_changes)
+                .sharing(shared),
             depth: 0,
             submitted: &mut session.submitted,
         };

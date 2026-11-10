@@ -1637,13 +1637,14 @@ fn accepted_receipt_commit_publishes_retained_pending_observer() {
     h.events();
     h.runtime
         .store_worker05(StoreCommand::Acknowledge(v05::BatchAcknowledgement {
-            context: batch.context,
+            context: batch.context.clone(),
             batch_id: batch.batch_id,
             digest: batch.digest,
             results: vec![v05::MutationResult {
                 mutation_id: batch.mutations[0].id,
                 outcome: v05::MutationOutcome::Accepted {
                     sync_cursor: 0,
+                    materialization: batch.context.materialization,
                     result: Value::Null,
                     targets: vec![],
                 },

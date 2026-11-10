@@ -127,3 +127,62 @@ fn noncascading_reference_does_not_borrow_parent_tombstone() {
             .is_empty()
     );
 }
+fn install(
+    c: &mut Client<SqliteStore>,
+    model: &str,
+    id: &str,
+    cursor: u64,
+    state: serde_json::Value,
+) {
+    let context = c.request_context05().unwrap();
+    c.install_authority05(
+        &context,
+        &[v05::AuthorityChange::Record {
+            key: v05::RecordKey {
+                model: model.into(),
+                identity: json!({ "id": id }),
+            },
+            cursor,
+            state,
+        }],
+        None,
+    )
+    .unwrap();
+}
+fn cached(c: &mut Client<SqliteStore>, model: &str, id: &str, state: serde_json::Value) -> usize {
+    c.install_cache05(
+        &[v05::ReadRecord {
+            key: v05::RecordKey {
+                model: model.into(),
+                identity: json!({ "id": id }),
+            },
+            cursor: (),
+            state,
+        }],
+        true,
+    )
+    .unwrap()
+    .applied
+}
+#[test]
+fn protection_holds_only_in_the_materialization_that_installed_it() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema("delete"), "User:u").unwrap();
+    install(&mut c, "Parent", "live", 57, json!({}));
+    install(&mut c, "Parent", "gone", 58, serde_json::Value::Null);
+    let protected = |c: &mut Client<SqliteStore>| {
+        [
+            cached(c, "Parent", "live", json!({})),
+            cached(c, "Parent", "gone", json!({})),
+            cached(c, "Child", "c", json!({"parentId":"gone"})),
+        ]
+    };
+    assert_eq!(protected(&mut c), [0, 0, 0]);
+    let db = rusqlite::Connection::open(&p).unwrap();
+    db.execute("UPDATE axton_store SET materialization='m2'", [])
+        .unwrap();
+    assert_eq!(protected(&mut c), [1, 1, 1]);
+    assert!(c.read(&key("Parent", "gone")).unwrap().is_some());
+    assert!(c.read(&key("Child", "c")).unwrap().is_some());
+}

@@ -42,6 +42,31 @@ impl<S: ClientStore> Engine<'_, S> {
                 .ok_or_else(|| invalid("descriptor missing"))?,
         )
     }
+    /// A queued Mutation's piece on `model` is used only when that Model's
+    /// shape in the Mutation's retained descriptor needs no reset under the
+    /// current schema. A Model the current schema lacks is not shared.
+    pub(crate) fn shared05(&mut self, descriptor: &str, model: &str) -> Result<bool> {
+        let key = (descriptor.to_owned(), model.to_owned());
+        if let Some(shared) = self.shared.models().get(&key) {
+            return Ok(shared);
+        }
+        let retained = self.retained_schema05(descriptor)?;
+        let shared = !matches!(
+            Schema::model_compatibility(&retained, self.schema, model),
+            axton_core::Compatibility::Incompatible(_)
+        );
+        self.shared.models().insert(key, shared);
+        Ok(shared)
+    }
+    /// The descriptor context a queued Mutation was enqueued under.
+    pub(crate) fn mutation_descriptor05(&mut self, id: u64) -> Result<String> {
+        self.scalar(
+            "SELECT descriptor FROM axton_mutation_queue WHERE id=?",
+            &[json!(id)],
+        )?
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .ok_or_else(|| invalid("queued Mutation missing"))
+    }
     pub(crate) fn wire_ops05(&mut self, id: u64) -> Result<Vec<v05::MutationOperation>> {
         self.rows("SELECT step,input_path,operation,model,identity,value FROM axton_mutation_queue_operation WHERE mutation_id=? AND input_path IS NOT NULL ORDER BY step",&[json!(id)])?.rows.into_iter().map(|r|Ok(v05::MutationOperation{step:as_u64(&r[0])?,input_path:r[1].as_str().ok_or_else(||invalid("input path missing"))?.into(),operation:serde_json::from_value(json!(r[2]))?,model:r[3].as_str().map(str::to_owned),identity:if r[4].is_null(){Value::Null}else{decode(&r[4])?},value:if r[5].is_null(){Value::Null}else{decode(&r[5])?}})).collect()
     }
@@ -200,15 +225,13 @@ impl<S: ClientStore> Engine<'_, S> {
         })
     }
     pub(crate) fn reconstruct_batch05(&mut self, batch: u64) -> Result<v05::MutationRequest> {
-        let rows=self.rows("SELECT id,name,descriptor_version,descriptor,batch_materialization,batch_digest FROM axton_mutation_queue WHERE batch_id=? ORDER BY id",&[json!(batch)])?.rows;
+        let rows=self.rows("SELECT id,name,descriptor_version,descriptor,batch_digest FROM axton_mutation_queue WHERE batch_id=? ORDER BY id",&[json!(batch)])?.rows;
         if rows.is_empty() {
             return Err(invalid("unknown Batch"));
         }
-        let mut context = self.context05()?;
-        context.materialization = rows[0][4]
-            .as_str()
-            .ok_or_else(|| invalid("Batch context missing"))?
-            .into();
+        // The materialization is transport: a Batch is sent in the Store's
+        // current contract, whichever one it was frozen under.
+        let context = self.context05()?;
         let mut mutations = vec![];
         for r in &rows {
             let id = as_u64(&r[0])?;
@@ -297,9 +320,9 @@ impl<S: ClientStore> Engine<'_, S> {
         request.validate()?;
         if rows
             .iter()
-            .any(|r| !r[5].is_null() && r[5] != request.digest)
+            .any(|r| !r[4].is_null() && r[4] != request.digest)
         {
-            // Includes Batches frozen under the protocol-5 digest definition.
+            // Includes Batches frozen under an earlier digest definition.
             return Err(axton_core::Error::Terminal(format!(
                 "frozen Batch {batch} no longer matches its saved digest and cannot be resent; reset the Store to discard it"
             )));
@@ -337,11 +360,6 @@ impl<S: ClientStore> Engine<'_, S> {
         )?.is_some() {
             return Ok(None);
         }
-        // Rollover hold: frozen work drains under the previous context;
-        // new work waits for the fresh Store.
-        if self.rollover_pending05()? {
-            return Ok(None);
-        }
         // A terminal refusal finishes sequence ordering. Lifecycle edges
         // still refuse their dependents; accepted predecessors wait for settlement.
         let rows=self.rows("SELECT id FROM axton_mutation_queue q WHERE batch_id IS NULL AND reconciled=0 AND rejection_code IS NULL AND NOT EXISTS(SELECT 1 FROM axton_mutation_prerequisite p WHERE p.ordinal=q.id) AND NOT EXISTS(SELECT 1 FROM axton_mutation_dependency d JOIN axton_mutation_queue p ON p.id=d.depends_on WHERE d.ordinal=q.id AND (p.reconciled=0 OR (d.kind='lifecycle' AND p.rejection_code IS NOT NULL))) ORDER BY id",&[])?.rows;
@@ -352,12 +370,11 @@ impl<S: ClientStore> Engine<'_, S> {
             .checked_add(1)
             .filter(|v| *v <= axton_core::MAX_SAFE_INTEGER)
             .ok_or_else(|| invalid("Batch counter exhausted"))?;
-        let context = self.context05()?;
         for r in rows {
             self.exec(
                 "axton_mutation_queue",
-                "UPDATE axton_mutation_queue SET batch_id=?,batch_materialization=? WHERE id=?",
-                &[json!(batch), json!(context.materialization), r[0].clone()],
+                "UPDATE axton_mutation_queue SET batch_id=? WHERE id=?",
+                &[json!(batch), r[0].clone()],
             )?;
         }
         let request = self.reconstruct_batch05(batch)?;

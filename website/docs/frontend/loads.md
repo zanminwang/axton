@@ -25,7 +25,7 @@ The backend's typed `bootstrap({ctx})` callback may track visible identities thr
 
 Handshake commits initial head S and committed prefix C=S. Bootstrap progress B starts absent and advances with complete committed units; initialization completes at B=S. Bootstrap selects marked Models through that fixed cursor boundary; an empty range still completes. Each page reads current state. Independent records moved beyond the boundary arrive through subsequent Sync. Reopen retains committed progress and resumes the remaining work.
 
-Initial selection, and Bootstrap after a materialization rollover, use `@@bootstrap`. Mutation settlement waits for the Stream; a target the Stream will never deliver to this Store settles from the receipt, without rerunning application Bootstrap preparation or implicitly tracking records.
+Initial selection, and Bootstrap after a Store upgrade, use `@@bootstrap`. Mutation settlement waits for the Stream; a target the Stream will never deliver to this Store settles from the receipt, without rerunning application Bootstrap preparation or implicitly tracking records.
 
 Every required uniqueness/cascade component commits whole, even when transported in several fragments. Earlier independent units can remain committed after a later unit fails, but progress never crosses its missing coverage. Expiry or capacity refusal claims no completion. Bootstrap completion describes the captured head, not perpetual freshness.
 

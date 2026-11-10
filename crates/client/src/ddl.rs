@@ -1,7 +1,8 @@
-//! The tables are the schema record. Reconciliation makes them match the compiled schema or fails.
+//! Model tables. Reconciliation makes them match the compiled schema and
+//! resets a Model whose storage shape changed.
 use crate::store::ClientStore;
 use axton_core::{
-    FieldDescriptor, ModelDescriptor, Result, ScalarType, Schema, ValueType, invalid,
+    Compatibility, FieldDescriptor, ModelDescriptor, Result, ScalarType, Schema, ValueType, invalid,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -127,83 +128,91 @@ fn existing<S: ClientStore>(store: &mut S, table: &str) -> Result<Option<Existin
     }))
 }
 
-/// Why the tables in `store` cannot be reconciled with `schema`, if they
-/// cannot: the same refusals [`reconcile`] makes, found by reading only. A
-/// storage failure is an error, never a reason, so a caller can tell an
-/// incompatible layout from a database that merely failed to answer.
-pub fn incompatibility<S: ClientStore>(store: &mut S, schema: &Schema) -> Result<Option<String>> {
-    for model in &schema.models {
-        let Some(current) = existing(store, &model.name)? else {
-            continue;
-        };
-        if current.identity != model.identity {
-            return Ok(Some(format!("identity columns of {} changed", model.name)));
-        }
-        for field in &model.fields {
-            match current.columns.get(&field.name) {
-                Some(ty) if ty == storage_type(&field.value_type) => {}
-                Some(ty) => {
-                    return Ok(Some(format!(
-                        "column {}.{} is {ty} in the database but {} in the schema",
-                        model.name,
-                        field.name,
-                        storage_type(&field.value_type)
-                    )));
-                }
-                None if !field.nullable && field.default.is_none() => {
-                    return Ok(Some(format!(
-                        "column {}.{} is not nullable and has no default",
-                        model.name, field.name
-                    )));
-                }
-                None => {}
+/// Whether the table, as stored, cannot hold `model` in place: its identity
+/// or a column's type differs, or a required field without a default is
+/// missing. Extra columns do not count.
+fn misshaped(current: &Existing, model: &ModelDescriptor) -> bool {
+    current.identity != model.identity
+        || model
+            .fields
+            .iter()
+            .any(|field| match current.columns.get(&field.name) {
+                Some(ty) => ty != storage_type(&field.value_type),
+                None => !field.nullable && field.default.is_none(),
+            })
+}
+
+fn drop_tables<S: ClientStore>(store: &mut S, model: &str) -> Result<()> {
+    for table in [model.to_owned(), before_table(model)] {
+        store.execute(&format!("DROP TABLE IF EXISTS {}", quote(&table)), &[])?;
+    }
+    Ok(())
+}
+
+/// Make the tables match `schema`. `stored` is the schema they were built
+/// for, absent for a fresh file. A Model whose storage shape changed
+/// ([`Schema::model_compatibility`] finds it incompatible, or the table cannot
+/// hold it) is reset: its table and before-image are dropped and created
+/// again. A Model only `stored` has is dropped. An added nullable or
+/// defaulted field is added in place. Returns the reset Models, removed ones
+/// included; their record state is the caller's.
+pub fn reconcile<S: ClientStore>(
+    store: &mut S,
+    stored: Option<&Schema>,
+    schema: &Schema,
+) -> Result<Vec<String>> {
+    let mut reset = vec![];
+    if let Some(stored) = stored {
+        for old in &stored.models {
+            if schema.model(&old.name).is_err() {
+                drop_tables(store, &old.name)?;
+                reset.push(old.name.clone());
             }
         }
     }
-    Ok(None)
+    for model in &schema.models {
+        if let Some(current) = existing(store, &model.name)? {
+            let incompatible = stored.is_some_and(|stored| {
+                matches!(
+                    Schema::model_compatibility(stored, schema, &model.name),
+                    Compatibility::Incompatible(_)
+                )
+            });
+            if !incompatible && !misshaped(&current, model) {
+                add_fields(store, model, &current)?;
+                for statement in model_ddl(model).into_iter().skip(2) {
+                    store.execute(&statement, &[])?;
+                }
+                continue;
+            }
+            drop_tables(store, &model.name)?;
+            reset.push(model.name.clone());
+        }
+        for statement in model_ddl(model) {
+            store.execute(&statement, &[])?;
+        }
+    }
+    Ok(reset)
 }
 
-pub fn reconcile<S: ClientStore>(store: &mut S, schema: &Schema) -> Result<()> {
-    for model in &schema.models {
-        let Some(current) = existing(store, &model.name)? else {
-            for statement in model_ddl(model) {
-                store.execute(&statement, &[])?;
-            }
+fn add_fields<S: ClientStore>(
+    store: &mut S,
+    model: &ModelDescriptor,
+    current: &Existing,
+) -> Result<()> {
+    for field in &model.fields {
+        if current.columns.contains_key(&field.name) {
             continue;
-        };
-        if current.identity != model.identity {
-            return Err(invalid(format!(
-                "identity columns of {} changed; cannot open",
-                model.name
-            )));
         }
-        for field in &model.fields {
-            match current.columns.get(&field.name) {
-                Some(ty) if ty == storage_type(&field.value_type) => {}
-                Some(ty) => {
-                    return Err(invalid(format!(
-                        "column {}.{} is {ty} in the database but {} in the schema",
-                        model.name,
-                        field.name,
-                        storage_type(&field.value_type)
-                    )));
-                }
-                None => {
-                    let mut definition = column(field);
-                    if !field.nullable {
-                        definition.push_str(&format!(" DEFAULT {}", literal(field)?));
-                    }
-                    for table in [model.name.clone(), before_table(&model.name)] {
-                        store.execute(
-                            &format!("ALTER TABLE {} ADD COLUMN {definition}", quote(&table)),
-                            &[],
-                        )?;
-                    }
-                }
-            }
+        let mut definition = column(field);
+        if !field.nullable {
+            definition.push_str(&format!(" DEFAULT {}", literal(field)?));
         }
-        for statement in model_ddl(model).into_iter().skip(2) {
-            store.execute(&statement, &[])?;
+        for table in [model.name.clone(), before_table(&model.name)] {
+            store.execute(
+                &format!("ALTER TABLE {} ADD COLUMN {definition}", quote(&table)),
+                &[],
+            )?;
         }
     }
     Ok(())

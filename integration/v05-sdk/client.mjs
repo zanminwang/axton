@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, symlink, link, readFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, link } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, execFile } from "node:child_process";
@@ -14,7 +14,7 @@ import {
   liveModels,
   makeMutations,
 } from "./client.ts";
-import { GeneratedClient as RolloverClient } from "./rollover/client.ts";
+import { GeneratedClient as UpgradedClient } from "./upgraded/client.ts";
 import { GeneratedClient as VersionedClient } from "./versioned/client.ts";
 import { host } from "./server.mjs";
 import { isRetryableTransactionError } from "../../packages/backend/server/bindings/retryable.mts";
@@ -1268,7 +1268,7 @@ if (process.argv[2] === "enqueue-child") {
       await rm(dir, { recursive: true, force: true });
     }
   });
-  test("A14: a changed schema rolls over by clearing Stream rows and Bootstrapping the new selection", async () => {
+  test("A14: a changed schema upgrades at open, keeps every row and Bootstraps the new selection over handshake and pull alone", async () => {
     let h = await host();
     const dir = await mkdtemp(join(tmpdir(), "axton-sdk05-schema-"));
     let client;
@@ -1302,43 +1302,35 @@ if (process.argv[2] === "enqueue-child") {
         invalidate.snapshot("schema-snapshot");
       });
       await h.close();
-      const config = JSON.parse(
-        await readFile(new URL("./backend.json", import.meta.url), "utf8"),
-      );
-      h = await host({
-        rollover: true,
-        materializations: {
-          [before.materialization]: {
-            schema: config.schema,
-            projectionGeneration: "1",
-          },
-        },
-      });
-      client = await RolloverClient.open({
-        path,
-        stream: "User:schema",
-        connection: { url: h.url, token: "schema" },
-      });
-      await until(async () => {
-        const row = (
-          await client.readSql(
-            "SELECT materialization,desired_materialization,start_cursor FROM axton_store",
-          )
-        )[0];
-        return (
-          row.materialization === row.desired_materialization &&
-          row.materialization !== before.materialization &&
-          row.start_cursor !== null
-        );
-      }, "rollover committed with the handshake head");
-      await client.bootstrap();
-      assert.equal(
-        (await client.models.entry.get({ id: "schema-entry" })).text,
-        "new content",
+      // The upgraded backend serves only its own materialization.
+      h = await host({ upgraded: true });
+      client = await UpgradedClient.open({ path, stream: "User:schema" });
+      // The upgrade commits at open, with no network: rows stay, B is absent
+      // and S = C.
+      const opened = (
+        await client.readSql(
+          "SELECT materialization,start_cursor,bootstrap_cursor,cursor FROM axton_store",
+        )
+      )[0];
+      assert.notEqual(opened.materialization, before.materialization);
+      assert.deepEqual(
+        [opened.start_cursor, opened.bootstrap_cursor, opened.cursor],
+        [before.cursor, null, before.cursor],
       );
       assert.equal(
         (await client.models.snapshot.get({ id: "schema-snapshot" })).text,
-        "new content",
+        "old snapshot",
+      );
+      await client.connect({ url: h.url, token: "schema" });
+      await client.bootstrap();
+      // Changes published after C arrive by Sync from C.
+      await until(
+        async () =>
+          (await client.models.entry.get({ id: "schema-entry" })).text ===
+            "new content" &&
+          (await client.models.snapshot.get({ id: "schema-snapshot" }))
+            .text === "new content",
+        "Sync from C delivers the changes made after it",
       );
       const after = (
         await client.readSql(
@@ -1351,7 +1343,12 @@ if (process.argv[2] === "enqueue-child") {
           .map((request) => request.route)
           .filter((route) => !["/sync/handshake", "/sync/pull"].includes(route)),
         [],
-        "rollover reads only handshake and Stream ranges",
+        "the upgrade reads only handshake and Stream ranges",
+      );
+      assert.deepEqual(
+        h.responses.filter((response) => response.status === 409),
+        [],
+        "no request ran in the previous context",
       );
     } finally {
       await client?.close();
@@ -1359,7 +1356,7 @@ if (process.argv[2] === "enqueue-child") {
       await rm(dir, { recursive: true, force: true });
     }
   });
-  test("A14: retained version 1 and desired version 2 Bootstrap a new field at the same cursor", async () => {
+  test("A14: an upgrade to Model version 2 Bootstraps its new field over the held row at the same cursor", async () => {
     let h = await host();
     const dir = await mkdtemp(join(tmpdir(), "axton-sdk05-versioned-"));
     let client;
@@ -1392,42 +1389,24 @@ if (process.argv[2] === "enqueue-child") {
       await client.close();
       client = undefined;
       await h.close();
-      const config = JSON.parse(
-        await readFile(new URL("./backend.json", import.meta.url), "utf8"),
-      );
-      h = await host({
-        versioned: true,
-        materializations: {
-          [before.materialization]: {
-            schema: config.schema,
-            projectionGeneration: "1",
-          },
-        },
-      });
+      h = await host({ versioned: true });
       client = await VersionedClient.open({
         path,
         stream: "User:versioned",
         connection: { url: h.url, token: "versioned" },
       });
-      await until(async () => {
-        const row = (
-          await client.readSql(
-            "SELECT materialization,desired_materialization,start_cursor FROM axton_store",
-          )
-        )[0];
-        return (
-          row.materialization === row.desired_materialization &&
-          row.materialization !== before.materialization &&
-          row.start_cursor !== null
-        );
-      }, "versioned rollover committed");
+      assert.notEqual(
+        (await client.readSql("SELECT materialization FROM axton_store"))[0]
+          .materialization,
+        before.materialization,
+      );
       await client.bootstrap();
       assert.deepEqual(
         h.requests
           .map((request) => request.route)
           .filter((route) => !["/sync/handshake", "/sync/pull"].includes(route)),
         [],
-        "rollover reads only handshake and Stream ranges",
+        "the upgrade reads only handshake and Stream ranges",
       );
       const row = await client.models.entry.get({ id: "versioned-entry" });
       assert.equal(row.text, "same row");
@@ -1442,13 +1421,13 @@ if (process.argv[2] === "enqueue-child") {
       assert.equal(
         after.membership.cursor,
         evidence.membership.cursor,
-        "rollover Bootstrap restamped an unchanged record",
+        "Bootstrap restamped an unchanged record",
       );
       assert.equal(
         (await client.readSql("SELECT bootstrap_cursor FROM axton_store"))[0]
           .bootstrap_cursor,
         before.bootstrap_cursor,
-        "rollover Bootstrap starts at the unchanged Stream head",
+        "Bootstrap completes at S = C, the unchanged Stream head",
       );
       assert.equal(
         (
@@ -1464,7 +1443,7 @@ if (process.argv[2] === "enqueue-child") {
       await rm(dir, { recursive: true, force: true });
     }
   });
-  test("A14: a fresh file's queued Mutations roll over at the first handshake to generation 2 and push in its context", async () => {
+  test("A14: a fresh file's queued Mutations upgrade at the first handshake to generation 2 and push in its context", async () => {
     const dir = await mkdtemp(join(tmpdir(), "axton-sdk05-generation-")),
       path = join(dir, "db");
     let client = await open(path),
@@ -1479,15 +1458,12 @@ if (process.argv[2] === "enqueue-child") {
       client = await open(path, h.url);
       await until(
         async () => (await client.syncState()).pending === 0,
-        "queued Mutation settles after the rollover",
+        "queued Mutation settles after the upgrade",
       );
       const store = (
-        await client.readSql(
-          "SELECT materialization,desired_materialization FROM axton_store",
-        )
+        await client.readSql("SELECT materialization FROM axton_store")
       )[0];
       assert.notEqual(store.materialization, offline);
-      assert.equal(store.materialization, store.desired_materialization);
       assert.equal(h.batches.length, 1);
       assert.equal(JSON.parse(h.batches[0]).materialization, store.materialization);
       assert.equal(
@@ -1500,7 +1476,7 @@ if (process.argv[2] === "enqueue-child") {
       await rm(dir, { recursive: true, force: true });
     }
   });
-  test("A14: a backend projection change rolls an initialized Store over instead of a context_mismatch loop", async () => {
+  test("A14: a backend projection change upgrades an initialized Store with no request in the dropped context", async () => {
     let h = await host();
     const dir = await mkdtemp(join(tmpdir(), "axton-sdk05-projection-")),
       path = join(dir, "db");
@@ -1531,7 +1507,7 @@ if (process.argv[2] === "enqueue-child") {
           )
         )[0];
         return row.materialization !== before && row.start_cursor !== null;
-      }, "handshake-reported generation rolls the Store over");
+      }, "handshake-reported generation upgrades the Store");
       await client.bootstrap();
       assert.equal(
         (await client.models.entry.get({ id: "projection-entry" })).text,
@@ -1542,6 +1518,94 @@ if (process.argv[2] === "enqueue-child") {
         [],
         "no request ran in the dropped context",
       );
+    } finally {
+      await client?.close();
+      await h.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  test("A14: a Batch frozen before an upgrade is sent after it with the same digest in the new context and accepted", async () => {
+    let h = await host();
+    const dir = await mkdtemp(join(tmpdir(), "axton-sdk05-frozen-")),
+      path = join(dir, "db");
+    let client;
+    try {
+      client = await open(path, h.url, "frozen");
+      await client.bootstrap();
+      h.holdMutations();
+      await publish(client, "frozen-entry", " frozen ", "private");
+      await until(() => h.batches.length > 0, "Batch frozen and sent");
+      const before = JSON.parse(h.batches[0]);
+      await client.close();
+      client = undefined;
+      await h.close();
+      h = await host({ upgraded: true });
+      client = await UpgradedClient.open({
+        path,
+        stream: "User:frozen",
+        connection: { url: h.url, token: "frozen" },
+      });
+      await until(
+        async () => (await client.syncState()).pending === 0,
+        "the frozen Batch settles after the upgrade",
+      );
+      const resent = JSON.parse(h.batches[0]);
+      assert.equal(resent.digest, before.digest);
+      assert.equal(resent.batchId, before.batchId);
+      assert.notEqual(resent.materialization, before.materialization);
+      assert.equal(
+        resent.materialization,
+        (await client.readSql("SELECT materialization FROM axton_store"))[0]
+          .materialization,
+      );
+      assert.deepEqual(h.executions, ["frozen-entry"]);
+      // Executed in the new contract: its receipt snapshot installs.
+      assert.equal(
+        (await client.models.entry.get({ id: "frozen-entry" })).text,
+        "frozen",
+      );
+    } finally {
+      await client?.close();
+      await h.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  test("A14: a Batch executed before an upgrade whose receipt was lost replays its old label and settles without installing its snapshot", async () => {
+    let h = await host();
+    const dir = await mkdtemp(join(tmpdir(), "axton-sdk05-lost-")),
+      path = join(dir, "db");
+    let client;
+    try {
+      client = await open(path, h.url, "lost");
+      await client.bootstrap();
+      h.loseNext(1000);
+      await publish(client, "lost-entry", " lost ", "private");
+      await until(() => h.executions.includes("lost-entry"), "Batch executed");
+      const before = JSON.parse(h.batches[0]);
+      await client.close();
+      client = undefined;
+      await h.close();
+      h = await host({ upgraded: true });
+      client = await UpgradedClient.open({
+        path,
+        stream: "User:lost",
+        connection: { url: h.url, token: "lost" },
+      });
+      await until(
+        async () => (await client.syncState()).pending === 0,
+        "the replayed receipt settles after the upgrade",
+      );
+      const resent = JSON.parse(h.batches[0]);
+      assert.equal(resent.digest, before.digest);
+      assert.notEqual(resent.materialization, before.materialization);
+      assert.deepEqual(h.executions, [], "the resend replays, it does not execute");
+      const receipt = JSON.parse(
+        h.responses.find((response) => response.route === "/sync/mutations").body,
+      );
+      assert.equal(receipt.results[0].outcome.kind, "accepted");
+      assert.equal(receipt.results[0].outcome.materialization, before.materialization);
+      // The snapshot was loaded in the previous contract and is not installed.
+      assert.equal(await client.models.entry.get({ id: "lost-entry" }), null);
     } finally {
       await client?.close();
       await h.close();

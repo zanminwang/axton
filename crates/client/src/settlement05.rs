@@ -29,15 +29,15 @@ use crate::engine::as_u64;
 use crate::mutation_queue::{decode, text};
 use crate::queue::OpKind;
 use axton_protocols::sync::{self as v05, Validate};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 impl<S: ClientStore> Engine<'_, S> {
     fn outcome05(&mut self, id: u64) -> Result<Option<v05::MutationOutcome>> {
-        let r=self.rows("SELECT sync_cursor,result,targets,rejection_code,rejection_message FROM axton_mutation_queue WHERE id=?",&[json!(id)])?.rows;
+        let r=self.rows("SELECT sync_cursor,outcome_materialization,result,targets,rejection_code,rejection_message FROM axton_mutation_queue WHERE id=?",&[json!(id)])?.rows;
         let Some(r) = r.first() else { return Ok(None) };
-        if let Some(code) = r[3].as_str() {
+        if let Some(code) = r[4].as_str() {
             return Ok(Some(v05::MutationOutcome::Rejected {
                 code: code.into(),
-                message: r[4].as_str().map(str::to_owned),
+                message: r[5].as_str().map(str::to_owned),
             }));
         }
         if r[0].is_null() {
@@ -45,8 +45,12 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         Ok(Some(v05::MutationOutcome::Accepted {
             sync_cursor: as_u64(&r[0])?,
-            result: decode(&r[1])?,
-            targets: decode(&r[2])?,
+            materialization: r[1]
+                .as_str()
+                .ok_or_else(|| invalid("outcome materialization missing"))?
+                .into(),
+            result: decode(&r[2])?,
+            targets: decode(&r[3])?,
         }))
     }
     fn completion05(&mut self, id: u64) -> Result<CallCompletion> {
@@ -74,7 +78,12 @@ impl<S: ClientStore> Engine<'_, S> {
                 .unwrap(),
         )?;
         if ack.batch_id <= last {
-            let rows=self.rows("SELECT id,batch_digest,batch_materialization FROM axton_mutation_queue WHERE batch_id=? ORDER BY id",&[json!(ack.batch_id)])?.rows;
+            let rows = self
+                .rows(
+                    "SELECT id,batch_digest FROM axton_mutation_queue WHERE batch_id=? ORDER BY id",
+                    &[json!(ack.batch_id)],
+                )?
+                .rows;
             if rows.len() != ack.results.len() || rows.is_empty() {
                 return Err(invalid("unknown acknowledged Batch"));
             }
@@ -85,10 +94,7 @@ impl<S: ClientStore> Engine<'_, S> {
                     .iter()
                     .find(|r| r.mutation_id == id)
                     .ok_or_else(|| invalid("acknowledgement membership mismatch"))?;
-                if r[1] != ack.digest
-                    || r[2] != ack.context.materialization
-                    || self.outcome05(id)?.as_ref() != Some(&result.outcome)
-                {
+                if r[1] != ack.digest || self.outcome05(id)?.as_ref() != Some(&result.outcome) {
                     return Err(invalid("acknowledgement replay differs"));
                 }
             }
@@ -98,24 +104,56 @@ impl<S: ClientStore> Engine<'_, S> {
             return Err(invalid("Batch acknowledgement skipped"));
         }
         let request = self.reconstruct_batch05(ack.batch_id)?;
-        v05::validate_acknowledgement(&request, ack)?;
-        // Validate every result and snapshot before changing any durable outcome.
+        // A target is required only on a Model the Mutation shares with the
+        // current schema.
+        let mut unshared = BTreeSet::new();
+        for mutation in &request.mutations {
+            let descriptor = self.mutation_descriptor05(mutation.id)?;
+            for model in mutation
+                .operations
+                .iter()
+                .filter_map(|o| o.model.as_deref())
+            {
+                if !self.shared05(&descriptor, model)? {
+                    unshared.insert((mutation.id, model.to_owned()));
+                }
+            }
+        }
+        v05::validate_acknowledgement(&request, ack, |id, model| {
+            !unshared.contains(&(id, model.to_owned()))
+        })?;
+        // Validate every result and snapshot before changing any durable
+        // outcome. The result follows the Mutation's own contract. A target
+        // on a shared Model is keyed under the current schema, so its identity
+        // must be canonical whatever the label. A snapshot is used only on a
+        // shared Model and in the Store's materialization, so its state is
+        // validated against the current schema only then.
+        let active = self.context05()?.materialization;
         for result in &ack.results {
             if let v05::MutationOutcome::Accepted {
                 result: value,
+                materialization,
                 targets,
                 ..
             } = &result.outcome
             {
                 let row=self.rows("SELECT name,descriptor_version,descriptor FROM axton_mutation_queue WHERE id=?",&[json!(result.mutation_id)])?.rows.remove(0);
-                let schema = self.retained_schema05(row[2].as_str().unwrap())?;
-                let action = schema.action(row[0].as_str().unwrap(), as_u64(&row[1])?)?;
-                axton_core::validate_action_result(&schema, action, value)?;
+                let descriptor = row[2].as_str().unwrap();
+                let retained = self.retained_schema05(descriptor)?;
+                let action = retained.action(row[0].as_str().unwrap(), as_u64(&row[1])?)?;
+                axton_core::validate_action_result(&retained, action, value)?;
+                let schema = self.schema;
                 for target in targets {
                     let k = target.key();
+                    if !self.shared05(descriptor, &k.model)? {
+                        continue;
+                    }
                     let canonical = schema.record_key(&k.model, &k.identity)?;
                     if canonical.identity != k.identity {
                         return Err(invalid("noncanonical settlement identity"));
+                    }
+                    if *materialization != active {
+                        continue;
                     }
                     let r = match target {
                         v05::SettlementTarget::Stream { fallback, .. } => fallback,
@@ -133,10 +171,11 @@ impl<S: ClientStore> Engine<'_, S> {
             match &result.outcome {
                 v05::MutationOutcome::Accepted {
                     sync_cursor,
+                    materialization,
                     result,
                     targets,
                 } => {
-                    self.exec("axton_mutation_queue","UPDATE axton_mutation_queue SET sync_cursor=?,result=?,targets=? WHERE id=?",&[json!(sync_cursor),text(result)?,text(targets)?,json!(id)])?;
+                    self.exec("axton_mutation_queue","UPDATE axton_mutation_queue SET sync_cursor=?,outcome_materialization=?,result=?,targets=? WHERE id=?",&[json!(sync_cursor),json!(materialization),text(result)?,text(targets)?,json!(id)])?;
                 }
                 v05::MutationOutcome::Rejected { code, message } => {
                     rejected.insert(id, (code.clone(), message.clone()));
@@ -191,12 +230,12 @@ impl<S: ClientStore> Engine<'_, S> {
         let key = self.schema.record_key(&key.model, &key.identity)?;
         let evidence = self.evidence05(&key)?;
         let materialization = self.context05()?.materialization;
-        let cursor = evidence.history.get(&materialization).copied();
+        // History holds the one delivery it last installed, in whichever
+        // contract; protection counts only in the Store's.
         Ok(v05::TargetEvidence {
-            content_cursor: cursor,
-            materialization: cursor.map(|_| materialization),
+            content_cursor: evidence.history.values().max().copied(),
+            protected: !evidence.allows_cache(&materialization),
             removed_cursor: evidence.membership.filter(|m| !m.live).map(|m| m.cursor),
-            protected: evidence.current.is_some(),
         })
     }
     fn owned05(&mut self, id: u64, step: u64, key: &RecordKey) -> Result<bool> {
@@ -221,10 +260,7 @@ impl<S: ClientStore> Engine<'_, S> {
     pub fn reconcile_ready05(&mut self, held: &mut Held) -> Result<Vec<CallCompletion>> {
         let context = self.context05()?;
         let row = self
-            .rows(
-                "SELECT cursor,start_cursor,enabled_descriptor FROM axton_store",
-                &[],
-            )?
+            .rows("SELECT cursor,start_cursor FROM axton_store", &[])?
             .rows
             .remove(0);
         let (cursor, start_cursor) = (row[0].as_u64(), row[1].as_u64());
@@ -238,29 +274,34 @@ impl<S: ClientStore> Engine<'_, S> {
         if pending.is_empty() {
             return Ok(completions);
         }
-        // Bootstrap flags come from the active materialization: a rollover
-        // drain settles under the previous contract's selection.
         let bootstrap_models = self
-            .retained_schema05(
-                row[2]
-                    .as_str()
-                    .ok_or_else(|| invalid("descriptor missing"))?,
-            )?
+            .schema
             .models
-            .into_iter()
+            .iter()
             .filter(|m| m.bootstrap)
-            .map(|m| m.name)
+            .map(|m| m.name.clone())
             .collect::<std::collections::BTreeSet<_>>();
         for row in pending {
             let id = as_u64(&row[0])?;
             let Some(v05::MutationOutcome::Accepted {
                 sync_cursor,
+                materialization,
                 targets,
                 ..
             }) = self.outcome05(id)?
             else {
                 continue;
             };
+            // A target on a Model the Mutation does not share with the
+            // current schema is neither awaited nor installed.
+            let descriptor = self.mutation_descriptor05(id)?;
+            let mut shared = vec![];
+            for target in targets {
+                if self.shared05(&descriptor, &target.key().model)? {
+                    shared.push(target);
+                }
+            }
+            let targets = shared;
             let mut evidence = BTreeMap::new();
             for target in &targets {
                 evidence.insert(
@@ -273,7 +314,6 @@ impl<S: ClientStore> Engine<'_, S> {
                 cursor,
                 start_cursor,
                 &targets,
-                &context.materialization,
                 &bootstrap_models,
                 &evidence,
             )? {
@@ -287,7 +327,6 @@ impl<S: ClientStore> Engine<'_, S> {
             for target in &targets {
                 if v05::target_disposition(
                     target,
-                    &context.materialization,
                     start_cursor,
                     bootstrap_models.contains(&target.key().model),
                     &evidence[&target.key().encoded()?],
@@ -314,7 +353,11 @@ impl<S: ClientStore> Engine<'_, S> {
                 else {
                     return Err(invalid("unowned private target"));
                 };
-                if !self.owned05(id, position, &key)? {
+                // A snapshot loaded in another contract is not installed; the
+                // target settles without it.
+                if materialization != context.materialization
+                    || !self.owned05(id, position, &key)?
+                {
                     continue;
                 }
                 let op = Operation {
@@ -330,8 +373,8 @@ impl<S: ClientStore> Engine<'_, S> {
                     } else {
                         // The receipt is authority, not a new create. Project
                         // omitted current nullable fields to null without
-                        // evaluating creation defaults. Retained descriptor
-                        // validation already admitted this snapshot at ack.
+                        // evaluating creation defaults. Acknowledgement
+                        // already validated it against the current schema.
                         Some(self.schema.normalize_state(&key.model, &record.state)?)
                     },
                 };
@@ -516,6 +559,7 @@ impl<S: ClientStore> Engine<'_, S> {
         store: bool,
         held: &mut Held,
     ) -> Result<usize> {
+        let materialization = self.context05()?.materialization;
         let mut applied = 0;
         for record in records {
             record.validate()?;
@@ -532,7 +576,7 @@ impl<S: ClientStore> Engine<'_, S> {
                     &self.schema.validate_state(&k.model, &record.state)?,
                 ))
             };
-            if !store || row.is_none() || self.evidence05(&key)?.current.is_some() {
+            if !store || row.is_none() || !self.evidence05(&key)?.allows_cache(&materialization) {
                 continue;
             }
             let row = row.unwrap();
@@ -553,7 +597,11 @@ impl<S: ClientStore> Engine<'_, S> {
                     let parent = self
                         .schema
                         .record_key(&relation.target, &Value::Object(identity))?;
-                    if self.evidence05(&parent)?.current.is_some_and(|e| e.deleted) {
+                    if self
+                        .evidence05(&parent)?
+                        .current
+                        .is_some_and(|e| e.deleted && e.materialization == materialization)
+                    {
                         blocked = true;
                         break;
                     }

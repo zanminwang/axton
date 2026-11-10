@@ -102,6 +102,6 @@ export function emptyMutation(text) {
   return JSON.stringify({
     ...context05(request), batchId: request.batchId, digest: request.digest,
     results: request.mutations.map(mutation => ({mutationId: mutation.id,
-      outcome: {kind: "accepted", syncCursor: 0, result: null, targets: []}})),
+      outcome: {kind: "accepted", syncCursor: 0, materialization: request.materialization, result: null, targets: []}})),
   });
 }

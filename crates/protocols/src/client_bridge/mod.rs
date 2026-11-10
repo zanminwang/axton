@@ -289,8 +289,7 @@ pub enum Command {
     // answers only after its guarded cache transaction committed.
     // A local failure carries `details.code`: `fetch.invalid_options`,
     // `fetch.unavailable`, `fetch.timeout`, `fetch.transport_failed`,
-    // `fetch.invalid_response`, `fetch.store_failed`, `fetch.schema_pending`
-    // or `fetch.schema_changed`.
+    // `fetch.invalid_response`, `fetch.store_failed` or `fetch.schema_changed`.
     Fetch {
         model: String,
         #[serde(deserialize_with = "counter")]

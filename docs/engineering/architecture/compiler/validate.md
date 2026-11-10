@@ -57,4 +57,4 @@ Code: `validate` and the `Validated` types in [compiler/validate.rs](../../../..
 ## 11. Risks and Technical Debt
 
 - **Accepted limitation:** the descriptor backstop (`Schema::from_value`) has no source positions. Every descriptor rule known to be reachable from source is checked earlier with a location; a rule that only the backstop refuses still reports the end of the input. Treat such a report as a missing located check.
-- **Accepted limitation:** the fence checks names only; a type or identity change passes the compiler; the client classifies it as incompatible at open and rebuilds the local database ([Reconciliation](../client/storage/reconciliation.md)), using the same `Schema::compatibility` rule the history check shares. The source comment records this as deferred.
+- **Accepted limitation:** the fence checks names only; a type or identity change passes the compiler; the client resets that Model at open ([Reconciliation](../client/storage/reconciliation.md)), using the per-Model rule of `Schema::compatibility` that the history check shares. The source comment records this as deferred.

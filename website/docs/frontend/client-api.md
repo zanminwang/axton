@@ -34,7 +34,7 @@ One physical SQLite file belongs to one Client, Store identity and Stream. The b
     );
     ```
 
-`path` and `stream` are required; `connection` is optional. Opening commits local storage before starting its connection and works offline. The backend reports its projection generation at every handshake; the client has no option for it. A change to it or to the normalized Model contracts rolls the Store over. Retain supported old contracts and the previous materialization on the backend so durable queued Mutations drain.
+`path` and `stream` are required; `connection` is optional. Opening commits local storage before starting its connection and works offline. The backend reports its projection generation at every handshake; the client has no option for it. A change to it or to the normalized Model contracts upgrades the Store in place; see [opening and schema changes](runtime.md#opening-and-schema-changes). Queued Mutations upload in the new context.
 
 `prerequisites` registers named prerequisite handlers. Dart `libraryPath` selects an explicit development library; installed packages use their bundled library. Android applications initialize the process's stable support/files directory once with `Client.configureApplicationData(path)` before opening any Store. This directory is application configuration, not a per-client lock option.
 
@@ -171,7 +171,6 @@ Failures reject with `CallError`:
 | `fetch.transport_failed` | The request or credential refresh failed; `cause` carries the message and the HTTP status, if any |
 | `fetch.invalid_response` | The response did not answer this request |
 | `fetch.store_failed` | The permitted local cache transaction failed; no content or progress from that transaction commits. |
-| `fetch.schema_pending` | The Store is rolling over to a new materialization |
 | `fetch.schema_changed` | An explicit Store reset replaced the context while the call waited |
 
 A failure never deletes the local row. `execution` is `rejected` for the backend's codes, `fetch.invalid_options`, and `unknown` otherwise; a read has no side effects either way. A call on a client that is already closed rejects with the runtime's plain `client_closed` error (`Error` in TypeScript, `StateError` in Dart), not a `CallError`. A result the generated decoder cannot read rejects with `action.observation_failed`, as for a direct call.
@@ -324,7 +323,7 @@ Stream authority retires preceding direct changes and preserves later pending op
 
 The Stream supplied at open is the client's only Stream. `await client.bootstrap()` waits for its entire Bootstrap: finite immutable authority units applied atomically through the captured head. An empty plan still completes. Capturing a head never advances delivery progress. Normal reopen resumes persisted work.
 
-Initial Bootstrap selects Models marked `@@bootstrap`. A materialization change (a compatible schema change, or a new projection generation reported by the backend) drains frozen Mutations, clears Stream-delivered rows and runs Bootstrap again. A Mutation settles when the Stream delivers its targets; a target in an unmarked Model at or below the Store's initial cursor never arrives, so it settles from the receipt without tracking or allocating a new cursor.
+Initial Bootstrap selects Models marked `@@bootstrap`. A materialization change (a schema change, or a new projection generation reported by the backend) keeps every row and runs Bootstrap again from the Store's Sync position. A Mutation settles when the Stream delivers its targets; a target in an unmarked Model at or below the Store's initial cursor never arrives, so it settles from the receipt without tracking or allocating a new cursor.
 
 Bootstrap and delta failures commit neither the failing unit nor its progress. Earlier independent committed units remain valid. Required constraint closure is indivisible; reducing transport page size cannot split it. Membership Remove releases current live-content protection without deleting the Model or clearing historical evidence; true Stream deletion remains protected.
 

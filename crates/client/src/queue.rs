@@ -5,7 +5,7 @@ use crate::{Mutation, Operation, OperationKind};
 use axton_core::{RecordKey, Result, invalid};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -51,6 +51,9 @@ pub struct Queued {
     pub diverged: bool,
     pub mutation: Mutation,
 }
+
+// A queued Mutation's local operations, by ordinal, in step order.
+type OpsByOrdinal = BTreeMap<u64, Vec<QueuedOp>>;
 
 fn text(value: &Value) -> String {
     value.as_str().unwrap_or("").to_string()
@@ -166,6 +169,7 @@ impl<S: ClientStore> Engine<'_, S> {
     pub(crate) fn call_ops(&mut self, ordinal: u64) -> Result<Vec<QueuedOp>> {
         Ok(self
             .ops_by_ordinal("AND q.id=?", &[json!(ordinal)])?
+            .0
             .into_values()
             .flatten()
             .collect())
@@ -231,18 +235,29 @@ impl<S: ClientStore> Engine<'_, S> {
         )?;
         Ok(())
     }
+    // Every reader of a queued Mutation's local operations loads them here.
+    // An operation on a Model the Mutation does not share with the current
+    // schema is left out, and its Mutation is returned as diverged.
     fn ops_by_ordinal(
         &mut self,
         filter: &str,
         params: &[Value],
-    ) -> Result<BTreeMap<u64, Vec<QueuedOp>>> {
-        let rows = self.rows(&format!("SELECT o.mutation_id,o.step,o.kind,o.model,o.identity,o.operation,o.value FROM axton_mutation_queue_operation o JOIN axton_mutation_queue q ON q.id=o.mutation_id WHERE o.model IS NOT NULL AND q.reconciled=0 AND q.rejection_code IS NULL {filter} ORDER BY o.mutation_id,o.step"), params)?;
-        let mut result: BTreeMap<u64, Vec<QueuedOp>> = BTreeMap::new();
+    ) -> Result<(OpsByOrdinal, BTreeSet<u64>)> {
+        let rows = self.rows(&format!("SELECT o.mutation_id,o.step,o.kind,o.model,o.identity,o.operation,o.value,q.descriptor FROM axton_mutation_queue_operation o JOIN axton_mutation_queue q ON q.id=o.mutation_id WHERE o.model IS NOT NULL AND q.reconciled=0 AND q.rejection_code IS NULL {filter} ORDER BY o.mutation_id,o.step"), params)?;
+        let mut result = OpsByOrdinal::new();
+        let mut skipped = BTreeSet::new();
         for row in &rows.rows {
+            let descriptor = row[7]
+                .as_str()
+                .ok_or_else(|| invalid("descriptor missing"))?;
+            if !self.shared05(descriptor, &text(&row[3]))? {
+                skipped.insert(as_u64(&row[0])?);
+                continue;
+            }
             let op = decode_op(row)?;
             result.entry(op.ordinal).or_default().push(op);
         }
-        Ok(result)
+        Ok((result, skipped))
     }
     pub(crate) fn queued_where(&mut self, filter: &str, params: &[Value]) -> Result<Vec<Queued>> {
         let mutations = self.rows(
@@ -254,7 +269,7 @@ impl<S: ClientStore> Engine<'_, S> {
         if mutations.rows.is_empty() {
             return Ok(vec![]);
         }
-        let ops = self.ops_by_ordinal(filter, params)?;
+        let (ops, skipped) = self.ops_by_ordinal(filter, params)?;
         let deps = self.rows(
             &format!(
                 "SELECT d.ordinal,d.depends_on,d.kind FROM axton_mutation_dependency d JOIN axton_mutation_queue q ON q.id=d.ordinal WHERE q.reconciled=0 AND q.rejection_code IS NULL {filter} ORDER BY d.ordinal,d.depends_on"
@@ -303,7 +318,7 @@ impl<S: ClientStore> Engine<'_, S> {
             result.push(Queued {
                 ordinal,
                 push: row[3].as_u64(),
-                diverged: row[4].as_u64().unwrap_or(0) != 0,
+                diverged: row[4].as_u64().unwrap_or(0) != 0 || skipped.contains(&ordinal),
                 mutation,
             });
         }
@@ -324,6 +339,7 @@ impl<S: ClientStore> Engine<'_, S> {
                 "AND o.model=? AND o.identity=?",
                 &[json!(key.model), json!(key.encoded_identity()?)],
             )?
+            .0
             .into_values()
             .flatten()
             .collect())
@@ -338,13 +354,22 @@ impl<S: ClientStore> Engine<'_, S> {
         )?;
         Ok(())
     }
+    // A record is dirty while a queued Mutation it shares with the current
+    // schema has an operation on it.
     pub fn dirty(&mut self, key: &RecordKey) -> Result<bool> {
-        Ok(self
-            .scalar(
-                "SELECT 1 FROM axton_mutation_queue_operation o JOIN axton_mutation_queue q ON q.id=o.mutation_id WHERE o.model=? AND o.identity=? AND q.reconciled=0 AND q.rejection_code IS NULL LIMIT 1",
-                &[json!(key.model), json!(key.encoded_identity()?)],
-            )?
-            .is_some())
+        let descriptors = self.rows(
+            "SELECT DISTINCT q.descriptor FROM axton_mutation_queue_operation o JOIN axton_mutation_queue q ON q.id=o.mutation_id WHERE o.model=? AND o.identity=? AND q.reconciled=0 AND q.rejection_code IS NULL",
+            &[json!(key.model), json!(key.encoded_identity()?)],
+        )?;
+        for row in &descriptors.rows {
+            let descriptor = row[0]
+                .as_str()
+                .ok_or_else(|| invalid("descriptor missing"))?;
+            if self.shared05(descriptor, &key.model)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn prerequisite_keys(&mut self) -> Result<Vec<(String, Option<String>)>> {

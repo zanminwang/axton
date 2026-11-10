@@ -33,13 +33,17 @@ The tests assert exact Batch retry, refusal isolation, private settlement,
 later local ownership, independent Store identities, zero-cursor Bootstrap,
 fresh read snapshots, Store modes, direct-delete refill, physical file aliases,
 stale Query protection, initial-start ordering, durable completion lookup, and
-Dart's typed completion across the same actual host. The rollover fixture checks
-that a changed schema clears Stream rows and Bootstraps a newly selected Model
-over handshake and pull alone. A separate versioned fixture retains Model and
-Mutation v1 history while serving v2; it adds a nullable field at the same
-record cursor through the rollover Bootstrap. Generation cases roll a fresh file
-over to a backend's projection generation 2 at its first handshake, and an
-initialized Store over without any request in the dropped context. A concurrency
+Dart's typed completion across the same actual host. The upgraded fixture marks
+another Model `@@bootstrap`. Against it, an upgrade commits at open with every
+row kept and `S = C`, Bootstraps the new selection over handshake and pull
+alone, and receives later changes by Sync from `C`. A Batch frozen before the
+upgrade is sent after it with the same digest in the new context. A Batch
+executed before it whose receipt was lost replays its old label and settles
+without installing its snapshot. A separate versioned fixture retains Model and
+Mutation v1 history while serving v2; Bootstrap fills its new nullable field over
+the held row at the same record cursor. Generation cases upgrade a fresh file to
+a backend's projection generation 2 at its first handshake, and an initialized
+Store without any request in the dropped context. A concurrency
 case settles 60 Mutations from one Store over push and pull alone with fewer
 than 10 serialization retries. Query enrollment is tested both for implicit absence
 and deliberate tracking through the authenticated Stream context.

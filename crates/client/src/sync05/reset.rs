@@ -32,7 +32,7 @@ impl<S: ClientStore> Client<S> {
             e.exec("axton_mutation_queue","DELETE FROM axton_mutation_queue",&[])?;
             e.delete_records05()?;
             e.clear_delivery_staging05()?;
-            e.exec("axton_store","UPDATE axton_store SET id=?,materialization=desired_materialization,enabled_descriptor=schema_descriptor,next_mutation_id=1,next_local_sequence=1,last_acknowledged_batch_id=0,start_cursor=NULL,bootstrap_cursor=NULL,cursor=NULL",&[json!(fresh)])?;
+            e.exec("axton_store","UPDATE axton_store SET id=?,next_mutation_id=1,next_local_sequence=1,last_acknowledged_batch_id=0,start_cursor=NULL,bootstrap_cursor=NULL,cursor=NULL",&[json!(fresh)])?;
             Ok(ResetStoreReport05{context:e.context05()?,abandoned_calls})
         })?;
         self.client_id = report.context.store_id.clone();

@@ -483,7 +483,7 @@ fn unsafe_sequence_counter_rolls_back_model_write_and_mutation_id() {
 }
 #[test]
 fn late_cascade_discovery_extends_owned_effects_without_changing_frozen_input() {
-    use axton_client::{Operation, OperationKind, RecordKey};
+    use axton_client::RecordKey;
     let mut value = json!({"enums":[],"models":[
         {"name":"Book","identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}]},
         {"name":"Comment","identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"bookId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"relations":[{"name":"book","target":"Book","fields":["bookId"],"targetFields":["id"],"onDelete":"delete"}]}
@@ -494,15 +494,7 @@ fn late_cascade_discovery_extends_owned_effects_without_changing_frozen_input() 
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
-    c.transaction(|tx| {
-        tx.direct(Operation {
-            model: "Book".into(),
-            op: OperationKind::Create,
-            identity: json!({"id":"b"}),
-            values: Some(json!({"title":"book"})),
-        })
-    })
-    .unwrap();
+    cache_row(&mut c, "Book", "b", json!({"title":"book"}));
     let call = c
         .transaction(|tx| tx.submit_mutation05("DeleteBook", 1, json!({"book":{"id":"b"}}), vec![]))
         .unwrap();
@@ -538,6 +530,22 @@ fn late_cascade_discovery_extends_owned_effects_without_changing_frozen_input() 
     );
 }
 
+fn cache_row(c: &mut Client<SqliteStore>, model: &str, id: &str, state: Value) {
+    let report = c
+        .install_cache05(
+            &[v05::ReadRecord {
+                key: v05::RecordKey {
+                    model: model.into(),
+                    identity: json!({ "id": id }),
+                },
+                cursor: (),
+                state,
+            }],
+            true,
+        )
+        .unwrap();
+    assert_eq!(report.applied, 1, "{model} {id} installed as cache");
+}
 fn creation_then_sequenced_edit_schema() -> Schema {
     let mut value = serde_json::to_value(schema()).unwrap();
     value["actions"].as_array_mut().unwrap().push(json!({
@@ -709,7 +717,7 @@ fn offline_sequenced_update_waits_for_creation_settlement_and_survives_reopen() 
 
 #[test]
 fn rejected_predecessor_releases_sequence_survivor_and_rolls_back_lifecycle_dependent() {
-    use axton_client::{Operation, OperationKind, RecordKey};
+    use axton_client::RecordKey;
     for reopen in [false, true] {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("db");
@@ -731,15 +739,7 @@ fn rejected_predecessor_releases_sequence_survivor_and_rolls_back_lifecycle_depe
             model: "Entry".into(),
             identity: json!({"id":"n"}),
         };
-        c.transaction(|tx| {
-            tx.direct(Operation {
-                model: "Entry".into(),
-                op: OperationKind::Create,
-                identity: existing.identity.clone(),
-                values: Some(json!({"text":"base","note":null})),
-            })
-        })
-        .unwrap();
+        cache_row(&mut c, "Entry", "e", json!({"text":"base","note":null}));
         let first = c.transaction(|tx| tx.submit_mutation05("Write",1,json!({"entries":[{"id":"n","text":"created","note":null}],"maybe":{"id":"e","text":"first"}}),vec![])).unwrap();
         let survivor = c
             .transaction(|tx| {
@@ -1212,14 +1212,6 @@ fn pair_schema(change: Option<Change>) -> Schema {
     };
     Schema::from_value(json!({"enums":[],"models":models,"actions":actions})).unwrap()
 }
-fn row(model: &str, id: &str, title: Value) -> axton_client::Operation {
-    axton_client::Operation {
-        model: model.into(),
-        op: axton_client::OperationKind::Create,
-        identity: json!({ "id": id }),
-        values: Some(json!({ "title": title })),
-    }
-}
 /// A Store whose queue holds `Pair` (updates of `a` and `b`) enqueued under
 /// the old schema, reopened with the schema `change` made.
 fn queued_across(
@@ -1235,11 +1227,8 @@ fn queued_across(
     let mut c =
         Client::open05(SqliteStore::open(&p).unwrap(), pair_schema(None), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
-    c.transaction(|tx| {
-        tx.direct(row("A", "a", json!("A0")))?;
-        tx.direct(row("B", "b", json!("B0")))
-    })
-    .unwrap();
+    cache_row(&mut c, "A", "a", json!({"title":"A0"}));
+    cache_row(&mut c, "B", "b", json!({"title":"B0"}));
     c.transaction(|tx| {
         tx.submit_mutation05(
             "Pair",
@@ -1454,16 +1443,8 @@ fn an_action_sequenced_after_a_diverged_mutation_can_be_enqueued() {
     )
     .unwrap();
     c.initialize_stream05(0, "1").unwrap();
-    c.transaction(|tx| {
-        tx.direct(axton_client::Operation {
-            model: "A".into(),
-            op: axton_client::OperationKind::Create,
-            identity: json!({"id":"a"}),
-            values: Some(json!({"code":"c","title":"A0"})),
-        })?;
-        tx.direct(row("B", "b", json!("B0")))
-    })
-    .unwrap();
+    cache_row(&mut c, "A", "a", json!({"code":"c","title":"A0"}));
+    cache_row(&mut c, "B", "b", json!({"title":"B0"}));
     let pair = c
         .transaction(|tx| {
             tx.submit_mutation05(

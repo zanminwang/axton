@@ -9,22 +9,19 @@ fn query_normalizes_filters_orders_nulls_and_resolves_relationships() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = Client::open05(
         SqliteStore::open(dir.path().join("db")).unwrap(),
-        family_schema(),
+        with_crud(family_schema()),
         "User:u",
     )
     .unwrap();
-    c.transaction(|tx| {
-        tx.direct(create("Book", "b", json!({"title":"Book"})))?;
-        for (id, text) in [("c1", "Z"), ("c2", "A"), ("c3", "A")] {
-            tx.direct(create(
-                "Comment",
-                id,
-                json!({"bookId":if id=="c3"{"other"}else{"b"},"text":text}),
-            ))?;
-        }
-        Ok(())
-    })
-    .unwrap();
+    cached(&mut c, "Book", "b", json!({"title":"Book"}));
+    for (id, text) in [("c1", "Z"), ("c2", "A"), ("c3", "A")] {
+        cached(
+            &mut c,
+            "Comment",
+            id,
+            json!({"bookId":if id=="c3"{"other"}else{"b"},"text":text}),
+        );
+    }
     let spec: QuerySpec = serde_json::from_value(
         json!({"orderBy":[{"field":"text","direction":"ascending"}],"limit":2}),
     )
@@ -48,7 +45,7 @@ fn query_normalizes_filters_orders_nulls_and_resolves_relationships() {
     assert_eq!(c.query("Comment", &json!({"bookId":"b"})).unwrap().len(), 2);
     c.transaction(|tx| {
         assert_eq!(tx.query("Comment", &json!({}))?.len(), 3);
-        tx.direct(create("Comment", "c4", json!({"bookId":"b","text":"Q"})))?;
+        create_call(tx, "Comment", "c4", json!({"bookId":"b","text":"Q"}))?;
         assert_eq!(
             tx.query("Comment", &json!({}))?.len(),
             4,
@@ -81,7 +78,8 @@ fn readonly_sql_sees_optimistic_rows_and_refuses_write_statements() {
         "duplicate column names need aliases"
     );
     c.begin_session().unwrap();
-    c.session(|tx| tx.direct(update("C"))).unwrap();
+    c.session(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"C"}}), vec![]))
+        .unwrap();
     assert_eq!(
         c.session_sql("SELECT text FROM Entry", &[]).unwrap(),
         vec![json!({"text":"C"})]
@@ -155,16 +153,12 @@ fn sql_tables_are_the_model_tables_a_select_reads() {
         assert!(c.sql_tables(refused).is_err(), "{refused} is refused");
     }
     // The authorizer lived for one prepare only.
-    c.transaction(|tx| {
-        tx.direct(create("Book", "b", json!({"title":"Title"})))?;
-        Ok(())
-    })
-    .unwrap();
+    cached(&mut c, "Book", "b", json!({"title":"Title"}));
     assert_eq!(
         c.read_sql("SELECT count(*) AS n FROM axton_authority", &[])
             .unwrap(),
         vec![json!({"n":1})],
-        "direct write evidence is exposed through the derived read view"
+        "cache install evidence is exposed through the derived read view"
     );
     assert_eq!(
         c.read_sql("SELECT title FROM Book", &[]).unwrap(),
@@ -188,8 +182,7 @@ fn unsupported_filter_and_order_shapes_are_refused() {
         "User:u",
     )
     .unwrap();
-    c.transaction(|tx| tx.direct(create("Note", "n", json!({"mood":"calm","tags":["a"]}))))
-        .unwrap();
+    cached(&mut c, "Note", "n", json!({"mood":"calm","tags":["a"]}));
     let mut query = |spec: Value| {
         let spec: QuerySpec = serde_json::from_value(spec).unwrap();
         c.query_spec("Note", &spec)

@@ -931,15 +931,8 @@ fn crash_after_sql_commit_before_dequeue_child() {
         store: SqliteStore::open(path).unwrap(),
         armed: armed.clone(),
     };
-    let mut c = Client::open05(
-        store,
-        Schema::from_value(
-            serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap(),
-        )
-        .unwrap(),
-        "User:u",
-    )
-    .unwrap();
+    // The Entry schema with its `Edit` Mutation, as the parent reopens it.
+    let mut c = Client::open05(store, common05::schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let f = v05::freeze_delivery(
@@ -965,7 +958,7 @@ fn crash_after_sql_commit_before_dequeue_child() {
     panic!("crash commit hook not reached");
 }
 #[test]
-fn crash_after_commit_before_dequeue_reopens_without_reapplying_later_direct() {
+fn crash_after_commit_before_dequeue_reopens_without_reapplying_under_later_optimism() {
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("db");
     let status = std::process::Command::new(std::env::current_exe().unwrap())
@@ -978,7 +971,7 @@ fn crash_after_commit_before_dequeue_reopens_without_reapplying_later_direct() {
         .status()
         .unwrap();
     assert_eq!(status.code(), Some(73));
-    let mut c = client(&path);
+    let mut c = common05::open(&path);
     assert_eq!(c.store_status05().unwrap().cursor, Some(1));
     let key = axton_client::RecordKey {
         model: "Entry".into(),
@@ -986,12 +979,12 @@ fn crash_after_commit_before_dequeue_reopens_without_reapplying_later_direct() {
     };
     assert_eq!(c.read(&key).unwrap().unwrap()["text"], "a");
     c.transaction(|tx| {
-        tx.direct(axton_client::Operation {
-            model: "Entry".into(),
-            identity: key.identity.clone(),
-            op: axton_client::OperationKind::Update,
-            values: Some(serde_json::json!({"text":"later"})),
-        })
+        tx.submit_mutation05(
+            "Edit",
+            1,
+            serde_json::json!({"entry":{"id":"a","text":"later"}}),
+            vec![],
+        )
     })
     .unwrap();
     let context = c.request_context05().unwrap();

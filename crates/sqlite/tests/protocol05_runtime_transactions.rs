@@ -282,7 +282,7 @@ fn harness() -> Harness<SqliteStore> {
     let dir = tempfile::tempdir().unwrap();
     let client = Client::open05(
         SqliteStore::open(dir.path().join("db")).unwrap(),
-        schema(),
+        common05::with_crud(schema()),
         "User:u",
     )
     .unwrap();
@@ -293,6 +293,38 @@ fn harness() -> Harness<SqliteStore> {
 }
 fn create(id: &str, text: &str) -> Value {
     json!({"kind":"direct","operation":{"model":"Entry","op":"create","identity":{"id":id},"values":{"text":text}}})
+}
+/// A transaction command that creates Entry `id`: a Mutation, applied
+/// optimistically and answered with its Call.
+fn write(id: &str, text: &str) -> Value {
+    submit_mutation("CreateEntry", json!({"row":{"id":id,"text":text}}), false)
+}
+/// A transaction command that fails without writing: an unknown Mutation.
+fn failing_write() -> Value {
+    submit_mutation("Nope", json!({}), false)
+}
+/// The task form of [`failing_write`].
+fn failing_task() -> Value {
+    json!({"kind":"submitAction","name":"Nope","version":1,"args":{}})
+}
+/// A write's completion as [`calls`] shows it.
+fn wrote(id: &str) -> Value {
+    done(id, json!("call"))
+}
+/// `events` with each Mutation submission's answer `{callId, ordinal}`
+/// shown as `"call"` and Call states left out: where a write completes is
+/// what the tests below check, and the committed rows show its fate.
+fn calls(events: Vec<Value>) -> Vec<Value> {
+    events
+        .into_iter()
+        .filter(|e| e["type"] != "transactionCallState")
+        .map(|mut e| {
+            if e["type"] == "taskCompleted" && e["ok"] == true && e["value"]["callId"].is_string() {
+                e["value"] = json!("call");
+            }
+            e
+        })
+        .collect()
 }
 fn read(id: &str) -> Value {
     json!({"kind":"read","key":{"model":"Entry","identity":{"id":id}}})
@@ -382,11 +414,11 @@ fn submitted(events: &[Value], id: &str) -> Value {
 fn tasks_complete_in_order_to_their_own_request_and_a_duplicate_never_runs_twice() {
     let mut h = harness();
     h.task("1", read("e"));
-    h.task("2", create("e", "hi"));
-    h.task("3", missing_model());
+    h.task("2", put("Entry", "e", json!({"text":"hi"})));
+    h.task("3", failing_task());
     h.task("4", read("e"));
     // A second submission of a routed id is a protocol report, not a task.
-    h.task("4", create("e", "twice"));
+    h.task("4", put("Entry", "e", json!({"text":"twice"})));
     let reported = h.events();
     assert_eq!(
         reported,
@@ -396,8 +428,8 @@ fn tasks_complete_in_order_to_their_own_request_and_a_duplicate_never_runs_twice
     );
     // A write's success is observed only once it committed.
     assert_eq!(
-        h.completed("2"),
-        vec![done("1", Value::Null), done("2", Value::Null)]
+        calls(h.completed("2")),
+        vec![done("1", Value::Null), wrote("2")]
     );
     assert_eq!(h.committed(), Some(row("hi")));
     let events = h.run();
@@ -436,8 +468,8 @@ fn a_callback_transaction_owns_the_writer_until_its_result_commits() {
     h.task("2", read("e"));
     assert_eq!(h.run(), Vec::<Value>::new());
     // The callback's own write runs on the continuation lane.
-    h.command("3", &a.transaction, None, create("e", "hi"));
-    assert_eq!(h.run(), vec![done("3", Value::Null)]);
+    h.command("3", &a.transaction, None, write("e", "hi"));
+    assert_eq!(calls(h.run()), vec![wrote("3")]);
     // A wrong token joins nothing.
     h.command("4", "tx999", None, read("e"));
     assert_eq!(h.run(), vec![failed("4", "transaction_closed")]);
@@ -447,7 +479,7 @@ fn a_callback_transaction_owns_the_writer_until_its_result_commits() {
     assert_eq!(h.committed(), None);
     h.callback(&a, true, None);
     // The parent succeeds only once the callback's writes committed.
-    assert_eq!(h.completed("1"), vec![done("1", Value::Null)]);
+    assert_eq!(calls(h.completed("1")), vec![done("1", Value::Null)]);
     assert_eq!(h.committed(), Some(row("hi")));
     assert_eq!(h.run(), vec![done("2", row("hi"))]);
     // After the result the transaction is closed to its own token too.
@@ -472,31 +504,31 @@ fn savepoint_scopes_admit_only_the_innermost_open_scope() {
     let scope = events[0]["value"]["scope"].as_str().unwrap().to_string();
     assert_eq!(events, vec![done("2", json!({"scope":scope}))]);
     assert!(!scope.is_empty());
-    h.command("3", &a.transaction, None, create("e", "outer"));
+    h.command("3", &a.transaction, None, write("e", "outer"));
     assert_eq!(h.run(), vec![failed("3", "invalid transaction scope")]);
-    h.command("4", &a.transaction, Some(&scope), create("e", "inner"));
+    h.command("4", &a.transaction, Some(&scope), write("e", "inner"));
     h.command(
         "5",
         &a.transaction,
         Some(&scope),
         json!({"kind":"release","scope":scope}),
     );
-    assert_eq!(
-        h.run(),
-        vec![done("4", Value::Null), done("5", Value::Null)]
-    );
+    assert_eq!(calls(h.run()), vec![wrote("4"), done("5", Value::Null)]);
     h.callback(&a, true, None);
-    assert_eq!(h.run(), vec![failed("1", "invalid transaction scope")]);
+    assert_eq!(
+        calls(h.run()),
+        vec![failed("1", "invalid transaction scope")]
+    );
     assert_eq!(h.committed(), None);
 
     // A failure inside a savepoint that rolls back leaves the outer unit
     // committable; nested scopes release in order.
     let mut h = harness();
     let a = h.begin("1");
-    h.command("2", &a.transaction, None, create("e", "outer"));
+    h.command("2", &a.transaction, None, write("e", "outer"));
     h.command("3", &a.transaction, None, json!({"kind":"savepoint"}));
-    let events = h.run();
-    assert_eq!(events[0], done("2", Value::Null));
+    let events = calls(h.run());
+    assert_eq!(events[0], wrote("2"));
     let outer = events[1]["value"]["scope"].as_str().unwrap().to_string();
     h.command(
         "4",
@@ -506,7 +538,7 @@ fn savepoint_scopes_admit_only_the_innermost_open_scope() {
     );
     let inner = h.run()[0]["value"]["scope"].as_str().unwrap().to_string();
     assert_ne!(inner, outer);
-    h.command("5", &a.transaction, Some(&inner), missing_model());
+    h.command("5", &a.transaction, Some(&inner), failing_write());
     let events = h.run();
     assert_eq!(events[0]["requestId"], "5");
     assert_eq!(events[0]["ok"], false);
@@ -527,19 +559,19 @@ fn savepoint_scopes_admit_only_the_innermost_open_scope() {
         vec![done("6", Value::Null), done("7", Value::Null)]
     );
     h.callback(&a, true, None);
-    assert_eq!(h.run(), vec![done("1", Value::Null)]);
+    assert_eq!(calls(h.run()), vec![done("1", Value::Null)]);
     assert_eq!(h.committed(), Some(row("outer")));
 
     // A failure caught at the top level still poisons the commit.
     let mut h = harness();
     let a = h.begin("1");
-    h.command("2", &a.transaction, None, create("e", "kept?"));
-    h.command("3", &a.transaction, None, missing_model());
-    let events = h.run();
-    assert_eq!(events[0], done("2", Value::Null));
+    h.command("2", &a.transaction, None, write("e", "kept?"));
+    h.command("3", &a.transaction, None, failing_write());
+    let events = calls(h.run());
+    assert_eq!(events[0], wrote("2"));
     let error = events[1]["error"].as_str().unwrap().to_string();
     h.callback(&a, true, None);
-    assert_eq!(h.run(), vec![failed("1", &error)]);
+    assert_eq!(calls(h.run()), vec![failed("1", &error)]);
     assert_eq!(h.committed(), None);
 
     // `release` pops only the top scope.
@@ -562,19 +594,22 @@ fn savepoint_scopes_admit_only_the_innermost_open_scope() {
     );
     assert_eq!(h.run(), vec![failed("4", "invalid transaction scope")]);
     // The inner scope is still the top one.
-    h.command("5", &a.transaction, Some(&inner), create("e", "x"));
-    assert_eq!(h.run(), vec![done("5", Value::Null)]);
+    h.command("5", &a.transaction, Some(&inner), write("e", "x"));
+    assert_eq!(calls(h.run()), vec![wrote("5")]);
     h.callback(&a, true, None);
-    assert_eq!(h.run(), vec![failed("1", "invalid transaction scope")]);
+    assert_eq!(
+        calls(h.run()),
+        vec![failed("1", "invalid transaction scope")]
+    );
 
     // An unclosed savepoint at a successful result rolls back.
     let mut h = harness();
     let a = h.begin("1");
-    h.command("2", &a.transaction, None, create("e", "x"));
+    h.command("2", &a.transaction, None, write("e", "x"));
     h.command("3", &a.transaction, None, json!({"kind":"savepoint"}));
     assert_eq!(h.run().len(), 2);
     h.callback(&a, true, None);
-    assert_eq!(h.run(), vec![failed("1", "unclosed savepoint")]);
+    assert_eq!(calls(h.run()), vec![failed("1", "unclosed savepoint")]);
     assert_eq!(h.committed(), None);
     // The runtime is usable afterwards.
     h.task("4", read("e"));
@@ -585,8 +620,8 @@ fn savepoint_scopes_admit_only_the_innermost_open_scope() {
 fn callback_failure_rolls_back_and_stale_or_late_messages_join_nothing() {
     let mut h = harness();
     let a = h.begin("1");
-    h.command("2", &a.transaction, None, create("e", "hi"));
-    assert_eq!(h.run(), vec![done("2", Value::Null)]);
+    h.command("2", &a.transaction, None, write("e", "hi"));
+    assert_eq!(calls(h.run()), vec![wrote("2")]);
     // A result naming another effect or transaction is ignored.
     h.submit(
         json!({"type":"callbackResult","effectId":"999","transactionId":a.transaction,"ok":true}),
@@ -603,7 +638,7 @@ fn callback_failure_rolls_back_and_stale_or_late_messages_join_nothing() {
     h.command("3", &a.transaction, None, read("e"));
     assert_eq!(h.run(), vec![done("3", row("hi"))]);
     h.callback(&a, false, Some("boom"));
-    assert_eq!(h.run(), vec![failed("1", "boom")]);
+    assert_eq!(calls(h.run()), vec![failed("1", "boom")]);
     assert_eq!(h.committed(), None);
     h.command("4", &a.transaction, None, read("e"));
     assert_eq!(h.run(), vec![failed("4", "transaction_closed")]);
@@ -619,7 +654,7 @@ fn callback_failure_rolls_back_and_stale_or_late_messages_join_nothing() {
     // A result that arrives while submitted commands are still queued means
     // the application did not await them: nothing commits.
     let c = h.begin("6");
-    h.command("7", &c.transaction, None, create("e", "unawaited"));
+    h.command("7", &c.transaction, None, write("e", "unawaited"));
     h.callback(&c, true, None);
     // Commands after the result are closed at once.
     h.command("8", &c.transaction, None, read("e"));
@@ -638,8 +673,8 @@ fn callback_failure_rolls_back_and_stale_or_late_messages_join_nothing() {
 fn close_during_a_callback_rolls_back_and_releases_every_waiter() {
     let mut h = harness();
     let a = h.begin("1");
-    h.command("2", &a.transaction, None, create("e", "hi"));
-    assert_eq!(h.run(), vec![done("2", Value::Null)]);
+    h.command("2", &a.transaction, None, write("e", "hi"));
+    assert_eq!(calls(h.run()), vec![wrote("2")]);
     h.task("3", read("e"));
     h.command("4", &a.transaction, None, read("e"));
     h.submit(json!({"type":"close"})).unwrap();
@@ -649,7 +684,7 @@ fn close_during_a_callback_rolls_back_and_releases_every_waiter() {
         Err(BridgeError::Closed)
     );
     assert_eq!(
-        h.run(),
+        calls(h.run()),
         vec![
             json!({"type":"cancelEffect","effectId":a.effect}),
             failed("1", "client_closed"),
@@ -664,7 +699,12 @@ fn close_during_a_callback_rolls_back_and_releases_every_waiter() {
     assert_eq!(h.committed(), None);
     // The rollback released the writer: another client can write the file.
     let dir = h._dir.path().join("db");
-    let mut other = Client::open05(SqliteStore::open(&dir).unwrap(), schema(), "User:u").unwrap();
+    let mut other = Client::open05(
+        SqliteStore::open(&dir).unwrap(),
+        common05::with_crud(schema()),
+        "User:u",
+    )
+    .unwrap();
     let _ = other.generation();
     assert!(other.read(&key()).unwrap().is_none());
 }
@@ -678,30 +718,32 @@ fn a_failed_commit_fails_the_task_and_lets_no_success_or_change_escape() {
         armed: armed.clone(),
     };
     let mut h = Harness {
-        runtime: ClientRuntime::new(Client::open05(store, schema(), "User:u").unwrap()),
+        runtime: ClientRuntime::new(
+            Client::open05(store, common05::with_crud(schema()), "User:u").unwrap(),
+        ),
         _dir: dir,
     };
     let generation = h.runtime.client().generation();
     // The callback transaction.
     let a = h.begin("1");
-    h.command("2", &a.transaction, None, create("e", "hi"));
-    assert_eq!(h.run(), vec![done("2", Value::Null)]);
+    h.command("2", &a.transaction, None, write("e", "hi"));
+    assert_eq!(calls(h.run()), vec![wrote("2")]);
     armed.store(true, Ordering::SeqCst);
     h.callback(&a, true, None);
-    assert_eq!(h.run(), vec![failed("1", "injected commit failure")]);
+    assert_eq!(calls(h.run()), vec![failed("1", "injected commit failure")]);
     assert_eq!(h.runtime.client().generation(), generation);
     assert_eq!(h.committed(), None);
     // An ordinary write task.
     armed.store(true, Ordering::SeqCst);
-    h.task("3", create("e", "hi"));
+    h.task("3", put("Entry", "e", json!({"text":"hi"})));
     assert_eq!(h.run(), vec![failed("3", "injected commit failure")]);
     assert_eq!(h.committed(), None);
     // The writer is free again: a later transaction commits.
     let c = h.begin("6");
-    h.command("7", &c.transaction, None, create("e", "later"));
-    assert_eq!(h.run(), vec![done("7", Value::Null)]);
+    h.command("7", &c.transaction, None, write("e", "later"));
+    assert_eq!(calls(h.run()), vec![wrote("7")]);
     h.callback(&c, true, None);
-    assert_eq!(h.run(), vec![done("6", Value::Null)]);
+    assert_eq!(calls(h.run()), vec![done("6", Value::Null)]);
     assert_eq!(h.committed(), Some(row("later")));
 }
 
@@ -1676,7 +1718,24 @@ fn unsent_observers_publish_initial_then_changed_inputs_and_end_on_unwatch_or_cl
         h.runtime.client().refused_acts05().unwrap()[0].id,
         refused.ordinal
     );
-    let (_, events) = h.call("unrelated", create("unrelated", "local"));
+    // A commit that changes no unsent view: a cache install, published by
+    // the next task.
+    h.runtime
+        .client()
+        .install_cache05(
+            &[v05::ReadRecord {
+                key: v05::RecordKey {
+                    model: "Entry".into(),
+                    identity: json!({"id":"unrelated"}),
+                },
+                cursor: (),
+                state: json!({"text":"local","note":null}),
+            }],
+            true,
+        )
+        .unwrap();
+    let (_, events) = h.call("unrelated", json!({"kind":"status"}));
+    assert_eq!(h.entry("unrelated").unwrap()["text"], "local");
     assert!(
         unsent_events(&events).is_empty(),
         "unchanged views publish no duplicate"
@@ -1951,7 +2010,7 @@ fn observer_harness() -> Harness<SqliteStore> {
         runtime: ClientRuntime::new(
             Client::open05(
                 SqliteStore::open(dir.path().join("db")).unwrap(),
-                Schema::from_value(raw).unwrap(),
+                common05::with_crud(Schema::from_value(raw).unwrap()),
                 "User:u",
             )
             .unwrap(),
@@ -1970,11 +2029,15 @@ const JOURNAL: &str = "SELECT e.id AS entry, e.text AS text, m.url AS media, p.n
     FROM Entry e JOIN Media m ON m.entryId = e.id JOIN Person p ON p.entryId = e.id ORDER BY e.id";
 /// Every re-run of this statement publishes: its `random()` column differs.
 const PROBE: &str = "SELECT count(*) AS n, random() AS r FROM Entry";
-fn put(model: &str, id: &str, values: Value) -> Value {
-    json!({"kind":"direct","operation":{"model":model,"op":"create","identity":{"id":id},"values":values}})
+/// A task that creates `model` row `id` through its `with_crud` Mutation.
+fn put(model: &str, id: &str, mut values: Value) -> Value {
+    values["id"] = json!(id);
+    json!({"kind":"submitAction","name":format!("Create{model}"),"version":1,"args":{"row":values}})
 }
-fn change(model: &str, id: &str, values: Value) -> Value {
-    json!({"kind":"direct","operation":{"model":model,"op":"update","identity":{"id":id},"values":values}})
+/// A task that updates `model` row `id` through its `with_crud` Mutation.
+fn change(model: &str, id: &str, mut values: Value) -> Value {
+    values["id"] = json!(id);
+    json!({"kind":"submitAction","name":format!("Update{model}"),"version":1,"args":{"row":values}})
 }
 fn watch_sql(sql: &str, parameters: Value) -> Value {
     json!({"kind":"watchSql","sql":sql,"parameters":parameters})
@@ -2102,7 +2165,7 @@ fn a_watched_statement_refuses_writes_and_engine_tables_and_lives_like_a_watch()
         );
     }
 
-    h.commit("seed", create("e", "first"));
+    h.commit("seed", put("Entry", "e", json!({"text":"first"})));
     let (one, events) = h.watch_sql("one", "SELECT text FROM Entry WHERE id = ?", json!(["e"]));
     assert_eq!(rows(&events, &one), [json!([{"text":"first"}])]);
     // Fails to run while exactly two Entries exist.
@@ -2112,7 +2175,7 @@ fn a_watched_statement_refuses_writes_and_engine_tables_and_lives_like_a_watch()
         json!([]),
     );
     assert_eq!(rows(&events, &fragile), [json!([{"n":1}])]);
-    let events = h.commit("second", create("f", "second"));
+    let events = h.commit("second", put("Entry", "f", json!({"text":"second"})));
     assert_eq!(
         events
             .iter()
@@ -2122,7 +2185,7 @@ fn a_watched_statement_refuses_writes_and_engine_tables_and_lives_like_a_watch()
         "{events:?}"
     );
     assert!(rows(&events, &fragile).is_empty() && rows(&events, &one).is_empty());
-    let events = h.commit("third", create("g", "third"));
+    let events = h.commit("third", put("Entry", "g", json!({"text":"third"})));
     assert_eq!(
         rows(&events, &fragile),
         [json!([{"n":3}])],
@@ -2138,9 +2201,9 @@ fn a_watched_statement_refuses_writes_and_engine_tables_and_lives_like_a_watch()
         .unwrap()
         .clone();
     let transaction = callback["operation"]["transactionId"].clone();
-    h.submit(json!({"type":"transactionCommand","requestId":"write","transactionId":transaction,"command":{"kind":"direct","operation":{"model":"Entry","op":"update","identity":{"id":"e"},"values":{"text":"inside"}}}})).unwrap();
-    let events = h.run();
-    assert!(events.contains(&done("write", Value::Null)));
+    h.submit(json!({"type":"transactionCommand","requestId":"write","transactionId":transaction,"command":submit_mutation("UpdateEntry", json!({"row":{"id":"e","text":"inside"}}), false)})).unwrap();
+    let events = calls(h.run());
+    assert!(events.contains(&wrote("write")));
     assert!(
         !events.iter().any(|e| e["type"] == "observerChanged"),
         "{events:?}"
@@ -2155,7 +2218,11 @@ fn a_watched_statement_refuses_writes_and_engine_tables_and_lives_like_a_watch()
 
     // unwatch: nothing more for that observer; the other goes on.
     h.task("stop", json!({"kind":"unwatch","observerId":one}));
-    let events = [h.run(), h.commit("fourth", create("h", "fourth"))].concat();
+    let events = [
+        h.run(),
+        h.commit("fourth", put("Entry", "h", json!({"text":"fourth"}))),
+    ]
+    .concat();
     assert!(events.contains(&done("stop", Value::Null)));
     assert!(rows(&events, &one).is_empty());
     assert_eq!(rows(&events, &fragile), [json!([{"n":4}])]);

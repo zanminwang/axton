@@ -20,7 +20,15 @@ fn schema() -> Value {
         )
         .unwrap()
     });
-    serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap()
+    let mut schema: Value =
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
+    schema["actions"] = json!([put_entry()]);
+    schema
+}
+/// The test Mutation every write below commits: it creates an Entry.
+fn put_entry() -> Value {
+    json!({"name":"PutEntry","version":1,"outputs":[],
+        "inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"create","cardinality":"single"}]})
 }
 fn wake_sink() -> (WakeSink, Receiver<u64>) {
     let (sender, receiver) = mpsc::channel();
@@ -87,8 +95,13 @@ impl Carrier {
         }
     }
 }
+/// A task that creates Entry `id` through a Mutation.
 fn create(id: &str) -> Value {
-    json!({"kind":"direct","operation":{"model":"Entry","op":"create","identity":{"id":id},"values":{"text":"hi"}}})
+    json!({"kind":"submitAction","name":"PutEntry","version":1,"args":{"entry":{"id":id,"text":"hi"}}})
+}
+/// The transaction command form of [`create`].
+fn tx_create(id: &str) -> Value {
+    json!({"kind":"submitMutation","name":"PutEntry","version":1,"args":{"entry":{"id":id,"text":"hi"}}})
 }
 fn read(id: &str) -> Value {
     json!({"kind":"read","key":{"model":"Entry","identity":{"id":id}}})
@@ -255,7 +268,7 @@ fn a_client_parked_in_a_callback_does_not_hold_up_another_client() {
     a.task("1", json!({"kind":"transaction"}));
     let effect = a.until(|e| e["type"] == "effect");
     let transaction = effect["operation"]["transactionId"].clone();
-    a.submit(json!({"type":"transactionCommand","requestId":"2","transactionId":transaction,"command":create("e")}));
+    a.submit(json!({"type":"transactionCommand","requestId":"2","transactionId":transaction,"command":tx_create("e")}));
     assert_eq!(a.completed("2")["ok"], true);
 
     // A holds its transaction open; B opens, writes, reads and closes.
@@ -326,7 +339,7 @@ fn detach_stops_wakes_before_it_returns_and_closes_a_live_runtime() {
     let effect = live.until(|e| e["type"] == "effect");
     let tx = effect["operation"]["transactionId"].clone();
     // The open transaction holds a write the detach must roll back.
-    live.submit(json!({"type":"transactionCommand","requestId":"w","transactionId":tx,"command":create("e")}));
+    live.submit(json!({"type":"transactionCommand","requestId":"w","transactionId":tx,"command":tx_create("e")}));
     assert_eq!(live.completed("w")["ok"], true);
     for i in 0..50 {
         live.task(&format!("r{i}"), read("e"));
@@ -364,7 +377,7 @@ fn transaction_isolation_and_closed_handles_match_the_session_contract() {
     c.task("1", json!({"kind":"transaction"}));
     let effect = c.until(|e| e["type"] == "effect");
     let tx = effect["operation"]["transactionId"].clone();
-    c.submit(json!({"type":"transactionCommand","requestId":"2","transactionId":tx,"command":create("e")}));
+    c.submit(json!({"type":"transactionCommand","requestId":"2","transactionId":tx,"command":tx_create("e")}));
     c.submit(
         json!({"type":"transactionCommand","requestId":"3","transactionId":tx,"command":read("e")}),
     );
@@ -397,7 +410,7 @@ fn transaction_isolation_and_closed_handles_match_the_session_contract() {
     c.task("3", json!({"kind":"transaction"}));
     let effect = c.until(|e| e["type"] == "effect");
     let tx = effect["operation"]["transactionId"].clone();
-    c.submit(json!({"type":"transactionCommand","requestId":"4","transactionId":tx,"command":create("e")}));
+    c.submit(json!({"type":"transactionCommand","requestId":"4","transactionId":tx,"command":tx_create("e")}));
     assert_eq!(c.completed("4")["ok"], true);
     // While the callback owns the transaction, lane commands wait.
     for (i, kind) in ["freeze", "status", "tasks"].iter().enumerate() {
@@ -413,7 +426,8 @@ fn transaction_isolation_and_closed_handles_match_the_session_contract() {
     );
     assert_eq!(c.completed("3")["ok"], true);
     assert_eq!(c.completed("sync0")["ok"], false); // The retired batch seam cannot mutate a bound Store.
-    assert_eq!(c.completed("sync1")["value"]["pending"], 0);
+    // The status ran after the commit: it counts the committed Call.
+    assert_eq!(c.completed("sync1")["value"]["pending"], 1);
     assert_eq!(c.completed("sync2")["ok"], true);
     // After the commit the same token is closed again.
     c.submit(
@@ -436,7 +450,7 @@ fn a_client_waiting_on_the_network_holds_no_writer_and_no_other_client_waits() {
     let dir = tempfile::tempdir().unwrap();
     let mut with_action = schema();
     with_action["actions"] =
-        json!([{"name":"Ping","kind":"query","version":1,"inputs":[],"outputs":[]}]);
+        json!([{"name":"Ping","kind":"query","version":1,"inputs":[],"outputs":[]}, put_entry()]);
     let (sink, wakes) = wake_sink();
     let id = actor::open(
         json!({"type":"open","requestId":"open","path":dir.path().join("a"),"schema":with_action,"protocol":5,"stream":"User:a"}),

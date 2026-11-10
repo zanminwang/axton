@@ -59,6 +59,10 @@ fn local_create(values: Value) -> Operation {
         values: Some(values),
     }
 }
+/// The durable `Add` of one Todo in its own transaction: optimistic now.
+fn add(client: &mut Client<SqliteStore>, todo: Value) -> Result<SubmittedCall> {
+    client.transaction(|tx| tx.submit_mutation05("Add", 1, json!({ "todo": todo }), vec![]))
+}
 fn assert_uuid_v4(value: &Value) -> String {
     let text = value.as_str().expect("generated id is text").to_string();
     let parsed = uuid::Uuid::parse_str(&text).unwrap();
@@ -83,15 +87,11 @@ fn only(object: &Value, keys: &[&str]) -> Map<String, Value> {
 }
 
 #[test]
-fn local_create_fills_only_omitted_fields_and_each_create_generates_anew() {
+fn optimistic_create_fills_only_omitted_fields_and_each_create_generates_anew() {
     let dir = tempfile::tempdir().unwrap();
     let mut client = open(&dir.path().join("db"));
-    client
-        .transaction(|tx| tx.direct(local_create(json!({"title":"explicit"}))))
-        .unwrap();
-    client
-        .transaction(|tx| tx.direct(local_create(json!({"note":null,"priority":7}))))
-        .unwrap();
+    add(&mut client, json!({"title":"explicit"})).unwrap();
+    add(&mut client, json!({"note":null,"priority":7})).unwrap();
     let mut all = rows(&mut client);
     all.sort_by_key(|r| r["title"].as_str().unwrap().to_string());
     let (blank, explicit) = (&all[0], &all[1]);
@@ -120,29 +120,25 @@ fn local_create_fills_only_omitted_fields_and_each_create_generates_anew() {
         "explicit nullable null stays null"
     );
     // An explicit null never requests a default for a required field.
-    let err = client
-        .transaction(|tx| tx.direct(local_create(json!({"done":null}))))
-        .unwrap_err();
+    let err = add(&mut client, json!({"done":null})).unwrap_err();
     assert!(err.to_string().contains("not nullable"), "{err}");
     // A supplied identity is kept (and normalized as before).
-    client
-        .transaction(|tx| {
-            tx.direct(Operation {
-                model: "Todo".into(),
-                op: OperationKind::Create,
-                identity: json!({"id":"mine"}),
-                values: Some(json!({})),
-            })
-        })
-        .unwrap();
+    add(&mut client, json!({"id":"mine"})).unwrap();
     assert!(rows(&mut client).iter().any(|r| r["id"] == "mine"));
+    assert_eq!(rows(&mut client).len(), 3);
+}
+
+#[test]
+fn a_direct_create_refuses_an_identity_key_in_its_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = open(&dir.path().join("db"));
     // An identity key in the state is misplaced, not a reason to generate one.
     assert!(
         client
             .transaction(|tx| tx.direct(local_create(json!({"id":"misplaced"}))))
             .is_err()
     );
-    assert_eq!(rows(&mut client).len(), 3);
+    assert!(rows(&mut client).is_empty());
 }
 
 #[test]
@@ -150,7 +146,7 @@ fn a_rolled_back_transaction_keeps_no_generated_record() {
     let dir = tempfile::tempdir().unwrap();
     let mut client = open(&dir.path().join("db"));
     let result: Result<()> = client.transaction(|tx| {
-        tx.direct(local_create(json!({})))?;
+        tx.submit_mutation05("Add", 1, json!({"todo":{}}), vec![])?;
         assert_eq!(tx.query("Todo", &json!({}))?.len(), 1, "visible inside");
         Err(axton_core::invalid("abort"))
     });
@@ -159,9 +155,9 @@ fn a_rolled_back_transaction_keeps_no_generated_record() {
     // A failing nested scope rolls back only its own create.
     client
         .transaction(|tx| {
-            tx.direct(local_create(json!({"title":"kept"})))?;
+            tx.submit_mutation05("Add", 1, json!({"todo":{"title":"kept"}}), vec![])?;
             let nested: Result<()> = tx.savepoint(|inner| {
-                inner.direct(local_create(json!({"title":"dropped"})))?;
+                inner.submit_mutation05("Add", 1, json!({"todo":{"title":"dropped"}}), vec![])?;
                 Err(axton_core::invalid("abort"))
             });
             assert!(nested.is_err());
@@ -178,24 +174,23 @@ fn update_omission_changes_nothing_and_never_evaluates_defaults() {
     let dir = tempfile::tempdir().unwrap();
     let mut client = open(&dir.path().join("db"));
     client.initialize_stream05(0, "1").unwrap();
-    client
-        .transaction(|tx| {
-            tx.direct(Operation {
-                model: "Todo".into(),
-                op: OperationKind::Create,
-                identity: json!({"id":"t"}),
-                values: Some(json!({"title":"a","done":true,"priority":5,"status":"closed","createdAt":"2020-01-01T00:00:00.000Z","note":"x"})),
-            })
-        })
+    let report = client
+        .install_cache05(
+            &[v05::ReadRecord {
+                key: v05::RecordKey {
+                    model: "Todo".into(),
+                    identity: json!({"id":"t"}),
+                },
+                cursor: (),
+                state: json!({"title":"a","done":true,"priority":5,"status":"closed","createdAt":"2020-01-01T00:00:00.000Z","note":"x","memo":null}),
+            }],
+            true,
+        )
         .unwrap();
+    assert_eq!(report.applied, 1);
     client
         .transaction(|tx| {
-            tx.direct(Operation {
-                model: "Todo".into(),
-                op: OperationKind::Update,
-                identity: json!({"id":"t"}),
-                values: Some(json!({"title":"b"})),
-            })
+            tx.submit_mutation05("Edit", 1, json!({"todo":{"id":"t","title":"b"}}), vec![])
         })
         .unwrap();
     let row = &rows(&mut client)[0];
@@ -205,14 +200,7 @@ fn update_omission_changes_nothing_and_never_evaluates_defaults() {
     );
     // An update without identity is refused, never given a generated one.
     let err = client
-        .transaction(|tx| {
-            tx.direct(Operation {
-                model: "Todo".into(),
-                op: OperationKind::Update,
-                identity: json!({}),
-                values: Some(json!({"title":"c"})),
-            })
-        })
+        .transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"todo":{"title":"c"}}), vec![]))
         .unwrap_err();
     assert!(err.to_string().contains("identity"), "{err}");
     client
@@ -223,6 +211,11 @@ fn update_omission_changes_nothing_and_never_evaluates_defaults() {
     let batch = client.freeze_batch05().unwrap().unwrap();
     assert_eq!(
         v05::reconstruct_input(&batch.mutations[0].operations).unwrap(),
+        json!({"todo":{"id":"t","title":"b"}}),
+        "the omission is sent as written"
+    );
+    assert_eq!(
+        v05::reconstruct_input(&batch.mutations[1].operations).unwrap(),
         json!({"todo":{"id":"t","title":"d"}})
     );
 }
@@ -316,7 +309,7 @@ fn a_default_only_change_opens_in_place_and_rewrites_nothing() {
     c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| {
         tx.submit_mutation05("Add", 1, json!({"todo":{"title":"queued"}}), vec![])?;
-        tx.direct(local_create(json!({"title":"local"})))
+        tx.submit_mutation05("Add", 1, json!({"todo":{"title":"local"}}), vec![])
     })
     .unwrap();
     let before = rows(&mut c);
@@ -336,16 +329,8 @@ fn a_default_only_change_opens_in_place_and_rewrites_nothing() {
     assert_eq!(c.request_context05().unwrap(), batch.context);
     assert_eq!(rows(&mut c), before);
     assert_eq!(c.freeze_batch05().unwrap().unwrap(), batch);
-    assert!(
-        c.transaction(|tx| tx.direct(local_create(json!({}))))
-            .is_err()
-    );
-    c.transaction(|tx| {
-        tx.direct(local_create(
-            json!({"createdAt":"2026-01-01T00:00:00.000Z"}),
-        ))
-    })
-    .unwrap();
+    assert!(add(&mut c, json!({})).is_err());
+    add(&mut c, json!({"createdAt":"2026-01-01T00:00:00.000Z"})).unwrap();
     let fresh = rows(&mut c)
         .into_iter()
         .find(|row| !before.contains(row))
@@ -358,8 +343,20 @@ fn a_creation_default_never_backfills_a_new_required_column() {
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("db");
     let mut c = open(&path);
-    c.transaction(|tx| tx.direct(local_create(json!({"title":"old"}))))
+    let report = c
+        .install_cache05(
+            &[v05::ReadRecord {
+                key: v05::RecordKey {
+                    model: "Todo".into(),
+                    identity: json!({"id":"t"}),
+                },
+                cursor: (),
+                state: json!({"title":"old","done":false,"priority":0,"status":"open","createdAt":"2020-01-01T00:00:00.000Z","note":null,"memo":null}),
+            }],
+            true,
+        )
         .unwrap();
+    assert_eq!(report.applied, 1);
     drop(c);
     let mut changed = serde_json::to_value(schema()).unwrap();
     changed["models"][0]["fields"].as_array_mut().unwrap().push(json!({"name":"rank","nullable":false,"type":{"kind":"scalar","name":"int"},"createDefault":{"kind":"literal","value":3}}));

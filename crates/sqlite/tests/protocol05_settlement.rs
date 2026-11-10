@@ -108,6 +108,22 @@ fn accepted_private_result_waits_for_coverage_then_settles_later_direct() {
     assert!(c.call_completion05(&call.call_id).unwrap().is_none());
     assert!(c.settle_ready05().unwrap().completions.is_empty());
 }
+fn cache_row(c: &mut Client<SqliteStore>, model: &str, id: &str, state: Value) {
+    let report = c
+        .install_cache05(
+            &[v05::ReadRecord {
+                key: v05::RecordKey {
+                    model: model.into(),
+                    identity: json!({ "id": id }),
+                },
+                cursor: (),
+                state,
+            }],
+            true,
+        )
+        .unwrap();
+    assert_eq!(report.applied, 1, "{model} {id} installed as cache");
+}
 fn stream_key(id: &str) -> v05::RecordKey {
     v05::RecordKey {
         model: "Entry".into(),
@@ -754,15 +770,7 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     s.models[0].unique.push(vec!["text".into()]);
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
-    c.transaction(|tx| {
-        tx.direct(Operation {
-            model: "Entry".into(),
-            identity: json!({"id":"other"}),
-            op: OperationKind::Create,
-            values: Some(state("taken")),
-        })
-    })
-    .unwrap();
+    cache_row(&mut c, "Entry", "other", state("taken"));
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -798,15 +806,7 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     drop(c);
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s, "User:u").unwrap();
     assert!(c.settle_ready05().unwrap().completions.is_empty());
-    c.transaction(|tx| {
-        tx.direct(Operation {
-            model: "Entry".into(),
-            identity: json!({"id":"other"}),
-            op: OperationKind::Update,
-            values: Some(json!({"text":"free"})),
-        })
-    })
-    .unwrap();
+    cache_row(&mut c, "Entry", "other", state("free"));
     let ctx = c.request_context05().unwrap();
     c.install_authority05(&ctx, &[], Some((0, 1))).unwrap();
     assert!(c.call_completion05(&call.call_id).unwrap().is_some());

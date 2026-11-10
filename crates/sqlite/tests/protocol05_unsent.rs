@@ -33,19 +33,24 @@ fn open(path: &std::path::Path) -> Client<SqliteStore> {
     Client::open05(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap()
 }
 
-/// A client with Note `n` at text `base`, device-only.
+/// A client with Note `n` at text `base`, installed as cache: unprotected
+/// and unpending.
 fn seeded(dir: &tempfile::TempDir) -> Client<SqliteStore> {
     let mut client = open(&dir.path().join("db"));
-    client
-        .transaction(|tx| {
-            tx.direct(Operation {
-                model: "Note".into(),
-                op: OperationKind::Create,
-                identity: json!({"id":"n"}),
-                values: Some(json!({"text":"base","blob":null})),
-            })
-        })
+    let report = client
+        .install_cache05(
+            &[v05::ReadRecord {
+                key: v05::RecordKey {
+                    model: "Note".into(),
+                    identity: json!({"id":"n"}),
+                },
+                cursor: (),
+                state: json!({"text":"base","blob":null}),
+            }],
+            true,
+        )
         .unwrap();
+    assert_eq!(report.applied, 1);
     client
 }
 

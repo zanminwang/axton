@@ -42,7 +42,12 @@ fn local_transaction_and_mutation_savepoint_have_independent_fate() {
     assert_eq!(c.pending_count().unwrap(), 0);
     assert!(events.try_recv().is_err());
     c.transaction(|tx| {
-        tx.direct(update("LOCAL"))?;
+        tx.submit_mutation05(
+            "Edit",
+            1,
+            json!({"entry":{"id":"e","text":"LOCAL"}}),
+            vec![],
+        )?;
         let failed: Result<()> = tx.savepoint(|tx| {
             tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"bad"}}), vec![])?;
             Err(invalid("refuse"))
@@ -52,7 +57,11 @@ fn local_transaction_and_mutation_savepoint_have_independent_fate() {
     })
     .unwrap();
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "LOCAL");
-    assert_eq!(c.pending_count().unwrap(), 0);
+    assert_eq!(
+        c.pending_count().unwrap(),
+        1,
+        "only the outer Mutation is queued"
+    );
     assert!(events.try_recv().is_ok());
     assert!(events.try_recv().is_err());
 }
@@ -76,11 +85,18 @@ fn session_reads_own_writes_without_notifying_until_commit_and_blocks_other_writ
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
     assert!(events.try_recv().is_err());
     assert!(
-        c.transaction(|tx| tx.direct(update("X"))).is_err(),
+        c.transaction(|tx| tx.submit_mutation05(
+            "Edit",
+            1,
+            json!({"entry":{"id":"e","text":"X"}}),
+            vec![]
+        ))
+        .is_err(),
         "no second transaction during a session"
     );
     c.session_savepoint().unwrap();
-    c.session(|tx| tx.direct(update("C"))).unwrap();
+    c.session(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"C"}}), vec![]))
+        .unwrap();
     c.session_rollback_savepoint().unwrap();
     assert_eq!(
         c.session(|tx| tx.read(&key())).unwrap().unwrap()["text"],
@@ -90,7 +106,8 @@ fn session_reads_own_writes_without_notifying_until_commit_and_blocks_other_writ
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
     assert!(events.try_recv().is_ok());
     c.begin_session().unwrap();
-    c.session(|tx| tx.direct(update("Z"))).unwrap();
+    c.session(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"Z"}}), vec![]))
+        .unwrap();
     c.rollback_session().unwrap();
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
 }
@@ -103,7 +120,9 @@ fn stale_writer_cannot_overwrite_committed_database() {
     let mut b = open(&path);
     seed(&mut a, "A");
     let error = b
-        .transaction(|tx| tx.direct(update("B")))
+        .transaction(|tx| {
+            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"B"}}), vec![])
+        })
         .expect_err("the stale handle must be fenced out");
     assert!(
         error.to_string().contains("stale client writer"),
@@ -117,20 +136,20 @@ fn declared_unique_constraint_is_atomic() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = Client::open05(
         SqliteStore::open(dir.path().join("db")).unwrap(),
-        family_schema(),
+        with_crud(family_schema()),
         "User:u",
     )
     .unwrap();
     let result = c.transaction(|tx| {
-        tx.direct(create("Comment", "c1", json!({"bookId":"b","text":"same"})))?;
-        tx.direct(create("Comment", "c2", json!({"bookId":"b","text":"same"})))
+        create_call(tx, "Comment", "c1", json!({"bookId":"b","text":"same"}))?;
+        create_call(tx, "Comment", "c2", json!({"bookId":"b","text":"same"}))
     });
     assert!(result.is_err());
     assert!(c.query("Comment", &json!({})).unwrap().is_empty());
 }
 
 #[test]
-fn direct_cascade_handles_cyclic_relationships_once() {
+fn delete_cascade_handles_cyclic_relationships_once() {
     let dir = tempfile::tempdir().unwrap();
     let mut value = serde_json::to_value(family_schema()).unwrap();
     value["models"][0]["fields"]
@@ -140,19 +159,14 @@ fn direct_cascade_handles_cyclic_relationships_once() {
     value["models"][0]["relations"] = json!([{"name":"comment","target":"Comment","fields":["commentId"],"targetFields":["id"],"onDelete":"delete"}]);
     let mut c = Client::open05(
         SqliteStore::open(dir.path().join("db")).unwrap(),
-        Schema::from_value(value).unwrap(),
+        with_crud(Schema::from_value(value).unwrap()),
         "User:u",
     )
     .unwrap();
     c.transaction(|tx| {
-        tx.direct(create("Book", "b", json!({"title":"B","commentId":"c"})))?;
-        tx.direct(create("Comment", "c", json!({"bookId":"b","text":"C"})))?;
-        tx.direct(Operation {
-            model: "Book".into(),
-            op: OperationKind::Delete,
-            identity: json!({"id":"b"}),
-            values: None,
-        })
+        create_call(tx, "Book", "b", json!({"title":"B","commentId":"c"}))?;
+        create_call(tx, "Comment", "c", json!({"bookId":"b","text":"C"}))?;
+        delete_call(tx, "Book", "b")
     })
     .unwrap();
     assert!(c.query("Book", &json!({})).unwrap().is_empty());
@@ -162,9 +176,14 @@ fn direct_cascade_handles_cyclic_relationships_once() {
 #[test]
 fn committing_with_an_unclosed_savepoint_is_refused_and_rolls_back() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = open(&dir.path().join("db"));
+    let mut c = Client::open05(
+        SqliteStore::open(dir.path().join("db")).unwrap(),
+        with_crud(schema()),
+        "User:u",
+    )
+    .unwrap();
     c.begin_session().unwrap();
-    c.session(|tx| tx.direct(create("Entry", "e", json!({"text":"inside","note":null}))))
+    c.session(|tx| create_call(tx, "Entry", "e", json!({"text":"inside","note":null})))
         .unwrap();
     c.session_savepoint().unwrap();
     c.session(|tx| {
@@ -186,7 +205,7 @@ fn committing_with_an_unclosed_savepoint_is_refused_and_rolls_back() {
     );
     assert_eq!(c.pending_count().unwrap(), 0);
     c.begin_session().unwrap();
-    c.session(|tx| tx.direct(create("Entry", "e", json!({"text":"again","note":null}))))
+    c.session(|tx| create_call(tx, "Entry", "e", json!({"text":"again","note":null})))
         .unwrap();
     c.session_savepoint().unwrap();
     c.session_release().unwrap();

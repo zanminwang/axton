@@ -1,8 +1,10 @@
-use axton_client::{Client, Operation, OperationKind, RecordKey, Schema, v05};
+use axton_client::{Client, RecordKey, Schema, v05};
 use axton_sqlite::SqliteStore;
 use serde_json::json;
 fn schema(on_delete: &str) -> Schema {
-    Schema::from_value(json!({"enums":[],"models":[
+    Schema::from_value(json!({"enums":[],
+ "actions":[{"name":"DeleteParent","version":1,"outputs":[],"inputs":[{"kind":"model","name":"parent","model":"Parent","operation":"delete","cardinality":"single"}]}],
+ "models":[
  {"name":"Parent","identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}]},
  {"name":"Child","identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"parentId","nullable":true,"type":{"kind":"scalar","name":"string"}}],"relations":[{"name":"parent","target":"Parent","fields":["parentId"],"targetFields":["id"],"onDelete":on_delete}]}
  ]})).unwrap()
@@ -61,12 +63,7 @@ fn cascading_reference_cache_guard_uses_only_current_parent_tombstone() {
     ); // unloaded parent
     parent(&mut c, 57, false);
     c.transaction(|tx| {
-        tx.direct(Operation {
-            model: "Parent".into(),
-            op: OperationKind::Delete,
-            identity: json!({"id":"p"}),
-            values: None,
-        })
+        tx.submit_mutation05("DeleteParent", 1, json!({"parent":{"id":"p"}}), vec![])
     })
     .unwrap();
     assert_eq!(
@@ -74,7 +71,7 @@ fn cascading_reference_cache_guard_uses_only_current_parent_tombstone() {
             .unwrap()
             .applied,
         1
-    ); // local absence has no authority
+    ); // a pending local delete has no authority
     parent(&mut c, 58, true);
     assert!(c.read(&key("Child", "c")).unwrap().is_none());
     assert_eq!(

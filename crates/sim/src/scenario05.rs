@@ -1,7 +1,7 @@
 //! Deterministic recovery orders against real protocol-5 SQLite state.
 //! Cloud acknowledgements are fixtures; the actual PostgreSQL/SDK join lives
 //! in integration/v05-sdk and must pass independently.
-use axton_client::{Client, Operation, OperationKind, RecordKey, Schema};
+use axton_client::{Client, RecordKey, Schema};
 use axton_protocols::sync as v05;
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
@@ -20,13 +20,20 @@ pub struct RecoveryTrace05 {
     pub exact_retry: bool,
     pub unfinished_after_receipt: bool,
     pub durable_completion: bool,
+    /// The row with the later pending Mutation applied on top.
+    pub optimistic: Value,
+    /// The row once that later Mutation is discarded: what the receipt and
+    /// authority left.
     pub visible: Value,
     pub boundaries: Vec<Boundary05>,
 }
 fn schema() -> Schema {
     let mut value: Value =
         serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
-    value["actions"] = json!([{"name":"Write","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"create","cardinality":"single"}],"outputs":[]}]);
+    value["actions"] = json!([
+        {"name":"Write","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"create","cardinality":"single"}],"outputs":[]},
+        {"name":"Edit","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"update","cardinality":"single"}],"outputs":[]}
+    ]);
     Schema::from_value(value).unwrap()
 }
 fn open(path: &Path) -> Client<SqliteStore> {
@@ -60,14 +67,16 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
     boundaries.push(Boundary05::Frozen);
     client = open(path);
     let exact_retry = v05::encode(&client.freeze_batch05().unwrap().unwrap()).unwrap() == bytes;
-    client
+    // A later Mutation on the same record, queued after the frozen Batch and
+    // never sent: it stays pending on top of whatever settles beneath it.
+    let later = client
         .transaction(|tx| {
-            tx.direct(Operation {
-                model: "Entry".into(),
-                identity: key.identity.clone(),
-                op: OperationKind::Update,
-                values: Some(json!({"text":"later direct"})),
-            })
+            tx.submit_mutation05(
+                "Edit",
+                1,
+                json!({"entry":{"id":"e","text":"later"}}),
+                vec![],
+            )
         })
         .unwrap();
     let authority = v05::AuthorityChange::Record {
@@ -145,10 +154,16 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
     drop(client);
     boundaries.push(Boundary05::Settled);
     client = open(path);
+    let durable_completion = client.call_completion05(&call.call_id).unwrap().is_some();
+    let optimistic = client.read(&key).unwrap().unwrap();
+    client
+        .transaction(|tx| tx.discard_mutation05(later.ordinal))
+        .unwrap();
     RecoveryTrace05 {
         exact_retry,
         unfinished_after_receipt,
-        durable_completion: client.call_completion05(&call.call_id).unwrap().is_some(),
+        durable_completion,
+        optimistic,
         visible: client.read(&key).unwrap().unwrap(),
         boundaries,
     }

@@ -60,7 +60,10 @@ test("listener close drains an admitted HTTP Fetch after the native requester cl
         authorizeStream: (viewer, stream) => stream === `User:${viewer}`,
       },
       onError: (error) => diagnostics.push(error),
-      mutations: { publish: async () => ({ entry: { id: "unused" } }) },
+      mutations: {
+        publish: async () => ({ entry: { id: "unused" } }),
+        retext: async () => ({ entry: { id: "unused" } }),
+      },
       queries: { find: async () => ({ entry: null }), peek: async () => ({ entry: null }) },
       loaders: {
         entry: async ({ tx, ids }) => {
@@ -191,7 +194,10 @@ for (const reporterThrows of [false, true]) {
         diagnostics.push(error);
         if (reporterThrows && error === expected) throw reporterFailure;
       },
-      mutations: { publish: async () => ({ entry: { id: "unused" } }) },
+      mutations: {
+        publish: async () => ({ entry: { id: "unused" } }),
+        retext: async () => ({ entry: { id: "unused" } }),
+      },
       queries: { find: async () => ({ entry: null }), peek: async () => ({ entry: null }) },
       loaders: {
         entry: async ({ ids }) => ids.map(() => null),

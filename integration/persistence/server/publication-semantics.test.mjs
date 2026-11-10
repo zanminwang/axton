@@ -62,7 +62,10 @@ async function fixture(body) {
       protocol5: {
         authorizeStream: (owner, stream) => stream === `User:${owner}`,
       },
-      mutations: { publish: async () => ({ entry: { id: "unused" } }) },
+      mutations: {
+        publish: async () => ({ entry: { id: "unused" } }),
+        retext: async () => ({ entry: { id: "unused" } }),
+      },
       queries: {
         find: async () => ({ entry: null }),
         peek: async () => ({ entry: null }),

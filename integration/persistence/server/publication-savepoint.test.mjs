@@ -58,7 +58,10 @@ for (const [name, database] of adapters)
             database,
             authenticate: () => "alice",
             protocol5: { authorizeStream: () => true },
-            mutations: { publish: async () => ({ entry: { id: "unused" } }) },
+            mutations: {
+              publish: async () => ({ entry: { id: "unused" } }),
+              retext: async () => ({ entry: { id: "unused" } }),
+            },
             queries: {
               find: async () => ({ entry: null }),
               peek: async () => ({ entry: null }),
@@ -178,7 +181,10 @@ for (const [name, first] of adapters)
           database,
           authenticate: () => "alice",
           protocol5: { authorizeStream: () => true },
-          mutations: { publish: async () => ({ entry: { id: "unused" } }) },
+          mutations: {
+            publish: async () => ({ entry: { id: "unused" } }),
+            retext: async () => ({ entry: { id: "unused" } }),
+          },
           queries: {
             find: async () => ({ entry: null }),
             peek: async () => ({ entry: null }),

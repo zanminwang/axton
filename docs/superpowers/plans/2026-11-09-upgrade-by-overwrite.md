@@ -59,10 +59,10 @@
 
 **Files:** `crates/client/src/ddl.rs`, `store05.rs`; tests in `crates/sqlite/tests/protocol05_ddl.rs`.
 
-- [ ] Test per reset reason (removed field, changed type, changed nullability, changed identity, unique, relations, enum values, required field with no default, removed Model): reopen succeeds; that Model's table, before-image, `axton_authority`, `axton_local_replica_layer` and `axton_local_write` rows are gone; another Model's rows and evidence are untouched; the queue is untouched.
-- [ ] `ddl::reconcile` takes the stored schema, resets incompatible Models, keeps the additive path and returns whether it reset any. A removed Model's tables are dropped.
-- [ ] `open05` stops returning `Incompatible`; "Model version regressed" stays. Delete `ddl::incompatibility` if it has no caller left.
-- [ ] Until Task 5 a reset with an unchanged materialization leaves the Model empty with nothing asking for Bootstrap. Bridge it in this task: when `reconcile` reset a Model and the materialization did not change, set `bootstrap_cursor = NULL` and `start_cursor = cursor` here. Task 5 folds this into the upgrade function.
+- [x] Test per reset reason (removed field, changed type, changed nullability, changed identity, unique, relations, enum values, required field with no default, removed Model): reopen succeeds; that Model's table, before-image, `axton_authority`, `axton_local_replica_layer` and `axton_local_write` rows are gone; another Model's rows and evidence are untouched; the queue is untouched.
+- [x] `ddl::reconcile` takes the stored schema, resets incompatible Models, keeps the additive path and returns whether it reset any. A removed Model's tables are dropped.
+- [x] `open05` stops returning `Incompatible`; "Model version regressed" stays. Delete `ddl::incompatibility` if it has no caller left.
+- [x] Until Task 5 a reset with an unchanged materialization leaves the Model empty with nothing asking for Bootstrap. Bridge it in this task: when `reconcile` reset a Model and the materialization did not change, set `bootstrap_cursor = NULL` and `start_cursor = cursor` here. Task 5 folds this into the upgrade function.
 
 ## Task 5: The upgrade transaction replaces the rollover (spec §2.1, §2.6)
 

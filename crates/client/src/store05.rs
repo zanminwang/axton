@@ -157,7 +157,7 @@ impl<S: ClientStore> Client<S> {
             "1".into()
         };
         let descriptor = Descriptor05::new(&schema, &projection)?;
-        if existing {
+        let stored = if existing {
             let old=store.query("SELECT descriptor FROM axton_descriptor WHERE context=(SELECT schema_descriptor FROM axton_store)",&[])?.rows;
             let old: Schema = serde_json::from_str(
                 old.first()
@@ -166,21 +166,17 @@ impl<S: ClientStore> Client<S> {
                     .as_str()
                     .ok_or_else(|| invalid("descriptor missing"))?,
             )?;
-            let mut comparison = old.clone();
-            for m in &mut comparison.models {
-                if let Some(new) = schema.models.iter().find(|n| n.name == m.name) {
-                    if new.version < m.version {
-                        return Err(invalid("Model version regressed"));
-                    }
-                    m.version = new.version
+            for m in &old.models {
+                if let Some(new) = schema.models.iter().find(|n| n.name == m.name)
+                    && new.version < m.version
+                {
+                    return Err(invalid("Model version regressed"));
                 }
             }
-            if let axton_core::Compatibility::Incompatible(reason) =
-                Schema::compatibility(&comparison, &schema)
-            {
-                return Err(invalid(reason));
-            }
-        }
+            Some(old)
+        } else {
+            None
+        };
         store.begin()?;
         let opened = (|| {
             if !existing {
@@ -199,7 +195,23 @@ impl<S: ClientStore> Client<S> {
                 store.execute_batch(DROP_BATCH_MATERIALIZATION)?;
                 store.execute_batch(QUEUE_ENVELOPE)?;
             }
-            ddl::reconcile(&mut store, &schema)?;
+            let reset = ddl::reconcile(&mut store, stored.as_ref(), &schema)?;
+            for model in &reset {
+                for table in RECORD_STATE {
+                    store.execute(
+                        &format!("DELETE FROM {table} WHERE model=?"),
+                        &[json!(model)],
+                    )?;
+                }
+            }
+            // A reset Model is filled again by Bootstrap. A changed
+            // materialization asks for it through the rollover.
+            if !reset.is_empty() {
+                store.execute(
+                    "UPDATE axton_store SET bootstrap_cursor=NULL,start_cursor=cursor WHERE materialization=?",
+                    &[json!(descriptor.materialization)],
+                )?;
+            }
             // Network plans do not survive a reopen.
             Engine::new(&mut store, &schema, &mut BTreeSet::new(), false)
                 .clear_delivery_staging05()?;

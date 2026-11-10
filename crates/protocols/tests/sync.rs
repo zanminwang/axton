@@ -65,6 +65,18 @@ fn a1_canonical_batch_binds_exact_order_context_and_descriptor() {
     }
 }
 #[test]
+fn batch_digest_survives_a_protocol_number_change() {
+    // The protocol number is transport: a Batch frozen under one protocol
+    // keeps its digest under the next, while admission still checks it.
+    let request = request();
+    for protocol in [PROTOCOL - 1, PROTOCOL + 1] {
+        let mut moved = request.clone();
+        moved.context.protocol = protocol;
+        assert_eq!(batch_digest(&moved).unwrap(), request.digest);
+        assert!(validate_batch(&moved).is_err());
+    }
+}
+#[test]
 fn strict_envelopes_counters_and_duplicates() {
     let request = request();
     let value = serde_json::to_value(&request).unwrap();

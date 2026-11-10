@@ -15,6 +15,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error("{0}")]
     Invalid(String),
+    /// Durable state that no retry can repair; the caller must stop, not retry.
+    #[error("{0}")]
+    Terminal(String),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }

@@ -299,7 +299,10 @@ impl<S: ClientStore> Engine<'_, S> {
             .iter()
             .any(|r| !r[5].is_null() && r[5] != request.digest)
         {
-            return Err(invalid("frozen Batch digest changed"));
+            // Includes Batches frozen under the protocol-5 digest definition.
+            return Err(axton_core::Error::Terminal(format!(
+                "frozen Batch {batch} no longer matches its saved digest and cannot be resent; reset the Store to discard it"
+            )));
         }
         Ok(request)
     }

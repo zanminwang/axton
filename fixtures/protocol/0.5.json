@@ -1,7 +1,7 @@
 {
   "batchAcknowledgement": {
     "batchId": 1,
-    "digest": "108ace186dd2e3235a28b4a6f6349e274f306a9139f6bafe94b621887ffbe991",
+    "digest": "2ecc56bed16fa22a88b260c91ad7e226998e86c8c5f97202afe460b7f923198c",
     "materialization": "schema1",
     "protocol": 6,
     "results": [
@@ -277,7 +277,7 @@
   },
   "mutationRequest": {
     "batchId": 1,
-    "digest": "108ace186dd2e3235a28b4a6f6349e274f306a9139f6bafe94b621887ffbe991",
+    "digest": "2ecc56bed16fa22a88b260c91ad7e226998e86c8c5f97202afe460b7f923198c",
     "materialization": "schema1",
     "mutations": [
       {
@@ -403,7 +403,7 @@
   },
   "rejectedAcknowledgement": {
     "batchId": 1,
-    "digest": "108ace186dd2e3235a28b4a6f6349e274f306a9139f6bafe94b621887ffbe991",
+    "digest": "2ecc56bed16fa22a88b260c91ad7e226998e86c8c5f97202afe460b7f923198c",
     "materialization": "schema1",
     "protocol": 6,
     "results": [

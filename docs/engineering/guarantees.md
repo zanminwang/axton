@@ -37,7 +37,7 @@ Pending optimism changes the projection without clearing base protection. Ordina
 | P1 | Frozen-request retry returns its saved backend outcome without rerunning handlers, preparation, tracking or publication. |
 | P2 | Authenticated Store context, Mutation identity and exact frozen intent reject foreign or conflicting replay before business work. Each immutable Batch contains named Mutations with individually saved outcomes; members in one commit group become durable together. |
 | P3 | Unready prerequisites block dependent calls; lifecycle and sequence dependencies retain their declared meaning. Independent ready work can proceed. |
-| P4 | Frozen intent, call identity and original descriptor survive retries, reopen and supported retained-schema reconciliation unchanged. |
+| P4 | Frozen intent, call identity and original descriptor survive retries, reopen, supported retained-schema reconciliation and wire protocol changes unchanged; the Batch digest excludes the protocol number. |
 | P5 | Rejection removes only that Mutation's optimism and companions, rejects lifecycle dependents and retains a readable refusal. Other pending work replays. |
 | P6 | A Mutation-level refusal rolls back its savepoint and effects, preserving successful independent calls. Infrastructure failure rolls back the current uncommitted backend group or enclosing local delivery/receipt and stays retryable. |
 | P7 | Unsupported Mutation versions are per-call refusals. Backend acceptance followed by local failure remains accepted-awaiting-settlement; it never becomes business rejection. |

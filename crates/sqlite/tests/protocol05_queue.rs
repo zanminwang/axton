@@ -1103,3 +1103,79 @@ fn reopen_during_drain_keeps_the_reported_generation_desired() {
     assert!(c.rollover_pending05().unwrap());
     assert_eq!(c.freeze_batch05().unwrap().unwrap(), frozen);
 }
+#[test]
+fn stale_frozen_digest_halts_the_uplink_once_without_deleting_anything() {
+    use axton_client::{
+        runtime::{ClientRuntime, Event, Operation},
+        sync05::{Control, StoreCommand, StoreReport},
+    };
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
+    c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]}), vec![]))
+        .unwrap();
+    c.freeze_batch05().unwrap().unwrap();
+    drop(c);
+    // A Batch frozen under the protocol-5 digest definition looks like this.
+    let raw = rusqlite::Connection::open(&p).unwrap();
+    raw.execute_batch(&format!(
+        "DROP TRIGGER axton_queue_envelope; UPDATE axton_mutation_queue SET batch_digest='{}'",
+        "0".repeat(64)
+    ))
+    .unwrap();
+    drop(raw);
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
+    let error = c.freeze_batch05().unwrap_err();
+    assert!(matches!(error, axton_client::Error::Terminal(_)), "{error}");
+    assert!(error.to_string().contains("reset the Store"));
+    let rows = || {
+        let raw = rusqlite::Connection::open(&p).unwrap();
+        raw.query_row(
+            "SELECT COUNT(*),MAX(batch_id),MAX(batch_digest) FROM axton_mutation_queue",
+            [],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .unwrap()
+    };
+    let before = rows();
+    assert_eq!(before, (1, 1, "0".repeat(64)));
+
+    // The runtime reports it as a halt, and control stops instead of retrying.
+    let mut runtime = ClientRuntime::new(c);
+    let status = runtime.client().store_status05().unwrap();
+    let report = runtime.store_worker05(StoreCommand::Freeze).unwrap();
+    assert!(matches!(report, StoreReport::Halted(_)));
+    let mut control = Control::new(status);
+    control.connect().unwrap();
+    control.events();
+    control.report(report, 1).unwrap();
+    let events = control.events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, Event::Report { .. }))
+            .count(),
+        1,
+        "{events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::Effect {
+                operation: Operation::Timer { .. } | Operation::Http { .. },
+                ..
+            }
+        )),
+        "a halt schedules no retry: {events:?}"
+    );
+    control.wake();
+    assert!(control.jobs().is_empty());
+    assert_eq!(rows(), before);
+}

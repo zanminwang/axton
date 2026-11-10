@@ -280,7 +280,10 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                 StoreReport::ActivePlans(self.client.cleanup_delivery05(now)?)
             }
             StoreCommand::Snapshot => StoreReport::Snapshot(self.client.store_status05()?),
-            StoreCommand::Freeze => StoreReport::Frozen(self.client.freeze_batch05()?),
+            StoreCommand::Freeze => match self.client.freeze_batch05() {
+                Err(crate::Error::Terminal(message)) => StoreReport::Halted(message),
+                frozen => StoreReport::Frozen(frozen?),
+            },
             StoreCommand::Acknowledge(receipt) => {
                 let _span =
                     tracing::info_span!(target: "axton::client", "batch.acknowledge").entered();

@@ -30,10 +30,12 @@ const canonical = (v) =>
       : JSON.stringify(v);
 const digest = (r) =>
   createHash("sha256")
-    .update("axton:mutation-batch:5\0")
+    .update("axton:batch-intent:1\0")
     .update(
       canonical(
-        Object.fromEntries(Object.entries(r).filter(([k]) => k !== "digest")),
+        Object.fromEntries(
+          Object.entries(r).filter(([k]) => k !== "digest" && k !== "protocol"),
+        ),
       ),
     )
     .digest("hex");

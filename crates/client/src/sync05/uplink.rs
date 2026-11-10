@@ -51,6 +51,8 @@ pub enum StoreReport {
         status: Option<StoreStatus05>,
     },
     Frozen(Option<v05::MutationRequest>),
+    /// The uplink cannot continue from durable state; nothing retries it.
+    Halted(String),
     Committed {
         status: StoreStatus05,
         report: ApplyReport,

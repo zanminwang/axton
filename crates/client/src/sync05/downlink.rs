@@ -534,6 +534,17 @@ impl Control {
                     }
                 }
             }
+            StoreReport::Halted(message) => {
+                // Report once and stop: a retry would hit the same state.
+                self.stop();
+                self.events.push(Event::Report {
+                    diagnostic: Diagnostic::Error {
+                        message,
+                        status: None,
+                    },
+                });
+                return Ok(());
+            }
             StoreReport::ActivePlans(active) => {
                 self.queue
                     .plans

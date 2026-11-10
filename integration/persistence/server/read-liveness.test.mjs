@@ -230,9 +230,11 @@ for (const kind of ["Query", "Fetch", "Query Model Loader"])
               ],
             };
             request.digest = hash(
-              "axton:mutation-batch:5",
+              "axton:batch-intent:1",
               Object.fromEntries(
-                Object.entries(request).filter(([key]) => key !== "digest"),
+                Object.entries(request).filter(
+                  ([key]) => key !== "digest" && key !== "protocol",
+                ),
               ),
             );
             mutation = app.push("alice", JSON.stringify(request));
@@ -373,12 +375,7 @@ test("ordinary read refuses existing Store owner or Stream mismatch before appli
 
 // Exercise complete cursor reads in READ ONLY transactions,
 // while a real same-Store Mutation holds its progress guard inside a handler.
-for (const kind of [
-  "handshake",
-  "pull",
-  "live",
-  "cursor_resume",
-]) {
+for (const kind of ["handshake", "pull", "live", "cursor_resume"]) {
   test(
     `${kind} on an initialized Store completes while its Mutation handler is suspended`,
     { timeout: 15000 },
@@ -542,9 +539,11 @@ for (const kind of [
           ],
         };
         request.digest = hash(
-          "axton:mutation-batch:5",
+          "axton:batch-intent:1",
           Object.fromEntries(
-            Object.entries(request).filter(([key]) => key !== "digest"),
+            Object.entries(request).filter(
+              ([key]) => key !== "digest" && key !== "protocol",
+            ),
           ),
         );
         pending = app.push("alice", JSON.stringify(request));

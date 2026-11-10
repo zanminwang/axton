@@ -211,8 +211,36 @@ fn rekeyed() -> Config {
     let write = json!({"name":"Write","version":1,"kind":"mutation","inputs":[{"kind":"model","name":"todo","model":"Todo","operation":"create","cardinality":"single"}],"outputs":[],"input":{"models":[old],"enums":[]}});
     Config::decode(json!({"schema":{"enums":[],"models":[{"name":"Todo","version":2,"identity":["code"],"fields":[field("code"),field("title")]}],"actions":[action(),write]},"mutations":[],"loaders":["Todo"],"protocol5":{"projectionGeneration":"1"}})).unwrap()
 }
+/// The events logged on this thread, each as its name and fields.
+#[derive(Clone, Default)]
+struct Logged(std::sync::Arc<Mutex<Vec<String>>>);
+struct Fields<'a>(&'a mut String);
+impl tracing::field::Visit for Fields<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        self.0.push_str(&format!(" {}={value:?}", field.name()));
+    }
+}
+impl tracing::Subscriber for Logged {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut line = format!("{} {}", event.metadata().level(), event.metadata().name());
+        event.record(&mut Fields(&mut line));
+        self.0.lock().unwrap().push(line);
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
 #[test]
 fn a_member_whose_input_cannot_be_keyed_is_refused_alone() {
+    let logged = Logged::default();
+    let _guard = tracing::subscriber::set_default(logged.clone());
     run(async {
         let c = rekeyed();
         let mut r = request(&c);
@@ -261,4 +289,14 @@ fn a_member_whose_input_cannot_be_keyed_is_refused_alone() {
             "the refused handler never runs"
         );
     });
+    // The reason is logged; the refusal code stays generic.
+    let logged = logged.0.lock().unwrap();
+    assert!(
+        logged
+            .iter()
+            .any(|line| line.starts_with("INFO mutation.unkeyable")
+                && line.contains("mutation=Write")
+                && line.contains("identity must contain exactly identity fields")),
+        "{logged:?}"
+    );
 }

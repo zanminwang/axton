@@ -142,9 +142,20 @@ pub(crate) async fn execute_claimed(
     // A retained version this backend no longer serves, or whose input its
     // current schema cannot key, is refused as that one Mutation.
     let supported = match protocol_v05::validate_member(config, member)? {
-        protocol_v05::MutationInput::Supported(args) => input_keys(config, member, &args)
-            .ok()
-            .map(|keys| (args, keys)),
+        protocol_v05::MutationInput::Supported(args) => match input_keys(config, member, &args) {
+            Ok(keys) => Some((args, keys)),
+            Err(error) => {
+                tracing::info!(
+                    name: "mutation.unkeyable",
+                    target: "axton::server",
+                    mutation = %member.name,
+                    version = member.version,
+                    %error,
+                    "refusing a Mutation whose input the current schema cannot key"
+                );
+                None
+            }
+        },
         protocol_v05::MutationInput::Unsupported => None,
     };
     let Some((args, input_keys)) = supported else {

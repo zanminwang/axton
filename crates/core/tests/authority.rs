@@ -4,24 +4,27 @@ use axton_core::authority::*;
 fn cache_admission_uses_current_protection_not_historical_position() {
     let mut evidence = RecordEvidence::default();
     assert!(evidence.install("schema-one", 57, false).unwrap());
-    assert!(!evidence.allows_cache());
+    assert!(!evidence.allows_cache("schema-one"));
+    assert!(evidence.allows_cache("schema-two"));
     evidence.current = None; // State after an explicit local operation.
-    assert!(evidence.allows_cache());
+    assert!(evidence.allows_cache("schema-one"));
     assert!(!evidence.install("schema-one", 57, false).unwrap());
     assert_eq!(evidence.history["schema-one"], 57);
     assert!(evidence.install("schema-one", 58, true).unwrap());
+    assert!(!evidence.allows_cache("schema-one"));
+    assert!(evidence.allows_cache("schema-two"));
     evidence.current = None; // State after an explicit local operation.
-    assert!(evidence.allows_cache());
+    assert!(evidence.allows_cache("schema-one"));
     assert_eq!(evidence.history["schema-one"], 58);
     assert!(!evidence.install("schema-one", 56, false).unwrap());
 }
 
 #[test]
-fn new_materialization_accepts_same_position_without_erasing_old_history() {
+fn new_materialization_accepts_same_position_and_replaces_history() {
     let mut evidence = RecordEvidence::default();
     evidence.install("schema-one", 57, false).unwrap();
     assert!(evidence.install("schema-two", 57, false).unwrap());
-    assert_eq!(evidence.history.len(), 2);
+    assert_eq!(evidence.history, [("schema-two".to_owned(), 57)].into());
     assert_eq!(
         evidence.current.as_ref().unwrap().materialization,
         "schema-two"
@@ -33,17 +36,17 @@ fn membership_remove_releases_live_content_but_preserves_true_deletion() {
     let mut live = RecordEvidence::default();
     live.install("schema-one", 57, false).unwrap();
     assert!(live.remove(58).unwrap());
-    assert!(live.allows_cache());
+    assert!(live.allows_cache("schema-one"));
     assert_eq!(live.history["schema-one"], 57);
     assert!(!live.remove(57).unwrap());
     assert!(!live.install("schema-two", 57, false).unwrap());
     assert!(live.install("schema-two", 59, false).unwrap());
     assert!(!live.remove(58).unwrap());
-    assert!(!live.allows_cache());
+    assert!(!live.allows_cache("schema-two"));
     let mut deleted = RecordEvidence::default();
     deleted.install("schema-one", 57, true).unwrap();
     deleted.remove(58).unwrap();
-    assert!(!deleted.allows_cache());
+    assert!(!deleted.allows_cache("schema-one"));
     assert_eq!(deleted.history["schema-one"], 57);
 }
 
@@ -57,8 +60,8 @@ fn another_context_admits_the_same_position_but_never_an_older_one() {
         AuthorityAdmission::Newer
     );
     evidence.install("schema-two", 57, false).unwrap();
-    assert!(!evidence.allows_cache());
-    assert_eq!(evidence.history.len(), 2);
+    assert!(!evidence.allows_cache("schema-two"));
+    assert_eq!(evidence.history.len(), 1);
     evidence.install("schema-two", 58, false).unwrap();
     assert_eq!(
         evidence.admission("schema-three", 57).unwrap(),
@@ -80,4 +83,13 @@ fn restored_evidence_cannot_protect_content_superseded_by_remove_or_another_cont
     assert!(removed.validate().is_err());
     evidence.history.insert("schema-two".into(), 58);
     assert!(evidence.validate().is_err());
+}
+
+#[test]
+fn a_return_to_an_earlier_materialization_installs_again() {
+    let mut evidence = RecordEvidence::default();
+    assert!(evidence.install("a", 5, false).unwrap());
+    assert!(evidence.install("b", 5, false).unwrap());
+    assert!(evidence.install("a", 5, false).unwrap());
+    assert_eq!(evidence.current.as_ref().unwrap().materialization, "a");
 }

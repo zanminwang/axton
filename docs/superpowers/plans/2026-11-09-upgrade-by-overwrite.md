@@ -22,10 +22,10 @@
 
 **Files:** `crates/core/src/authority.rs`, `crates/protocols/src/sync/delivery.rs`, `crates/client/src/settlement05.rs`; tests in `crates/core`, `crates/sqlite/tests/protocol05_cache.rs`, `protocol05_authority.rs`.
 
-- [ ] Test (core): install under `a` at 5, under `b` at 5, under `a` at 5 again. The third install is admitted. Fails today as `Duplicate`.
-- [ ] `RecordEvidence::install` replaces `history` with its one entry. Search every reader of `history` (`covers`, `owned05`, `target_evidence05`, `validate`) and confirm none needs an older entry; if one does, stop and report.
-- [ ] Test: a record whose `current` is under `m1` accepts a cache install when the Store's materialization is `m2`, and refuses it under `m1`. Same for a `current.deleted` record and for a child of a deleted parent.
-- [ ] `RecordEvidence::allows_cache(materialization)`; `stage_cache05` and its deleted-parent check pass the Store's materialization. `target_evidence05` sets `protected` by the same rule.
+- [x] Test (core): install under `a` at 5, under `b` at 5, under `a` at 5 again. The third install is admitted. Fails today as `Duplicate`.
+- [x] `RecordEvidence::install` replaces `history` with its one entry. Search every reader of `history` (`covers`, `owned05`, `target_evidence05`, `validate`) and confirm none needs an older entry; if one does, stop and report.
+- [x] Test: a record whose `current` is under `m1` accepts a cache install when the Store's materialization is `m2`, and refuses it under `m1`. Same for a `current.deleted` record and for a child of a deleted parent.
+- [x] `RecordEvidence::allows_cache(materialization)`; `stage_cache05` and its deleted-parent check pass the Store's materialization. `target_evidence05` sets `protected` by the same rule.
 
 ## Task 2: The Batch carries no schema version (spec §2.4)
 

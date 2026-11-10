@@ -263,6 +263,8 @@ pub struct TargetEvidence {
     pub content_cursor: Option<u64>,
     pub materialization: Option<String>,
     pub removed_cursor: Option<u64>,
+    /// The record's `current` protection was installed in the active
+    /// materialization; protection from another contract does not count.
     pub protected: bool,
 }
 impl Validate for TargetEvidence {

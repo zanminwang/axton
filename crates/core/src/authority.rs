@@ -71,8 +71,12 @@ impl RecordEvidence {
     }
 }
 impl RecordEvidence {
-    pub fn allows_cache(&self) -> bool {
-        self.current.is_none()
+    /// `current` protects the record against cache installs only in the
+    /// materialization it was installed under.
+    pub fn allows_cache(&self, materialization: &str) -> bool {
+        self.current
+            .as_ref()
+            .is_none_or(|current| current.materialization != materialization)
     }
     /// The caller must first admit the active direct/Stream context. Another
     /// context's evidence admits the same position, never an older one.
@@ -99,11 +103,12 @@ impl RecordEvidence {
         })
     }
     /// Installs evidence only; the consumer replaces the base in this commit.
+    /// Evidence belongs to one contract: the installed entry replaces history.
     pub fn install(&mut self, materialization: &str, cursor: u64, deleted: bool) -> Result<bool> {
         if self.admission(materialization, cursor)? == AuthorityAdmission::Duplicate {
             return Ok(false);
         }
-        self.history.insert(materialization.into(), cursor);
+        self.history = BTreeMap::from([(materialization.into(), cursor)]);
         self.current = Some(AuthorityProtection {
             materialization: materialization.into(),
             cursor,

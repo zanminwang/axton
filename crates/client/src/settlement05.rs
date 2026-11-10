@@ -194,9 +194,9 @@ impl<S: ClientStore> Engine<'_, S> {
         let cursor = evidence.history.get(&materialization).copied();
         Ok(v05::TargetEvidence {
             content_cursor: cursor,
+            protected: !evidence.allows_cache(&materialization),
             materialization: cursor.map(|_| materialization),
             removed_cursor: evidence.membership.filter(|m| !m.live).map(|m| m.cursor),
-            protected: evidence.current.is_some(),
         })
     }
     fn owned05(&mut self, id: u64, step: u64, key: &RecordKey) -> Result<bool> {
@@ -516,6 +516,7 @@ impl<S: ClientStore> Engine<'_, S> {
         store: bool,
         held: &mut Held,
     ) -> Result<usize> {
+        let materialization = self.context05()?.materialization;
         let mut applied = 0;
         for record in records {
             record.validate()?;
@@ -532,7 +533,7 @@ impl<S: ClientStore> Engine<'_, S> {
                     &self.schema.validate_state(&k.model, &record.state)?,
                 ))
             };
-            if !store || row.is_none() || self.evidence05(&key)?.current.is_some() {
+            if !store || row.is_none() || !self.evidence05(&key)?.allows_cache(&materialization) {
                 continue;
             }
             let row = row.unwrap();
@@ -553,7 +554,11 @@ impl<S: ClientStore> Engine<'_, S> {
                     let parent = self
                         .schema
                         .record_key(&relation.target, &Value::Object(identity))?;
-                    if self.evidence05(&parent)?.current.is_some_and(|e| e.deleted) {
+                    if self
+                        .evidence05(&parent)?
+                        .current
+                        .is_some_and(|e| e.deleted && e.materialization == materialization)
+                    {
                         blocked = true;
                         break;
                     }

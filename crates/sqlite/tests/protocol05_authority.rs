@@ -259,3 +259,27 @@ fn direct_writes_survive_refusal_but_newer_authority_retires_them_before_or_afte
         }
     }
 }
+
+#[test]
+fn a_return_to_an_earlier_materialization_overwrites_the_row_each_time() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = open(&p);
+    let a = c.request_context05().unwrap().materialization;
+    let db = rusqlite::Connection::open(&p).unwrap();
+    let adopt = |m: &str| {
+        db.execute("UPDATE axton_store SET materialization=?", [m])
+            .unwrap();
+    };
+    stream(&mut c, 57, Some("A"));
+    adopt("b");
+    stream(&mut c, 57, Some("B"));
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
+    adopt(&a);
+    stream(&mut c, 57, Some("A again"));
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A again");
+    assert_eq!(
+        c.record_evidence05(&key()).unwrap().history,
+        [(a, 57)].into()
+    );
+}

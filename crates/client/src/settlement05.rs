@@ -123,9 +123,11 @@ impl<S: ClientStore> Engine<'_, S> {
             !unshared.contains(&(id, model.to_owned()))
         })?;
         // Validate every result and snapshot before changing any durable
-        // outcome. The result follows the Mutation's own contract. A snapshot
-        // is used only on a shared Model and in the Store's materialization,
-        // so it is validated against the current schema.
+        // outcome. The result follows the Mutation's own contract. A target
+        // on a shared Model is keyed under the current schema, so its identity
+        // must be canonical whatever the label. A snapshot is used only on a
+        // shared Model and in the Store's materialization, so its state is
+        // validated against the current schema only then.
         let active = self.context05()?.materialization;
         for result in &ack.results {
             if let v05::MutationOutcome::Accepted {
@@ -140,9 +142,6 @@ impl<S: ClientStore> Engine<'_, S> {
                 let retained = self.retained_schema05(descriptor)?;
                 let action = retained.action(row[0].as_str().unwrap(), as_u64(&row[1])?)?;
                 axton_core::validate_action_result(&retained, action, value)?;
-                if *materialization != active {
-                    continue;
-                }
                 let schema = self.schema;
                 for target in targets {
                     let k = target.key();
@@ -152,6 +151,9 @@ impl<S: ClientStore> Engine<'_, S> {
                     let canonical = schema.record_key(&k.model, &k.identity)?;
                     if canonical.identity != k.identity {
                         return Err(invalid("noncanonical settlement identity"));
+                    }
+                    if *materialization != active {
+                        continue;
                     }
                     let r = match target {
                         v05::SettlementTarget::Stream { fallback, .. } => fallback,

@@ -1901,3 +1901,57 @@ fn a_target_the_stream_delivered_before_an_upgrade_settles_after_it_without_boot
         }
     }
 }
+#[test]
+fn a_noncanonical_target_identity_is_refused_whatever_the_outcome_label() {
+    let tally = Schema::from_value(json!({"enums":[],"models":[{"name":"Tally","identity":["n"],"fields":[
+        {"name":"n","nullable":false,"type":{"kind":"scalar","name":"int"}},
+        {"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}]}],
+        "actions":[{"name":"Add","version":1,"inputs":[{"kind":"model","name":"tally","model":"Tally","operation":"create","cardinality":"single"}],"outputs":[]}]}))
+    .unwrap();
+    for label in ["current", "earlier"] {
+        let d = tempfile::tempdir().unwrap();
+        let mut c = Client::open05(
+            SqliteStore::open(d.path().join("db")).unwrap(),
+            tally.clone(),
+            "User:u",
+        )
+        .unwrap();
+        c.initialize_stream05(0, "1").unwrap();
+        c.transaction(|tx| {
+            tx.submit_mutation05("Add", 1, json!({"tally":{"n":1,"text":"one"}}), vec![])
+        })
+        .unwrap();
+        let b = c.freeze_batch05().unwrap().unwrap();
+        let target = |n: Value| v05::SettlementTarget::Private {
+            record: v05::ReadRecord {
+                key: v05::RecordKey {
+                    model: "Tally".into(),
+                    identity: json!({ "n": n }),
+                },
+                cursor: (),
+                state: json!({"text":"receipt"}),
+            },
+        };
+        let refused = c.acknowledge_batch05(&ack(
+            &b,
+            v05::MutationOutcome::Accepted {
+                sync_cursor: 0,
+                materialization: if label == "current" {
+                    b.context.materialization.clone()
+                } else {
+                    "earlier".into()
+                },
+                result: Value::Null,
+                // `2.0` names record 2, whose canonical identity is `2`.
+                targets: vec![target(json!(1)), target(json!(2.0))],
+            },
+        ));
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|e| e.to_string().contains("noncanonical settlement identity")),
+            "{label}: {refused:?}"
+        );
+        assert_eq!(c.store_status05().unwrap().last_acknowledged_batch_id, 0);
+    }
+}

@@ -336,14 +336,12 @@ impl<S: ClientStore> Engine<'_, S> {
 
     // Apply one queued operation in local order and hand every write to
     // `record` as it happens: each record's base is held first, a delete's
-    // cascade to its descendants comes before the delete (as `cascade`),
-    // then the operation itself (as `own`), so a cascade is stored at its
+    // cascade to its descendants comes before the delete (as an `Effect`),
+    // then the operation itself (as a `Wire`), so a cascade is stored at its
     // trigger.
     pub(crate) fn apply_in_order(
         &mut self,
         op: &Operation,
-        own: OpKind,
-        cascade: OpKind,
         mut record: impl FnMut(&mut Self, OpKind, Operation) -> Result<()>,
     ) -> Result<()> {
         let key = self.schema.record_key(&op.model, &op.identity)?;
@@ -358,10 +356,10 @@ impl<S: ClientStore> Engine<'_, S> {
                     values: None,
                 };
                 self.apply_main(&delete)?;
-                record(self, cascade, delete)?;
+                record(self, OpKind::Effect, delete)?;
             }
         }
         self.apply_main(op)?;
-        record(self, own, op.clone())
+        record(self, OpKind::Wire, op.clone())
     }
 }

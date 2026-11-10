@@ -164,7 +164,7 @@ impl<S: ClientStore> Engine<'_, S> {
                 } else {
                     name.to_owned()
                 };
-                self.apply_in_order(op, OpKind::Wire, OpKind::Effect, |e, k, op| {
+                self.apply_in_order(op, |e, k, op| {
                     e.insert_owned05(
                         id,
                         step,

@@ -374,7 +374,10 @@ fn the_purge_leaves_a_record_a_refused_mutation_s_companion_touched() {
     let mut c = open(&path);
     start_stream(&mut c);
     seed(&mut c, "A");
-    protected(&mut c, &[record("Entry", "r", 1, json!({"text":"R","note":null}))]);
+    protected(
+        &mut c,
+        &[record("Entry", "r", 1, json!({"text":"R","note":null}))],
+    );
     let call = offline(&mut c, "Edit", json!({"entry":{"id":"e","text":"B"}}));
     let batch = c.freeze_batch05().unwrap().unwrap();
     c.acknowledge_batch05(&v05::BatchAcknowledgement {
@@ -391,7 +394,8 @@ fn the_purge_leaves_a_record_a_refused_mutation_s_companion_touched() {
     })
     .unwrap();
     let delivered = schema().record_key("Entry", &json!({"id":"r"})).unwrap();
-    let evidence = "SELECT evidence FROM axton_authority WHERE model='Entry' AND identity='{\"id\":\"r\"}'";
+    let evidence =
+        "SELECT evidence FROM axton_authority WHERE model='Entry' AND identity='{\"id\":\"r\"}'";
     let before = c.read_sql(evidence, &[]).unwrap();
     assert_eq!(before.len(), 1);
     drop(c);
@@ -433,9 +437,11 @@ fn with_extra(removed: bool, incompatible: bool) -> Schema {
     let mut value = serde_json::to_value(schema()).unwrap();
     if !removed {
         let title = if incompatible { "int" } else { "string" };
-        value["models"].as_array_mut().unwrap().push(json!({"name":"Extra","identity":["id"],"fields":[
+        value["models"].as_array_mut().unwrap().push(
+            json!({"name":"Extra","identity":["id"],"fields":[
             {"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},
-            {"name":"title","nullable":false,"type":{"kind":"scalar","name":title}}]}));
+            {"name":"title","nullable":false,"type":{"kind":"scalar","name":title}}]}),
+        );
     }
     Schema::from_value(value).unwrap()
 }
@@ -541,8 +547,12 @@ fn the_purge_leaves_a_record_of_a_model_the_mutation_does_not_share() {
     let reset = with_extra(false, true);
     let mut c = open_with(&path, reset.clone());
     let context = c.request_context05().unwrap();
-    c.install_authority05(&context, &[record("Extra", "x", 2, json!({"title":7}))], None)
-        .unwrap();
+    c.install_authority05(
+        &context,
+        &[record("Extra", "x", 2, json!({"title":7}))],
+        None,
+    )
+    .unwrap();
     drop(c);
     retired_writes_on_extra(&path, false);
     let x = reset.record_key("Extra", &json!({"id":"x"})).unwrap();

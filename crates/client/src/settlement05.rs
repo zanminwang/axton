@@ -228,6 +228,16 @@ impl<S: ClientStore> Engine<'_, S> {
             .rows
             .remove(0);
         let (cursor, start_cursor) = (row[0].as_u64(), row[1].as_u64());
+        let pending = self
+            .rows(
+                "SELECT id FROM axton_mutation_queue WHERE sync_cursor IS NOT NULL AND reconciled=0 ORDER BY id",
+                &[],
+            )?
+            .rows;
+        let mut completions = vec![];
+        if pending.is_empty() {
+            return Ok(completions);
+        }
         // Bootstrap flags come from the active materialization: a rollover
         // drain settles under the previous contract's selection.
         let bootstrap_models = self
@@ -241,13 +251,6 @@ impl<S: ClientStore> Engine<'_, S> {
             .filter(|m| m.bootstrap)
             .map(|m| m.name)
             .collect::<std::collections::BTreeSet<_>>();
-        let pending = self
-            .rows(
-                "SELECT id FROM axton_mutation_queue WHERE sync_cursor IS NOT NULL AND reconciled=0 ORDER BY id",
-                &[],
-            )?
-            .rows;
-        let mut completions = vec![];
         for row in pending {
             let id = as_u64(&row[0])?;
             let Some(v05::MutationOutcome::Accepted {

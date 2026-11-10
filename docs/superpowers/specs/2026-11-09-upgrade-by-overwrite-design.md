@@ -82,7 +82,7 @@ A Batch's identity is its intent: Store, Stream, Batch number and the ordered Mu
 
 - **Digest.** `batch_digest` excludes `context.materialization`, as it already excludes the protocol number. Its hash domain becomes `axton:batch-intent:2`.
 - **Request.** `context.materialization` stays on the request as transport: it tells the server which contract to shape the receipt's snapshots in. `reconstruct_batch05` reads it from the Store at send time. The `batch_materialization` column and its half of the `axton_queue_envelope` trigger are deleted.
-- **Receipt.** `MutationOutcome::Accepted` gains `materialization`, the contract its target snapshots were loaded in. The server sets it when the Mutation executes and saves it with the result. A replayed result is returned as saved (`crates/server/src/mutation_batch.rs:126-133`), so it keeps the label of its first execution; a Batch that was partly executed before an upgrade returns outcomes with different labels.
+- **Receipt.** `MutationOutcome::Accepted` gains `materialization`, the contract its target snapshots were loaded in. The client stores it with the outcome (`axton_mutation_queue.outcome_materialization`). The server sets it when the Mutation executes and saves it with the result. A replayed result is returned as saved (`crates/server/src/mutation_batch.rs:126-133`), so it keeps the label of its first execution; a Batch that was partly executed before an upgrade returns outcomes with different labels.
 - **Acknowledgement.** The client correlates a receipt by Store, Stream, Batch number and digest. It no longer compares the materialization.
 
 Server admission is unchanged: a request in a materialization the backend does not serve gets 409 `context_mismatch`. That is now the client's current contract, the same one its pulls use, so a queue can no longer be stranded by a contract only old Batches name.
@@ -91,12 +91,12 @@ Server admission is unchanged: a request in a materialization the backend does n
 
 One rule covers every piece of a Mutation that was shaped by a schema: **a piece from another contract is not used. It is never an error, and the Mutation is never deleted.**
 
-A Model is **shared** by a Mutation when its shape in the Mutation's retained descriptor is storage-compatible with the current schema: the per-Model check of §2.2 finds nothing to reset. A Model missing from the current schema is not shared.
+A Model is **shared** by a Mutation when its shape in the Mutation's retained descriptor is storage-compatible with the current schema: the per-Model check of §2.2 finds nothing to reset. The check ignores the Model's version number, which a retained descriptor is expected to trail. A Model missing from the current schema is not shared.
 
 | Piece | When it is used | Otherwise |
 | --- | --- | --- |
 | The input (name, version, slots) | Always. It uploads as enqueued. The server chooses the handler by name and version. | |
-| A local operation on a Model (the optimistic view) | The Model is shared. Replay fills the declared default for a field the operation does not carry, so a create enqueued before a defaulted field was added is a valid row. | Skipped in replay, and the Mutation is marked diverged, as when a pending operation cannot apply to its base today (`mutate.rs:254-258`). |
+| A local operation on a Model (the optimistic view) | The Model is shared. Replay fills the declared default for a field the operation does not carry, so a create enqueued before a defaulted field was added is a valid row. | Skipped everywhere the queue's operations are read (replay, dependency derivation, dirty keys), and the Mutation reads as diverged in the unsent-work view. The flag is derived from the skip and not stored. |
 | A settlement target | The Model is shared. | Not required in the receipt, not awaited, not installed. |
 | A receipt snapshot (`fallback` or `Private` record) | Its Model is shared and the outcome's `materialization` is the Store's. It is validated against the current schema, not the Mutation's retained one (`settlement05.rs:107-125`). | Not installed. The target settles without it. |
 
@@ -194,7 +194,7 @@ Design review (2026-11-09) changed: the upgrade also runs on a Model reset; §2.
 | A queued Mutation on a removed Model, and one on a Model whose identity changed, are acknowledged or rejected as single Mutations; the next Batch freezes | `crates/sqlite/tests/protocol05_queue.rs`, `crates/server/tests/` |
 | A queued create enqueued before a defaulted required field was added shows the default after the upgrade | `crates/sqlite/tests/protocol05_defaults.rs` |
 | A format-5 file written by 0.6.0 opens; the three columns are gone and the envelope trigger still rejects a changed digest | `crates/sqlite/tests/protocol05_client.rs` |
-| `git grep` over `crates`, `bindings`, `packages`, `integration`, `website` and `docs/engineering` except `history/` finds no `rollover`, `schema_pending`, `desired_materialization`, `enabled_descriptor` or `batch_materialization` | run in the last task; recorded in the PR |
+| `git grep` over `crates`, `bindings`, `packages`, `integration`, `website` and `docs/engineering` except `history/` finds no `rollover` or `schema_pending`, and finds `desired_materialization`, `enabled_descriptor` and `batch_materialization` only in the open-time column removal and its old-file test | run in the last task; recorded in the PR |
 
 ## 6. Out of scope
 

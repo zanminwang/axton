@@ -53,7 +53,7 @@ When the Store is next connected, the existing scheduler does the rest (`crates/
 
 Setting `S = C` keeps `C >= S`, and keeps settlement rule 3 of stream-only-downlink true: a target at or below `S` in an unmarked Model is never redelivered, so it settles from the receipt.
 
-**Work in flight.** Only a projection generation change can upgrade a connected Store. In that commit the sync worker sees its context change with the same Store ID: it empties its delivery queue, drops pending apply jobs, adopts the new context and schedules. It does not handshake again. The reset path keeps its own branch (`downlink.rs:475`). A push awaiting its receipt is acknowledged by §2.4. A Query or Fetch response that arrives in the previous context is returned to its caller and not installed.
+**Work in flight.** Only a projection generation change can upgrade a connected Store. In that commit the sync worker sees its context change with the same Store ID: it empties its delivery queue, drops pending apply jobs, adopts the new context and schedules. It does not handshake again. The reset path keeps its own branch (`downlink.rs:475`). A push awaiting its receipt is acknowledged, directly or after one resend of the same Batch (§2.4). A Query or Fetch response that arrives in the previous context is returned to its caller and not installed.
 
 ### 2.2 Table shapes
 
@@ -62,8 +62,10 @@ Setting `S = C` keeps `C >= S`, and keeps settlement rule 3 of stream-only-downl
 | Change to a Model | Action |
 | --- | --- |
 | New Model | Create its tables (unchanged). |
-| New nullable or defaulted field | `ALTER TABLE ADD COLUMN` on the table and its before-image (unchanged). |
+| New nullable field | `ALTER TABLE ADD COLUMN` on the table and its before-image (unchanged). |
 | Anything else: removed or renamed field, changed type or nullability, changed identity, unique constraints, relations or enum values, a required field with no default, a removed Model | **Reset the Model.** Drop and recreate its table and before-image (a removed Model's are only dropped), and delete its rows in `axton_authority`, `axton_local_replica_layer` and `axton_local_write`. |
+
+A new required field is in the last row: a compiled schema carries no storage default, because `@default` is a create-time policy (`createDefault`, `crates/compiler/src/validate.rs:83`, `:514`).
 
 A reset Model is empty until Bootstrap, a Stream change or a Query fills it. Open never fails for a schema change. A Model version that goes backwards still refuses to open (`store05.rs:166`).
 
@@ -96,7 +98,7 @@ A Model is **shared** by a Mutation when its shape in the Mutation's retained de
 | Piece | When it is used | Otherwise |
 | --- | --- | --- |
 | The input (name, version, slots) | Always. It uploads as enqueued. The server chooses the handler by name and version. | |
-| A local operation on a Model (the optimistic view) | The Model is shared. Replay fills the declared default for a field the operation does not carry, so a create enqueued before a defaulted field was added is a valid row. | Skipped everywhere the queue's operations are read (replay, dependency derivation, dirty keys), and the Mutation reads as diverged in the unsent-work view. The flag is derived from the skip and not stored. |
+| A local operation on a Model (the optimistic view) | The Model is shared. | Skipped everywhere the queue's operations or inputs are keyed (replay, dependency and sequence derivation at enqueue, dirty keys), and the Mutation reads as diverged in the unsent-work view. The flag is derived from the skip and not stored. |
 | A settlement target | The Model is shared. | Not required in the receipt, not awaited, not installed. |
 | A receipt snapshot (`fallback` or `Private` record) | Its Model is shared and the outcome's `materialization` is the Store's. It is validated against the current schema, not the Mutation's retained one (`settlement05.rs:107-125`). | Not installed. The target settles without it. |
 
@@ -104,7 +106,7 @@ Every client path that keys a Mutation's operations applies the shared check fir
 
 **Server requirement.** A Mutation whose input cannot be keyed under the server's current schema is refused as that one Mutation, with an ordinary rejection. Today it fails the whole Batch with `request_invalid` (`mutation_batch.rs:213`, `:240`), which strands the queue the same way.
 
-Settlement itself does not change. Evidence is read under the current materialization (`settlement05.rs:190-200`), so after an upgrade a `@@bootstrap` target waits until Bootstrap delivers it in the new contract, and its local operation stays on screen until then. Every other target at or below `S` settles from the receipt.
+Settlement asks one thing of a Stream target: has the Stream delivered this record at or after the target's position? It does not ask in which contract. A target delivered before the upgrade settles at once, and its row is overwritten by Bootstrap like any other held row. `TargetEvidence` loses its `materialization`, and `target_disposition` its comparison (`crates/protocols/src/sync/delivery.rs:316-319`). A target not yet delivered waits for Sync, or settles from the receipt when it is at or below `S` in an unmarked Model, as before.
 
 The shared check compares shapes and needs no stored marker: a Mutation enqueued two upgrades ago is judged against the schema of today.
 
@@ -166,13 +168,16 @@ Across an upgrade, queued Mutations are never deleted and are uploaded, and the 
 - **The receipt labels its snapshots with a materialization.** Rejected: a Model version on each snapshot, which does not see a projection generation change. Rejected: no label and trusting the request context, which mislabels a replayed result that first executed before the upgrade.
 - **A piece from another contract is dropped, not converted** (user, 2026-11-09). Rejected: shaping receipt data by Mutation version, which puts two schema versions on the device.
 - **Derive the shared check from descriptors.** Rejected: a per-Model reset marker in the Store, which is one more piece of state to keep true.
-- **Replay fills declared defaults.** Rejected: leaving a create that lacks a new required field to fail its write. Today that falls back silently without marking the Mutation diverged (`crates/client/src/rows.rs:31`, `ddl.rs:192-194`, `mutate.rs:254`).
+- **A new required field resets the Model.** Rejected: filling a default in replay. No compiled schema has a storage default, so the fill could never run.
+- **Settlement evidence counts in any contract.** Rejected: waiting for redelivery in the new contract. A `@@bootstrap` target whose record was deleted before the upgrade would wait on a tombstone Bootstrap may not deliver, and an unsettled Batch blocks every later one (`mutation_queue.rs:334-338`).
 - **All protection is per contract, absence included.** Rejected: keeping absence protection across contracts. A tombstone from a Loader null under an earlier projection would block a record the current projection shows, and it needs a second rule.
 - **Evidence history holds one entry.** Rejected: one entry per materialization, which turns a return to an earlier materialization into a `Duplicate` and skips the overwrite (`authority.rs:83-86`).
 - **A read response in another context is returned and not installed.** Rejected: failing it, which surfaces an error to the app for a change it did not make.
 - **SQLite format 5 kept; open removes the dead columns.** Rejected: format 6 with no migration, which refuses every existing file and discards its queue for a change that only removes three columns.
 
 Design review (2026-11-09) changed: the upgrade also runs on a Model reset; §2.5 gained the shared check on every keying path and the server requirement, because a Mutation on a removed Model stranded the queue; protection became one rule; history became one entry; defaults in replay were decided instead of left to a test; §2.1 states what the sync worker and reads in flight do; §2.7 states the hidden-record limit and what "pulled again" covers.
+
+Code review (2026-11-10) changed: settlement evidence counts in any contract, which removes a wait that could block the queue; default filling in replay was removed as unreachable; sequence derivation at enqueue applies the shared check.
 
 ## 5. Verification
 
@@ -192,7 +197,10 @@ Design review (2026-11-09) changed: the upgrade also runs on a Model reset; §2.
 | Reopen with a field's type changed: only that Model's rows, before-images and evidence are gone; other Models keep theirs; open succeeds | `crates/sqlite/tests/protocol05_ddl.rs` |
 | A queued update on a reset Model uploads, is marked diverged and shows no optimistic row; a queued Mutation on another Model keeps its optimistic view | `crates/sqlite/tests/protocol05_queue.rs` |
 | A queued Mutation on a removed Model, and one on a Model whose identity changed, are acknowledged or rejected as single Mutations; the next Batch freezes | `crates/sqlite/tests/protocol05_queue.rs`, `crates/server/tests/` |
-| A queued create enqueued before a defaulted required field was added shows the default after the upgrade | `crates/sqlite/tests/protocol05_defaults.rs` |
+| A new required field resets its Model; a queued create on it uploads and shows no optimistic row | `crates/sqlite/tests/protocol05_ddl.rs`, `protocol05_queue.rs` |
+| A Mutation accepted before the upgrade whose target the Stream already delivered settles after the upgrade with no Bootstrap; so does one whose record was deleted before the upgrade | `crates/sqlite/tests/protocol05_settlement.rs` |
+| With a diverged Mutation queued, enqueueing an action sequenced after it succeeds | `crates/sqlite/tests/protocol05_queue.rs` |
+| A push answered after a generation upgrade is acknowledged through the sync worker, directly or after one resend | `crates/sqlite/tests/protocol05_downlink.rs` |
 | A format-5 file written by 0.6.0 opens; the three columns are gone and the envelope trigger still rejects a changed digest | `crates/sqlite/tests/protocol05_client.rs` |
 | `git grep` over `crates`, `bindings`, `packages`, `integration`, `website` and `docs/engineering` except `history/` finds no `rollover` or `schema_pending`, and finds `desired_materialization`, `enabled_descriptor` and `batch_materialization` only in the open-time column removal and its old-file test | run in the last task; recorded in the PR |
 

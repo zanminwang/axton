@@ -182,20 +182,9 @@ impl<S: ClientStore> Client<S> {
                 store.execute("INSERT INTO axton_store(singleton,format,id,stream,materialization,desired_materialization,schema_descriptor,enabled_descriptor) VALUES(1,5,?,?,?,?,?,?)",&[json!(uuid::Uuid::new_v4().to_string()),json!(stream),json!(descriptor.materialization),json!(descriptor.materialization),json!(descriptor.context),json!(descriptor.context)])?;
             }
             ddl::reconcile(&mut store, &schema)?;
-            // Delivery staging is transient: network plans do not survive a
-            // reopen, and progress rows prove no coverage.
-            for table in ["axton_delivery_key", "axton_delivery_progress"] {
-                if !store
-                    .query(
-                        "SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?",
-                        &[json!(table)],
-                    )?
-                    .rows
-                    .is_empty()
-                {
-                    store.execute(&format!("DELETE FROM {table}"), &[])?;
-                }
-            }
+            // Network plans do not survive a reopen.
+            Engine::new(&mut store, &schema, &mut BTreeSet::new(), false)
+                .clear_delivery_staging05()?;
             store.execute(
                 INSERT_DESCRIPTOR,
                 &[
@@ -296,7 +285,45 @@ impl<S: ClientStore> Engine<'_, S> {
         Ok(n)
     }
 }
+/// Engine tables that hold state for one record, keyed by Model and identity.
+const RECORD_STATE: [&str; 3] = [
+    "axton_local_replica_layer",
+    "axton_local_write",
+    "axton_authority",
+];
 impl<S: ClientStore> Engine<'_, S> {
+    fn delete_record_state05(
+        &mut self,
+        key: &axton_core::RecordKey,
+        tables: &[&str],
+    ) -> Result<()> {
+        for table in tables {
+            self.exec(
+                table,
+                &format!("DELETE FROM {table} WHERE model=? AND identity=?"),
+                &[json!(key.model), json!(key.encoded_identity()?)],
+            )?;
+        }
+        Ok(())
+    }
+    /// Delete one record: its Model row, before-image and engine state.
+    pub(crate) fn delete_record05(&mut self, key: &axton_core::RecordKey) -> Result<()> {
+        self.main_set(key, None)?;
+        self.before_set(key, None)?;
+        self.delete_record_state05(key, &RECORD_STATE)
+    }
+    /// Delete every record: all Model rows, before-images and engine state.
+    pub(crate) fn delete_records05(&mut self) -> Result<()> {
+        for model in self.schema.models.clone() {
+            for table in [model.name.clone(), ddl::before_table(&model.name)] {
+                self.exec(&table, &format!("DELETE FROM {}", ddl::quote(&table)), &[])?;
+            }
+        }
+        for table in RECORD_STATE {
+            self.exec(table, &format!("DELETE FROM {table}"), &[])?;
+        }
+        Ok(())
+    }
     /// Adopt the projection generation a handshake reported. A change writes
     /// the descriptor for the app schema under it and makes that the desired
     /// materialization; the rollover then runs as for a schema change.
@@ -375,17 +402,11 @@ impl<S: ClientStore> Engine<'_, S> {
                     .into(),
                 identity: crate::mutation_queue::decode(&row[1])?,
             };
-            if !self.dirty(&key)? {
-                self.main_set(&key, None)?;
-                self.before_set(&key, None)?;
-                self.clear_local_layer(&key)?;
-                self.delete_local_writes(&key)?;
+            if self.dirty(&key)? {
+                self.delete_record_state05(&key, &["axton_authority"])?;
+            } else {
+                self.delete_record05(&key)?;
             }
-            self.exec(
-                "axton_authority",
-                "DELETE FROM axton_authority WHERE model=? AND identity=?",
-                &[row[0].clone(), row[1].clone()],
-            )?;
         }
         self.clear_delivery_staging05()?;
         self.exec("axton_store","UPDATE axton_store SET materialization=desired_materialization,enabled_descriptor=schema_descriptor,start_cursor=NULL,bootstrap_cursor=NULL,cursor=NULL",&[])?;

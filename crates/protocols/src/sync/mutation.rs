@@ -43,9 +43,12 @@ pub fn validate_batch(request: &MutationRequest) -> Result<()> {
     }
     Ok(())
 }
+/// `required(mutation_id, model)` says whether an accepted Mutation's
+/// operations on `model` must have a settlement target in the receipt.
 pub fn validate_acknowledgement(
     request: &MutationRequest,
     ack: &BatchAcknowledgement,
+    required: impl Fn(u64, &str) -> bool,
 ) -> Result<()> {
     validate_batch(request)?;
     ack.validate()?;
@@ -72,6 +75,7 @@ pub fn validate_acknowledgement(
                 .collect::<Result<_>>()?;
             for op in &mutation.operations {
                 if let Some(model) = &op.model
+                    && required(mutation.id, model)
                     && !supplied.contains(
                         &RecordKey {
                             model: model.clone(),

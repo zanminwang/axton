@@ -1,5 +1,4 @@
-//! An accepted outcome names the contract its snapshots were loaded in: the
-//! request's materialization when the member first executed.
+//! Batch member execution against a deterministic persistence seam.
 use axton_protocols::sync::{self as v05, Mutation, MutationOperation, MutationRequest};
 use axton_server::{Config, Host, HostResult};
 use serde_json::{Value, json};
@@ -199,5 +198,67 @@ fn a_batch_partly_executed_before_an_upgrade_returns_mixed_labels() {
         .unwrap();
         assert_eq!(ack.context, resent.context);
         assert_eq!(host.0.lock().unwrap().executions, 2);
+    });
+}
+/// The backend after `Todo` changed its identity: the retained `Write` still
+/// shapes its input with the old identity, which the current schema cannot key.
+/// (A backend cannot retain a version on a removed Model: its config refuses.)
+fn rekeyed() -> Config {
+    let field =
+        |name: &str| json!({"name":name,"nullable":false,"type":{"kind":"scalar","name":"string"}});
+    let old =
+        json!({"name":"Todo","version":1,"identity":["id"],"fields":[field("id"),field("title")]});
+    let write = json!({"name":"Write","version":1,"kind":"mutation","inputs":[{"kind":"model","name":"todo","model":"Todo","operation":"create","cardinality":"single"}],"outputs":[],"input":{"models":[old],"enums":[]}});
+    Config::decode(json!({"schema":{"enums":[],"models":[{"name":"Todo","version":2,"identity":["code"],"fields":[field("code"),field("title")]}],"actions":[action(),write]},"mutations":[],"loaders":["Todo"],"protocol5":{"projectionGeneration":"1"}})).unwrap()
+}
+#[test]
+fn a_member_whose_input_cannot_be_keyed_is_refused_alone() {
+    run(async {
+        let c = rekeyed();
+        let mut r = request(&c);
+        let write = Mutation {
+            id: 2,
+            name: "Write".into(),
+            version: 1,
+            descriptor: v05::mutation_descriptor_digest(&c.schema.actions[1]).unwrap(),
+            operations: vec![MutationOperation {
+                step: 1,
+                input_path: "todo".into(),
+                operation: v05::Operation::Create,
+                model: Some("Todo".into()),
+                identity: json!({"id":"x"}),
+                value: json!({"title":"hello"}),
+            }],
+        };
+        let mut last = r.mutations.pop().unwrap();
+        last.id = 3;
+        r.mutations.extend([write, last]);
+        r.digest = v05::batch_digest(&r).unwrap();
+        let host = BatchHost::default();
+        let bytes = v05::encode(&r).unwrap();
+        let mut outcomes = vec![];
+        for ordinal in 0..3 {
+            let result: v05::MutationResult = serde_json::from_str(
+                &axton_server::process_batch_member(&c, "alice", &bytes, ordinal, &host)
+                    .await
+                    .unwrap_or_else(|e| panic!("member {ordinal}: {e}")),
+            )
+            .unwrap();
+            outcomes.push(result.outcome);
+        }
+        assert!(matches!(outcomes[0], v05::MutationOutcome::Accepted { .. }));
+        assert_eq!(
+            outcomes[1],
+            v05::MutationOutcome::Rejected {
+                code: axton_server::code::MUTATION_VERSION_UNSUPPORTED.into(),
+                message: None,
+            }
+        );
+        assert!(matches!(outcomes[2], v05::MutationOutcome::Accepted { .. }));
+        assert_eq!(
+            host.0.lock().unwrap().executions,
+            2,
+            "the refused handler never runs"
+        );
     });
 }

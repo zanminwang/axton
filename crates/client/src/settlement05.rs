@@ -29,7 +29,7 @@ use crate::engine::as_u64;
 use crate::mutation_queue::{decode, text};
 use crate::queue::OpKind;
 use axton_protocols::sync::{self as v05, Validate};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 impl<S: ClientStore> Engine<'_, S> {
     fn outcome05(&mut self, id: u64) -> Result<Option<v05::MutationOutcome>> {
         let r=self.rows("SELECT sync_cursor,outcome_materialization,result,targets,rejection_code,rejection_message FROM axton_mutation_queue WHERE id=?",&[json!(id)])?.rows;
@@ -104,7 +104,24 @@ impl<S: ClientStore> Engine<'_, S> {
             return Err(invalid("Batch acknowledgement skipped"));
         }
         let request = self.reconstruct_batch05(ack.batch_id)?;
-        v05::validate_acknowledgement(&request, ack)?;
+        // A target is required only on a Model the Mutation shares with the
+        // current schema.
+        let mut unshared = BTreeSet::new();
+        for mutation in &request.mutations {
+            let descriptor = self.mutation_descriptor05(mutation.id)?;
+            for model in mutation
+                .operations
+                .iter()
+                .filter_map(|o| o.model.as_deref())
+            {
+                if !self.shared05(&descriptor, model)? {
+                    unshared.insert((mutation.id, model.to_owned()));
+                }
+            }
+        }
+        v05::validate_acknowledgement(&request, ack, |id, model| {
+            !unshared.contains(&(id, model.to_owned()))
+        })?;
         // Validate every result and snapshot before changing any durable outcome.
         for result in &ack.results {
             if let v05::MutationOutcome::Accepted {
@@ -114,11 +131,15 @@ impl<S: ClientStore> Engine<'_, S> {
             } = &result.outcome
             {
                 let row=self.rows("SELECT name,descriptor_version,descriptor FROM axton_mutation_queue WHERE id=?",&[json!(result.mutation_id)])?.rows.remove(0);
-                let schema = self.retained_schema05(row[2].as_str().unwrap())?;
+                let descriptor = row[2].as_str().unwrap();
+                let schema = self.retained_schema05(descriptor)?;
                 let action = schema.action(row[0].as_str().unwrap(), as_u64(&row[1])?)?;
                 axton_core::validate_action_result(&schema, action, value)?;
                 for target in targets {
                     let k = target.key();
+                    if !self.shared05(descriptor, &k.model)? {
+                        continue;
+                    }
                     let canonical = schema.record_key(&k.model, &k.identity)?;
                     if canonical.identity != k.identity {
                         return Err(invalid("noncanonical settlement identity"));
@@ -269,6 +290,16 @@ impl<S: ClientStore> Engine<'_, S> {
             else {
                 continue;
             };
+            // A target on a Model the Mutation does not share with the
+            // current schema is neither awaited nor installed.
+            let descriptor = self.mutation_descriptor05(id)?;
+            let mut shared = vec![];
+            for target in targets {
+                if self.shared05(&descriptor, &target.key().model)? {
+                    shared.push(target);
+                }
+            }
+            let targets = shared;
             let mut evidence = BTreeMap::new();
             for target in &targets {
                 evidence.insert(

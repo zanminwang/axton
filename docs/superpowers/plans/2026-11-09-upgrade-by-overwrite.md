@@ -43,17 +43,17 @@
 
 **Files:** `crates/core/src/schema.rs`; `crates/protocols/src/sync/mutation.rs`; `crates/server/src/mutation_batch.rs`; `crates/client/src/mutate.rs`, `rows.rs`, `queue.rs`, `settlement05.rs`; tests in `crates/core`, `crates/server/tests/`, `crates/sqlite/tests/protocol05_queue.rs`, `protocol05_defaults.rs`.
 
-- [ ] Extract the per-Model body of `Schema::compatibility` as a function of two schemas and a Model name; `compatibility` calls it. A Model missing from the incoming schema is incompatible. Add a unit test that a change to Model `A` leaves Model `B` compatible.
-- [ ] The shared check: (Mutation's retained descriptor, Model) is shared when the per-Model check finds nothing to reset. Cache the answer per (descriptor, Model) for the Engine's lifetime.
-- [ ] Tests: build a Store whose queue holds a Mutation enqueued under an older schema, with operations on Model `A` (incompatible now, in three variants: changed field type, changed identity, removed) and Model `B` (unchanged). The tests construct the older descriptor directly, since open still refuses an incompatible schema until Task 4.
+- [x] Extract the per-Model body of `Schema::compatibility` as a function of two schemas and a Model name; `compatibility` calls it. A Model missing from the incoming schema is incompatible. Add a unit test that a change to Model `A` leaves Model `B` compatible.
+- [x] The shared check: (Mutation's retained descriptor, Model) is shared when the per-Model check finds nothing to reset. Cache the answer per (descriptor, Model) for the Engine's lifetime.
+- [x] Tests: build a Store whose queue holds a Mutation enqueued under an older schema, with operations on Model `A` (incompatible now, in three variants: changed field type, changed identity, removed) and Model `B` (unchanged). The tests construct the older descriptor directly, since open still refuses an incompatible schema until Task 4.
   - Rebuild: `A`'s operation is skipped and the Mutation is marked diverged; `B`'s applies.
   - Acknowledge with a receipt that has no target for `A`: accepted. Fails today on `record_key` or the mandatory-target check.
   - Rejection of that Mutation: completes.
   - Settlement: `A`'s target is neither awaited nor installed.
-- [ ] Apply the shared check on every path that keys a Mutation's operations: acknowledgement validation, `validate_acknowledgement` (it takes the Models whose targets are required), rejection, settlement, rebuild.
-- [ ] Test: a create enqueued before a defaulted required field existed replays as a valid row holding the default. Fails today: replay writes NULL (`rows.rs:31`) into a `NOT NULL DEFAULT` column and falls back silently.
-- [ ] Replay fills the declared default for each field an operation does not carry, accepted local writes included.
-- [ ] Test (server): a Batch whose second member's input cannot be keyed under the current schema returns an ordinary rejection for that member and results for the others. Fails today with `request_invalid` for the Batch. Change `mutation_batch.rs:213`, `:240` to refuse the member, with the rejection code the unsupported-version path uses unless a better existing code fits; record the choice here.
+- [x] Apply the shared check on every path that keys a Mutation's operations: acknowledgement validation, `validate_acknowledgement` (it takes the Models whose targets are required), rejection, settlement, rebuild.
+- [x] Test: a create enqueued before a defaulted required field existed replays as a valid row holding the default. Fails today: replay writes NULL (`rows.rs:31`) into a `NOT NULL DEFAULT` column and falls back silently.
+- [x] Replay fills the declared default for each field an operation does not carry, accepted local writes included.
+- [x] Test (server): a Batch whose second member's input cannot be keyed under the current schema returns an ordinary rejection for that member and results for the others. Fails today with `request_invalid` for the Batch. Change `mutation_batch.rs:213`, `:240` to refuse the member, with the rejection code the unsupported-version path uses unless a better existing code fits; record the choice here. Choice: `mutation_version_unsupported`, the code the unsupported-version path uses: to the app, a retained Mutation version this backend cannot key is a version it no longer serves, and `model_version_unsupported` names a read contract instead. The input is keyed before the handler runs, so a refused member runs no handler (it fails today with `action.invalid` from `input_identities`, not `request_invalid`).
 
 ## Task 4: Reset an incompatible Model (spec §2.2)
 

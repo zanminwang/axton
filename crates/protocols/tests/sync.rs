@@ -110,7 +110,7 @@ fn strict_envelopes_counters_and_duplicates() {
 fn exact_ack_and_owned_target_envelopes() {
     let request = request();
     let acknowledgement = ack(&request);
-    validate_acknowledgement(&request, &acknowledgement).unwrap();
+    validate_acknowledgement(&request, &acknowledgement, |_, _| true).unwrap();
     for variant in 0..6 {
         let mut bad = acknowledgement.clone();
         match variant {
@@ -121,13 +121,13 @@ fn exact_ack_and_owned_target_envelopes() {
             4 => bad.context.store_id = "new".into(),
             _ => bad.digest = "0".repeat(64),
         }
-        assert!(validate_acknowledgement(&request, &bad).is_err());
+        assert!(validate_acknowledgement(&request, &bad, |_, _| true).is_err());
     }
     // A receipt is correlated by Store, Stream, Batch and digest: one that
     // answers in another materialization still acknowledges the Batch.
     let mut moved = acknowledgement.clone();
     moved.context.materialization = "schema2".into();
-    validate_acknowledgement(&request, &moved).unwrap();
+    validate_acknowledgement(&request, &moved, |_, _| true).unwrap();
     let base = json!({"kind":"stream","key":{"model":"Entry","identity":{"id":"e"}},"cursor":2,"fallback":{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"a"}}});
     let target = decode::<SettlementTarget>(&serde_json::to_vec(&base).unwrap()).unwrap();
     assert_eq!(serde_json::to_value(target).unwrap(), base);
@@ -346,9 +346,11 @@ fn accepted_acknowledgement_requires_every_server_model_input_target() {
     r.mutations[0].operations.push(serde_json::from_value(json!({"step":3,"inputPath":"entry","operation":"create","model":"Entry","identity":{"id":"e"},"value":{"text":"A"}})).unwrap());
     r.digest = batch_digest(&r).unwrap();
     assert!(
-        validate_acknowledgement(&r, &ack(&r)).is_err(),
+        validate_acknowledgement(&r, &ack(&r), |_, _| true).is_err(),
         "missing owned target was accepted"
     );
+    // A Model whose targets the client does not require needs none.
+    validate_acknowledgement(&r, &ack(&r), |id, model| !(id == 1 && model == "Entry")).unwrap();
 }
 #[test]
 fn handshake_and_reads_correlate_store_stream_request_and_modes() {
@@ -560,7 +562,7 @@ fn receipt_stream_target_cannot_exceed_its_fenced_sync_head() {
             },
         }],
     };
-    assert!(validate_acknowledgement(&r, &a).is_err());
+    assert!(validate_acknowledgement(&r, &a, |_, _| true).is_err());
 }
 
 #[test]

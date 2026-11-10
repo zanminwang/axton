@@ -42,6 +42,31 @@ impl<S: ClientStore> Engine<'_, S> {
                 .ok_or_else(|| invalid("descriptor missing"))?,
         )
     }
+    /// A queued Mutation's piece on `model` is used only when that Model's
+    /// shape in the Mutation's retained descriptor needs no reset under the
+    /// current schema. A Model the current schema lacks is not shared.
+    pub(crate) fn shared05(&mut self, descriptor: &str, model: &str) -> Result<bool> {
+        let key = (descriptor.to_owned(), model.to_owned());
+        if let Some(shared) = self.shared.get(&key) {
+            return Ok(*shared);
+        }
+        let retained = self.retained_schema05(descriptor)?;
+        let shared = !matches!(
+            Schema::model_compatibility(&retained, self.schema, model),
+            axton_core::Compatibility::Incompatible(_)
+        );
+        self.shared.insert(key, shared);
+        Ok(shared)
+    }
+    /// The descriptor context a queued Mutation was enqueued under.
+    pub(crate) fn mutation_descriptor05(&mut self, id: u64) -> Result<String> {
+        self.scalar(
+            "SELECT descriptor FROM axton_mutation_queue WHERE id=?",
+            &[json!(id)],
+        )?
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .ok_or_else(|| invalid("queued Mutation missing"))
+    }
     pub(crate) fn wire_ops05(&mut self, id: u64) -> Result<Vec<v05::MutationOperation>> {
         self.rows("SELECT step,input_path,operation,model,identity,value FROM axton_mutation_queue_operation WHERE mutation_id=? AND input_path IS NOT NULL ORDER BY step",&[json!(id)])?.rows.into_iter().map(|r|Ok(v05::MutationOperation{step:as_u64(&r[0])?,input_path:r[1].as_str().ok_or_else(||invalid("input path missing"))?.into(),operation:serde_json::from_value(json!(r[2]))?,model:r[3].as_str().map(str::to_owned),identity:if r[4].is_null(){Value::Null}else{decode(&r[4])?},value:if r[5].is_null(){Value::Null}else{decode(&r[5])?}})).collect()
     }

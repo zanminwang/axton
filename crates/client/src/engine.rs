@@ -3,7 +3,7 @@ use crate::changes::ModelChanges;
 use crate::store::{ClientStore, SqlRows};
 use axton_core::{RecordKey, Result, Schema, invalid};
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub struct Engine<'a, S: ClientStore> {
     pub store: &'a mut S,
@@ -11,6 +11,10 @@ pub struct Engine<'a, S: ClientStore> {
     pub changed: &'a mut BTreeSet<String>,
     pub committed: bool,
     pub(crate) model_changes: Option<&'a mut ModelChanges>,
+    /// Whether a retained descriptor's Model is shared with `schema`, by
+    /// (descriptor context, Model). Descriptors are immutable, so an answer
+    /// holds for the Engine's lifetime.
+    pub(crate) shared: BTreeMap<(String, String), bool>,
 }
 
 impl<'a, S: ClientStore> Engine<'a, S> {
@@ -26,6 +30,7 @@ impl<'a, S: ClientStore> Engine<'a, S> {
             changed,
             committed,
             model_changes: None,
+            shared: BTreeMap::new(),
         }
     }
     pub(crate) fn tracking(mut self, changes: &'a mut ModelChanges) -> Self {
@@ -39,6 +44,7 @@ impl<'a, S: ClientStore> Engine<'a, S> {
             changed: &mut *self.changed,
             committed: self.committed,
             model_changes: self.model_changes.as_deref_mut(),
+            shared: self.shared.clone(),
         }
     }
     pub fn rows(&mut self, sql: &str, parameters: &[Value]) -> Result<SqlRows> {

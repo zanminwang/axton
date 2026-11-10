@@ -381,3 +381,51 @@ fn a_creation_default_never_backfills_a_new_required_column() {
             .any(|r| r["name"] == "rank")
     );
 }
+#[test]
+fn a_create_queued_before_a_defaulted_required_field_existed_replays_with_the_default() {
+    let entry = |rank: bool| {
+        let mut fields = vec![
+            json!({"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}),
+            json!({"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}),
+        ];
+        if rank {
+            fields.push(json!({"name":"rank","nullable":false,"type":{"kind":"scalar","name":"int"},"default":0}));
+        }
+        Schema::from_value(json!({"enums":[],"models":[{"name":"Entry","identity":["id"],"fields":fields}],
+            "actions":[{"name":"Add","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"create","cardinality":"single"}],"outputs":[]}]}))
+        .unwrap()
+    };
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), entry(false), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
+    c.transaction(|tx| {
+        tx.submit_mutation05("Add", 1, json!({"entry":{"id":"e","text":"A"}}), vec![])
+    })
+    .unwrap();
+    drop(c);
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), entry(true), "User:u").unwrap();
+    let key = RecordKey {
+        model: "Entry".into(),
+        identity: json!({"id":"e"}),
+    };
+    // Authority that the record is absent replays the queued create over it.
+    let context = c.request_context05().unwrap();
+    c.install_authority05(
+        &context,
+        &[v05::AuthorityChange::Record {
+            key: v05::RecordKey {
+                model: "Entry".into(),
+                identity: json!({"id":"e"}),
+            },
+            cursor: 1,
+            state: Value::Null,
+        }],
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        c.read(&key).unwrap(),
+        Some(json!({"id":"e","text":"A","rank":0}))
+    );
+}

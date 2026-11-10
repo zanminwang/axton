@@ -1199,3 +1199,268 @@ fn stale_frozen_digest_halts_the_uplink_once_without_deleting_anything() {
     assert!(control.jobs().is_empty());
     assert_eq!(rows(), before);
 }
+
+/// How Model `A` changed since a queued Mutation was enqueued; `B` is unchanged.
+#[derive(Clone, Copy, Debug)]
+enum Change {
+    FieldType,
+    Identity,
+    Removed,
+}
+fn pair_schema(change: Option<Change>) -> Schema {
+    let text =
+        |name: &str| json!({"name":name,"nullable":false,"type":{"kind":"scalar","name":"string"}});
+    let a = match change {
+        None => Some(json!({"name":"A","identity":["id"],"fields":[text("id"),text("title")]})),
+        Some(Change::FieldType) => Some(
+            json!({"name":"A","identity":["id"],"fields":[text("id"),{"name":"title","nullable":false,"type":{"kind":"scalar","name":"int"}}]}),
+        ),
+        Some(Change::Identity) => {
+            Some(json!({"name":"A","identity":["id","title"],"fields":[text("id"),text("title")]}))
+        }
+        Some(Change::Removed) => None,
+    };
+    let b = json!({"name":"B","identity":["id"],"fields":[text("id"),text("title")]});
+    let models: Vec<Value> = a.into_iter().chain([b]).collect();
+    let touch = json!({"name":"Touch","version":1,"inputs":[
+        {"kind":"model","name":"b","model":"B","operation":"update","cardinality":"single","fields":["title"]}],"outputs":[]});
+    let actions = if change.is_none() {
+        json!([touch, {"name":"Pair","version":1,"inputs":[
+            {"kind":"model","name":"a","model":"A","operation":"update","cardinality":"single","fields":["title"]},
+            {"kind":"model","name":"b","model":"B","operation":"update","cardinality":"single","fields":["title"]}],"outputs":[]}])
+    } else {
+        json!([touch])
+    };
+    Schema::from_value(json!({"enums":[],"models":models,"actions":actions})).unwrap()
+}
+fn row(model: &str, id: &str, title: Value) -> axton_client::Operation {
+    axton_client::Operation {
+        model: model.into(),
+        op: axton_client::OperationKind::Create,
+        identity: json!({ "id": id }),
+        values: Some(json!({ "title": title })),
+    }
+}
+/// A Store whose queue holds `Pair` (updates of `a` and `b`) enqueued under
+/// the old schema, now running the schema `change` made. Until open resets an
+/// incompatible Model, the test swaps the Store's descriptor and drops `A`'s
+/// tables and record state itself.
+fn queued_across(
+    change: Change,
+    freeze: bool,
+) -> (
+    tempfile::TempDir,
+    Client<SqliteStore>,
+    Option<v05::MutationRequest>,
+) {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c =
+        Client::open05(SqliteStore::open(&p).unwrap(), pair_schema(None), "User:u").unwrap();
+    c.initialize_stream05(0, "1").unwrap();
+    c.transaction(|tx| {
+        tx.direct(row("A", "a", json!("A0")))?;
+        tx.direct(row("B", "b", json!("B0")))
+    })
+    .unwrap();
+    c.transaction(|tx| {
+        tx.submit_mutation05(
+            "Pair",
+            1,
+            json!({"a":{"id":"a","title":"A1"},"b":{"id":"b","title":"B1"}}),
+            vec![],
+        )
+    })
+    .unwrap();
+    let batch = freeze.then(|| c.freeze_batch05().unwrap().unwrap());
+    drop(c);
+    let fresh = d.path().join("fresh");
+    drop(
+        Client::open05(
+            SqliteStore::open(&fresh).unwrap(),
+            pair_schema(Some(change)),
+            "User:u",
+        )
+        .unwrap(),
+    );
+    let raw = rusqlite::Connection::open(&p).unwrap();
+    raw.execute("ATTACH DATABASE ? AS fresh", [fresh.to_str().unwrap()])
+        .unwrap();
+    raw.execute_batch(
+        "INSERT INTO axton_descriptor SELECT * FROM fresh.axton_descriptor;
+         UPDATE axton_store SET (materialization,desired_materialization,schema_descriptor,enabled_descriptor)=(SELECT materialization,desired_materialization,schema_descriptor,enabled_descriptor FROM fresh.axton_store);
+         DROP TABLE \"A\"; DROP TABLE \"axton_before_A\";
+         DELETE FROM axton_authority WHERE model='A';
+         DELETE FROM axton_local_replica_layer WHERE model='A';
+         DELETE FROM axton_local_write WHERE model='A';",
+    )
+    .unwrap();
+    drop(raw);
+    let c = Client::open05(
+        SqliteStore::open(&p).unwrap(),
+        pair_schema(Some(change)),
+        "User:u",
+    )
+    .unwrap();
+    (d, c, batch)
+}
+fn pair_key(model: &str, id: &str) -> axton_client::RecordKey {
+    axton_client::RecordKey {
+        model: model.into(),
+        identity: json!({ "id": id }),
+    }
+}
+fn stream(c: &mut Client<SqliteStore>, model: &str, id: &str, cursor: u64, title: Value) {
+    let context = c.request_context05().unwrap();
+    c.install_authority05(
+        &context,
+        &[v05::AuthorityChange::Record {
+            key: wire(model, id),
+            cursor,
+            state: json!({ "title": title }),
+        }],
+        None,
+    )
+    .unwrap();
+}
+const CHANGES: [Change; 3] = [Change::FieldType, Change::Identity, Change::Removed];
+#[test]
+fn replay_skips_an_operation_on_a_model_that_is_not_shared_and_marks_the_mutation_diverged() {
+    for change in CHANGES {
+        let (_d, mut c, _) = queued_across(change, false);
+        stream(&mut c, "B", "b", 1, json!("server"));
+        assert_eq!(
+            c.read(&pair_key("B", "b")).unwrap().unwrap()["title"],
+            "B1",
+            "{change:?}"
+        );
+        let status = c.record_status(&pair_key("B", "b")).unwrap();
+        assert_eq!(status["pending"][0]["diverged"], true, "{change:?}");
+        // A later Mutation derives its dependencies past the skipped operation.
+        c.transaction(|tx| {
+            tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B2"}}), vec![])
+        })
+        .unwrap_or_else(|e| panic!("{change:?}: {e}"));
+        assert_eq!(c.read(&pair_key("B", "b")).unwrap().unwrap()["title"], "B2");
+        if let Change::FieldType = change {
+            stream(&mut c, "A", "a", 1, json!(5));
+            assert_eq!(c.read(&pair_key("A", "a")).unwrap().unwrap()["title"], 5);
+        }
+    }
+}
+fn private(model: &str, id: &str, title: &str) -> v05::SettlementTarget {
+    v05::SettlementTarget::Private {
+        record: v05::ReadRecord {
+            key: wire(model, id),
+            cursor: (),
+            state: json!({ "title": title }),
+        },
+    }
+}
+fn answer(b: &v05::MutationRequest, outcome: v05::MutationOutcome) -> v05::BatchAcknowledgement {
+    v05::BatchAcknowledgement {
+        context: b.context.clone(),
+        batch_id: b.batch_id,
+        digest: b.digest.clone(),
+        results: vec![v05::MutationResult {
+            mutation_id: b.mutations[0].id,
+            outcome,
+        }],
+    }
+}
+#[test]
+fn acknowledgement_needs_no_target_for_a_model_that_is_not_shared() {
+    for change in CHANGES {
+        let (_d, mut c, b) = queued_across(change, true);
+        let b = b.unwrap();
+        // The receipt answers in the Store's current contract.
+        let current = c.request_context05().unwrap().materialization;
+        c.acknowledge_batch05(&answer(
+            &b,
+            v05::MutationOutcome::Accepted {
+                sync_cursor: 0,
+                materialization: current.clone(),
+                result: Value::Null,
+                targets: vec![private("B", "b", "accepted")],
+            },
+        ))
+        .unwrap_or_else(|e| panic!("{change:?}: {e}"));
+        assert_eq!(
+            c.settle_ready05().unwrap().completions.len(),
+            1,
+            "{change:?}"
+        );
+        assert_eq!(
+            c.read(&pair_key("B", "b")).unwrap().unwrap()["title"],
+            "accepted"
+        );
+        c.transaction(|tx| {
+            tx.submit_mutation05("Touch", 1, json!({"b":{"id":"b","title":"B2"}}), vec![])
+        })
+        .unwrap();
+        assert_eq!(
+            c.freeze_batch05().unwrap().unwrap().batch_id,
+            2,
+            "{change:?}"
+        );
+    }
+}
+#[test]
+fn rejection_of_a_mutation_on_a_model_that_is_not_shared_completes() {
+    for change in CHANGES {
+        let (_d, mut c, b) = queued_across(change, true);
+        let b = b.unwrap();
+        let call = format!("{}:{}", c.client_id(), b.mutations[0].id);
+        c.acknowledge_batch05(&answer(
+            &b,
+            v05::MutationOutcome::Rejected {
+                code: "pair.denied".into(),
+                message: None,
+            },
+        ))
+        .unwrap_or_else(|e| panic!("{change:?}: {e}"));
+        assert!(c.call_completion05(&call).unwrap().is_some(), "{change:?}");
+        assert_eq!(c.read(&pair_key("B", "b")).unwrap().unwrap()["title"], "B0");
+        assert_eq!(c.store_status05().unwrap().last_acknowledged_batch_id, 1);
+    }
+}
+#[test]
+fn settlement_neither_awaits_nor_installs_a_target_that_is_not_shared() {
+    for change in CHANGES {
+        let (_d, mut c, b) = queued_across(change, true);
+        let b = b.unwrap();
+        // The receipt answers in the Store's current contract.
+        let current = c.request_context05().unwrap().materialization;
+        c.acknowledge_batch05(&answer(
+            &b,
+            v05::MutationOutcome::Accepted {
+                sync_cursor: 5,
+                materialization: current.clone(),
+                result: Value::Null,
+                targets: vec![
+                    v05::SettlementTarget::Stream {
+                        key: wire("A", "a"),
+                        cursor: 5,
+                        fallback: v05::ReadRecord {
+                            key: wire("A", "a"),
+                            cursor: (),
+                            state: json!({"title":"A5"}),
+                        },
+                    },
+                    private("B", "b", "accepted"),
+                ],
+            },
+        ))
+        .unwrap_or_else(|e| panic!("{change:?}: {e}"));
+        let context = c.request_context05().unwrap();
+        let covered = c.install_authority05(&context, &[], Some((0, 5))).unwrap();
+        assert_eq!(covered.completions.len(), 1, "{change:?}");
+        assert_eq!(
+            c.read(&pair_key("B", "b")).unwrap().unwrap()["title"],
+            "accepted"
+        );
+        if let Change::FieldType = change {
+            assert!(c.read(&pair_key("A", "a")).unwrap().is_none());
+        }
+    }
+}

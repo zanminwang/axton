@@ -4,7 +4,7 @@
 
 ClientRuntime owns task admission, transactions, prerequisites, connection lifecycles, direct reads and observers. It drives protocol-5 handshake, Uplink and finite delivery effects. Priority close cancels parked remote tasks and releases the actor without waiting for a network response; post-close results cannot install Models. SDKs submit tasks and carry effects rather than making retry or coverage decisions.
 
-Settlement needs no request of its own: an accepted receipt raises the delivery head and the Stream brings the evidence. A Store whose context changed (a reset, or a rollover clear) drops staging of the old context; already dispatched Store work retains its authority admission and reports completion before the next apply is scheduled.
+Settlement needs no request of its own: an accepted receipt raises the delivery head and the Stream brings the evidence. A Store whose context changed drops staging of the old context; already dispatched Store work retains its authority admission and reports completion before the next apply is scheduled. After a reset (a new Store ID) the worker reconnects. After an upgrade (the same Store ID in a new materialization) it drops pulls and applies of the old context and schedules from the committed positions without a second handshake; a push in flight still acknowledges, and a Query or Fetch response from the previous context is returned and not installed. Stored reads wait only for the first handshake.
 
 Every publication path refreshes retained pending, failure and refusal observers before consuming the commit mark for Model watches. Application tasks and protocol-5 Store worker commits use this same boundary; listeners receive changed committed snapshots without polling.
 

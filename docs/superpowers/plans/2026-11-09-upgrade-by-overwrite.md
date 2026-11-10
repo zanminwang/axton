@@ -84,6 +84,6 @@
 
 **Files:** `docs/engineering/guarantees.md`, `docs/engineering/architecture/client/storage/protocol5.md`, `storage/reconciliation.md`, `client/runtime.md`, `protocols/sync.md`, `server/protocol5.md`, `docs/engineering/testing/end-to-end.md`, `website/docs/frontend/sync.md`, `setup.md`, `client-api.md`, `loads.md`, `schema/reference.md`.
 
-- [ ] Guarantees: replace the rollover paragraph with spec §2.7 and the §2.3 rules; delete the release rule; rewrite D9 and D10 (`:101-102`), since `S` is no longer only a handshake head but `C >= S` still holds; rewrite line 123 (incompatible storage no longer fails).
-- [ ] Architecture and website pages: describe the upgrade as §2.1 and the table rules as §2.2; remove every mention of drain, clear and `schema_pending`.
-- [ ] Mark stream-only-downlink §2.3 as superseded by this spec in one line at its top; do not rewrite it.
+- [x] Guarantees: replace the rollover paragraph with spec §2.7 and the §2.3 rules; delete the release rule; rewrite D9 and D10 (`:101-102`), since `S` is no longer only a handshake head but `C >= S` still holds; rewrite line 123 (incompatible storage no longer fails).
+- [x] Architecture and website pages: describe the upgrade as §2.1 and the table rules as §2.2; remove every mention of drain, clear and `schema_pending`.
+- [x] Mark stream-only-downlink §2.3 as superseded by this spec in one line at its top; do not rewrite it.

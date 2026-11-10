@@ -51,5 +51,5 @@ Current [compiler tests](../../../../crates/compiler/tests/compiler.rs), [histor
 ## 11. Risks and Technical Debt
 
 - **Accepted limitation:** `now()` uses the client clock and `uuid()` a client generator; neither is a trusted server value, and multiple `now()` fields of one create need not share an instant.
-- **Accepted limitation:** creation defaults never backfill. A new required field is refused by compatible local open ([Reconciliation](../client/storage/reconciliation.md)) and needs a model version bump; historical values come from the application's loaders.
+- **Accepted limitation:** creation defaults never backfill. A new required field without a storage default resets the Model at local open ([Reconciliation](../client/storage/reconciliation.md)) and needs a model version bump; historical values come from the application's loaders.
 - **Accepted limitation:** unique constraints and identities are enforced on the client only; the application's database schema is authoritative on the server.

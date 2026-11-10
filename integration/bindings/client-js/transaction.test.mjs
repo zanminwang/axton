@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {Transaction,strictJson} from '../../../packages/frontend/client-js/api/transaction.mts';
+import { Client } from '../../../packages/frontend/client-js/index.mts';
+import { openStore } from './store-fixture.mjs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 test('public callback context is disabled only after settlement, including rejection and finish failure',async()=>{
  const originalRun=AsyncLocalStorage.prototype.run;
  const originalDisable=AsyncLocalStorage.prototype.disable;
@@ -85,3 +90,28 @@ test('outer commands are refused without reaching the runtime while a local subm
 // Mutations in a transaction through the native runtime (shared with React Native).
 import { mutationTests } from './mutations-harness.mjs';
 mutationTests(test, Transaction, { savepoints: true, exactGuard: true });
+test('a transaction reads a row and submits a Mutation built from it: the commit keeps both, a rollback discards the Call',async()=>{
+ const schema=JSON.parse(await readFile(new URL('../../../fixtures/schemas/entry.json',import.meta.url),'utf8'));
+ schema.actions=[{name:'Create',version:1,kind:'mutation',inputs:[{kind:'model',name:'entry',model:'Entry',operation:'create',cardinality:'single',allowedFields:['text','note']}],outputs:[]}];
+ const dir=await mkdtemp(join(tmpdir(),'axton-transaction-'));
+ const client=await openStore(Client,{path:join(dir,'client.sqlite'),schema});
+ const create=(port,id,text)=>port.submitMutation('Create',1,{entry:{id,text,note:null}},value=>value);
+ try {
+  await create(client,'draft','local');
+  const copy=async tx=>{
+   const draft=await tx.read('Entry',{id:'draft'});
+   const call=await create(tx,'copy',draft.text);
+   assert.equal((await tx.read('Entry',{id:'copy'})).text,'local','the transaction sees its own Call');
+   return call;
+  };
+  let rolledBack;
+  await assert.rejects(client.transaction(async tx=>{rolledBack=await copy(tx);throw Error('boom');}),/boom/);
+  await assert.rejects(rolledBack.wait(),{code:'transaction_rolled_back'});
+  assert.equal(await client.read('Entry',{id:'copy'}),null);
+  assert.equal((await client.syncState()).pending,1,'only the seed is queued');
+  const committed=await client.transaction(copy);
+  assert.equal(committed.provisional,false);
+  assert.equal((await client.read('Entry',{id:'copy'})).text,'local');
+  assert.equal((await client.syncState()).pending,2);
+ } finally { await client.close(); await rm(dir,{recursive:true,force:true}); }
+});

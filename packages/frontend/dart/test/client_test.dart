@@ -388,6 +388,38 @@ void main() {
       expect((await client.syncState())['pending'], 0);
     },
   );
+  test(
+    'a Mutation built from a read commits with its transaction and a rollback discards the Call',
+    () async {
+      Future<Call<void>> copy(Transaction tx) async {
+        final row = await tx.read('Entry', {'id': 'e'});
+        final call = await tx.submitMutation<void>('Publish', 1, {
+          'entry': {'id': 'copy', 'text': row!['text'], 'note': null},
+        }, (_) {});
+        expect((await tx.read('Entry', {'id': 'copy'}))!['text'], 'hello');
+        return call;
+      }
+
+      late Call<void> rolledBack;
+      await expectLater(
+        client.transaction((tx) async {
+          rolledBack = await copy(tx);
+          throw StateError('undo');
+        }),
+        stateError('undo'),
+      );
+      await expectLater(
+        rolledBack.wait(),
+        callError('transaction_rolled_back'),
+      );
+      expect(await text('copy'), isNull);
+      expect((await client.syncState())['pending'], 0);
+      final committed = await client.transaction(copy);
+      expect(committed.status, CallStatus.pending);
+      expect(await text('copy'), 'hello');
+      expect((await client.syncState())['pending'], 1);
+    },
+  );
   test('savepoint ends only Calls owned by its scope', () async {
     late Call<void> discarded;
     final kept = await client.transaction((tx) async {

@@ -813,6 +813,66 @@ fn a_named_mutation_submitted_in_a_callback_is_provisional_until_the_commit() {
     assert_eq!(h.pending(), 1);
 }
 
+/// A transaction reads a row and submits a Mutation built from what it
+/// read: both run in one local transaction, so the commit keeps the Call and
+/// a rollback discards it with everything else the unit wrote.
+#[test]
+fn a_mutation_built_from_a_read_commits_with_its_transaction_and_a_rollback_discards_it() {
+    let mut h = mutation_harness();
+    let (seeded, _) = h.call(
+        "seed",
+        json!({"kind":"submitAction","name":"Publish","version":1,
+            "args":{"entry":{"id":"draft","text":"local","note":null}}}),
+    );
+    assert_eq!(seeded["ok"], true, "{seeded}");
+    for commit in [false, true] {
+        let a = h.begin("tx");
+        h.command("r", &a.transaction, None, read("draft"));
+        let events = h.run();
+        assert_eq!(events.len(), 1, "{events:?}");
+        let text = events[0]["value"]["text"].clone();
+        assert_eq!(text, "local", "{events:?}");
+        h.command(
+            "s",
+            &a.transaction,
+            None,
+            submit_mutation(
+                "Publish",
+                json!({"entry":{"id":"copy","text":text,"note":null}}),
+                false,
+            ),
+        );
+        let events = h.run();
+        let call = submitted(&events, "s");
+        h.command("after", &a.transaction, None, read("copy"));
+        let events = h.run();
+        assert_eq!(
+            events[0]["value"]["text"], "local",
+            "the unit sees its own Call"
+        );
+        if commit {
+            h.callback(&a, true, None);
+            assert_eq!(
+                h.run(),
+                vec![call_state(&call, "committed"), done("tx", Value::Null)]
+            );
+            assert_eq!(h.entry("copy").unwrap()["text"], "local");
+            assert_eq!(h.pending(), 2);
+        } else {
+            h.callback(&a, false, Some("boom"));
+            assert_eq!(
+                h.run(),
+                vec![call_state(&call, "rolledBack"), failed("tx", "boom")]
+            );
+            assert_eq!(h.entry("copy"), None);
+            assert_eq!(h.pending(), 1, "only the seed is queued");
+        }
+    }
+    h.runtime.client().initialize_stream05(0, "1").unwrap();
+    let batch = h.runtime.client().freeze_batch05().unwrap().unwrap();
+    assert_eq!(batch.mutations.len(), 2, "the seed and the committed copy");
+}
+
 #[test]
 fn a_local_callback_runs_inside_its_submission_and_its_writes_are_companions() {
     let mut h = mutation_harness();

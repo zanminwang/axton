@@ -358,6 +358,198 @@ fn an_old_file_s_companion_operations_and_independent_writes_are_purged_at_open(
         let body = String::from_utf8(v05::encode(&batch).unwrap()).unwrap();
         assert!(!body.contains("companion"), "{body}");
         assert!(!body.contains("independent"), "{body}");
+        axton_sim::scenario05::assert_projection05(&mut c, &schema());
+    }
+}
+
+// A refused Mutation the app has not dismissed keeps its operation rows,
+// and in an old file a `companion` may be among them. The refusal already
+// restored every record the Mutation touched and dropped their before
+// images, so the purge deletes the companion and leaves the record as the
+// Stream delivered it, with its evidence.
+#[test]
+fn the_purge_leaves_a_record_a_refused_mutation_s_companion_touched() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open(&path);
+    start_stream(&mut c);
+    seed(&mut c, "A");
+    protected(&mut c, &[record("Entry", "r", 1, json!({"text":"R","note":null}))]);
+    let call = offline(&mut c, "Edit", json!({"entry":{"id":"e","text":"B"}}));
+    let batch = c.freeze_batch05().unwrap().unwrap();
+    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+        context: batch.context.clone(),
+        batch_id: batch.batch_id,
+        digest: batch.digest.clone(),
+        results: vec![v05::MutationResult {
+            mutation_id: call.ordinal,
+            outcome: v05::MutationOutcome::Rejected {
+                code: "write.denied".into(),
+                message: None,
+            },
+        }],
+    })
+    .unwrap();
+    let delivered = schema().record_key("Entry", &json!({"id":"r"})).unwrap();
+    let evidence = "SELECT evidence FROM axton_authority WHERE model='Entry' AND identity='{\"id\":\"r\"}'";
+    let before = c.read_sql(evidence, &[]).unwrap();
+    assert_eq!(before.len(), 1);
+    drop(c);
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.execute_batch(
+        "INSERT INTO axton_mutation_queue_operation(mutation_id,step,local_sequence,input_path,kind,model,identity,operation,value,owner_history) \
+         SELECT mutation_id,step+1,local_sequence+1000,NULL,'companion',model,'{\"id\":\"r\"}',operation,'{\"text\":\"companion\"}',owner_history \
+         FROM axton_mutation_queue_operation WHERE kind='wire';",
+    )
+    .unwrap();
+    drop(raw);
+    for _ in 0..2 {
+        let mut c = open(&path);
+        assert_eq!(
+            c.read_sql(
+                "SELECT COUNT(*) AS n FROM axton_mutation_queue_operation WHERE kind<>'wire'",
+                &[]
+            )
+            .unwrap()[0]["n"],
+            0
+        );
+        assert_eq!(
+            c.read(&delivered).unwrap(),
+            Some(json!({"id":"r","text":"R","note":null}))
+        );
+        assert_eq!(c.read_sql(evidence, &[]).unwrap(), before);
+        assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
+        assert!(matches!(
+            c.mutation_result05(call.ordinal).unwrap().unwrap().outcome,
+            v05::MutationOutcome::Rejected { .. }
+        ));
+        axton_sim::scenario05::assert_projection05(&mut c, &schema());
+    }
+}
+
+/// `schema()` with a second Model `Extra`; `title` is a string, or an int
+/// (`incompatible`), and `removed` leaves `Extra` out.
+fn with_extra(removed: bool, incompatible: bool) -> Schema {
+    let mut value = serde_json::to_value(schema()).unwrap();
+    if !removed {
+        let title = if incompatible { "int" } else { "string" };
+        value["models"].as_array_mut().unwrap().push(json!({"name":"Extra","identity":["id"],"fields":[
+            {"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},
+            {"name":"title","nullable":false,"type":{"kind":"scalar","name":title}}]}));
+    }
+    Schema::from_value(value).unwrap()
+}
+fn open_with(path: &std::path::Path, schema: Schema) -> Client<SqliteStore> {
+    Client::open05(SqliteStore::open(path).unwrap(), schema, "User:u").unwrap()
+}
+/// What an engine with companion and direct writes left on `Extra` `x`:
+/// a companion of the queued Edit and an independent write after it, over a
+/// held base when `held`.
+fn retired_writes_on_extra(path: &std::path::Path, held: bool) {
+    let raw = rusqlite::Connection::open(path).unwrap();
+    raw.execute_batch(
+        "INSERT INTO axton_mutation_queue_operation(mutation_id,step,local_sequence,input_path,kind,model,identity,operation,value,owner_history) \
+         SELECT mutation_id,step+1,local_sequence+1000,NULL,'companion','Extra','{\"id\":\"x\"}','update','{\"title\":\"companion\"}',owner_history \
+         FROM axton_mutation_queue_operation WHERE kind='wire';
+         INSERT INTO axton_local_write(sequence,ordinal,position,disposition,model,identity,op,\"values\") \
+         VALUES(1000,1,NULL,'independent','Extra','{\"id\":\"x\"}','update','{\"title\":\"independent\"}');",
+    )
+    .unwrap();
+    if held {
+        raw.execute_batch(
+            "INSERT INTO axton_before_Extra SELECT * FROM Extra WHERE id='x';
+             UPDATE Extra SET title='independent' WHERE id='x';",
+        )
+        .unwrap();
+    }
+}
+/// A Store with `Extra` `x` delivered by the Stream and an offline Edit of
+/// `e`, written under `with_extra(false, false)`.
+fn queued_with_extra(path: &std::path::Path) -> SubmittedCall {
+    let mut c = open_with(path, with_extra(false, false));
+    start_stream(&mut c);
+    seed(&mut c, "A");
+    protected(&mut c, &[record("Extra", "x", 1, json!({"title":"X"}))]);
+    offline(&mut c, "Edit", json!({"entry":{"id":"e","text":"B"}}))
+}
+fn assert_purged(c: &mut Client<SqliteStore>, schema: &Schema, call: &SubmittedCall) {
+    assert_eq!(
+        c.read_sql(
+            "SELECT COUNT(*) AS n FROM axton_mutation_queue_operation WHERE kind<>'wire'",
+            &[]
+        )
+        .unwrap()[0]["n"],
+        0
+    );
+    assert_eq!(table_count(c, "axton_local_write"), 0);
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
+    assert_eq!(c.pending_count().unwrap(), 1);
+    assert_eq!(
+        c.freeze_batch05().unwrap().unwrap().mutations[0].id,
+        call.ordinal
+    );
+    axton_sim::scenario05::assert_projection05(c, schema);
+}
+// The purge runs after open reconciled the Model tables in the same
+// transaction. A companion or independent write on a Model the new schema
+// removed names a record that has no key and no table: both are deleted and
+// nothing is rebuilt.
+#[test]
+fn the_purge_deletes_retired_writes_on_a_removed_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let call = queued_with_extra(&path);
+    retired_writes_on_extra(&path, true);
+    for _ in 0..2 {
+        let mut c = open_with(&path, with_extra(true, false));
+        assert_purged(&mut c, &with_extra(true, false), &call);
+        assert!(
+            c.read_sql(
+                "SELECT name FROM sqlite_schema WHERE name LIKE '%Extra%'",
+                &[]
+            )
+            .unwrap()
+            .is_empty()
+        );
+    }
+}
+// A Model the new schema resets as incompatible is emptied before the purge,
+// and the queued Mutation no longer shares it: its companion on that Model
+// holds nothing, both retired rows are deleted and nothing is rebuilt.
+#[test]
+fn the_purge_deletes_retired_writes_on_a_reset_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let call = queued_with_extra(&path);
+    retired_writes_on_extra(&path, true);
+    for _ in 0..2 {
+        let mut c = open_with(&path, with_extra(false, true));
+        assert_purged(&mut c, &with_extra(false, true), &call);
+        assert_eq!(table_count(&mut c, "Extra"), 0);
+        assert_eq!(table_count(&mut c, "axton_before_Extra"), 0);
+    }
+}
+// An older engine that reset `Extra` kept the queued Mutation's companion on
+// it, and the Stream then delivered `x` again under the new shape. The
+// Mutation does not share `Extra` with the current schema, so the purge
+// deletes the companion and leaves `x` as delivered.
+#[test]
+fn the_purge_leaves_a_record_of_a_model_the_mutation_does_not_share() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let call = queued_with_extra(&path);
+    let reset = with_extra(false, true);
+    let mut c = open_with(&path, reset.clone());
+    let context = c.request_context05().unwrap();
+    c.install_authority05(&context, &[record("Extra", "x", 2, json!({"title":7}))], None)
+        .unwrap();
+    drop(c);
+    retired_writes_on_extra(&path, false);
+    let x = reset.record_key("Extra", &json!({"id":"x"})).unwrap();
+    for _ in 0..2 {
+        let mut c = open_with(&path, reset.clone());
+        assert_purged(&mut c, &reset, &call);
+        assert_eq!(c.read(&x).unwrap(), Some(json!({"id":"x","title":7})));
     }
 }
 

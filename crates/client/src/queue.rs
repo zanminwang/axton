@@ -160,9 +160,13 @@ impl<S: ClientStore> Engine<'_, S> {
     }
     // A file written while Mutation companion writes and direct Model writes
     // existed may hold `companion` queue operations and `independent` local
-    // writes. Open deletes both in its own transaction and rebuilds every
-    // record they touched from its base and what remains; their Mutations
-    // stay queued. A file without them costs two empty reads.
+    // writes. Open deletes both in its own transaction and rebuilds the
+    // records among them that a live Mutation still holds; their Mutations
+    // stay queued. Every other record is left as it is: a refused Mutation's
+    // refusal already restored its records, and a direct write on a record
+    // nothing held stays as cache. A record of a Model the current schema
+    // lacks or does not share with its Mutation is not held. A file without
+    // them costs one empty read.
     pub(crate) fn purge_retired_writes05(&mut self) -> Result<()> {
         let touched = self.rows(
             "SELECT model,identity FROM axton_mutation_queue_operation WHERE kind='companion' UNION SELECT model,identity FROM axton_local_write WHERE disposition<>'accepted'",
@@ -170,6 +174,23 @@ impl<S: ClientStore> Engine<'_, S> {
         )?;
         if touched.rows.is_empty() {
             return Ok(());
+        }
+        let mut held = Held::new();
+        for row in &touched.rows {
+            let (Some(model), Some(identity)) = (row[0].as_str(), row[1].as_str()) else {
+                continue;
+            };
+            let Ok(key) = self
+                .schema
+                .record_key(model, &serde_json::from_str(identity)?)
+            else {
+                continue;
+            };
+            // Read before the deletes: a record held only by a companion is
+            // rebuilt without it.
+            if self.dirty(&key)? {
+                held.insert(key.encoded()?, key);
+            }
         }
         self.exec(
             "axton_mutation_queue_operation",
@@ -181,19 +202,6 @@ impl<S: ClientStore> Engine<'_, S> {
             "DELETE FROM axton_local_write WHERE disposition<>'accepted'",
             &[],
         )?;
-        let mut held = Held::new();
-        for row in &touched.rows {
-            let (Some(model), Some(identity)) = (row[0].as_str(), row[1].as_str()) else {
-                continue;
-            };
-            // A Model the schema no longer has holds no rows to rebuild.
-            if let Ok(key) = self
-                .schema
-                .record_key(model, &serde_json::from_str(identity)?)
-            {
-                held.insert(key.encoded()?, key);
-            }
-        }
         self.rebuild_held(&held)?;
         Ok(())
     }

@@ -162,9 +162,9 @@ Uses are counted by call site. Routes: *cache* is `common05::cached` (unprotecte
 
 **Files:** `crates/client/src/authority.rs`, `store05.rs`, `ddl.rs`; `crates/sqlite/tests/protocol05_authority.rs`, `protocol05_client.rs`.
 
-- [ ] Confirm by search that no production code reads the table; if one does, stop and report.
-- [ ] Delete `retain_local_operation`, `local_layer`, `clear_local_layer`, the table's DDL and its `RECORD_STATE` entry; open drops the table from an existing file. Test: a file with the table opens and the table is gone.
-- [ ] Remove the cases in `protocol05_authority.rs` that read it.
+- [x] Confirm by search that no production code reads the table; if one does, stop and report. Only `rebuild` called `retain_local_operation`, whose only reader was `local_layer`.
+- [x] Delete `retain_local_operation`, `local_layer`, `clear_local_layer`, the table's DDL and its `RECORD_STATE` entry; open drops the table from an existing file. Test: a file with the table opens and the table is gone.
+- [x] Remove the cases in `protocol05_authority.rs` that read it. Tasks 2 and 3 already had; the last reader was `state()` in `protocol05_ddl.rs`. Test: `an_old_file_s_local_replica_layer_is_dropped_at_open` (`crates/sqlite/tests/protocol05_client.rs`).
 
 ## Task 5: Every Model has a Loader (spec §2.4)
 

@@ -188,7 +188,6 @@ impl<S: ClientStore> Engine<'_, S> {
         for step in steps.drain(..settled) {
             if let Step::Settled(write) = step {
                 apply_settled(&mut base, &write.op);
-                self.retain_local_operation(key, &write.op)?;
                 self.delete_local_write(write.sequence)?;
             }
         }

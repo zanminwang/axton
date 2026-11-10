@@ -360,3 +360,39 @@ fn an_old_file_s_companion_operations_and_independent_writes_are_purged_at_open(
         assert!(!body.contains("independent"), "{body}");
     }
 }
+
+// A file written while direct Model writes existed has
+// `axton_local_replica_layer`, maybe with rows. Open drops it; the file stays
+// format 5 and its rows are unchanged.
+#[test]
+fn an_old_file_s_local_replica_layer_is_dropped_at_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open(&path);
+    seed(&mut c, "A");
+    drop(c);
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.execute_batch(
+        "CREATE TABLE IF NOT EXISTS axton_local_replica_layer(model TEXT NOT NULL,identity TEXT NOT NULL,operations TEXT NOT NULL,PRIMARY KEY(model,identity));
+         INSERT INTO axton_local_replica_layer VALUES('Entry','{\"id\":\"e\"}','[]');",
+    )
+    .unwrap();
+    drop(raw);
+    for _ in 0..2 {
+        let mut c = open(&path);
+        assert_eq!(
+            c.read_sql(
+                "SELECT COUNT(*) AS n FROM sqlite_schema WHERE name='axton_local_replica_layer'",
+                &[]
+            )
+            .unwrap()[0]["n"],
+            0
+        );
+        assert_eq!(
+            c.read_sql("SELECT format FROM axton_store", &[]).unwrap()[0]["format"],
+            5
+        );
+        assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
+        assert_eq!(c.pending_count().unwrap(), 0);
+    }
+}

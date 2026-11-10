@@ -204,7 +204,7 @@ fn key(model: &str, id: &str) -> v05::RecordKey {
     }
 }
 /// Rows per engine table for one Model: the table, its before-image,
-/// authority evidence, the local replica layer and local writes.
+/// authority evidence and local writes.
 fn state(path: &std::path::Path, model: &str) -> Vec<i64> {
     let raw = rusqlite::Connection::open(path).unwrap();
     let count = |sql: &str| -> i64 {
@@ -231,7 +231,6 @@ fn state(path: &std::path::Path, model: &str) -> Vec<i64> {
         table(model),
         table(&format!("axton_before_{model}")),
         count("SELECT COUNT(*) FROM axton_authority WHERE model=?"),
-        count("SELECT COUNT(*) FROM axton_local_replica_layer WHERE model=?"),
         count("SELECT COUNT(*) FROM axton_local_write WHERE model=?"),
     ]
 }
@@ -326,11 +325,7 @@ fn reopen_resets_only_the_model_whose_storage_changed() {
         } else {
             0
         };
-        assert_eq!(
-            state(&path, "Task"),
-            vec![empty, empty, 0, 0, 0],
-            "{reset:?}"
-        );
+        assert_eq!(state(&path, "Task"), vec![empty, empty, 0, 0], "{reset:?}");
         assert_eq!(state(&path, "Other"), other, "{reset:?}");
         assert_eq!(queue(&path), queued, "{reset:?}");
         assert_eq!(

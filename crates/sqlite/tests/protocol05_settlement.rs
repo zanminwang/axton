@@ -1788,6 +1788,10 @@ fn a_target_protected_only_under_the_previous_materialization_finalizes_from_the
         drop(c);
         let after = edit(if upgrade { labelled() } else { schema() });
         let mut c = Client::open05(SqliteStore::open(&p).unwrap(), after, "User:u").unwrap();
+        // The target (60) is past the held delivery (57), so it is not
+        // installed; at or below S in an unmarked Model it settles from the
+        // receipt. (A target at 57 would settle on the held delivery in any
+        // contract.)
         let resent = c.freeze_batch05().unwrap().unwrap();
         c.acknowledge_batch05(&ack(
             &resent,
@@ -1797,7 +1801,7 @@ fn a_target_protected_only_under_the_previous_materialization_finalizes_from_the
                 result: Value::Null,
                 targets: vec![v05::SettlementTarget::Stream {
                     key: stream_key("e"),
-                    cursor: 57,
+                    cursor: 60,
                     fallback: v05::ReadRecord {
                         key: stream_key("e"),
                         cursor: (),
@@ -1812,5 +1816,88 @@ fn a_target_protected_only_under_the_previous_materialization_finalizes_from_the
         // Current protection holds only in the contract that installed it.
         let text = if upgrade { "fallback" } else { "stream" };
         assert_eq!(c.read(&key()).unwrap().unwrap()["text"], text);
+    }
+}
+/// `Entry` marked `@@bootstrap` with an `Edit` update, optionally `labelled`.
+fn marked_edit(labelled_schema: bool) -> Schema {
+    let mut s = serde_json::to_value(if labelled_schema {
+        labelled()
+    } else {
+        schema()
+    })
+    .unwrap();
+    s["models"][0]["bootstrap"] = json!(true);
+    s["actions"] = json!([{"name":"Edit","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"update","cardinality":"single","fields":["text"]}],"outputs":[]}]);
+    Schema::from_value(s).unwrap()
+}
+#[test]
+fn a_target_the_stream_delivered_before_an_upgrade_settles_after_it_without_bootstrap() {
+    for deleted in [false, true] {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("db");
+        let mut c =
+            Client::open05(SqliteStore::open(&p).unwrap(), marked_edit(false), "User:u").unwrap();
+        c.initialize_stream05(10, "1").unwrap();
+        let context = c.request_context05().unwrap();
+        let record = |cursor: u64, text: Option<&str>| v05::AuthorityChange::Record {
+            key: stream_key("e"),
+            cursor,
+            state: text.map(state).unwrap_or(Value::Null),
+        };
+        c.install_authority05(&context, &[record(12, Some("stream"))], Some((10, 12)))
+            .unwrap();
+        let call = c
+            .transaction(|tx| {
+                tx.submit_mutation05(
+                    "Edit",
+                    1,
+                    json!({"entry":{"id":"e","text":"edited"}}),
+                    vec![],
+                )
+            })
+            .unwrap();
+        let b = c.freeze_batch05().unwrap().unwrap();
+        // Accepted at 20; the Stream delivers the target before the upgrade,
+        // but the Store has not yet covered the receipt's head.
+        c.acknowledge_batch05(&ack(
+            &b,
+            v05::MutationOutcome::Accepted {
+                sync_cursor: 30,
+                materialization: b.context.materialization.clone(),
+                result: Value::Null,
+                targets: vec![v05::SettlementTarget::Stream {
+                    key: stream_key("e"),
+                    cursor: 20,
+                    fallback: v05::ReadRecord {
+                        key: stream_key("e"),
+                        cursor: (),
+                        state: state("fallback"),
+                    },
+                }],
+            },
+        ))
+        .unwrap();
+        let server = if deleted { None } else { Some("server") };
+        c.install_authority05(&context, &[record(20, server)], Some((12, 20)))
+            .unwrap();
+        assert!(c.call_completion05(&call.call_id).unwrap().is_none());
+        drop(c);
+        let mut c =
+            Client::open05(SqliteStore::open(&p).unwrap(), marked_edit(true), "User:u").unwrap();
+        let upgraded = c.request_context05().unwrap();
+        assert_ne!(upgraded.materialization, context.materialization);
+        assert_eq!(c.store_status05().unwrap().bootstrap_cursor, None);
+        // Sync reaches the receipt's head; no Bootstrap unit is applied.
+        let settled = c
+            .install_authority05(&upgraded, &[], Some((20, 30)))
+            .unwrap();
+        assert_eq!(settled.completions.len(), 1, "deleted={deleted}");
+        assert!(c.call_completion05(&call.call_id).unwrap().is_some());
+        let row = c.read(&key()).unwrap();
+        if deleted {
+            assert_eq!(row, None);
+        } else {
+            assert_eq!(row.unwrap()["text"], "server");
+        }
     }
 }

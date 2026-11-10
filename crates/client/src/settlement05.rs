@@ -228,11 +228,11 @@ impl<S: ClientStore> Engine<'_, S> {
         let key = self.schema.record_key(&key.model, &key.identity)?;
         let evidence = self.evidence05(&key)?;
         let materialization = self.context05()?.materialization;
-        let cursor = evidence.history.get(&materialization).copied();
+        // History holds the one delivery it last installed, in whichever
+        // contract; protection counts only in the Store's.
         Ok(v05::TargetEvidence {
-            content_cursor: cursor,
+            content_cursor: evidence.history.values().max().copied(),
             protected: !evidence.allows_cache(&materialization),
-            materialization: cursor.map(|_| materialization),
             removed_cursor: evidence.membership.filter(|m| !m.live).map(|m| m.cursor),
         })
     }
@@ -312,7 +312,6 @@ impl<S: ClientStore> Engine<'_, S> {
                 cursor,
                 start_cursor,
                 &targets,
-                &context.materialization,
                 &bootstrap_models,
                 &evidence,
             )? {
@@ -326,7 +325,6 @@ impl<S: ClientStore> Engine<'_, S> {
             for target in &targets {
                 if v05::target_disposition(
                     target,
-                    &context.materialization,
                     start_cursor,
                     bootstrap_models.contains(&target.key().model),
                     &evidence[&target.key().encoded()?],

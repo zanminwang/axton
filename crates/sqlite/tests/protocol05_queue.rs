@@ -508,6 +508,7 @@ fn late_cascade_discovery_extends_owned_effects_without_changing_frozen_input() 
         identity: json!({"id":"c"}),
     };
     assert!(c.read(&child).unwrap().is_none());
+    axton_sim::scenario05::assert_projection05(&mut c, &s);
     let ops = c.read_sql("SELECT input_path,kind,model FROM axton_mutation_queue_operation WHERE mutation_id=? ORDER BY step",&[json!(call.ordinal)]).unwrap();
     assert_eq!(ops.len(), 2);
     assert_eq!(ops[1]["input_path"], Value::Null);
@@ -515,7 +516,8 @@ fn late_cascade_discovery_extends_owned_effects_without_changing_frozen_input() 
     assert_eq!(ops[1]["model"], "Comment");
     assert_eq!(c.freeze_batch05().unwrap().unwrap(), batch);
     drop(c);
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s, "User:u").unwrap();
+    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
+    axton_sim::scenario05::assert_projection05(&mut c, &s);
     assert_eq!(
         v05::encode(&c.freeze_batch05().unwrap().unwrap()).unwrap(),
         v05::encode(&batch).unwrap()
@@ -761,6 +763,7 @@ fn rejected_predecessor_releases_sequence_survivor_and_rolls_back_lifecycle_depe
             })
             .unwrap();
         assert_eq!(report.completions.len(), 2);
+        axton_sim::scenario05::assert_projection05(&mut c, &s);
         assert!(c.call_completion05(&first.call_id).unwrap().is_some());
         assert!(c.call_completion05(&lifecycle.call_id).unwrap().is_some());
         assert!(c.call_completion05(&survivor.call_id).unwrap().is_none());
@@ -768,8 +771,9 @@ fn rejected_predecessor_releases_sequence_survivor_and_rolls_back_lifecycle_depe
         assert!(c.read(&created).unwrap().is_none());
         if reopen {
             drop(c);
-            c = Client::open05(SqliteStore::open(&p).unwrap(), s, "User:u").unwrap();
+            c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
         }
+        axton_sim::scenario05::assert_projection05(&mut c, &s);
         assert_eq!(
             c.mutation_result05(first.ordinal).unwrap().unwrap().outcome,
             rejection

@@ -200,6 +200,86 @@ fn newer_stream_supersedes_private_fallback_beneath_a_later_pending_mutation() {
     discard(&mut c, edit);
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "server");
 }
+// Two Edits of one cached record share a Batch. The later one's Private
+// receipt settles first, while the earlier one waits for the Stream: its accepted
+// state is retained at its own position above the earlier pending Edit and
+// outlives its settlement, until the earlier Edit settles beneath it.
+#[test]
+fn an_accepted_state_outlives_its_settlement_above_an_earlier_pending_mutation() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = open(&p);
+    c.initialize_stream05(0, "1").unwrap();
+    cache_row(&mut c, "Entry", "e", state("base"));
+    let first = later(&mut c, "first");
+    let second = later(&mut c, "second");
+    let b = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(
+        b.mutations.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![first, second]
+    );
+    let accepted = |sync_cursor, target| v05::MutationOutcome::Accepted {
+        sync_cursor,
+        materialization: b.context.materialization.clone(),
+        result: Value::Null,
+        targets: vec![target],
+    };
+    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+        context: b.context.clone(),
+        batch_id: b.batch_id,
+        digest: b.digest.clone(),
+        results: vec![
+            v05::MutationResult {
+                mutation_id: first,
+                outcome: accepted(
+                    5,
+                    v05::SettlementTarget::Stream {
+                        key: stream_key("e"),
+                        cursor: 5,
+                        fallback: v05::ReadRecord {
+                            key: stream_key("e"),
+                            cursor: (),
+                            state: state("first fallback"),
+                        },
+                    },
+                ),
+            },
+            v05::MutationResult {
+                mutation_id: second,
+                outcome: accepted(
+                    1,
+                    v05::SettlementTarget::Private {
+                        record: v05::ReadRecord {
+                            key: stream_key("e"),
+                            cursor: (),
+                            state: state("second accepted"),
+                        },
+                    },
+                ),
+            },
+        ],
+    })
+    .unwrap();
+    axton_sim::scenario05::assert_projection05(&mut c, &schema());
+    let context = c.request_context05().unwrap();
+    c.install_authority05(&context, &[], Some((0, 1))).unwrap();
+    c.settle_ready05().unwrap();
+    let retained = "SELECT COUNT(*) AS n FROM axton_local_write WHERE disposition='accepted'";
+    assert_eq!(c.pending_count().unwrap(), 1);
+    assert_eq!(c.read_sql(retained, &[]).unwrap()[0]["n"], 1);
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "second accepted");
+    axton_sim::scenario05::assert_projection05(&mut c, &schema());
+    drop(c);
+    let mut c = open(&p);
+    axton_sim::scenario05::assert_projection05(&mut c, &schema());
+    install(&mut c, "e", 5, Some("first server"));
+    let context = c.request_context05().unwrap();
+    c.install_authority05(&context, &[], Some((1, 5))).unwrap();
+    c.settle_ready05().unwrap();
+    assert_eq!(c.pending_count().unwrap(), 0);
+    assert_eq!(c.read_sql(retained, &[]).unwrap()[0]["n"], 0);
+    axton_sim::scenario05::assert_projection05(&mut c, &schema());
+}
 #[test]
 fn rejected_update_keeps_a_later_pending_mutation_on_the_protected_base() {
     let d = tempfile::tempdir().unwrap();

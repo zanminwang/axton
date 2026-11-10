@@ -2,7 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:axton/axton.dart';
-export 'package:axton/axton.dart' show RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
+export 'package:axton/axton.dart' show AxtonDiagnostics, AxtonTraceRecord, RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
 class Present<T> { final T value; const Present(this.value); }
 abstract interface class _DartActionRecord { Map<String,dynamic> toRecord(); }
 final Map<String,dynamic> schema = jsonDecode('{"actions":[{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"done","nullable":false,"type":{"kind":"scalar","name":"boolean"}},{"name":"createdById","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Todo","name":"todo","operation":"create"}],"kind":"mutation","name":"AddTodo","outputEnums":[],"outputs":[],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"done","nullable":false,"type":{"kind":"scalar","name":"boolean"}}],"identity":["id"],"name":"Todo"}]},"inputs":[{"allowedPatchFields":["done"],"cardinality":"single","kind":"model","model":"Todo","name":"todo","operation":"update"}],"kind":"mutation","name":"SetTodoDone","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":1,"name":"todo","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"name","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"User","relations":[],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"done","nullable":false,"type":{"kind":"scalar","name":"boolean"}},{"name":"createdById","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo","relations":[{"fields":["createdById"],"name":"createdBy","onDelete":"none","target":"User","targetFields":["id"]}],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"done","nullable":false,"type":{"kind":"scalar","name":"boolean"}},{"name":"createdById","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"name","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"User","version":1}]}') as Map<String,dynamic>;
@@ -136,12 +136,13 @@ class TodoFilter {
 }
 enum TodoOrderField {byId('id'),byTitle('title'),byDone('done'),byCreatedById('createdById'); final String wireName; const TodoOrderField(this.wireName);}
 class TodoOrder { final TodoOrderField field; final bool descending; const TodoOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
+User _copyUserWatch(User value) => value;
 class UserModel { final ReadPort port; UserModel(this.port);
  Future<User?> get(UserIdentity identity) async { final row=await port.read('User',identity.toRecord()); return row == null ? null : User.fromRecord(row); }
  Future<List<User>> query({UserFilter? where,List<UserOrder> orderBy=const [],int? limit}) async => (await port.querySpec('User',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(User.fromRecord).toList();
 }
 class UserLiveModel extends UserTxModel { final Client client; UserLiveModel(this.client) : super(client);
- Stream<List<User>> watch({UserFilter? where}) => client.watch('User', where:where?.toRecord()??{}).map((rows) => rows.map(User.fromRecord).toList());
+ Stream<List<User>> watch({UserFilter? where}) => client.watchDecoded<User>('User', where:where?.toRecord()??{},decode:User.fromRecord,copy:_copyUserWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(UserIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('User', identity.toRecord()));
 }
@@ -150,13 +151,14 @@ class UserTxModel extends UserModel { final WritePort writer; UserTxModel(this.w
  Future<void> update(UserIdentity identity, UserPatch patch) => writer.direct({'model':'User','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
  Future<void> delete(UserIdentity identity) => writer.direct({'model':'User','op':'delete','identity':identity.toRecord()});
 }
+Todo _copyTodoWatch(Todo value) => value;
 class TodoModel { final ReadPort port; TodoModel(this.port);
  Future<Todo?> get(TodoIdentity identity) async { final row=await port.read('Todo',identity.toRecord()); return row == null ? null : Todo.fromRecord(row); }
  Future<List<Todo>> query({TodoFilter? where,List<TodoOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Todo',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Todo.fromRecord).toList();
  Future<User?> createdBy(TodoIdentity identity) async { final row=await port.related('Todo',identity.toRecord(),'createdBy');return row==null?null:User.fromRecord(row); }
 }
 class TodoLiveModel extends TodoTxModel { final Client client; TodoLiveModel(this.client) : super(client);
- Stream<List<Todo>> watch({TodoFilter? where}) => client.watch('Todo', where:where?.toRecord()??{}).map((rows) => rows.map(Todo.fromRecord).toList());
+ Stream<List<Todo>> watch({TodoFilter? where}) => client.watchDecoded<Todo>('Todo', where:where?.toRecord()??{},decode:Todo.fromRecord,copy:_copyTodoWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(TodoIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Todo', identity.toRecord()));
 }
@@ -316,7 +318,7 @@ class GeneratedClient {
  late final Queries queries=Queries(client);
  late final FetchModels fetch=FetchModels(client);
  GeneratedClient._(this.client);
- static Future<GeneratedClient> open({required String path, required String stream, StoreConnection? connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites));
+ static Future<GeneratedClient> open({required String path, required String stream, StoreConnection? connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites, AxtonDiagnostics? diagnostics}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites,diagnostics:diagnostics));
  Future<void> bootstrap() => client.bootstrap();
  Future<RuntimeConnection> connect(SyncServer server,{void Function(Object)? onError,Future<void> Function()? refreshAuth,Duration directTimeout=const Duration(seconds:30)}) => client.connect(server,onError:onError,refreshAuth:refreshAuth,directTimeout:directTimeout);
  Future<void> resetStore({bool discardPending=false}) => client.resetStore(discardPending:discardPending);

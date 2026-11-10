@@ -2,7 +2,7 @@
 import type { Call, QueryOptions } from './client.ts';
 export interface ReadPort { read(model:string,identity:object):Promise<Record<string,unknown>|null>; querySpec(model:string,query:object):Promise<Record<string,unknown>[]>; related(model:string,identity:object,relation:string):Promise<Record<string,unknown>|null>; referencing(model:string,identity:object,source:string,relation:string):Promise<Record<string,unknown>[]>; }
 export interface WritePort extends ReadPort { direct(operation:object):Promise<void>; }
-export interface LivePort extends WritePort { watch(model:string,where:Record<string,unknown>,listener:(rows:Record<string,unknown>[])=>void,onError?:(error:unknown)=>void):()=>void; syncState(model:string,identity:object):Promise<unknown>; }
+export interface LivePort extends WritePort { watch(model:string,where:Record<string,unknown>,listener:(rows:Record<string,unknown>[])=>void,onError?:(error:unknown)=>void):()=>void; watchDecoded<T>(model:string,where:Record<string,unknown>,decode:(row:Record<string,unknown>)=>T,copy:(value:T)=>T,listener:(rows:T[])=>void,onError?:(error:unknown)=>void):()=>void; syncState(model:string,identity:object):Promise<unknown>; }
 export interface CallPort { invokeQuery<T>(name:string,version:number,args:object,decode:(value:unknown)=>T,options?:QueryOptions):Promise<T>; }
 export const schema = {"actions":[{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"done","nullable":false,"type":{"kind":"scalar","name":"boolean"}},{"name":"createdById","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Todo","name":"todo","operation":"create"}],"kind":"mutation","name":"AddTodo","outputEnums":[],"outputs":[],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"done","nullable":false,"type":{"kind":"scalar","name":"boolean"}}],"identity":["id"],"name":"Todo"}]},"inputs":[{"allowedPatchFields":["done"],"cardinality":"single","kind":"model","model":"Todo","name":"todo","operation":"update"}],"kind":"mutation","name":"SetTodoDone","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":1,"name":"todo","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"name","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"User","relations":[],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"done","nullable":false,"type":{"kind":"scalar","name":"boolean"}},{"name":"createdById","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo","relations":[{"fields":["createdById"],"name":"createdBy","onDelete":"none","target":"User","targetFields":["id"]}],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"done","nullable":false,"type":{"kind":"scalar","name":"boolean"}},{"name":"createdById","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"name","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"User","version":1}]} as const;
 export type MutationName = 'AddTodo'|'SetTodoDone';
@@ -109,6 +109,10 @@ export function encodeTodoCreate(value:TodoCreate):Record<string,unknown> { retu
 export function encodeTodoCreateIdentity(value:TodoCreate):Record<string,unknown> { return {
  id: value.id,
 }; }
+function _copyUserWatch(value:User):User { return {
+ id: value.id,
+ name: value.name,
+}; }
 export class UserModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:UserIdentity):Promise<User|null> { const row=await this.port.read('User',encodeUserIdentity(identity)); return row===null ? null : decodeUser(row); }
  async query(options:{where?:Partial<User>;orderBy?:{field:'id' | 'name';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<User[]> { return (await this.port.querySpec('User',{filter:encodeUserWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeUser); }
@@ -119,10 +123,16 @@ export class UserTxModel<P extends WritePort=WritePort> extends UserModel<P> {
  delete(identity:UserIdentity):Promise<void> { return this.port.direct({model:'User',op:'delete',identity:encodeUserIdentity(identity)}); }
 }
 export class UserLiveModel extends UserTxModel<LivePort> {
- watch(options:{where?:Partial<User>}, listener:(rows:User[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('User',encodeUserWhere(options.where??{}),(rows)=>listener(rows.map(decodeUser)),onError); }
+ watch(options:{where?:Partial<User>}, listener:(rows:User[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watchDecoded('User',encodeUserWhere(options.where??{}),decodeUser,_copyUserWatch,listener,onError); }
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:UserIdentity):Promise<SyncState> { return (await this.port.syncState('User',encodeUserIdentity(identity))) as SyncState; }
 }
+function _copyTodoWatch(value:Todo):Todo { return {
+ id: value.id,
+ title: value.title,
+ done: value.done,
+ createdById: value.createdById,
+}; }
 export class TodoModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:TodoIdentity):Promise<Todo|null> { const row=await this.port.read('Todo',encodeTodoIdentity(identity)); return row===null ? null : decodeTodo(row); }
  async query(options:{where?:Partial<Todo>;orderBy?:{field:'id' | 'title' | 'done' | 'createdById';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Todo[]> { return (await this.port.querySpec('Todo',{filter:encodeTodoWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeTodo); }
@@ -134,7 +144,7 @@ export class TodoTxModel<P extends WritePort=WritePort> extends TodoModel<P> {
  delete(identity:TodoIdentity):Promise<void> { return this.port.direct({model:'Todo',op:'delete',identity:encodeTodoIdentity(identity)}); }
 }
 export class TodoLiveModel extends TodoTxModel<LivePort> {
- watch(options:{where?:Partial<Todo>}, listener:(rows:Todo[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Todo',encodeTodoWhere(options.where??{}),(rows)=>listener(rows.map(decodeTodo)),onError); }
+ watch(options:{where?:Partial<Todo>}, listener:(rows:Todo[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watchDecoded('Todo',encodeTodoWhere(options.where??{}),decodeTodo,_copyTodoWatch,listener,onError); }
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:TodoIdentity):Promise<SyncState> { return (await this.port.syncState('Todo',encodeTodoIdentity(identity))) as SyncState; }
 }

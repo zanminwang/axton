@@ -2,7 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:axton/axton.dart';
-export 'package:axton/axton.dart' show RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
+export 'package:axton/axton.dart' show AxtonDiagnostics, AxtonTraceRecord, RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
 class Present<T> { final T value; const Present(this.value); }
 abstract interface class _DartActionRecord { Map<String,dynamic> toRecord(); }
 final Map<String,dynamic> schema = jsonDecode('{"actions":[{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"FindItem","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"project","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"ProjectItems","outputEnums":[],"outputs":[{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"items","source":"handlerIdentity"},{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Tag"},"kind":"model","model":"Tag","modelReadVersion":1,"name":"tags","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Item","name":"item","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"private","nullable":false,"required":true,"type":{"kind":"scalar","name":"boolean"}}],"kind":"mutation","name":"PublishItem","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item"}]},"inputs":[{"allowedPatchFields":["title"],"cardinality":"single","kind":"model","model":"Item","name":"item","operation":"update"}],"kind":"mutation","name":"RenameItem","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Parent","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"parentId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Child","relations":[{"fields":["parentId"],"name":"parent","onDelete":"delete","target":"Parent","targetFields":["id"]}],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","relations":[],"unique":[["title"]],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Tag","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"parentId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Child","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Parent","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Tag","version":1}]}') as Map<String,dynamic>;
@@ -313,12 +313,13 @@ class DraftFilter {
 }
 enum DraftOrderField {byId('id'),byTitle('title'); final String wireName; const DraftOrderField(this.wireName);}
 class DraftOrder { final DraftOrderField field; final bool descending; const DraftOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
+Parent _copyParentWatch(Parent value) => value;
 class ParentModel { final ReadPort port; ParentModel(this.port);
  Future<Parent?> get(ParentIdentity identity) async { final row=await port.read('Parent',identity.toRecord()); return row == null ? null : Parent.fromRecord(row); }
  Future<List<Parent>> query({ParentFilter? where,List<ParentOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Parent',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Parent.fromRecord).toList();
 }
 class ParentLiveModel extends ParentTxModel { final Client client; ParentLiveModel(this.client) : super(client);
- Stream<List<Parent>> watch({ParentFilter? where}) => client.watch('Parent', where:where?.toRecord()??{}).map((rows) => rows.map(Parent.fromRecord).toList());
+ Stream<List<Parent>> watch({ParentFilter? where}) => client.watchDecoded<Parent>('Parent', where:where?.toRecord()??{},decode:Parent.fromRecord,copy:_copyParentWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(ParentIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Parent', identity.toRecord()));
 }
@@ -327,13 +328,14 @@ class ParentTxModel extends ParentModel { final WritePort writer; ParentTxModel(
  Future<void> update(ParentIdentity identity, ParentPatch patch) => writer.direct({'model':'Parent','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
  Future<void> delete(ParentIdentity identity) => writer.direct({'model':'Parent','op':'delete','identity':identity.toRecord()});
 }
+Child _copyChildWatch(Child value) => value;
 class ChildModel { final ReadPort port; ChildModel(this.port);
  Future<Child?> get(ChildIdentity identity) async { final row=await port.read('Child',identity.toRecord()); return row == null ? null : Child.fromRecord(row); }
  Future<List<Child>> query({ChildFilter? where,List<ChildOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Child',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Child.fromRecord).toList();
  Future<Parent?> parent(ChildIdentity identity) async { final row=await port.related('Child',identity.toRecord(),'parent');return row==null?null:Parent.fromRecord(row); }
 }
 class ChildLiveModel extends ChildTxModel { final Client client; ChildLiveModel(this.client) : super(client);
- Stream<List<Child>> watch({ChildFilter? where}) => client.watch('Child', where:where?.toRecord()??{}).map((rows) => rows.map(Child.fromRecord).toList());
+ Stream<List<Child>> watch({ChildFilter? where}) => client.watchDecoded<Child>('Child', where:where?.toRecord()??{},decode:Child.fromRecord,copy:_copyChildWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(ChildIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Child', identity.toRecord()));
 }
@@ -342,12 +344,13 @@ class ChildTxModel extends ChildModel { final WritePort writer; ChildTxModel(thi
  Future<void> update(ChildIdentity identity, ChildPatch patch) => writer.direct({'model':'Child','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
  Future<void> delete(ChildIdentity identity) => writer.direct({'model':'Child','op':'delete','identity':identity.toRecord()});
 }
+Item _copyItemWatch(Item value) => value;
 class ItemModel { final ReadPort port; ItemModel(this.port);
  Future<Item?> get(ItemIdentity identity) async { final row=await port.read('Item',identity.toRecord()); return row == null ? null : Item.fromRecord(row); }
  Future<List<Item>> query({ItemFilter? where,List<ItemOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Item',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Item.fromRecord).toList();
 }
 class ItemLiveModel extends ItemTxModel { final Client client; ItemLiveModel(this.client) : super(client);
- Stream<List<Item>> watch({ItemFilter? where}) => client.watch('Item', where:where?.toRecord()??{}).map((rows) => rows.map(Item.fromRecord).toList());
+ Stream<List<Item>> watch({ItemFilter? where}) => client.watchDecoded<Item>('Item', where:where?.toRecord()??{},decode:Item.fromRecord,copy:_copyItemWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(ItemIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Item', identity.toRecord()));
 }
@@ -356,12 +359,13 @@ class ItemTxModel extends ItemModel { final WritePort writer; ItemTxModel(this.w
  Future<void> update(ItemIdentity identity, ItemPatch patch) => writer.direct({'model':'Item','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
  Future<void> delete(ItemIdentity identity) => writer.direct({'model':'Item','op':'delete','identity':identity.toRecord()});
 }
+Tag _copyTagWatch(Tag value) => value;
 class TagModel { final ReadPort port; TagModel(this.port);
  Future<Tag?> get(TagIdentity identity) async { final row=await port.read('Tag',identity.toRecord()); return row == null ? null : Tag.fromRecord(row); }
  Future<List<Tag>> query({TagFilter? where,List<TagOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Tag',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Tag.fromRecord).toList();
 }
 class TagLiveModel extends TagTxModel { final Client client; TagLiveModel(this.client) : super(client);
- Stream<List<Tag>> watch({TagFilter? where}) => client.watch('Tag', where:where?.toRecord()??{}).map((rows) => rows.map(Tag.fromRecord).toList());
+ Stream<List<Tag>> watch({TagFilter? where}) => client.watchDecoded<Tag>('Tag', where:where?.toRecord()??{},decode:Tag.fromRecord,copy:_copyTagWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(TagIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Tag', identity.toRecord()));
 }
@@ -370,12 +374,13 @@ class TagTxModel extends TagModel { final WritePort writer; TagTxModel(this.writ
  Future<void> update(TagIdentity identity, TagPatch patch) => writer.direct({'model':'Tag','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
  Future<void> delete(TagIdentity identity) => writer.direct({'model':'Tag','op':'delete','identity':identity.toRecord()});
 }
+Draft _copyDraftWatch(Draft value) => value;
 class DraftModel { final ReadPort port; DraftModel(this.port);
  Future<Draft?> get(DraftIdentity identity) async { final row=await port.read('Draft',identity.toRecord()); return row == null ? null : Draft.fromRecord(row); }
  Future<List<Draft>> query({DraftFilter? where,List<DraftOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Draft',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Draft.fromRecord).toList();
 }
 class DraftLiveModel extends DraftTxModel { final Client client; DraftLiveModel(this.client) : super(client);
- Stream<List<Draft>> watch({DraftFilter? where}) => client.watch('Draft', where:where?.toRecord()??{}).map((rows) => rows.map(Draft.fromRecord).toList());
+ Stream<List<Draft>> watch({DraftFilter? where}) => client.watchDecoded<Draft>('Draft', where:where?.toRecord()??{},decode:Draft.fromRecord,copy:_copyDraftWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(DraftIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Draft', identity.toRecord()));
 }
@@ -671,7 +676,7 @@ class GeneratedClient {
  late final Queries queries=Queries(client);
  late final FetchModels fetch=FetchModels(client);
  GeneratedClient._(this.client);
- static Future<GeneratedClient> open({required String path, required String stream, StoreConnection? connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites));
+ static Future<GeneratedClient> open({required String path, required String stream, StoreConnection? connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites, AxtonDiagnostics? diagnostics}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites,diagnostics:diagnostics));
  Future<void> bootstrap() => client.bootstrap();
  Future<RuntimeConnection> connect(SyncServer server,{void Function(Object)? onError,Future<void> Function()? refreshAuth,Duration directTimeout=const Duration(seconds:30)}) => client.connect(server,onError:onError,refreshAuth:refreshAuth,directTimeout:directTimeout);
  Future<void> resetStore({bool discardPending=false}) => client.resetStore(discardPending:discardPending);

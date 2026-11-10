@@ -2,7 +2,7 @@
 import type { Call, QueryOptions } from './client.ts';
 export interface ReadPort { read(model:string,identity:object):Promise<Record<string,unknown>|null>; querySpec(model:string,query:object):Promise<Record<string,unknown>[]>; related(model:string,identity:object,relation:string):Promise<Record<string,unknown>|null>; referencing(model:string,identity:object,source:string,relation:string):Promise<Record<string,unknown>[]>; }
 export interface WritePort extends ReadPort { direct(operation:object):Promise<void>; }
-export interface LivePort extends WritePort { watch(model:string,where:Record<string,unknown>,listener:(rows:Record<string,unknown>[])=>void,onError?:(error:unknown)=>void):()=>void; syncState(model:string,identity:object):Promise<unknown>; }
+export interface LivePort extends WritePort { watch(model:string,where:Record<string,unknown>,listener:(rows:Record<string,unknown>[])=>void,onError?:(error:unknown)=>void):()=>void; watchDecoded<T>(model:string,where:Record<string,unknown>,decode:(row:Record<string,unknown>)=>T,copy:(value:T)=>T,listener:(rows:T[])=>void,onError?:(error:unknown)=>void):()=>void; syncState(model:string,identity:object):Promise<unknown>; }
 export interface CallPort { invokeQuery<T>(name:string,version:number,args:object,decode:(value:unknown)=>T,options?:QueryOptions):Promise<T>; }
 export const schema = {"actions":[{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"FindItem","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"project","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"ProjectItems","outputEnums":[],"outputs":[{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"items","source":"handlerIdentity"},{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Tag"},"kind":"model","model":"Tag","modelReadVersion":1,"name":"tags","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Item","name":"item","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"private","nullable":false,"required":true,"type":{"kind":"scalar","name":"boolean"}}],"kind":"mutation","name":"PublishItem","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item"}]},"inputs":[{"allowedPatchFields":["title"],"cardinality":"single","kind":"model","model":"Item","name":"item","operation":"update"}],"kind":"mutation","name":"RenameItem","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Parent","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"parentId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Child","relations":[{"fields":["parentId"],"name":"parent","onDelete":"delete","target":"Parent","targetFields":["id"]}],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","relations":[],"unique":[["title"]],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Tag","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"parentId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Child","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Parent","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Tag","version":1}]} as const;
 export type MutationName = 'PublishItem'|'RenameItem';
@@ -243,6 +243,10 @@ export function encodeDraftCreate(value:DraftCreate):Record<string,unknown> { re
 export function encodeDraftCreateIdentity(value:DraftCreate):Record<string,unknown> { return {
  id: value.id,
 }; }
+function _copyParentWatch(value:Parent):Parent { return {
+ id: value.id,
+ title: value.title,
+}; }
 export class ParentModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:ParentIdentity):Promise<Parent|null> { const row=await this.port.read('Parent',encodeParentIdentity(identity)); return row===null ? null : decodeParent(row); }
  async query(options:{where?:Partial<Parent>;orderBy?:{field:'id' | 'title';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Parent[]> { return (await this.port.querySpec('Parent',{filter:encodeParentWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeParent); }
@@ -253,10 +257,15 @@ export class ParentTxModel<P extends WritePort=WritePort> extends ParentModel<P>
  delete(identity:ParentIdentity):Promise<void> { return this.port.direct({model:'Parent',op:'delete',identity:encodeParentIdentity(identity)}); }
 }
 export class ParentLiveModel extends ParentTxModel<LivePort> {
- watch(options:{where?:Partial<Parent>}, listener:(rows:Parent[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Parent',encodeParentWhere(options.where??{}),(rows)=>listener(rows.map(decodeParent)),onError); }
+ watch(options:{where?:Partial<Parent>}, listener:(rows:Parent[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watchDecoded('Parent',encodeParentWhere(options.where??{}),decodeParent,_copyParentWatch,listener,onError); }
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:ParentIdentity):Promise<SyncState> { return (await this.port.syncState('Parent',encodeParentIdentity(identity))) as SyncState; }
 }
+function _copyChildWatch(value:Child):Child { return {
+ id: value.id,
+ parentId: value.parentId,
+ title: value.title,
+}; }
 export class ChildModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:ChildIdentity):Promise<Child|null> { const row=await this.port.read('Child',encodeChildIdentity(identity)); return row===null ? null : decodeChild(row); }
  async query(options:{where?:Partial<Child>;orderBy?:{field:'id' | 'parentId' | 'title';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Child[]> { return (await this.port.querySpec('Child',{filter:encodeChildWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeChild); }
@@ -268,10 +277,15 @@ export class ChildTxModel<P extends WritePort=WritePort> extends ChildModel<P> {
  delete(identity:ChildIdentity):Promise<void> { return this.port.direct({model:'Child',op:'delete',identity:encodeChildIdentity(identity)}); }
 }
 export class ChildLiveModel extends ChildTxModel<LivePort> {
- watch(options:{where?:Partial<Child>}, listener:(rows:Child[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Child',encodeChildWhere(options.where??{}),(rows)=>listener(rows.map(decodeChild)),onError); }
+ watch(options:{where?:Partial<Child>}, listener:(rows:Child[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watchDecoded('Child',encodeChildWhere(options.where??{}),decodeChild,_copyChildWatch,listener,onError); }
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:ChildIdentity):Promise<SyncState> { return (await this.port.syncState('Child',encodeChildIdentity(identity))) as SyncState; }
 }
+function _copyItemWatch(value:Item):Item { return {
+ id: value.id,
+ project: value.project,
+ title: value.title,
+}; }
 export class ItemModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:ItemIdentity):Promise<Item|null> { const row=await this.port.read('Item',encodeItemIdentity(identity)); return row===null ? null : decodeItem(row); }
  async query(options:{where?:Partial<Item>;orderBy?:{field:'id' | 'project' | 'title';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Item[]> { return (await this.port.querySpec('Item',{filter:encodeItemWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeItem); }
@@ -282,10 +296,15 @@ export class ItemTxModel<P extends WritePort=WritePort> extends ItemModel<P> {
  delete(identity:ItemIdentity):Promise<void> { return this.port.direct({model:'Item',op:'delete',identity:encodeItemIdentity(identity)}); }
 }
 export class ItemLiveModel extends ItemTxModel<LivePort> {
- watch(options:{where?:Partial<Item>}, listener:(rows:Item[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Item',encodeItemWhere(options.where??{}),(rows)=>listener(rows.map(decodeItem)),onError); }
+ watch(options:{where?:Partial<Item>}, listener:(rows:Item[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watchDecoded('Item',encodeItemWhere(options.where??{}),decodeItem,_copyItemWatch,listener,onError); }
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:ItemIdentity):Promise<SyncState> { return (await this.port.syncState('Item',encodeItemIdentity(identity))) as SyncState; }
 }
+function _copyTagWatch(value:Tag):Tag { return {
+ id: value.id,
+ project: value.project,
+ label: value.label,
+}; }
 export class TagModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:TagIdentity):Promise<Tag|null> { const row=await this.port.read('Tag',encodeTagIdentity(identity)); return row===null ? null : decodeTag(row); }
  async query(options:{where?:Partial<Tag>;orderBy?:{field:'id' | 'project' | 'label';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Tag[]> { return (await this.port.querySpec('Tag',{filter:encodeTagWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeTag); }
@@ -296,10 +315,14 @@ export class TagTxModel<P extends WritePort=WritePort> extends TagModel<P> {
  delete(identity:TagIdentity):Promise<void> { return this.port.direct({model:'Tag',op:'delete',identity:encodeTagIdentity(identity)}); }
 }
 export class TagLiveModel extends TagTxModel<LivePort> {
- watch(options:{where?:Partial<Tag>}, listener:(rows:Tag[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Tag',encodeTagWhere(options.where??{}),(rows)=>listener(rows.map(decodeTag)),onError); }
+ watch(options:{where?:Partial<Tag>}, listener:(rows:Tag[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watchDecoded('Tag',encodeTagWhere(options.where??{}),decodeTag,_copyTagWatch,listener,onError); }
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:TagIdentity):Promise<SyncState> { return (await this.port.syncState('Tag',encodeTagIdentity(identity))) as SyncState; }
 }
+function _copyDraftWatch(value:Draft):Draft { return {
+ id: value.id,
+ title: value.title,
+}; }
 export class DraftModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:DraftIdentity):Promise<Draft|null> { const row=await this.port.read('Draft',encodeDraftIdentity(identity)); return row===null ? null : decodeDraft(row); }
  async query(options:{where?:Partial<Draft>;orderBy?:{field:'id' | 'title';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Draft[]> { return (await this.port.querySpec('Draft',{filter:encodeDraftWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeDraft); }
@@ -310,7 +333,7 @@ export class DraftTxModel<P extends WritePort=WritePort> extends DraftModel<P> {
  delete(identity:DraftIdentity):Promise<void> { return this.port.direct({model:'Draft',op:'delete',identity:encodeDraftIdentity(identity)}); }
 }
 export class DraftLiveModel extends DraftTxModel<LivePort> {
- watch(options:{where?:Partial<Draft>}, listener:(rows:Draft[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Draft',encodeDraftWhere(options.where??{}),(rows)=>listener(rows.map(decodeDraft)),onError); }
+ watch(options:{where?:Partial<Draft>}, listener:(rows:Draft[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watchDecoded('Draft',encodeDraftWhere(options.where??{}),decodeDraft,_copyDraftWatch,listener,onError); }
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:DraftIdentity):Promise<SyncState> { return (await this.port.syncState('Draft',encodeDraftIdentity(identity))) as SyncState; }
 }

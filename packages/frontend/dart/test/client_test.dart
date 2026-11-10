@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:axton/axton.dart';
 import 'package:test/test.dart';
 import 'store_fixture.dart';
+import 'protocol5_transport.dart';
 
 Map<String, dynamic> create(String id, String text) => {
   'model': 'Entry',
@@ -17,6 +18,12 @@ Map<String, dynamic> update(String text) => {
   'identity': {'id': 'e'},
   'values': {'text': text},
 };
+
+/// The named `Edit` of Entry `e`, the seed route for a text change.
+Future<Call<void>> edit(SubmitMutationPort port, String text) =>
+    port.submitMutation<void>('Edit', 1, {
+      'entry': {'id': 'e', 'text': text},
+    }, (_) {});
 Map<String, dynamic> input(String id) => {
   'entry': {'id': id, 'text': 'published', 'note': null},
 };
@@ -89,7 +96,14 @@ void main() {
       },
     ]);
     client = await open();
-    await client.direct(create('e', 'hello'));
+    // A delivered row: the base no pending count below includes.
+    await deliverRecords(client, [
+      {
+        'model': 'Entry',
+        'identity': {'id': 'e'},
+        'state': {'text': 'hello', 'note': null},
+      },
+    ]);
   });
   tearDown(() async {
     await client.close();
@@ -123,7 +137,7 @@ void main() {
     () async {
       await expectLater(
         client.transaction((tx) async {
-          await tx.direct(update('bad'));
+          await edit(tx, 'bad');
           expect((await tx.read('Entry', {'id': 'e'}))!['text'], 'bad');
           throw StateError('rollback');
         }),
@@ -163,7 +177,7 @@ void main() {
           client.submitMutation<void>('Ping', 1, {}, (_) {}),
           stateError('transaction_active'),
         );
-        await tx.direct(update('inside'));
+        await edit(tx, 'inside');
       });
       expect(await text(), 'inside');
     },
@@ -172,16 +186,16 @@ void main() {
     'savepoint rolls back its writes while prior and later writes commit',
     () async {
       await client.transaction((tx) async {
-        await tx.direct(update('before'));
+        await edit(tx, 'before');
         await expectLater(
           tx.savepoint(() async {
-            await tx.direct(update('discard'));
+            await edit(tx, 'discard');
             throw StateError('undo');
           }),
           stateError('undo'),
         );
         expect((await tx.read('Entry', {'id': 'e'}))!['text'], 'before');
-        await tx.direct(update('after'));
+        await edit(tx, 'after');
       });
       expect(await text(), 'after');
     },
@@ -191,13 +205,13 @@ void main() {
     await client.transaction((tx) async {
       escaped = tx;
     });
-    await expectLater(escaped.direct(update('escaped')), throwsStateError);
+    await expectLater(edit(escaped, 'escaped'), throwsStateError);
     expect(await text(), 'hello');
   });
   test('unawaited native write poisons the entire transaction', () async {
     await expectLater(
       client.transaction((tx) async {
-        unawaited(tx.direct(update('unawaited')).catchError((Object _) {}));
+        unawaited(edit(tx, 'unawaited').then((_) {}, onError: (Object _) {}));
       }),
       throwsStateError,
     );
@@ -471,7 +485,7 @@ void main() {
                   );
                 } else {
                   await expectLater(
-                    a.direct(create('foreign', 'bad')),
+                    publish(a, 'foreign'),
                     stateError('foreign transaction scope'),
                   );
                 }
@@ -493,7 +507,7 @@ void main() {
     try {
       await client.transaction((tx) async {
         expect(await other.read('Entry', {'id': 'e'}), isNull);
-        await tx.direct(update('inside'));
+        await edit(tx, 'inside');
       });
       expect(await text(), 'inside');
     } finally {
@@ -567,10 +581,10 @@ void main() {
     },
   );
   test(
-    'one physical owner, ordinary close and offline reopen retain direct state',
+    'one physical owner, ordinary close and offline reopen retain local state',
     () async {
       await expectLater(open(), throwsA(anything));
-      await client.direct(update('retained'));
+      await edit(client, 'retained');
       await client.close();
       await client.close();
       client = await open();
@@ -584,8 +598,8 @@ void main() {
       final done = Completer<void>();
       final sub = client.watch('Entry').listen(rows.add, onDone: done.complete);
       await Future<void>.delayed(Duration.zero);
-      await client.direct(update('changed'));
-      await client.direct(update('changed'));
+      await edit(client, 'changed');
+      await edit(client, 'changed');
       await Future<void>.delayed(Duration.zero);
       expect(rows.map((r) => r.single['text']), ['hello', 'changed']);
       await client.close();
@@ -599,8 +613,10 @@ void main() {
       final rows = <List<Map<String, dynamic>>>[];
       final sub = client.watch('Entry', where: {'id': 'e'}).listen(rows.add);
       await Future<void>.delayed(Duration.zero);
-      await client.direct(create('other', 'irrelevant'));
-      await client.direct(update('filtered'));
+      await client.submitMutation<void>('Publish', 1, {
+        'entry': {'id': 'other', 'text': 'irrelevant', 'note': null},
+      }, (_) {});
+      await edit(client, 'filtered');
       await Future<void>.delayed(Duration.zero);
       expect(rows.map((r) => r.single['text']), ['hello', 'filtered']);
       await sub.cancel();

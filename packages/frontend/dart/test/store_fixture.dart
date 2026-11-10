@@ -40,3 +40,63 @@ void declareEntryEdit(Map<String, dynamic> schema) {
     },
   ];
 }
+
+/// Declare the test Mutations `Create<Model>` and `Update<Model>` for each
+/// [models] entry of [schema] (all of them when null), so tests seed and
+/// change rows with Mutations. Each takes one `row` slot; an update may patch
+/// every non-identity field. Prerequisites and requirements are copied from
+/// the schema, like [declareEntryEdit].
+void declareRowMutations(Map<String, dynamic> schema, [List<String>? models]) {
+  final actions = (schema['actions'] ??= <Object>[]) as List;
+  for (final model in (schema['models'] as List).cast<Map>()) {
+    if (models != null && !models.contains(model['name'])) continue;
+    final identity = (model['identity'] as List).cast<String>();
+    for (final operation in ['create', 'update']) {
+      actions.add({
+        'kind': 'mutation',
+        'name':
+            '${operation == 'create' ? 'Create' : 'Update'}${model['name']}',
+        'version': 1,
+        'input': {
+          'enums': schema['enums'] ?? [],
+          'models': [model],
+        },
+        'inputs': [
+          {
+            'name': 'row',
+            'kind': 'model',
+            'model': model['name'],
+            'operation': operation,
+            'cardinality': 'single',
+            if (operation == 'update')
+              'allowedPatchFields': [
+                for (final field in (model['fields'] as List).cast<Map>())
+                  if (!identity.contains(field['name'])) field['name'],
+              ],
+          },
+        ],
+        'outputs': [],
+        'outputEnums': [],
+        'prerequisites': schema['prerequisites'] ?? [],
+        'requirements': schema['requirements'] ?? [],
+        'sequence': null,
+      });
+    }
+  }
+}
+
+/// Create one [model] row offline through `Create<Model>` (see
+/// [declareRowMutations]); it stays a pending Mutation.
+Future<Call<void>> createRow(
+  SubmitMutationPort port,
+  String model,
+  Map<String, dynamic> row,
+) => port.submitMutation<void>('Create$model', 1, {'row': row}, (_) {});
+
+/// Patch one [model] row offline through `Update<Model>`; [row] carries the
+/// identity and the changed fields.
+Future<Call<void>> updateRow(
+  SubmitMutationPort port,
+  String model,
+  Map<String, dynamic> row,
+) => port.submitMutation<void>('Update$model', 1, {'row': row}, (_) {});

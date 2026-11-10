@@ -1,6 +1,7 @@
 // Runs in a scratch application that depends on an installed axton package:
 // the package's build hook bundled this host's library, so the client opens
-// without a libraryPath, writes, closes and reopens its database.
+// without a libraryPath, queues an offline Mutation, closes and reopens its
+// database.
 import 'dart:io';
 
 import 'package:axton/axton.dart';
@@ -25,6 +26,23 @@ const _schema = {
       ],
     },
   ],
+  'actions': [
+    {
+      'kind': 'mutation',
+      'name': 'Create',
+      'version': 1,
+      'inputs': [
+        {
+          'kind': 'model',
+          'name': 'entry',
+          'model': 'Entry',
+          'operation': 'create',
+          'cardinality': 'single',
+        },
+      ],
+      'outputs': <Object>[],
+    },
+  ],
 };
 
 Future<void> main() async {
@@ -42,14 +60,9 @@ Future<void> main() async {
       stream: 'User:viewer',
       connection: connection,
     );
-    await client.transaction((tx) async {
-      await tx.direct({
-        'model': 'Entry',
-        'op': 'create',
-        'identity': {'id': 'installed'},
-        'values': {'text': 'kept'},
-      });
-    });
+    await client.submitMutation<void>('Create', 1, {
+      'entry': {'id': 'installed', 'text': 'kept'},
+    }, (_) {});
     await client.close();
     final reopened = await Client.open(
       path: path,

@@ -37,7 +37,7 @@ void main() {
         'arguments': {'key': 'self'},
       },
     ];
-    declareEntryEdit(schema);
+    declareRowMutations(schema);
   });
   tearDown(() => dir.delete(recursive: true));
 
@@ -49,18 +49,9 @@ void main() {
     prerequisites: prerequisites,
   );
 
+  /// One offline Mutation whose `note` requires `RemoteBlob(key)`.
   Future<void> attach(Client client, String key) async {
-    await client.transaction(
-      (tx) => tx.direct({
-        'model': 'Entry',
-        'op': 'create',
-        'identity': {'id': key},
-        'values': {'text': 'A'},
-      }),
-    );
-    await client.submitMutation<void>('Edit', 1, {
-      'entry': {'id': key, 'note': key},
-    }, (_) {});
+    await createRow(client, 'Entry', {'id': key, 'text': 'A', 'note': key});
   }
 
   /// Poll [probe] until it holds; fail after five seconds.

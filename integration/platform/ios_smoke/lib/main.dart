@@ -29,6 +29,24 @@ const _schema = {
       ],
     },
   ],
+  // The seed: the smoke creates its row with an offline Mutation.
+  'actions': [
+    {
+      'kind': 'mutation',
+      'name': 'Create',
+      'version': 1,
+      'inputs': [
+        {
+          'kind': 'model',
+          'name': 'entry',
+          'model': 'Entry',
+          'operation': 'create',
+          'cardinality': 'single',
+        },
+      ],
+      'outputs': <Object>[],
+    },
+  ],
 };
 
 Future<void> main() async {
@@ -80,22 +98,19 @@ Future<void> main() async {
       result = 'AXTON_SMOKE_RESTART_OK';
     } else {
       await bounded(
-        'DIRECT_TX',
+        'CREATE_TX',
         client!.transaction((tx) async {
-          await tx.direct({
-            'model': 'Entry',
-            'op': 'create',
-            'identity': {'id': 'ios'},
-            'values': {'text': 'direct'},
-          });
+          await tx.submitMutation<void>('Create', 1, {
+            'entry': {'id': 'ios', 'text': 'created', 'note': null},
+          }, (_) {});
         }),
       );
-      final direct = await bounded(
-        'DIRECT_READ',
+      final created = await bounded(
+        'CREATE_READ',
         client!.read('Entry', {'id': 'ios'}),
       );
-      if (direct?['text'] != 'direct') {
-        throw StateError('direct write was not readable');
+      if (created?['text'] != 'created') {
+        throw StateError('created row was not readable');
       }
       await bounded(
         'ENQUEUE',

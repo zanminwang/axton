@@ -44,6 +44,7 @@ Future<Map<String, dynamic>> _schema() async {
       'fields': [_text('id'), _text('body')],
     },
   ]);
+  declareRowMutations(schema);
   return schema;
 }
 
@@ -56,27 +57,27 @@ const _journal =
 /// Every re-run publishes: its `random()` column differs.
 const _probe = 'SELECT count(*) AS n, random() AS r FROM Entry';
 
-Map<String, dynamic> _put(
+/// Create [model] row [id] with an offline Mutation; unset nullable fields
+/// are null.
+Future<void> _put(
+  SubmitMutationPort port,
   String model,
   String id,
   Map<String, dynamic> values,
-) => {
-  'model': model,
-  'op': 'create',
-  'identity': {'id': id},
-  'values': values,
-};
+) => createRow(port, model, {
+  'id': id,
+  if (model == 'Entry') 'note': null,
+  if (model == 'Media') 'caption': null,
+  ...values,
+});
 
-Map<String, dynamic> _change(
+/// Patch [model] row [id] with an offline Mutation.
+Future<void> _change(
+  SubmitMutationPort port,
   String model,
   String id,
   Map<String, dynamic> values,
-) => {
-  'model': model,
-  'op': 'update',
-  'identity': {'id': id},
-  'values': values,
-};
+) => updateRow(port, model, {'id': id, ...values});
 
 Future<void> _eventually(bool Function() condition, String what) async {
   final deadline = DateTime.now().add(const Duration(seconds: 5));
@@ -110,9 +111,9 @@ void main() {
   test(
     'a join over three Models re-emits after a commit to each, and never for another table',
     () async {
-      await client.direct(_put('Entry', 'e', {'text': 'first'}));
-      await client.direct(_put('Media', 'm', {'entryId': 'e', 'url': 'a.jpg'}));
-      await client.direct(_put('Person', 'p', {'entryId': 'e', 'name': 'Ann'}));
+      await _put(client, 'Entry', 'e', {'text': 'first'});
+      await _put(client, 'Media', 'm', {'entryId': 'e', 'url': 'a.jpg'});
+      await _put(client, 'Person', 'p', {'entryId': 'e', 'name': 'Ann'});
       final page = <List<Map<String, dynamic>>>[];
       final probe = <Object?>[];
       final watching = client.watchSql(_journal).listen(page.add);
@@ -130,14 +131,14 @@ void main() {
         'person': person,
       };
       expect(page.single, [row('first', 'a.jpg', 'Ann')]);
-      await client.direct(_change('Entry', 'e', {'text': 'second'}));
+      await _change(client, 'Entry', 'e', {'text': 'second'});
       await _eventually(
         () => page.length == 2 && probe.length == 2,
         'the Entry commit',
       );
-      await client.direct(_change('Media', 'm', {'url': 'b.jpg'}));
+      await _change(client, 'Media', 'm', {'url': 'b.jpg'});
       await _eventually(() => page.length == 3, 'the Media commit');
-      await client.direct(_change('Person', 'p', {'name': 'Bea'}));
+      await _change(client, 'Person', 'p', {'name': 'Bea'});
       await _eventually(() => page.length == 4, 'the Person commit');
       expect(page.sublist(1), [
         [row('second', 'a.jpg', 'Ann')],
@@ -146,21 +147,21 @@ void main() {
       ]);
       // A commit to an unrelated Model re-runs neither; one that leaves the
       // join's answer unchanged publishes nothing.
-      await client.direct(_put('Note', 'n', {'body': 'aside'}));
-      await client.direct(_change('Media', 'm', {'caption': 'unselected'}));
+      await _put(client, 'Note', 'n', {'body': 'aside'});
+      await _change(client, 'Media', 'm', {'caption': 'unselected'});
       await _settle();
       expect(page, hasLength(4));
       expect(probe, [1, 1], reason: 'only the Entry commit re-ran the probe');
       await watching.cancel();
       await probing.cancel();
-      await client.direct(_change('Entry', 'e', {'text': 'after'}));
+      await _change(client, 'Entry', 'e', {'text': 'after'});
       await _settle();
       expect(page, hasLength(4), reason: 'a cancelled watch hears nothing');
     },
   );
 
   test('binds parameters', () async {
-    await client.direct(_put('Entry', 'e', {'text': 'bound'}));
+    await _put(client, 'Entry', 'e', {'text': 'bound'});
     final rows = await client
         .watchSql('SELECT text FROM Entry WHERE id = ?', parameters: ['e'])
         .first
@@ -199,7 +200,7 @@ void main() {
     () async {
       Object? refusal;
       await client.transaction((tx) async {
-        await tx.direct(_put('Entry', 'e', {'text': 'inside'}));
+        await _put(tx, 'Entry', 'e', {'text': 'inside'});
         final done = Completer<void>();
         client
             .watchSql('SELECT text FROM Entry')

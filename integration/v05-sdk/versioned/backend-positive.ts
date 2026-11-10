@@ -29,6 +29,7 @@ const options: Options<object> = {
           note: "new schema",
         })),
     },
+    snapshot: async ({ ids }) => ids.map(() => null),
   },
 };
 createBackend(options);

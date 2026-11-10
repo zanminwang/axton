@@ -9,16 +9,7 @@ use axton_protocols::server_bridge::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) type Changes = BTreeMap<String, RecordKey>;
-pub(crate) fn unregistered(model: &str) -> Error {
-    Error::new(
-        code::LOADER_UNREGISTERED,
-        format!("Model {model} has no registered Loader: it is device-only and never published"),
-    )
-}
 pub(crate) fn resolve(config: &Config, record: &RecordRef) -> Result<RecordKey> {
-    if !config.loaders.contains(&record.model) {
-        return Err(unregistered(&record.model));
-    }
     config
         .schema
         .record_key(&record.model, &record.identity)
@@ -64,11 +55,6 @@ pub(crate) async fn settle_changes(
         .collect();
     let mut tracks: BTreeMap<(String, String), RecordKey> = BTreeMap::new();
     let mut named = BTreeSet::new();
-    for key in changed.values() {
-        if !config.loaders.contains(&key.model) {
-            return Err(unregistered(&key.model));
-        }
-    }
     for intent in declarations {
         for stream in intent.streams() {
             axton_core::check_stream(stream)

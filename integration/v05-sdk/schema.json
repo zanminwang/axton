@@ -260,33 +260,6 @@
   "enums": [],
   "models": [
     {
-      "fields": [
-        {
-          "name": "id",
-          "nullable": false,
-          "type": {
-            "kind": "scalar",
-            "name": "string"
-          }
-        },
-        {
-          "name": "text",
-          "nullable": false,
-          "type": {
-            "kind": "scalar",
-            "name": "string"
-          }
-        }
-      ],
-      "identity": [
-        "id"
-      ],
-      "name": "Draft",
-      "relations": [],
-      "unique": [],
-      "version": 1
-    },
-    {
       "bootstrap": true,
       "fields": [
         {
@@ -345,32 +318,6 @@
   "prerequisites": [],
   "requirements": [],
   "resultModels": [
-    {
-      "enums": [],
-      "fields": [
-        {
-          "name": "id",
-          "nullable": false,
-          "type": {
-            "kind": "scalar",
-            "name": "string"
-          }
-        },
-        {
-          "name": "text",
-          "nullable": false,
-          "type": {
-            "kind": "scalar",
-            "name": "string"
-          }
-        }
-      ],
-      "identity": [
-        "id"
-      ],
-      "name": "Draft",
-      "version": 1
-    },
     {
       "enums": [],
       "fields": [

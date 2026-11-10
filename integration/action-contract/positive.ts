@@ -36,5 +36,5 @@ function contexts(m:MutationContext<object>,q:QueryContext<object>,b:Transaction
  b.streams(['User:a']).invalidate.todo(identity);
 }
 const hooks:LoaderHooks<object>={todo:{async prepareForViewer(call){call.streams(['User:a']).track.todo(call.ids);call.invalidate.todo(call.ids);}}};
-const loaders:Loaders<object>={todo:{async v1({ids}){return ids.map(id=>({id:id.id,title:'old',state:'open' as const}));},async v2({ids}){return ids.map(id=>({...created,id:id.id}));}}};
+const loaders:Loaders<object>={todo:{async v1({ids}){return ids.map(id=>({id:id.id,title:'old',state:'open' as const}));},async v2({ids}){return ids.map(id=>({...created,id:id.id}));}},project:async({ids})=>ids.map(()=>null),note:async({ids})=>ids.map(()=>null)};
 void [clientContract,contexts,hooks,loaders,oldInput,oldOutput,handlerOutput,states,oldStates];

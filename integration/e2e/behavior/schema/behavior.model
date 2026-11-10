@@ -25,11 +25,6 @@ model Tag {
  label String
  @@id(id)
 }
-model Draft {
- id String
- title String
- @@id(id)
-}
 mutation PublishItem(item Item.create, private Boolean) { item Item }
 mutation RenameItem(item Item.update<title>) { item Item }
 query ProjectItems(project String) { items Item[] tags Tag[] }

@@ -500,12 +500,6 @@ test("atomic PublishEntry optimism and backend rows accept or roll back together
         ].sort(),
         ["entry", "media", "placement"],
       );
-    assert.equal(
-      fixture.publishes.some((input) =>
-        JSON.stringify(input).includes("Composition"),
-      ),
-      false,
-    );
   } finally {
     fixture.rejectedEntries.delete("entry-no");
     await s.close();

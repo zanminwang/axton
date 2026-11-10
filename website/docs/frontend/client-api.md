@@ -164,7 +164,7 @@ Failures reject with `CallError`:
 
 | `code` | Meaning |
 | --- | --- |
-| The Loader's `CallRejected` code, `loader.failed`, `loader.invalid`, `loader.unregistered`, `model_version_unsupported` | The backend answered with this failure. `execution` is `rejected` |
+| The Loader's `CallRejected` code, `loader.failed`, `loader.invalid`, `model_version_unsupported` | The backend answered with this failure. `execution` is `rejected` |
 | `fetch.invalid_options` | An invalid identity or option, refused before any request |
 | `fetch.unavailable` | No connection, the connection was stopped before the response, or the client was closed while waiting |
 | `fetch.timeout` | The direct timeout passed |
@@ -223,27 +223,27 @@ The examples use [the typed SDK fixture](https://github.com/zanminwang/axton/tre
 
     ```ts title="v05-sdk"
     const call = await client.transaction(async tx => {
-      const draft = await tx.models.draft.get({ id: 'draft-1' });
-      if (!draft) throw Error('draft missing');
-      return tx.mutations.publish({ entry: { id: 'entry-1', text: draft.text }, call: 'publish' });
+      const source = await tx.models.entry.get({ id: 'entry-1' });
+      if (!source) throw Error('entry missing');
+      return tx.mutations.publish({ entry: { id: 'entry-2', text: source.text }, call: 'copy' });
     });
     const outcome = await call.wait();
     if (outcome.error) console.error(outcome.error.code);
-    const snapshot = await client.queries.find({ id: 'entry-1' });
+    const snapshot = await client.queries.find({ id: 'entry-2' });
     ```
 
 === "Flutter"
 
     ```dart title="v05-sdk"
     final call = await client.transaction((tx) async {
-      final draft = await tx.models.draft.get(const DraftIdentity(id: 'draft-1'));
-      if (draft == null) throw StateError('draft missing');
+      final source = await tx.models.entry.get(const EntryIdentity(id: 'entry-1'));
+      if (source == null) throw StateError('entry missing');
       return tx.mutations.publish(PublishInput(
-          entry: EntryCreate(id: 'entry-1', text: draft.text), call: 'publish'));
+          entry: EntryCreate(id: 'entry-2', text: source.text), call: 'copy'));
     });
     final outcome = await call.wait();
     if (outcome is CallFailure<PublishOutput>) print(outcome.error.code);
-    final snapshot = await client.queries.find(id: 'entry-1');
+    final snapshot = await client.queries.find(id: 'entry-2');
     ```
 
 A Mutation takes its typed input; with nothing to read first, call `client.mutations.publish(input)` directly. A caller that reads before building the input does so in `client.transaction` and then calls `tx.mutations.publish(input)`: the read and the Mutation run in one local transaction and see one snapshot. A business input named `call` retains its name. Refusal undoes only the Mutation's own optimism and preserves later independent work.

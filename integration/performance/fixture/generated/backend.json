@@ -73,9 +73,6 @@
   ],
   "deprecations": [],
   "inverses": [],
-  "loaders": [
-    "Entry"
-  ],
   "models": [
     {
       "enums": [],

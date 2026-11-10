@@ -18,6 +18,9 @@ const options: Options<object> = {
     },
     peek: async () => ({ entry: null }),
   },
-  loaders: { entry: async ({ ids }) => ids.map(() => null) },
+  loaders: {
+    entry: async ({ ids }) => ids.map(() => null),
+    snapshot: async ({ ids }) => ids.map(() => null),
+  },
 };
 createBackend(options);

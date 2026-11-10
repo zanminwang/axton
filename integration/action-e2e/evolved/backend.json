@@ -781,9 +781,6 @@
   ],
   "deprecations": [],
   "inverses": [],
-  "loaders": [
-    "Todo"
-  ],
   "models": [
     {
       "enums": [],

@@ -5,35 +5,7 @@ import 'package:axton/axton.dart';
 export 'package:axton/axton.dart' show AxtonDiagnostics, AxtonTraceRecord, RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
 class Present<T> { final T value; const Present(this.value); }
 abstract interface class _DartActionRecord { Map<String,dynamic> toRecord(); }
-final Map<String,dynamic> schema = jsonDecode('{"actions":[{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Find","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Find","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":2,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":2},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Peek","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Snapshot"},"kind":"model","model":"Snapshot","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"call","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"Publish","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"call","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"Publish","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":2,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":2}],"clientPolicies":[],"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","relations":[],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":2},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":2},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","version":1}]}') as Map<String,dynamic>;
-/// What a fresh create of Draft accepts: a complete [Draft], or a [DraftCreate] that may omit fields with creation defaults.
-abstract interface class DraftCreateInput { Map<String,dynamic> toCreateRecord(); }
-class Draft implements DraftCreateInput {
- final String id;
- final String text;
- const Draft({required this.id,required this.text});
- Map<String,dynamic> toRecord() => {
- 'id': id,
- 'text': text,
- };
- factory Draft.fromRecord(Map<String,dynamic> row) => Draft(
- id: row['id'] as String,
- text: row['text'] as String,
- );
- @override
- Map<String,dynamic> toCreateRecord() => toRecord();
- DraftIdentity get identity => DraftIdentity(id: id);
-}
-class DraftIdentity {
- final String id;
- const DraftIdentity({required this.id});
- Map<String,dynamic> toRecord() => {
- 'id': id,
- };
- factory DraftIdentity.fromRecord(Map<String,dynamic> row) => DraftIdentity(
- id: row['id'] as String,
- );
-}
+final Map<String,dynamic> schema = jsonDecode('{"actions":[{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Find","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Find","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":2,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":2},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Peek","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Snapshot"},"kind":"model","model":"Snapshot","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"call","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"Publish","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"call","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"Publish","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":2,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":2}],"clientPolicies":[],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":2},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":2},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","version":1}]}') as Map<String,dynamic>;
 /// What a fresh create of Entry accepts: a complete [Entry], or a [EntryCreate] that may omit fields with creation defaults.
 abstract interface class EntryCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Entry implements EntryCreateInput {
@@ -93,16 +65,6 @@ class SnapshotIdentity {
  id: row['id'] as String,
  );
 }
-class DraftCreate implements DraftCreateInput {
- final String id;
- final String text;
- const DraftCreate({required this.id,required this.text});
- @override
- Map<String,dynamic> toCreateRecord() => {
- 'id': id,
- 'text': text,
- };
-}
 class EntryCreate implements EntryCreateInput {
  final String id;
  final String text;
@@ -125,17 +87,6 @@ class SnapshotCreate implements SnapshotCreateInput {
  'text': text,
  };
 }
-class DraftFilter {
- final Present<String>? id;
- final Present<String>? text;
- const DraftFilter({this.id,this.text});
- Map<String,dynamic> toRecord()=>{
- if(id!=null)'id':id!.value,
- if(text!=null)'text':text!.value,
-};
-}
-enum DraftOrderField {byId('id'),byText('text'); final String wireName; const DraftOrderField(this.wireName);}
-class DraftOrder { final DraftOrderField field; final bool descending; const DraftOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
 class EntryFilter {
  final Present<String>? id;
  final Present<String>? text;
@@ -160,16 +111,6 @@ class SnapshotFilter {
 }
 enum SnapshotOrderField {byId('id'),byText('text'); final String wireName; const SnapshotOrderField(this.wireName);}
 class SnapshotOrder { final SnapshotOrderField field; final bool descending; const SnapshotOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
-Draft _copyDraftWatch(Draft value) => value;
-class DraftModel { final ReadPort port; DraftModel(this.port);
- Future<Draft?> get(DraftIdentity identity) async { final row=await port.read('Draft',identity.toRecord()); return row == null ? null : Draft.fromRecord(row); }
- Future<List<Draft>> query({DraftFilter? where,List<DraftOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Draft',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Draft.fromRecord).toList();
-}
-class DraftLiveModel extends DraftModel { final Client client; DraftLiveModel(this.client) : super(client);
- Stream<List<Draft>> watch({DraftFilter? where}) => client.watchDecoded<Draft>('Draft', where:where?.toRecord()??{},decode:Draft.fromRecord,copy:_copyDraftWatch);
- /// This record's sync state: its pending mutations and retained rejections. Local only.
- Future<SyncState> syncState(DraftIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Draft', identity.toRecord()));
-}
 Entry _copyEntryWatch(Entry value) => value;
 class EntryModel { final ReadPort port; EntryModel(this.port);
  Future<Entry?> get(EntryIdentity identity) async { final row=await port.read('Entry',identity.toRecord()); return row == null ? null : Entry.fromRecord(row); }
@@ -191,16 +132,6 @@ class SnapshotLiveModel extends SnapshotModel { final Client client; SnapshotLiv
  Future<SyncState> syncState(SnapshotIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Snapshot', identity.toRecord()));
 }
 /// Public Action lifecycle types are owned by the SDK.
-typedef DraftDelete = DraftIdentity;
-class DraftUpdate implements _DartActionRecord {
- final String id;
- final Present<String>? text;
- const DraftUpdate({required this.id,this.text});
- Map<String,dynamic> toRecord() => {
- 'id': _dartActionEncode(id),
- if (text != null) 'text': _dartActionEncode(text!.value),
- };
-}
 typedef EntryDelete = EntryIdentity;
 class EntryUpdate implements _DartActionRecord {
  final String id;
@@ -406,9 +337,6 @@ dynamic _dartActionEncode(dynamic value) {
  if (value is Enum) return value.name;
  if (value is List) return value.map(_dartActionEncode).toList();
  if (value is _DartActionRecord) return value.toRecord();
- if (value is Draft) return value.toRecord();
- if (value is DraftCreateInput) return value.toCreateRecord();
- if (value is DraftIdentity) return value.toRecord();
  if (value is Entry) return value.toRecord();
  if (value is EntryCreateInput) return value.toCreateRecord();
  if (value is EntryIdentity) return value.toRecord();
@@ -426,18 +354,15 @@ class Queries {
  Future<PeekOutput> peek({required String id, bool store = true}) => this.client.invokeQuery<PeekOutput>('Peek', 1, {'id': _dartActionEncode(id)}, (value) { final row = (value as Map).cast<String,dynamic>(); return PeekOutput(entry: row['entry'] == null ? null : Snapshot.fromRecord((row['entry'] as Map).cast<String,dynamic>())); }, store: store);
 }
 class LiveModels { final Client port; LiveModels(this.port);
- late final DraftLiveModel draft = DraftLiveModel(port);
  late final EntryLiveModel entry = EntryLiveModel(port);
  late final SnapshotLiveModel snapshot = SnapshotLiveModel(port);
 }
 class TxModels { final ReadPort port; TxModels(this.port);
- late final DraftModel draft = DraftModel(port);
  late final EntryModel entry = EntryModel(port);
  late final SnapshotModel snapshot = SnapshotModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);
- Future<Draft?> draft(DraftIdentity identity, {bool store = true}) => _client.fetchModel('Draft', 1, identity.toRecord(), Draft.fromRecord, store: store);
  Future<Entry?> entry(EntryIdentity identity, {bool store = true}) => _client.fetchModel('Entry', 2, identity.toRecord(), Entry.fromRecord, store: store);
  Future<Snapshot?> snapshot(SnapshotIdentity identity, {bool store = true}) => _client.fetchModel('Snapshot', 1, identity.toRecord(), Snapshot.fromRecord, store: store);
 }

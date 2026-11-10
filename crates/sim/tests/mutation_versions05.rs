@@ -78,7 +78,7 @@ fn schema() -> Schema {
         .unwrap()
 }
 fn config() -> Config {
-    Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[action(1)]},"mutations":[],"loaders":[],"protocol5":{"projectionGeneration":"1"}})).unwrap()
+    Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[action(1)]},"mutations":[],"protocol5":{"projectionGeneration":"1"}})).unwrap()
 }
 async fn execute(c: &Config, h: &BatchHost, batch: &v05::MutationRequest) -> String {
     let bytes = v05::encode(batch).unwrap();
@@ -201,7 +201,7 @@ fn malformed_wire_bound_slot_and_forbidden_patch_remain_structural_request_error
             {"kind":"model","name":"first","model":"Entry","operation":"create","cardinality":"single"},
             {"kind":"model","name":"second","model":"Entry","operation":"update","cardinality":"single","allowedPatchFields":["text"],"bindings":[{"slot":"first","fields":["id"]}]}
         ]}]})).unwrap();
-    let config = Config::decode(json!({"schema":s,"mutations":[],"loaders":["Entry"]})).unwrap();
+    let config = Config::decode(json!({"schema":s,"mutations":[]})).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let mut client = Client::open05(
         SqliteStore::open(directory.path().join("client.sqlite")).unwrap(),
@@ -291,10 +291,9 @@ fn retained_query_cannot_enter_a_mutation_batch() {
     let batch = client.freeze_batch05().unwrap().unwrap();
     let mut query = action(1);
     query["kind"] = json!("query");
-    let config = Config::decode(
-        json!({"schema":{"enums":[],"models":[],"actions":[query]},"mutations":[],"loaders":[]}),
-    )
-    .unwrap();
+    let config =
+        Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[query]},"mutations":[]}))
+            .unwrap();
     assert_eq!(
         axton_server::validate_mutation_batch(&config, &v05::encode(&batch).unwrap())
             .unwrap_err()

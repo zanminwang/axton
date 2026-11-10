@@ -3,7 +3,7 @@ import type { Call, QueryOptions } from './client.ts';
 export interface ReadPort { read(model:string,identity:object):Promise<Record<string,unknown>|null>; querySpec(model:string,query:object):Promise<Record<string,unknown>[]>; related(model:string,identity:object,relation:string):Promise<Record<string,unknown>|null>; referencing(model:string,identity:object,source:string,relation:string):Promise<Record<string,unknown>[]>; }
 export interface LivePort extends ReadPort { watch(model:string,where:Record<string,unknown>,listener:(rows:Record<string,unknown>[])=>void,onError?:(error:unknown)=>void):()=>void; watchDecoded<T>(model:string,where:Record<string,unknown>,decode:(row:Record<string,unknown>)=>T,copy:(value:T)=>T,listener:(rows:T[])=>void,onError?:(error:unknown)=>void):()=>void; syncState(model:string,identity:object):Promise<unknown>; }
 export interface CallPort { invokeQuery<T>(name:string,version:number,args:object,decode:(value:unknown)=>T,options?:QueryOptions):Promise<T>; }
-export const schema = {"actions":[{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"FindItem","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"project","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"ProjectItems","outputEnums":[],"outputs":[{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"items","source":"handlerIdentity"},{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Tag"},"kind":"model","model":"Tag","modelReadVersion":1,"name":"tags","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Item","name":"item","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"private","nullable":false,"required":true,"type":{"kind":"scalar","name":"boolean"}}],"kind":"mutation","name":"PublishItem","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item"}]},"inputs":[{"allowedPatchFields":["title"],"cardinality":"single","kind":"model","model":"Item","name":"item","operation":"update"}],"kind":"mutation","name":"RenameItem","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Parent","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"parentId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Child","relations":[{"fields":["parentId"],"name":"parent","onDelete":"delete","target":"Parent","targetFields":["id"]}],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","relations":[],"unique":[["title"]],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Tag","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"parentId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Child","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Parent","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Tag","version":1}]} as const;
+export const schema = {"actions":[{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"FindItem","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"project","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"ProjectItems","outputEnums":[],"outputs":[{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"items","source":"handlerIdentity"},{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Tag"},"kind":"model","model":"Tag","modelReadVersion":1,"name":"tags","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Item","name":"item","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"private","nullable":false,"required":true,"type":{"kind":"scalar","name":"boolean"}}],"kind":"mutation","name":"PublishItem","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item"}]},"inputs":[{"allowedPatchFields":["title"],"cardinality":"single","kind":"model","model":"Item","name":"item","operation":"update"}],"kind":"mutation","name":"RenameItem","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Parent","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"parentId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Child","relations":[{"fields":["parentId"],"name":"parent","onDelete":"delete","target":"Parent","targetFields":["id"]}],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","relations":[],"unique":[["title"]],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Tag","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"parentId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Child","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Parent","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Tag","version":1}]} as const;
 export type MutationName = 'PublishItem'|'RenameItem';
 export interface PendingMutation { ordinal:number; name:MutationName; phase:'queued'|'frozen'; prerequisites:{key:string;state:'ready'|'pending'|'failed'}[]; diverged?:boolean; }
 export interface Rejection { ordinal:number; code:string; [key:string]:unknown; }
@@ -169,41 +169,6 @@ export function encodeTagWhere(value:Partial<Tag>):Record<string,unknown> { retu
  ...(value.project !== undefined ? { project: value.project } : {}),
  ...(value.label !== undefined ? { label: value.label } : {}),
 }; }
-export interface Draft {
- id: string;
- title: string;
-}
-export interface DraftIdentity {
- id: string;
-}
-export interface DraftPatch {
- title?: string;
-}
-export interface DraftCreate {
- id: string;
- title: string;
-}
-export function decodeDraft(row:Record<string,unknown>):Draft { return {
- id: row.id as string,
- title: row.title as string,
-}; }
-export function decodeDraftIdentity(row:Record<string,unknown>):DraftIdentity { return {
- id: row.id as string,
-}; }
-export function encodeDraft(value:Draft):Record<string,unknown> { return {
- id: value.id,
- title: value.title,
-}; }
-export function encodeDraftIdentity(value:DraftIdentity):Record<string,unknown> { return {
- id: value.id,
-}; }
-export function encodeDraftPatch(value:DraftPatch):Record<string,unknown> { return {
- ...(value.title !== undefined ? { title: value.title } : {}),
-}; }
-export function encodeDraftWhere(value:Partial<Draft>):Record<string,unknown> { return {
- ...(value.id !== undefined ? { id: value.id } : {}),
- ...(value.title !== undefined ? { title: value.title } : {}),
-}; }
 export function encodeParentCreate(value:ParentCreate):Record<string,unknown> { return {
  id: value.id,
  title: value.title,
@@ -222,10 +187,6 @@ export function encodeTagCreate(value:TagCreate):Record<string,unknown> { return
  id: value.id,
  project: value.project,
  label: value.label,
-}; }
-export function encodeDraftCreate(value:DraftCreate):Record<string,unknown> { return {
- id: value.id,
- title: value.title,
 }; }
 function _copyParentWatch(value:Parent):Parent { return {
  id: value.id,
@@ -283,19 +244,6 @@ export class TagLiveModel extends TagModel<LivePort> {
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:TagIdentity):Promise<SyncState> { return (await this.port.syncState('Tag',encodeTagIdentity(identity))) as SyncState; }
 }
-function _copyDraftWatch(value:Draft):Draft { return {
- id: value.id,
- title: value.title,
-}; }
-export class DraftModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
- async get(identity:DraftIdentity):Promise<Draft|null> { const row=await this.port.read('Draft',encodeDraftIdentity(identity)); return row===null ? null : decodeDraft(row); }
- async query(options:{where?:Partial<Draft>;orderBy?:{field:'id' | 'title';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Draft[]> { return (await this.port.querySpec('Draft',{filter:encodeDraftWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeDraft); }
-}
-export class DraftLiveModel extends DraftModel<LivePort> {
- watch(options:{where?:Partial<Draft>}, listener:(rows:Draft[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watchDecoded('Draft',encodeDraftWhere(options.where??{}),decodeDraft,_copyDraftWatch,listener,onError); }
- /** This record's sync state: its pending mutations and retained rejections. Local only. */
- async syncState(identity:DraftIdentity):Promise<SyncState> { return (await this.port.syncState('Draft',encodeDraftIdentity(identity))) as SyncState; }
-}
 export type ParentUpdate<K extends keyof ParentPatch = keyof ParentPatch> = ParentIdentity & Partial<Pick<ParentPatch, K>>;
 export type ParentDelete = ParentIdentity;
 export type ChildUpdate<K extends keyof ChildPatch = keyof ChildPatch> = ChildIdentity & Partial<Pick<ChildPatch, K>>;
@@ -304,8 +252,6 @@ export type ItemUpdate<K extends keyof ItemPatch = keyof ItemPatch> = ItemIdenti
 export type ItemDelete = ItemIdentity;
 export type TagUpdate<K extends keyof TagPatch = keyof TagPatch> = TagIdentity & Partial<Pick<TagPatch, K>>;
 export type TagDelete = TagIdentity;
-export type DraftUpdate<K extends keyof DraftPatch = keyof DraftPatch> = DraftIdentity & Partial<Pick<DraftPatch, K>>;
-export type DraftDelete = DraftIdentity;
 export interface FindItemInput {
  id: string;
 }
@@ -367,10 +313,10 @@ export function makeQueries(port:CallPort) { return {
  findItem: (args:FindItemInput, options?:FindItemOptions):Promise<FindItemOutput> => port.invokeQuery('FindItem',1,encodeFindItemInput(args),decodeFindItemOutput,options),
  projectItems: (args:ProjectItemsInput, options?:ProjectItemsOptions):Promise<ProjectItemsOutput> => port.invokeQuery('ProjectItems',1,encodeProjectItemsInput(args),decodeProjectItemsOutput,options),
 }; }
-export interface LiveModels { parent:ParentLiveModel; child:ChildLiveModel; item:ItemLiveModel; tag:TagLiveModel; draft:DraftLiveModel; }
-export function liveModels(port:LivePort):LiveModels { return { parent:new ParentLiveModel(port), child:new ChildLiveModel(port), item:new ItemLiveModel(port), tag:new TagLiveModel(port), draft:new DraftLiveModel(port) }; }
-export interface TxModels { parent:ParentModel; child:ChildModel; item:ItemModel; tag:TagModel; draft:DraftModel; }
-export function txModels(port:ReadPort):TxModels { return { parent:new ParentModel(port), child:new ChildModel(port), item:new ItemModel(port), tag:new TagModel(port), draft:new DraftModel(port) }; }
+export interface LiveModels { parent:ParentLiveModel; child:ChildLiveModel; item:ItemLiveModel; tag:TagLiveModel; }
+export function liveModels(port:LivePort):LiveModels { return { parent:new ParentLiveModel(port), child:new ChildLiveModel(port), item:new ItemLiveModel(port), tag:new TagLiveModel(port) }; }
+export interface TxModels { parent:ParentModel; child:ChildModel; item:ItemModel; tag:TagModel; }
+export function txModels(port:ReadPort):TxModels { return { parent:new ParentModel(port), child:new ChildModel(port), item:new ItemModel(port), tag:new TagModel(port) }; }
 export interface FetchPort { fetchModel<T>(model:string,version:number,identity:object,decode:(row:Record<string,unknown>)=>T,options?:{store?:boolean}):Promise<T|null>; }
 /** One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes. */
 export interface FetchModels {
@@ -378,14 +324,12 @@ export interface FetchModels {
  child(identity:ChildIdentity, options?:{store?:boolean}):Promise<Child|null>;
  item(identity:ItemIdentity, options?:{store?:boolean}):Promise<Item|null>;
  tag(identity:TagIdentity, options?:{store?:boolean}):Promise<Tag|null>;
- draft(identity:DraftIdentity, options?:{store?:boolean}):Promise<Draft|null>;
 }
 export function fetchModels(port:FetchPort):FetchModels { return {
  parent:(identity,options)=>port.fetchModel('Parent',1,encodeParentIdentity(identity),decodeParent,options),
  child:(identity,options)=>port.fetchModel('Child',1,encodeChildIdentity(identity),decodeChild,options),
  item:(identity,options)=>port.fetchModel('Item',1,encodeItemIdentity(identity),decodeItem,options),
  tag:(identity,options)=>port.fetchModel('Tag',1,encodeTagIdentity(identity),decodeTag,options),
- draft:(identity,options)=>port.fetchModel('Draft',1,encodeDraftIdentity(identity),decodeDraft,options),
 }; }
 export class GeneratedTransaction { readonly transaction:ReadPort; readonly models:TxModels; constructor(transaction:ReadPort) { this.transaction=transaction; this.models=txModels(transaction); } }
 export interface SubmitMutationPort { submitMutation<T>(name:string,version:number,input:object,decode:(value:unknown)=>T):Promise<Call<T>>; }

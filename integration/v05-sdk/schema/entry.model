@@ -1,4 +1,3 @@
-model Draft { id String text String @@id(id) }
 model Entry { id String text String @@id(id) @@bootstrap }
 model Snapshot { id String text String @@id(id) }
 mutation Publish(entry Entry.create, call String) { entry Entry }

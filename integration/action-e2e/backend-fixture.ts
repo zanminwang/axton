@@ -33,17 +33,6 @@ export async function createFixture() {
   const queryExecutions = { todoPage: 0, countTodos: 0 };
   let failQueries = false;
   let queryGate: (() => Promise<void>) | undefined;
-  /** Every PublishEntry argument exactly as the handler received it. */
-  const publishes: {
-    entry: { id: string; title: string; body: string };
-    media: { id: string; entryId: string; url: string }[];
-    placement: {
-      id: string;
-      entryId: string;
-      journal: string;
-      position: number;
-    };
-  }[] = [];
   let rejectPublish = false;
   /** UpdateTodo attempts left that end in a real serialization failure (#202). */
   let conflictUpdates = 0;
@@ -162,7 +151,6 @@ export async function createFixture() {
     // so the rejection must roll those back.
     async publishEntry({ ctx, args }) {
       handlerCalls++;
-      publishes.push(structuredClone(args));
       await ctx.tx.query(
         "INSERT INTO action_e2e_entry(id,title,body) VALUES($1,$2,$3)",
         [args.entry.id, args.entry.title, args.entry.body],
@@ -284,9 +272,6 @@ export async function createFixture() {
       }
       return rows;
     },
-    // No Composition Loader: Compositions are device-only (#187). The backend
-    // stores none, publishes none, and would refuse to start if a Mutation
-    // named one on the wire.
     async entry({ ids, tx }) {
       const rows: ({ id: string; title: string; body: string } | null)[] = [];
       for (const { id } of ids) {
@@ -416,8 +401,6 @@ export async function createFixture() {
     set failQueries(value: boolean) {
       failQueries = value;
     },
-    /** PublishEntry arguments in arrival order. */
-    publishes,
     /** While set, PublishEntry rejects with `publish.rejected` after partial inserts, which its transaction rolls back. */
     set rejectPublish(value: boolean) {
       rejectPublish = value;

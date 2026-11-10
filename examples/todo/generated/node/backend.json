@@ -140,10 +140,6 @@
   ],
   "deprecations": [],
   "inverses": [],
-  "loaders": [
-    "User",
-    "Todo"
-  ],
   "models": [
     {
       "enums": [],

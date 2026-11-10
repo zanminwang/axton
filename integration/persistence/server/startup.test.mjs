@@ -101,7 +101,7 @@ test("loader registration names every retained model version and a function mean
   register([], { task: async () => [] });
 });
 
-test("only actual5 native entrypoints are exported; startup preserves device-only and accessor validation", () => {
+test("only actual5 native entrypoints are exported; startup requires every Loader and validates accessors", () => {
   for (const name of [
     "processRead05",
     "processDelivery05",
@@ -147,48 +147,28 @@ test("only actual5 native entrypoints are exported; startup preserves device-onl
     /Unknown loader typo/,
   );
   const draft = { ...schema.models[0], name: "Draft" };
-  assert.doesNotThrow(() =>
-    create({
-      ...config,
-      schema: { ...schema, models: [...schema.models, draft] },
-    }),
-  );
+  // Every Model has a Loader: one left out fails startup, naming the Model.
   assert.throws(
     () =>
       create({
         ...config,
-        schema: {
-          ...schema,
-          models: [...schema.models, { ...draft, name: "task" }],
-        },
+        schema: { ...schema, models: [...schema.models, draft] },
       }),
-    /both generate the accessor task/,
+    /Missing loader draft for Draft v1/,
   );
-  const action = {
-    name: "Write",
-    version: 1,
-    kind: "mutation",
-    inputs: [
-      {
-        kind: "model",
-        name: "draft",
-        model: "Draft",
-        operation: "create",
-        cardinality: "single",
-      },
-    ],
-    outputs: [],
-  };
   assert.throws(
     () =>
       create(
         {
           ...config,
-          schema: { ...schema, models: [draft], actions: [action] },
+          schema: {
+            ...schema,
+            models: [...schema.models, { ...draft, name: "task" }],
+          },
         },
-        {},
+        { task: async () => [] },
       ),
-    /which has no Loader/,
+    /both generate the accessor task/,
   );
 });
 test("Mutation registration retains every exact version; a function means v1 only", () => {

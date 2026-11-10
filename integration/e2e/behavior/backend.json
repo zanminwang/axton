@@ -287,13 +287,6 @@
   ],
   "deprecations": [],
   "inverses": [],
-  "loaders": [
-    "Parent",
-    "Child",
-    "Item",
-    "Tag",
-    "Draft"
-  ],
   "models": [
     {
       "enums": [],
@@ -327,32 +320,6 @@
         "id"
       ],
       "name": "Child",
-      "version": 1
-    },
-    {
-      "enums": [],
-      "fields": [
-        {
-          "name": "id",
-          "nullable": false,
-          "type": {
-            "kind": "scalar",
-            "name": "string"
-          }
-        },
-        {
-          "name": "title",
-          "nullable": false,
-          "type": {
-            "kind": "scalar",
-            "name": "string"
-          }
-        }
-      ],
-      "identity": [
-        "id"
-      ],
-      "name": "Draft",
       "version": 1
     },
     {
@@ -891,33 +858,6 @@
         "relations": [],
         "unique": [],
         "version": 1
-      },
-      {
-        "fields": [
-          {
-            "name": "id",
-            "nullable": false,
-            "type": {
-              "kind": "scalar",
-              "name": "string"
-            }
-          },
-          {
-            "name": "title",
-            "nullable": false,
-            "type": {
-              "kind": "scalar",
-              "name": "string"
-            }
-          }
-        ],
-        "identity": [
-          "id"
-        ],
-        "name": "Draft",
-        "relations": [],
-        "unique": [],
-        "version": 1
       }
     ],
     "prerequisites": [],
@@ -955,32 +895,6 @@
           "id"
         ],
         "name": "Child",
-        "version": 1
-      },
-      {
-        "enums": [],
-        "fields": [
-          {
-            "name": "id",
-            "nullable": false,
-            "type": {
-              "kind": "scalar",
-              "name": "string"
-            }
-          },
-          {
-            "name": "title",
-            "nullable": false,
-            "type": {
-              "kind": "scalar",
-              "name": "string"
-            }
-          }
-        ],
-        "identity": [
-          "id"
-        ],
-        "name": "Draft",
         "version": 1
       },
       {

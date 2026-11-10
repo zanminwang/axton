@@ -5,7 +5,7 @@ import 'package:axton/axton.dart';
 export 'package:axton/axton.dart' show AxtonDiagnostics, AxtonTraceRecord, RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
 class Present<T> { final T value; const Present(this.value); }
 abstract interface class _DartActionRecord { Map<String,dynamic> toRecord(); }
-final Map<String,dynamic> schema = jsonDecode('{"actions":[{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"FindItem","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"project","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"ProjectItems","outputEnums":[],"outputs":[{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"items","source":"handlerIdentity"},{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Tag"},"kind":"model","model":"Tag","modelReadVersion":1,"name":"tags","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Item","name":"item","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"private","nullable":false,"required":true,"type":{"kind":"scalar","name":"boolean"}}],"kind":"mutation","name":"PublishItem","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item"}]},"inputs":[{"allowedPatchFields":["title"],"cardinality":"single","kind":"model","model":"Item","name":"item","operation":"update"}],"kind":"mutation","name":"RenameItem","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Parent","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"parentId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Child","relations":[{"fields":["parentId"],"name":"parent","onDelete":"delete","target":"Parent","targetFields":["id"]}],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","relations":[],"unique":[["title"]],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Tag","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"parentId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Child","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Parent","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Tag","version":1}]}') as Map<String,dynamic>;
+final Map<String,dynamic> schema = jsonDecode('{"actions":[{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"FindItem","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"project","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"ProjectItems","outputEnums":[],"outputs":[{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"items","source":"handlerIdentity"},{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Tag"},"kind":"model","model":"Tag","modelReadVersion":1,"name":"tags","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Item","name":"item","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"private","nullable":false,"required":true,"type":{"kind":"scalar","name":"boolean"}}],"kind":"mutation","name":"PublishItem","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item"}]},"inputs":[{"allowedPatchFields":["title"],"cardinality":"single","kind":"model","model":"Item","name":"item","operation":"update"}],"kind":"mutation","name":"RenameItem","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Item"},"kind":"model","model":"Item","modelReadVersion":1,"name":"item","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Parent","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"parentId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Child","relations":[{"fields":["parentId"],"name":"parent","onDelete":"delete","target":"Parent","targetFields":["id"]}],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","relations":[],"unique":[["title"]],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Tag","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"parentId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Child","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Parent","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"project","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Tag","version":1}]}') as Map<String,dynamic>;
 /// What a fresh create of Parent accepts: a complete [Parent], or a [ParentCreate] that may omit fields with creation defaults.
 abstract interface class ParentCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Parent implements ParentCreateInput {
@@ -127,34 +127,6 @@ class TagIdentity {
  id: row['id'] as String,
  );
 }
-/// What a fresh create of Draft accepts: a complete [Draft], or a [DraftCreate] that may omit fields with creation defaults.
-abstract interface class DraftCreateInput { Map<String,dynamic> toCreateRecord(); }
-class Draft implements DraftCreateInput {
- final String id;
- final String title;
- const Draft({required this.id,required this.title});
- Map<String,dynamic> toRecord() => {
- 'id': id,
- 'title': title,
- };
- factory Draft.fromRecord(Map<String,dynamic> row) => Draft(
- id: row['id'] as String,
- title: row['title'] as String,
- );
- @override
- Map<String,dynamic> toCreateRecord() => toRecord();
- DraftIdentity get identity => DraftIdentity(id: id);
-}
-class DraftIdentity {
- final String id;
- const DraftIdentity({required this.id});
- Map<String,dynamic> toRecord() => {
- 'id': id,
- };
- factory DraftIdentity.fromRecord(Map<String,dynamic> row) => DraftIdentity(
- id: row['id'] as String,
- );
-}
 class ParentCreate implements ParentCreateInput {
  final String id;
  final String title;
@@ -199,16 +171,6 @@ class TagCreate implements TagCreateInput {
  'id': id,
  'project': project,
  'label': label,
- };
-}
-class DraftCreate implements DraftCreateInput {
- final String id;
- final String title;
- const DraftCreate({required this.id,required this.title});
- @override
- Map<String,dynamic> toCreateRecord() => {
- 'id': id,
- 'title': title,
  };
 }
 class ParentFilter {
@@ -261,17 +223,6 @@ class TagFilter {
 }
 enum TagOrderField {byId('id'),byProject('project'),byLabel('label'); final String wireName; const TagOrderField(this.wireName);}
 class TagOrder { final TagOrderField field; final bool descending; const TagOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
-class DraftFilter {
- final Present<String>? id;
- final Present<String>? title;
- const DraftFilter({this.id,this.title});
- Map<String,dynamic> toRecord()=>{
- if(id!=null)'id':id!.value,
- if(title!=null)'title':title!.value,
-};
-}
-enum DraftOrderField {byId('id'),byTitle('title'); final String wireName; const DraftOrderField(this.wireName);}
-class DraftOrder { final DraftOrderField field; final bool descending; const DraftOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
 Parent _copyParentWatch(Parent value) => value;
 class ParentModel { final ReadPort port; ParentModel(this.port);
  Future<Parent?> get(ParentIdentity identity) async { final row=await port.read('Parent',identity.toRecord()); return row == null ? null : Parent.fromRecord(row); }
@@ -312,16 +263,6 @@ class TagLiveModel extends TagModel { final Client client; TagLiveModel(this.cli
  Stream<List<Tag>> watch({TagFilter? where}) => client.watchDecoded<Tag>('Tag', where:where?.toRecord()??{},decode:Tag.fromRecord,copy:_copyTagWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(TagIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Tag', identity.toRecord()));
-}
-Draft _copyDraftWatch(Draft value) => value;
-class DraftModel { final ReadPort port; DraftModel(this.port);
- Future<Draft?> get(DraftIdentity identity) async { final row=await port.read('Draft',identity.toRecord()); return row == null ? null : Draft.fromRecord(row); }
- Future<List<Draft>> query({DraftFilter? where,List<DraftOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Draft',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Draft.fromRecord).toList();
-}
-class DraftLiveModel extends DraftModel { final Client client; DraftLiveModel(this.client) : super(client);
- Stream<List<Draft>> watch({DraftFilter? where}) => client.watchDecoded<Draft>('Draft', where:where?.toRecord()??{},decode:Draft.fromRecord,copy:_copyDraftWatch);
- /// This record's sync state: its pending mutations and retained rejections. Local only.
- Future<SyncState> syncState(DraftIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Draft', identity.toRecord()));
 }
 /// Public Action lifecycle types are owned by the SDK.
 typedef ParentDelete = ParentIdentity;
@@ -368,16 +309,6 @@ class TagUpdate implements _DartActionRecord {
  'id': _dartActionEncode(id),
  if (project != null) 'project': _dartActionEncode(project!.value),
  if (label != null) 'label': _dartActionEncode(label!.value),
- };
-}
-typedef DraftDelete = DraftIdentity;
-class DraftUpdate implements _DartActionRecord {
- final String id;
- final Present<String>? title;
- const DraftUpdate({required this.id,this.title});
- Map<String,dynamic> toRecord() => {
- 'id': _dartActionEncode(id),
- if (title != null) 'title': _dartActionEncode(title!.value),
  };
 }
 class FindItemHandlerInput implements _DartActionRecord {
@@ -549,9 +480,6 @@ dynamic _dartActionEncode(dynamic value) {
  if (value is Tag) return value.toRecord();
  if (value is TagCreateInput) return value.toCreateRecord();
  if (value is TagIdentity) return value.toRecord();
- if (value is Draft) return value.toRecord();
- if (value is DraftCreateInput) return value.toCreateRecord();
- if (value is DraftIdentity) return value.toRecord();
  return value;
 }
 /// Named Mutations use the same owned local scope on client and transaction.
@@ -567,14 +495,12 @@ class LiveModels { final Client port; LiveModels(this.port);
  late final ChildLiveModel child = ChildLiveModel(port);
  late final ItemLiveModel item = ItemLiveModel(port);
  late final TagLiveModel tag = TagLiveModel(port);
- late final DraftLiveModel draft = DraftLiveModel(port);
 }
 class TxModels { final ReadPort port; TxModels(this.port);
  late final ParentModel parent = ParentModel(port);
  late final ChildModel child = ChildModel(port);
  late final ItemModel item = ItemModel(port);
  late final TagModel tag = TagModel(port);
- late final DraftModel draft = DraftModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);
@@ -582,7 +508,6 @@ class FetchModels { final Client _client; FetchModels(this._client);
  Future<Child?> child(ChildIdentity identity, {bool store = true}) => _client.fetchModel('Child', 1, identity.toRecord(), Child.fromRecord, store: store);
  Future<Item?> item(ItemIdentity identity, {bool store = true}) => _client.fetchModel('Item', 1, identity.toRecord(), Item.fromRecord, store: store);
  Future<Tag?> tag(TagIdentity identity, {bool store = true}) => _client.fetchModel('Tag', 1, identity.toRecord(), Tag.fromRecord, store: store);
- Future<Draft?> draft(DraftIdentity identity, {bool store = true}) => _client.fetchModel('Draft', 1, identity.toRecord(), Draft.fromRecord, store: store);
 }
 class GeneratedTransaction { final Transaction transaction; late final TxModels models=TxModels(transaction); GeneratedTransaction(this.transaction); }
 class TransactionMutations {

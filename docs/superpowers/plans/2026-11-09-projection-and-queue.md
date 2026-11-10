@@ -170,9 +170,9 @@ Uses are counted by call site. Routes: *cache* is `common05::cached` (unprotecte
 
 **Files:** `crates/server/src/lib.rs`, `settlement.rs`; `packages/backend/server/api/backend.mts`, `bindings/effects.mts`; `crates/compiler/src/emit.rs` (generated backend types); `integration/persistence/server/startup.test.mjs`, `integration/action-e2e`, `integration/e2e/parity*`.
 
-- [ ] Test: `createBackend` fails at startup for a Model without a Loader and names it.
-- [ ] Make Loaders required in the generated backend types and in `createBackend`; delete `Config.loaders`, the per-call device-only refusals (`settlement.rs:15`, `:19`, `:68`), the startup check for Mutations and Queries that name a Loader-less Model, and `LOADER_UNREGISTERED`.
-- [ ] Delete the device-only cases in the integration suites.
+- [x] Test: `createBackend` fails at startup for a Model without a Loader and names it (`integration/persistence/server/startup.test.mjs`).
+- [x] Make Loaders required in the generated backend types and in `createBackend`; delete `Config.loaders`, the per-call device-only refusals (`settlement.rs:15`, `:19`, `:68`), the startup check for Mutations and Queries that name a Loader-less Model, and `LOADER_UNREGISTERED`. The materialization ID reads only the schema. `createBackend` builds the Loader table over every Model, so a missing one fails as `Missing loader <key> for <Model> v<n>`; the effect collectors lose their `loaded` set, and the generated descriptor its `loaders` list.
+- [x] Delete the device-only cases in the integration suites. Fixture Models without a Loader are removed from their schemas and histories: `Composition` (`integration/action-e2e`), `Draft` (`integration/e2e/behavior`, `integration/v05-sdk` and its `upgraded` and `versioned` copies). Type-level fixtures gain the Loaders they left out (`integration/action-contract/positive.ts`, `integration/v05-sdk/backend-positive.ts` and `versioned/backend-positive.ts`); the parity device-only case had gone in Task 1.
 
 ## Task 6: Docs
 

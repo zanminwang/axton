@@ -299,12 +299,11 @@ type Declared = { entry: Entry; identity: Identity };
 const LONE_SURROGATE = /\p{Surrogate}/u;
 /**
  * What every collector over one configuration shares: the validated Models
- * and the per-call checks that refuse a device-only Model, a malformed
- * reference or a blank Stream name.
+ * and the per-call checks that refuse a malformed reference or a blank
+ * Stream name.
  */
 type Declarations = {
   entries: readonly Entry[];
-  publishable(model: string, caller: string): void;
   /** Resolves a mixed list whole, so a caught failure declares nothing. */
   list(records: unknown, caller: string): Declared[];
   streamName(name: unknown): void;
@@ -312,16 +311,9 @@ type Declarations = {
 function declarationsOf(
   models: readonly EffectModel[],
   enums: readonly EffectEnum[],
-  loaded: ReadonlySet<string> | undefined,
 ): Declarations {
   const entries = entriesOf(models, enums);
   const byName = new Map(entries.map((entry) => [entry.name, entry]));
-  const publishable = (model: string, caller: string) => {
-    if (loaded && !loaded.has(model))
-      throw new Error(
-        `${caller}: Model ${model} has no Loader, so it is device-only and cannot be published`,
-      );
-  };
   /** Resolves one explicit reference; a raw identity names no Model and fails. */
   const reference = (value: unknown, caller: string): Declared => {
     const model = (value as { model?: unknown } | null)?.model;
@@ -335,7 +327,6 @@ function declarationsOf(
       );
     const entry = byName.get(model);
     if (!entry) throw new Error(`${caller}: unknown Model ${model}`);
-    publishable(model, caller);
     return {
       entry,
       identity: entry.snapshot((value as RecordRef).identity, caller),
@@ -343,7 +334,6 @@ function declarationsOf(
   };
   return {
     entries,
-    publishable,
     list(records, caller) {
       if (!Array.isArray(records))
         throw new Error(`${caller}: expected an array of record references`);
@@ -370,22 +360,12 @@ const closed = (caller: string) =>
  * Validates `models` (and the `enums` their identities use) once and answers
  * a factory of callback-scoped collectors. A malformed configuration throws
  * here, at startup.
- *
- * `loaded` names the Models with a registered Loader. Any other Model is
- * device-only ([#187](https://github.com/zanminwang/axton/issues/187)): it is
- * never published, so every declaration naming it throws at the call.
- * Without `loaded`, every Model may be declared.
  */
 export function effectsFor(
   models: readonly EffectModel[],
   enums: readonly EffectEnum[] = [],
-  loaded?: ReadonlySet<string>,
 ): () => EffectCollector {
-  const { entries, publishable, list, streamName } = declarationsOf(
-    models,
-    enums,
-    loaded,
-  );
+  const { entries, list, streamName } = declarationsOf(models, enums);
   return () => {
     let open = true;
     const declarations: StreamIntent[] = [];
@@ -395,7 +375,6 @@ export function effectsFor(
     const canonical = {
       guard: <T,>(body: () => T) => body(),
       entries,
-      publishable,
       list,
       name: streamName,
       check: assertOpen,
@@ -422,9 +401,8 @@ export function effectsFor(
 export function createEffects(
   models: readonly EffectModel[],
   enums: readonly EffectEnum[] = [],
-  loaded?: ReadonlySet<string>,
 ): EffectCollector {
-  return effectsFor(models, enums, loaded)();
+  return effectsFor(models, enums)();
 }
 
 /** JSON with every object's keys in `Array.prototype.sort` order, as `axton_core::canonical_json` spells it. */
@@ -449,14 +427,9 @@ class EnrollmentOverflow extends Error {}
 function trackingEffectsFor(
   models: readonly EffectModel[],
   enums: readonly EffectEnum[],
-  loaded: ReadonlySet<string> | undefined,
   page: boolean,
 ): () => LoadEffectCollector {
-  const { entries, publishable, list, streamName } = declarationsOf(
-    models,
-    enums,
-    loaded,
-  );
+  const { entries, list, streamName } = declarationsOf(models, enums);
   return () => {
     let open = true;
     let failed: LoadEffectFailure | undefined;
@@ -483,7 +456,6 @@ function trackingEffectsFor(
     const canonical = {
       guard: declare,
       entries,
-      publishable,
       list,
       name: (name: unknown) => {
         streamName(name);
@@ -549,25 +521,22 @@ function trackingEffectsFor(
 export function loadEffectsFor(
   models: readonly EffectModel[],
   enums: readonly EffectEnum[] = [],
-  loaded?: ReadonlySet<string>,
 ): () => LoadEffectCollector {
-  return trackingEffectsFor(models, enums, loaded, true);
+  return trackingEffectsFor(models, enums, true);
 }
 
 /** Full Bootstrap enrollment precedes native finite-plan paging, not one read page. */
 export function bootstrapEffectsFor(
   models: readonly EffectModel[],
   enums: readonly EffectEnum[] = [],
-  loaded?: ReadonlySet<string>,
 ): () => LoadEffectCollector {
-  return trackingEffectsFor(models, enums, loaded, false);
+  return trackingEffectsFor(models, enums, false);
 }
 
 /** One Load collector over `models`, validating them first. */
 export function createLoadEffects(
   models: readonly EffectModel[],
   enums: readonly EffectEnum[] = [],
-  loaded?: ReadonlySet<string>,
 ): LoadEffectCollector {
-  return loadEffectsFor(models, enums, loaded)();
+  return loadEffectsFor(models, enums)();
 }

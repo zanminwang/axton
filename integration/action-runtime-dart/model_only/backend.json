@@ -2,9 +2,6 @@
   "actions": [],
   "deprecations": [],
   "inverses": [],
-  "loaders": [
-    "Item"
-  ],
   "models": [
     {
       "enums": [],

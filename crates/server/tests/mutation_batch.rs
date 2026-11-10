@@ -68,7 +68,7 @@ fn action() -> Value {
 }
 /// The backend at a projection generation; a new generation is an upgrade.
 fn config(generation: &str) -> Config {
-    Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[action()]},"mutations":[],"loaders":[],"protocol5":{"projectionGeneration":generation}})).unwrap()
+    Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[action()]},"mutations":[],"protocol5":{"projectionGeneration":generation}})).unwrap()
 }
 fn materialization(c: &Config) -> String {
     v05::materialization_id(
@@ -209,7 +209,7 @@ fn rekeyed() -> Config {
     let old =
         json!({"name":"Todo","version":1,"identity":["id"],"fields":[field("id"),field("title")]});
     let write = json!({"name":"Write","version":1,"kind":"mutation","inputs":[{"kind":"model","name":"todo","model":"Todo","operation":"create","cardinality":"single"}],"outputs":[],"input":{"models":[old],"enums":[]}});
-    Config::decode(json!({"schema":{"enums":[],"models":[{"name":"Todo","version":2,"identity":["code"],"fields":[field("code"),field("title")]}],"actions":[action(),write]},"mutations":[],"loaders":["Todo"],"protocol5":{"projectionGeneration":"1"}})).unwrap()
+    Config::decode(json!({"schema":{"enums":[],"models":[{"name":"Todo","version":2,"identity":["code"],"fields":[field("code"),field("title")]}],"actions":[action(),write]},"mutations":[],"protocol5":{"projectionGeneration":"1"}})).unwrap()
 }
 /// The events logged on this thread, each as its name and fields.
 #[derive(Clone, Default)]

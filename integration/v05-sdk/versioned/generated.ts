@@ -3,46 +3,11 @@ import type { Call, QueryOptions } from './client.ts';
 export interface ReadPort { read(model:string,identity:object):Promise<Record<string,unknown>|null>; querySpec(model:string,query:object):Promise<Record<string,unknown>[]>; related(model:string,identity:object,relation:string):Promise<Record<string,unknown>|null>; referencing(model:string,identity:object,source:string,relation:string):Promise<Record<string,unknown>[]>; }
 export interface LivePort extends ReadPort { watch(model:string,where:Record<string,unknown>,listener:(rows:Record<string,unknown>[])=>void,onError?:(error:unknown)=>void):()=>void; watchDecoded<T>(model:string,where:Record<string,unknown>,decode:(row:Record<string,unknown>)=>T,copy:(value:T)=>T,listener:(rows:T[])=>void,onError?:(error:unknown)=>void):()=>void; syncState(model:string,identity:object):Promise<unknown>; }
 export interface CallPort { invokeQuery<T>(name:string,version:number,args:object,decode:(value:unknown)=>T,options?:QueryOptions):Promise<T>; }
-export const schema = {"actions":[{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Find","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Find","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":2,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":2},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Peek","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Snapshot"},"kind":"model","model":"Snapshot","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"call","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"Publish","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"call","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"Publish","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":2,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":2}],"clientPolicies":[],"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","relations":[],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":2},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Draft","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":2},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","version":1}]} as const;
+export const schema = {"actions":[{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Find","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Find","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":2,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":2},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"Peek","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Snapshot"},"kind":"model","model":"Snapshot","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"call","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"Publish","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"create"},{"cardinality":"single","kind":"value","list":false,"name":"call","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"Publish","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":2,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":2}],"clientPolicies":[],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":2},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":2},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Snapshot","version":1}]} as const;
 export type MutationName = 'Publish';
 export interface PendingMutation { ordinal:number; name:MutationName; phase:'queued'|'frozen'; prerequisites:{key:string;state:'ready'|'pending'|'failed'}[]; diverged?:boolean; }
 export interface Rejection { ordinal:number; code:string; [key:string]:unknown; }
 export interface SyncState { pending:PendingMutation[]; rejections:Rejection[]; }
-export interface Draft {
- id: string;
- text: string;
-}
-export interface DraftIdentity {
- id: string;
-}
-export interface DraftPatch {
- text?: string;
-}
-export interface DraftCreate {
- id: string;
- text: string;
-}
-export function decodeDraft(row:Record<string,unknown>):Draft { return {
- id: row.id as string,
- text: row.text as string,
-}; }
-export function decodeDraftIdentity(row:Record<string,unknown>):DraftIdentity { return {
- id: row.id as string,
-}; }
-export function encodeDraft(value:Draft):Record<string,unknown> { return {
- id: value.id,
- text: value.text,
-}; }
-export function encodeDraftIdentity(value:DraftIdentity):Record<string,unknown> { return {
- id: value.id,
-}; }
-export function encodeDraftPatch(value:DraftPatch):Record<string,unknown> { return {
- ...(value.text !== undefined ? { text: value.text } : {}),
-}; }
-export function encodeDraftWhere(value:Partial<Draft>):Record<string,unknown> { return {
- ...(value.id !== undefined ? { id: value.id } : {}),
- ...(value.text !== undefined ? { text: value.text } : {}),
-}; }
 export interface Entry {
  id: string;
  text: string;
@@ -120,10 +85,6 @@ export function encodeSnapshotWhere(value:Partial<Snapshot>):Record<string,unkno
  ...(value.id !== undefined ? { id: value.id } : {}),
  ...(value.text !== undefined ? { text: value.text } : {}),
 }; }
-export function encodeDraftCreate(value:DraftCreate):Record<string,unknown> { return {
- id: value.id,
- text: value.text,
-}; }
 export function encodeEntryCreate(value:EntryCreate):Record<string,unknown> { return {
  id: value.id,
  text: value.text,
@@ -133,19 +94,6 @@ export function encodeSnapshotCreate(value:SnapshotCreate):Record<string,unknown
  id: value.id,
  text: value.text,
 }; }
-function _copyDraftWatch(value:Draft):Draft { return {
- id: value.id,
- text: value.text,
-}; }
-export class DraftModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
- async get(identity:DraftIdentity):Promise<Draft|null> { const row=await this.port.read('Draft',encodeDraftIdentity(identity)); return row===null ? null : decodeDraft(row); }
- async query(options:{where?:Partial<Draft>;orderBy?:{field:'id' | 'text';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Draft[]> { return (await this.port.querySpec('Draft',{filter:encodeDraftWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeDraft); }
-}
-export class DraftLiveModel extends DraftModel<LivePort> {
- watch(options:{where?:Partial<Draft>}, listener:(rows:Draft[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watchDecoded('Draft',encodeDraftWhere(options.where??{}),decodeDraft,_copyDraftWatch,listener,onError); }
- /** This record's sync state: its pending mutations and retained rejections. Local only. */
- async syncState(identity:DraftIdentity):Promise<SyncState> { return (await this.port.syncState('Draft',encodeDraftIdentity(identity))) as SyncState; }
-}
 function _copyEntryWatch(value:Entry):Entry { return {
  id: value.id,
  text: value.text,
@@ -173,8 +121,6 @@ export class SnapshotLiveModel extends SnapshotModel<LivePort> {
  /** This record's sync state: its pending mutations and retained rejections. Local only. */
  async syncState(identity:SnapshotIdentity):Promise<SyncState> { return (await this.port.syncState('Snapshot',encodeSnapshotIdentity(identity))) as SyncState; }
 }
-export type DraftUpdate<K extends keyof DraftPatch = keyof DraftPatch> = DraftIdentity & Partial<Pick<DraftPatch, K>>;
-export type DraftDelete = DraftIdentity;
 export type EntryUpdate<K extends keyof EntryPatch = keyof EntryPatch> = EntryIdentity & Partial<Pick<EntryPatch, K>>;
 export type EntryDelete = EntryIdentity;
 export type SnapshotUpdate<K extends keyof SnapshotPatch = keyof SnapshotPatch> = SnapshotIdentity & Partial<Pick<SnapshotPatch, K>>;
@@ -226,19 +172,17 @@ export function makeQueries(port:CallPort) { return {
  find: (args:FindInput, options?:FindOptions):Promise<FindOutput> => port.invokeQuery('Find',2,encodeFindInput(args),decodeFindOutput,options),
  peek: (args:PeekInput, options?:PeekOptions):Promise<PeekOutput> => port.invokeQuery('Peek',1,encodePeekInput(args),decodePeekOutput,options),
 }; }
-export interface LiveModels { draft:DraftLiveModel; entry:EntryLiveModel; snapshot:SnapshotLiveModel; }
-export function liveModels(port:LivePort):LiveModels { return { draft:new DraftLiveModel(port), entry:new EntryLiveModel(port), snapshot:new SnapshotLiveModel(port) }; }
-export interface TxModels { draft:DraftModel; entry:EntryModel; snapshot:SnapshotModel; }
-export function txModels(port:ReadPort):TxModels { return { draft:new DraftModel(port), entry:new EntryModel(port), snapshot:new SnapshotModel(port) }; }
+export interface LiveModels { entry:EntryLiveModel; snapshot:SnapshotLiveModel; }
+export function liveModels(port:LivePort):LiveModels { return { entry:new EntryLiveModel(port), snapshot:new SnapshotLiveModel(port) }; }
+export interface TxModels { entry:EntryModel; snapshot:SnapshotModel; }
+export function txModels(port:ReadPort):TxModels { return { entry:new EntryModel(port), snapshot:new SnapshotModel(port) }; }
 export interface FetchPort { fetchModel<T>(model:string,version:number,identity:object,decode:(row:Record<string,unknown>)=>T,options?:{store?:boolean}):Promise<T|null>; }
 /** One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes. */
 export interface FetchModels {
- draft(identity:DraftIdentity, options?:{store?:boolean}):Promise<Draft|null>;
  entry(identity:EntryIdentity, options?:{store?:boolean}):Promise<Entry|null>;
  snapshot(identity:SnapshotIdentity, options?:{store?:boolean}):Promise<Snapshot|null>;
 }
 export function fetchModels(port:FetchPort):FetchModels { return {
- draft:(identity,options)=>port.fetchModel('Draft',1,encodeDraftIdentity(identity),decodeDraft,options),
  entry:(identity,options)=>port.fetchModel('Entry',2,encodeEntryIdentity(identity),decodeEntry,options),
  snapshot:(identity,options)=>port.fetchModel('Snapshot',1,encodeSnapshotIdentity(identity),decodeSnapshot,options),
 }; }

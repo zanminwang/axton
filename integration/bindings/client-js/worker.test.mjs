@@ -17,6 +17,27 @@ const schema = JSON.parse(
     "utf8",
   ),
 );
+schema.actions = [
+  {
+    name: "Create",
+    version: 1,
+    kind: "mutation",
+    inputs: [
+      {
+        kind: "model",
+        name: "entry",
+        model: "Entry",
+        operation: "create",
+        cardinality: "single",
+        allowedFields: ["text", "note"],
+      },
+    ],
+    outputs: [],
+  },
+];
+/** An offline Mutation that creates one Entry and stays pending. */
+const create = (tx, id, text) =>
+  tx.submitMutation("Create", 1, { entry: { id, text, note: null } }, (x) => x);
 async function within(promise, ms, what) {
   let timer;
   try {
@@ -55,14 +76,7 @@ test("a terminated worker's runtime releases its database to the main thread", a
     try {
       // A write needs the lock the worker's transaction held.
       await within(
-        client.transaction((tx) =>
-          tx.direct({
-            model: "Entry",
-            op: "create",
-            identity: { id: "main" },
-            values: { text: "ok" },
-          }),
-        ),
+        client.transaction((tx) => create(tx, "main", "ok")),
         5_000,
         "a write after the worker ended",
       );
@@ -111,14 +125,7 @@ test("terminating one worker releases every owned Store without closing the main
       );
       clients.push(client);
       await within(
-        client.transaction((tx) =>
-          tx.direct({
-            model: "Entry",
-            op: "create",
-            identity: { id: "main" },
-            values: { text: "released" },
-          }),
-        ),
+        client.transaction((tx) => create(tx, "main", "released")),
         5_000,
         "writing each released file",
       );
@@ -132,14 +139,7 @@ test("terminating one worker releases every owned Store without closing the main
         "each unfinished worker transaction rolled back",
       );
     }
-    await main.transaction((tx) =>
-      tx.direct({
-        model: "Entry",
-        op: "create",
-        identity: { id: "still-live" },
-        values: { text: "main env" },
-      }),
-    );
+    await main.transaction((tx) => create(tx, "still-live", "main env"));
     assert.equal(
       (await main.read("Entry", { id: "still-live" })).text,
       "main env",

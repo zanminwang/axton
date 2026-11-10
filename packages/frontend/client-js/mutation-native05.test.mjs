@@ -50,11 +50,11 @@ test('captured transaction cannot join a different client callback', async () =>
   try {
     await assert.rejects(a.transaction(async txA => {
       await b.transaction(async () => {
-        await assert.rejects(txA.direct({model:'Draft',op:'create',identity:{id:'foreign'},values:{text:'bad'}}), /foreign transaction scope/);
+        await assert.rejects(txA.submitMutation('Publish',1,{entry:{id:'foreign',text:'bad'},call:'legal'},value=>value), /foreign transaction scope/);
       });
     }), /foreign transaction scope/);
-    assert.equal(await a.read('Draft',{id:'foreign'}),null);
-    assert.equal(await b.read('Draft',{id:'foreign'}),null);
+    assert.equal(await a.read('Entry',{id:'foreign'}),null);
+    assert.equal(await b.read('Entry',{id:'foreign'}),null);
   } finally { await a.close(); await b.close(); await rm(directory,{recursive:true,force:true}); }
 });
 test('captured empty savepoint cannot join another Store callback',async()=>{

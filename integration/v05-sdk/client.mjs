@@ -1111,9 +1111,10 @@ if (process.argv[2] === "enqueue-child") {
         await client.fetch.entry({ id: "not-held" }, { store: false }),
         null,
       );
-      await client.models.draft.create({ id: "local", text: "independent" });
+      // Local work proceeds while the Fetch is parked: an offline Mutation.
+      await publish(client, "local", "independent");
       assert.equal(
-        (await client.models.draft.get({ id: "local" })).text,
+        (await client.models.entry.get({ id: "local" })).text,
         "independent",
       );
       assert.equal(

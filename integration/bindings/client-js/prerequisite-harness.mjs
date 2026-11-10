@@ -32,7 +32,9 @@ schema.requirements = [
   },
 ];
 
-schema.actions=[{name:'Edit',version:1,kind:'mutation',inputs:[{kind:'model',name:'entry',model:'Entry',operation:'update',cardinality:'single',allowedFields:['text','note']}],outputs:[],requirements:schema.requirements}];
+schema.actions=[{name:'Edit',version:1,kind:'mutation',inputs:[{kind:'model',name:'entry',model:'Entry',operation:'update',cardinality:'single',allowedFields:['text','note']}],outputs:[],requirements:schema.requirements},
+ // The seed: its null `note` requires nothing.
+ {name:'Create',version:1,kind:'mutation',inputs:[{kind:'model',name:'entry',model:'Entry',operation:'create',cardinality:'single',allowedFields:['text','note']}],outputs:[],requirements:schema.requirements}];
 
 /**
  * The native carrier, except that every `timer` effect's delay is recorded in
@@ -88,14 +90,7 @@ export function prerequisiteSuite(
     const open = (prerequisites) =>
       openStore(Client,{ path: join(directory, "db"), schema, prerequisites });
     const attach = async (client, key) => {
-      await client.transaction((tx) =>
-        tx.direct({
-          model: "Entry",
-          op: "create",
-          identity: { id: key },
-          values: { text: "A" },
-        }),
-      );
+      await client.submitMutation('Create',1,{entry:{id:key,text:'A',note:null}},value=>value);
       await client.submitMutation('Edit',1,{entry:{id:key,note:key}},value=>value);
     };
     try {
@@ -119,7 +114,10 @@ export function prerequisiteSuite(
         await until(async () => (await client.pendingTasks()).length === 0);
         assert.deepEqual(calls, [{ key: "asset" }]);
         const status = await client.syncState("Entry", { id: "asset" });
-        assert.deepEqual(status.pending[0].prerequisites, []);
+        assert.deepEqual(
+          status.pending.map((call) => [call.name, call.prerequisites]),
+          [["Create", []], ["Edit", []]],
+        );
       } finally {
         await client.close();
       }

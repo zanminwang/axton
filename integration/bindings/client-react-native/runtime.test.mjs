@@ -8,7 +8,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Transaction } from "../../../packages/frontend/client-react-native/api/transaction.mts";
 import { createClient } from "../../../packages/frontend/client-js/api/runtime.mts";
-import { openStore, offlineNetwork } from "../client-js/store-fixture.mjs";
+import {
+  openStore,
+  offlineNetwork,
+  deliveringNetwork,
+  deliver,
+} from "../client-js/store-fixture.mjs";
 
 const native = createRequire(import.meta.url)(
   "../../../bindings/node/axton-node.node",
@@ -42,9 +47,26 @@ const write = (id, text, op = "create") => ({
   identity: { id },
   values: { text, note: null },
 });
-async function fixture(body) {
+/** The seed: an offline Mutation that writes one Entry and stays pending. */
+const put = (tx, id, text, op = "create") =>
+  tx.submitMutation(
+    op === "create" ? "Create" : "Edit",
+    1,
+    { entry: { id, text, note: null } },
+    (value) => value,
+  );
+/** A delivered Entry, for a test that counts the queue. */
+const Seeder = createClient(
+  native,
+  Transaction,
+  deliveringNetwork([
+    { model: "Entry", identity: { id: "e" }, state: { text: "before", note: null } },
+  ]),
+);
+async function fixture(body, { delivered = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "axton-rn-runtime-"));
   const path = join(directory, "store");
+  if (delivered) await deliver(Seeder, { path, schema });
   let client;
   const open = async () => (client = await openStore(Client, { path, schema }));
   try {
@@ -83,7 +105,7 @@ test("mobile bound Store has no hooks, anonymous mutations, Load jobs or public 
     await client.transaction(async (tx) => {
       for (const name of ["streams", "mutate", "local"])
         assert.equal(name in tx, false, name);
-      await tx.direct(write("e", "local"));
+      await put(tx, "e", "local");
     });
     assert.deepEqual((await client.syncState()).streams, ["User:viewer"]);
     assert.equal((await client.read("Entry", { id: "e" })).text, "local");
@@ -95,7 +117,7 @@ test("mobile scope preserves rollback, escaped scope refusal and persistent iden
     const id = client.clientId;
     await assert.rejects(
       client.transaction(async (tx) => {
-        await tx.direct(write("rolled-back", "no"));
+        await put(tx, "rolled-back", "no");
         throw Error("abort");
       }),
       /abort/,
@@ -104,7 +126,7 @@ test("mobile scope preserves rollback, escaped scope refusal and persistent iden
     let retained;
     await client.transaction(async (tx) => {
       retained = tx;
-      await tx.direct(write("kept", "yes"));
+      await put(tx, "kept", "yes");
     });
     await assert.rejects(retained.read("Entry", { id: "kept" }), /closed/);
     await client.close();
@@ -115,7 +137,7 @@ test("mobile scope preserves rollback, escaped scope refusal and persistent iden
     const gate = new Promise((resolve) => (release = resolve)),
       ready = new Promise((resolve) => (entered = resolve));
     const transaction = client.transaction(async (tx) => {
-      await tx.direct(write("kept", "after", "update"));
+      await put(tx, "kept", "after", "update");
       entered();
       await gate;
     });
@@ -135,7 +157,6 @@ test("mobile scope preserves rollback, escaped scope refusal and persistent iden
 
 test("mobile Mutation refuses callback and unrelated callers promptly under its coarse guard", async () => {
   await fixture(async (client) => {
-    await client.direct(write("e", "before"));
     let release, entered;
     const gate = new Promise((resolve) => (release = resolve)),
       ready = new Promise((resolve) => (entered = resolve));
@@ -177,7 +198,7 @@ test("mobile Mutation refuses callback and unrelated callers promptly under its 
     assert.equal((await client.syncState()).pending, 0);
     assert.equal((await submit("after")).status, "pending");
     assert.equal((await client.read("Entry", { id: "e" })).text, "after");
-  });
+  }, { delivered: true });
 });
 
 test("mobile Bootstrap awaited inside its own callback refuses instead of parking behind it", async () => {
@@ -231,7 +252,7 @@ test("priority close settles a held mobile transaction and rolls back its uncomm
     const result = client
       .transaction(async (tx) => {
         held = tx;
-        await tx.direct(write("uncommitted", "no"));
+        await put(tx, "uncommitted", "no");
         entered();
         await gate;
       })
@@ -257,7 +278,7 @@ test("concurrent top-level mobile transactions serialize and the next observes t
       order = [];
     const first = client.transaction(async (tx) => {
       order.push("first:begin");
-      await tx.direct(write("a", "first"));
+      await put(tx, "a", "first");
       entered();
       await gate;
       order.push("first:end");
@@ -266,7 +287,7 @@ test("concurrent top-level mobile transactions serialize and the next observes t
     const second = client.transaction(async (tx) => {
       order.push("second:begin");
       assert.equal((await tx.read("Entry", { id: "a" })).text, "first");
-      await tx.direct(write("b", "second"));
+      await put(tx, "b", "second");
       order.push("second:end");
     });
     await new Promise(setImmediate);

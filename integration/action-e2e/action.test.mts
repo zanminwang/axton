@@ -229,11 +229,13 @@ test("A-returns-B receipt reconciles A but preserves the immutable B business sn
       shown: "result-b",
     });
     await hold.arrived;
+    // Later local work: a pending Mutation of B, applied optimistically while
+    // A's receipt (which snapshots B) is still in flight.
+    let later!: Awaited<ReturnType<typeof s.client.mutations.updateTodo>>;
     await s.client.transaction(async (tx) => {
-      await tx.models.todo.update(
-        { id: "result-b" },
-        { title: "later direct B" },
-      );
+      later = await tx.mutations.updateTodo({
+        todo: { id: "result-b", title: "later direct B" },
+      });
     });
     hold.release();
     const output = await call.wait();
@@ -246,6 +248,7 @@ test("A-returns-B receipt reconciles A but preserves the immutable B business sn
       (await s.client.models.todo.get({ id: "result-b" }))?.title,
       "later direct B",
     );
+    assert.equal((await later.wait()).error, null);
   } finally {
     proxy.releaseAll();
     await s.close();
@@ -706,11 +709,11 @@ test("a suspended real Query handler leaves Stream sync and committed local tran
     pending.catch(() => {});
     await arrived;
     await s.client.transaction(async (tx) => {
-      await tx.models.composition.create(draft("responsive-local"));
+      await tx.mutations.addTodo({
+        todo: { id: "responsive-local", title: "local" },
+      });
     });
-    assert.ok(
-      await s.client.models.composition.get({ id: "responsive-local" }),
-    );
+    assert.ok(await s.client.models.todo.get({ id: "responsive-local" }));
     const mutation = await s.client.mutations.addTodo({
       todo: { id: "responsive-live", title: "responsive" },
     });

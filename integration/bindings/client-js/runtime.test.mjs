@@ -1,4 +1,7 @@
-import {openStore} from './store-fixture.mjs';
+import {openStore,deliveringNetwork,deliver} from './store-fixture.mjs';
+import { createRequire } from 'node:module';
+import { createClient } from '../../../packages/frontend/client-js/api/runtime.mts';
+import { Transaction as NodeTransaction } from '../../../packages/frontend/client-js/api/transaction.mts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -8,6 +11,11 @@ import { Client } from '../../../packages/frontend/client-js/index.mts';
 
 const schema = JSON.parse(await readFile(new URL('../../../fixtures/schemas/entry.json', import.meta.url), 'utf8'));
 const edit=(id,text)=>({entry:{id,text}});
+// Seeds: offline Mutations, which stay pending, or a delivered row where a
+// test counts the queue.
+const put=(client,id,text)=>client.submitMutation('Create',1,{entry:{id,text,note:null}},value=>value);
+const native=createRequire(import.meta.url)('../../../bindings/node/axton-node.node');
+const Seeder=createClient(native,NodeTransaction,deliveringNetwork([{model:'Entry',identity:{id:'e'},state:{text:'A',note:null}}]));
 schema.actions=['Edit','Create'].map(name=>({name,version:1,kind:'mutation',inputs:[{kind:'model',name:'entry',model:'Entry',operation:name==='Edit'?'update':'create',cardinality:'single',allowedFields:['text','note']}],outputs:[]}));
 async function within(promise, ms) {
  let timeout;
@@ -18,13 +26,13 @@ async function within(promise, ms) {
 
 test('a captured client mutate rejects promptly inside its transaction callback', async () => {
  const dir = await mkdtemp(join(tmpdir(), 'axton-runtime-'));
+ await deliver(Seeder,{ path: join(dir, 'client.sqlite'), schema });
  const client = await openStore(Client,{ path: join(dir, 'client.sqlite'), schema });
  let release, entered;
  const gate = new Promise(resolve => { release = resolve; });
  const started = new Promise(resolve => { entered = resolve; });
  let attempt;
  try {
-  await client.transaction(tx => tx.direct({ model: 'Entry', op: 'create', identity: { id: 'e' }, values: { text: 'A' } }));
   const capturedMutate = client.submitMutation.bind(client,'Edit',1);
   const transaction = client.transaction(async () => {
    attempt = capturedMutate(edit('e', 'B'),value=>value).then(() => 'accepted', error => error.message);
@@ -51,7 +59,7 @@ test('an unrelated Node async context waits for a transaction then enqueues', as
  const gate = new Promise(resolve => { release = resolve; });
  const started = new Promise(resolve => { entered = resolve; });
  try {
-  await client.transaction(tx => tx.direct({ model: 'Entry', op: 'create', identity: { id: 'e' }, values: { text: 'A' } }));
+  await put(client, 'e', 'A');
   const transaction = client.transaction(async tx => { entered(); assert.equal('mutate' in tx, false); await gate; });
   await started;
   const mutation = client.submitMutation('Edit',1,edit('e','B'),value=>value);
@@ -90,8 +98,7 @@ test('standalone queued mutation and optimistic value survive SQLite reopen', as
 // Local watch ([#134](https://github.com/zanminwang/axton/issues/134)): the
 // runtime registers the query, re-runs it after every commit and publishes only
 // a result that differs; the SDK delivers what it publishes.
-const create = (id, text) => ({ model: 'Entry', op: 'create', identity: { id }, values: { text } });
-const update = (id, text) => ({ model: 'Entry', op: 'update', identity: { id }, values: { text } });
+const change = (tx, id, text) => tx.submitMutation('Edit', 1, edit(id, text), value => value);
 async function until(predicate, what) {
  const deadline = Date.now() + 5000;
  while (!predicate()) { if (Date.now() > deadline) throw Error(`${what} timed out`); await new Promise(r => setTimeout(r, 5)); }
@@ -107,19 +114,19 @@ test('watch delivers the committed rows, then only a result that changed, and no
   const stop = client.watch('Entry', { id: 'one' }, rows => seen.push(rows.map(row => row.text)), error => errors.push(error));
   await until(() => seen.length === 1, 'the initial rows');
   assert.deepEqual(seen, [[]], 'the current result arrives first, empty or not');
-  await client.direct(create('one', 'A'));
+  await put(client, 'one', 'A');
   await until(() => seen.length === 2, 'the committed change');
   assert.deepEqual(seen, [[], ['A']]);
   // A commit that leaves this result as it was publishes nothing.
-  await client.direct(create('two', 'B'));
+  await put(client, 'two', 'B');
   await settle();
   assert.deepEqual(seen, [[], ['A']], 'an equal result is suppressed');
   // Uncommitted writes are invisible: only the committed transaction is seen.
-  await client.transaction(async tx => { await tx.direct(update('one', 'draft')); await tx.direct(update('one', 'C')); });
+  await client.transaction(async tx => { await change(tx, 'one', 'draft'); await change(tx, 'one', 'C'); });
   await until(() => seen.length === 3, 'the committed transaction');
   assert.deepEqual(seen.at(-1), ['C'], 'only the committed state, never the draft');
   stop();
-  await client.direct(update('one', 'D'));
+  await change(client, 'one', 'D');
   await settle();
   assert.equal(seen.length, 3, 'a stopped watch hears nothing');
   assert.deepEqual(errors, []);
@@ -134,8 +141,8 @@ test('a watch listener that throws is reported to onError and hears every later 
   const errors = [];
   const stop = client.watch('Entry', {}, rows => { seen.push(rows.length); throw Error(`listener failed at ${rows.length}`); }, error => errors.push(error.message));
   await until(() => seen.length === 1, 'the initial rows');
-  await client.direct(create('one', 'A'));
-  await client.direct(create('two', 'B'));
+  await put(client, 'one', 'A');
+  await put(client, 'two', 'B');
   await until(() => seen.length === 3, 'both commits');
   assert.deepEqual(seen, [0, 1, 2]);
   assert.deepEqual(errors, ['listener failed at 0', 'listener failed at 1', 'listener failed at 2']);
@@ -212,16 +219,16 @@ test('stop unregisters the watch by its observer id; a watch stopped before regi
 
 test('inside a callback, every task of the outer client rejects promptly with transaction_active', async () => {
  const dir = await mkdtemp(join(tmpdir(), 'axton-runtime-guard-'));
+ await deliver(Seeder,{ path: join(dir, 'client.sqlite'), schema });
  const client = await openStore(Client,{ path: join(dir, 'client.sqlite'), schema });
  try {
-  await client.direct(create('e', 'A'));
   const outcomes = {};
   const message = (promise) => within(promise.then(() => 'ran', error => error.message), 1000);
   const rows = [];
   let watchError;
   await client.transaction(async tx => {
    // The transaction's own commands are not the outer client's.
-   await tx.direct(update('e', 'inside'));
+   await change(tx, 'e', 'inside');
    outcomes.read = await message(client.read('Entry', { id: 'e' }));
    outcomes.transaction = await message(client.transaction(async () => { rows.push('nested body ran'); }));
    outcomes.query = await message(client.query('Entry'));
@@ -245,6 +252,6 @@ test('inside a callback, every task of the outer client rejects promptly with tr
   assert.deepEqual(rows, [], 'no nested body ran and no watch delivered');
   // Nothing was left parked behind the transaction.
   assert.equal((await client.read('Entry', { id: 'e' })).text, 'inside');
-  assert.equal((await client.syncState()).pending,0);
+  assert.equal((await client.syncState()).pending,1,'only the transaction\'s own Mutation');
  } finally { await client.close(); await rm(dir, { recursive: true, force: true }); }
 });

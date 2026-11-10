@@ -4,5 +4,8 @@ model Todo {
  channel String
  @@id(id)
 }
+// Test seeds: the reopen checks create and retitle through Mutations.
+mutation Add(todo Todo.create)
+mutation Retitle(todo Todo.update<title>)
 mutation Edit(todo Todo.update<channel>)
 query Scan(channel String) { todos Todo[] }

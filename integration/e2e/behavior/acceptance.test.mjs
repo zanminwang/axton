@@ -34,10 +34,10 @@ if (process.argv[2] === "commit-fault-child") {
     item: item("commit-fault", " accepted "),
     private: true,
   });
-  await client.models.item.update(
-    { id: "commit-fault" },
-    { title: "later-direct" },
-  );
+  // Later local content: a second pending Mutation of the same record.
+  await client.mutations.renameItem({
+    item: { id: "commit-fault", title: "later-direct" },
+  });
   await sqlite(
     path,
     "CREATE TABLE fault_parent(id INTEGER PRIMARY KEY);CREATE TABLE fault_marker(parent INTEGER REFERENCES fault_parent(id) DEFERRABLE INITIALLY DEFERRED);CREATE TRIGGER fail_settlement_commit BEFORE UPDATE OF reconciled ON axton_mutation_queue WHEN NEW.reconciled=1 BEGIN INSERT INTO fault_marker VALUES(99);END;",
@@ -68,12 +68,13 @@ if (process.argv[2] === "commit-fault-child") {
   // Verify the failed settlement left the independently committed receipt intact.
   await wait(async () => {
     const status = await client.syncState();
+    // Both Mutations stay unsettled: the publish and the later rename.
     return (
-      status.pending === 1 &&
+      status.pending === 2 &&
       (await client.models.item.get({ id: "commit-fault" })).title ===
         "later-direct"
     );
-  }, "pending accepted Mutation preserves newer direct content");
+  }, "pending accepted Mutation preserves newer local content");
   const proof = {
     storeId: client.clientId,
     queue: await client.readSql(
@@ -247,7 +248,15 @@ if (process.argv[2] === "commit-fault-child") {
           (await client.models.item.get({ id: "commit-fault" })).title,
           "later-direct",
         );
-        assert.equal((await client.syncState()).pending, 0);
+        // The later rename settles after the saved publish.
+        await wait(
+          async () => (await client.syncState()).pending === 0,
+          "the later rename settles",
+        );
+        assert.equal(
+          (await client.models.item.get({ id: "commit-fault" })).title,
+          "later-direct",
+        );
         assert.equal(
           (
             await h.pool.query(
@@ -419,10 +428,11 @@ if (process.argv[2] === "commit-fault-child") {
         second = await open(join(dir, "second"), h.proxy.url);
         await Promise.all([first.bootstrap(), second.bootstrap()]);
         await second.fetch.item({ id: "reset-row" });
-        await second.models.item.update(
-          { id: "reset-row" },
-          { title: "peer-only" },
-        );
+        // Peer-only content: a Mutation the paused peer never sends.
+        await second.connection.pause();
+        await second.mutations.renameItem({
+          item: { id: "reset-row", title: "peer-only" },
+        });
         const originalId = first.clientId;
         held = h.proxy.holdResponse(
           (x) =>

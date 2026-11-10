@@ -1861,13 +1861,14 @@ fn answer_handshake(
     control: &mut axton_client::sync05::Control,
     id: &str,
     context: &v05::RequestContext,
+    head: u64,
     generation: &str,
 ) {
     let body = serde_json::to_string(&v05::HandshakeResponse {
         protocol: v05::PROTOCOL,
         store_id: context.store_id.clone(),
         stream: context.stream.clone(),
-        head: 0,
+        head,
         projection_generation: generation.into(),
     })
     .unwrap();
@@ -1900,7 +1901,7 @@ fn freeze_in_flight_across_a_handshake_rollover_does_not_stall_the_uplink() {
     control.connect().unwrap();
     let id = handshake_effect(&mut control).unwrap();
     // The handshake reports generation 2; its Initialize is dispatched.
-    answer_handshake(&mut control, &id, &old.context, "2");
+    answer_handshake(&mut control, &id, &old.context, 0, "2");
     control.jobs();
     // The application commits a Mutation: wake dispatches Freeze in the old context.
     control
@@ -1925,4 +1926,88 @@ fn freeze_in_flight_across_a_handshake_rollover_does_not_stall_the_uplink() {
         freezes(&control.jobs()),
         "uplink stalled after the rollover"
     );
+}
+#[test]
+fn pull_parked_for_auth_refresh_is_not_resent_after_a_rollover() {
+    use axton_client::{
+        runtime::{EffectError, EffectOutcome, Event, HttpRoute, Operation},
+        sync05::{Control, StoreReport},
+    };
+    let d = tempfile::tempdir().unwrap();
+    let mut c = client(&d.path().join("db"));
+    c.initialize_stream05(0, "1").unwrap();
+    let old = c.store_status05().unwrap();
+    let mut control = Control::new(old.clone());
+    control.set_refresh_auth(true);
+    control.connect().unwrap();
+    let id = handshake_effect(&mut control).unwrap();
+    answer_handshake(&mut control, &id, &old.context, 5, "1");
+    control.jobs();
+    control
+        .report(StoreReport::Snapshot(old.clone()), 1)
+        .unwrap();
+    let (pull, request) = cursor_pull(&mut control);
+    assert_eq!(request.context, old.context);
+    control
+        .receive(
+            &pull,
+            EffectOutcome {
+                ok: false,
+                value: None,
+                error: Some(EffectError {
+                    message: "expired token".into(),
+                    status: Some(401),
+                    refusal: None,
+                    retry: false,
+                }),
+            },
+            1,
+        )
+        .unwrap();
+    let refresh = control
+        .events()
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Effect {
+                effect_id,
+                operation: Operation::RefreshAuth,
+            } => Some(effect_id),
+            _ => None,
+        })
+        .unwrap();
+    // A handshake-time rollover commits while the pull waits for the refresh.
+    let mut rolled = old.clone();
+    rolled.context.materialization = "rolled".into();
+    control
+        .report(StoreReport::Snapshot(rolled.clone()), 1)
+        .unwrap();
+    control.events();
+    control
+        .receive(
+            &refresh,
+            EffectOutcome {
+                ok: true,
+                value: None,
+                error: None,
+            },
+            1,
+        )
+        .unwrap();
+    let stale: Vec<_> = control
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::Effect {
+                operation:
+                    Operation::Http {
+                        route: HttpRoute::Pull,
+                        body,
+                    },
+                ..
+            } => Some(serde_json::from_str::<v05::DeltaRequest>(&body).unwrap()),
+            _ => None,
+        })
+        .filter(|request| request.context != rolled.context)
+        .collect();
+    assert!(stale.is_empty(), "old-context pull resent: {stale:?}");
 }

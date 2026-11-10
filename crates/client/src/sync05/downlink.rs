@@ -486,6 +486,11 @@ impl Control {
                         // Freeze in flight, whose report returns obsolete.
                         self.jobs
                             .retain(|job| !matches!(job, StoreCommand::Apply { .. }));
+                        // A pull parked for an auth refresh would be resent in
+                        // the old context and fail admission.
+                        self.refresh_waiters.retain(
+                            |flight| !matches!(flight, Flight::Delta(r) if r.context != status.context),
+                        );
                         self.context = status.context.clone();
                         if self.connected && !self.paused {
                             self.handshake()?;

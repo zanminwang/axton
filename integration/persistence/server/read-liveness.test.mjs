@@ -230,10 +230,13 @@ for (const kind of ["Query", "Fetch", "Query Model Loader"])
               ],
             };
             request.digest = hash(
-              "axton:batch-intent:1",
+              "axton:batch-intent:2",
               Object.fromEntries(
                 Object.entries(request).filter(
-                  ([key]) => key !== "digest" && key !== "protocol",
+                  ([key]) =>
+                    key !== "digest" &&
+                    key !== "protocol" &&
+                    key !== "materialization",
                 ),
               ),
             );
@@ -539,10 +542,13 @@ for (const kind of ["handshake", "pull", "live", "cursor_resume"]) {
           ],
         };
         request.digest = hash(
-          "axton:batch-intent:1",
+          "axton:batch-intent:2",
           Object.fromEntries(
             Object.entries(request).filter(
-              ([key]) => key !== "digest" && key !== "protocol",
+              ([key]) =>
+                key !== "digest" &&
+                key !== "protocol" &&
+                key !== "materialization",
             ),
           ),
         );

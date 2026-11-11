@@ -280,6 +280,10 @@ impl Validate for MutationRequest {
 pub enum MutationOutcome {
     Accepted {
         sync_cursor: u64,
+        /// The contract the target snapshots were loaded in: the request's
+        /// materialization when the Mutation first executed. A replayed
+        /// result keeps the label of its first execution.
+        materialization: String,
         result: Value,
         targets: Vec<SettlementTarget>,
     },
@@ -318,10 +322,12 @@ impl Validate for BatchAcknowledgement {
             match &result.outcome {
                 MutationOutcome::Accepted {
                     sync_cursor,
+                    materialization,
                     targets,
                     ..
                 } => {
                     counter(*sync_cursor)?;
+                    text(materialization)?;
                     let mut keys = BTreeSet::new();
                     for target in targets {
                         target.validate()?;
@@ -654,10 +660,13 @@ impl Validate for ReadRequest {
     }
 }
 impl ReadResponse {
+    /// Correlate the response with its request. The request must belong to
+    /// the active Store and Stream; its materialization may be an earlier one,
+    /// and the caller then returns the result without installing records.
     pub fn admit_correlation(&self, request: &ReadRequest, active: &RequestContext) -> Result<()> {
         self.validate()?;
         request.validate()?;
-        request.context.admit(active)?;
+        request.context.admit_store(active)?;
         if self.context != request.context || self.request_id != request.request_id {
             return Err(invalid("read correlation mismatch"));
         }

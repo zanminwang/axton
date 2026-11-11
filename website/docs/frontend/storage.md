@@ -11,9 +11,9 @@ Use a writable application directory and one active client per physical file. A 
 
 ## Change the schema
 
-Compatible changes, including a new Model or nullable field, adapt local tables without dropping pending operations. The Store retains full prior descriptors for durable frozen Mutation contracts. A changed read contract rolls over: frozen Mutations drain in their original context, rows that came from the Stream are cleared, and Bootstrap runs again. Queued Mutations are never deleted and still upload. Rows that never came from the Stream survive, as do rows a queued Mutation still holds; a local change to a Stream-delivered row is cleared otherwise. Unmarked Models return through later Stream changes or Queries.
+A new Model or a new nullable or defaulted field adapts local tables in place. Any other change to a Model's stored shape (a removed, renamed or retyped field, a changed identity, unique constraint, relation or enum, a new required field with no default, a removed Model) resets that Model: its local rows are deleted and come back through Bootstrap, the Stream or a Query. Other Models keep their rows. The Store retains full prior descriptors for durable frozen Mutation contracts. A changed read contract upgrades the Store in place: every row is kept, Bootstrap runs again for `@@bootstrap` Models, and Sync continues where it was. Queued Mutations are never deleted and still upload. A kept row of an unmarked Model is replaced by a later Stream change or Query result.
 
-Unsupported changes fail without silently discarding pending work. Explicit `resetStore` changes incarnation, rebuilds the Store and ends old handles. Pending work prevents reset unless `discardPending` is explicitly chosen. Update backend business tables through your own forward migrations. See [opening and schema changes](runtime.md#opening-and-schema-changes).
+Opening never fails for a schema change; a Model version that goes backwards refuses to open. Explicit `resetStore` changes incarnation, rebuilds the Store and ends old handles. Pending work prevents reset unless `discardPending` is explicitly chosen. Update backend business tables through your own forward migrations. See [opening and schema changes](runtime.md#opening-and-schema-changes).
 
 ## Transactions and pending work
 

@@ -52,6 +52,6 @@ await client.bootstrap();
 final subscription = client.models.entry.watch().listen(render);
 ```
 
-Bootstrap waits for complete finite authority units at its captured head; it does not promise perpetual freshness. An empty result still completes. Models marked `@@bootstrap` are selected initially and again after a materialization rollover. The Stream supplied at open continues delivering after Bootstrap. Watch local Models for continuous state and use Query/Fetch results as invocation snapshots.
+Bootstrap waits for complete finite authority units at its captured head; it does not promise perpetual freshness. An empty result still completes. Models marked `@@bootstrap` are selected initially and again after a Store upgrade. The Stream supplied at open continues delivering after Bootstrap. Watch local Models for continuous state and use Query/Fetch results as invocation snapshots.
 
 Close the client when its application session ends; cancel individual observers when their view ends. See [the generated API](client-api.md) for named Mutations, request-level storage, local transactions and unsent-work controls.

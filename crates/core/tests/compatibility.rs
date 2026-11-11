@@ -192,3 +192,31 @@ fn creation_defaults_are_policy_not_storage_shape() {
         Compatibility::Incompatible(reason) if reason.contains("required and has no default")
     ));
 }
+
+#[test]
+fn a_change_to_one_model_leaves_another_model_compatible() {
+    let two = |title: &str| {
+        schema(
+            json!([{"name":"A","identity":["id"],"fields":[field("id","string",false),field("title",title,false)]},
+                   {"name":"B","identity":["id"],"fields":[field("id","string",false)]}]),
+            json!([]),
+        )
+    };
+    let (stored, incoming) = (two("string"), two("int"));
+    assert!(matches!(
+        Schema::model_compatibility(&stored, &incoming, "A"),
+        Compatibility::Incompatible(_)
+    ));
+    assert_eq!(
+        Schema::model_compatibility(&stored, &incoming, "B"),
+        Compatibility::Identical
+    );
+    let only_b = schema(
+        json!([{"name":"B","identity":["id"],"fields":[field("id","string",false)]}]),
+        json!([]),
+    );
+    assert!(matches!(
+        Schema::model_compatibility(&stored, &only_b, "A"),
+        Compatibility::Incompatible(_)
+    ));
+}

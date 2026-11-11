@@ -221,7 +221,8 @@ pub fn encode_batch_acknowledgement(bytes: &[u8], results: &[String]) -> Result<
             .map(|s| serde_json::from_str(s).map_err(crate::storage_invalid))
             .collect::<Result<_>>()?,
     };
-    v05::validate_acknowledgement(&request, &ack).map_err(crate::storage_invalid)?;
+    // The server keyed every accepted member's input under its schema.
+    v05::validate_acknowledgement(&request, &ack, |_, _| true).map_err(crate::storage_invalid)?;
     String::from_utf8(v05::encode(&ack).map_err(internal)?).map_err(internal)
 }
 

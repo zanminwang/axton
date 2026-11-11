@@ -139,21 +139,37 @@ pub(crate) async fn execute_claimed(
         store.current_digest = Some(request.digest.clone());
         store.current_count = Some(count);
     }
-    let args = match protocol_v05::validate_member(config, member)? {
-        protocol_v05::MutationInput::Supported(args) => args,
-        protocol_v05::MutationInput::Unsupported => {
-            let result = v05::MutationResult {
-                mutation_id: member.id,
-                outcome: v05::MutationOutcome::Rejected {
-                    code: crate::code::MUTATION_VERSION_UNSUPPORTED.into(),
-                    message: None,
-                },
-            };
-            store
-                .save(request, ordinal, &result, persist, raw_host)
-                .await?;
-            return Ok(result);
-        }
+    // A retained version this backend no longer serves, or whose input its
+    // current schema cannot key, is refused as that one Mutation.
+    let supported = match protocol_v05::validate_member(config, member)? {
+        protocol_v05::MutationInput::Supported(args) => match input_keys(config, member, &args) {
+            Ok(keys) => Some((args, keys)),
+            Err(error) => {
+                tracing::info!(
+                    name: "mutation.unkeyable",
+                    target: "axton::server",
+                    mutation = %member.name,
+                    version = member.version,
+                    %error,
+                    "refusing a Mutation whose input the current schema cannot key"
+                );
+                None
+            }
+        },
+        protocol_v05::MutationInput::Unsupported => None,
+    };
+    let Some((args, input_keys)) = supported else {
+        let result = v05::MutationResult {
+            mutation_id: member.id,
+            outcome: v05::MutationOutcome::Rejected {
+                code: crate::code::MUTATION_VERSION_UNSUPPORTED.into(),
+                message: None,
+            },
+        };
+        store
+            .save(request, ordinal, &result, persist, raw_host)
+            .await?;
+        return Ok(result);
     };
     let host = Publication05::new(raw_host);
     let _: Acknowledged = host
@@ -207,20 +223,8 @@ pub(crate) async fn execute_claimed(
                 .map_err(request_invalid)?;
             let models = models(config, &request.context)?;
             let mut inputs = crate::settlement::Changes::new();
-            for input in &action.inputs {
-                if let ActionInputDescriptor::Model { name, model, .. } = input {
-                    for identity in
-                        crate::actions::input_identities(&config.schema, model, &args[name], input)?
-                    {
-                        crate::settlement::insert(
-                            &mut inputs,
-                            config
-                                .schema
-                                .record_key(model, &identity)
-                                .map_err(request_invalid)?,
-                        )?;
-                    }
-                }
+            for key in &input_keys {
+                crate::settlement::insert(&mut inputs, key.clone())?;
             }
             let mut keys = crate::action_results::snapshot_keys(config, action, &args, &outputs)?;
             keys.extend(inputs.values().cloned());
@@ -282,7 +286,12 @@ pub(crate) async fn execute_claimed(
             let result = axton_core::validate_action_result(&config.schema, action, &result)
                 .map_err(internal)?;
             let sync_cursor = crate::head(&host, &request.context.stream).await?;
-            Ok(v05::MutationOutcome::Accepted {sync_cursor,result,targets})
+            Ok(v05::MutationOutcome::Accepted {
+                sync_cursor,
+                materialization: request.context.materialization.clone(),
+                result,
+                targets,
+            })
             }.await;
             match accepted {
                 Ok(outcome) => outcome,
@@ -316,6 +325,33 @@ pub(crate) async fn execute_claimed(
         .save(request, ordinal, &result, persist, raw_host)
         .await?;
     Ok(result)
+}
+/// The records a member's Model inputs name, keyed under the current schema.
+fn input_keys(
+    config: &Config,
+    member: &v05::Mutation,
+    args: &serde_json::Value,
+) -> Result<Vec<RecordKey>> {
+    let action = config
+        .schema
+        .action(&member.name, member.version)
+        .map_err(request_invalid)?;
+    let mut keys = vec![];
+    for input in &action.inputs {
+        if let ActionInputDescriptor::Model { name, model, .. } = input {
+            for identity in
+                crate::actions::input_identities(&config.schema, model, &args[name], input)?
+            {
+                keys.push(
+                    config
+                        .schema
+                        .record_key(model, &identity)
+                        .map_err(request_invalid)?,
+                );
+            }
+        }
+    }
+    Ok(keys)
 }
 pub(crate) fn models(
     config: &Config,

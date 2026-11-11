@@ -1,5 +1,7 @@
 # Deliver authority only through the Stream
 
+§2.3 (drain, clear, Bootstrap) is superseded by [Upgrade by overwrite](2026-11-09-upgrade-by-overwrite-design.md).
+
 Issue: Capso CAP-879 (no AXTON issue yet). Status: approved (2026-11-08). Slug: `stream-only-downlink`.
 
 A Store receives authoritative records only from its own Stream, by `/sync/pull` ranges or the live socket. `/sync/materialize`, the point fetch by key, is removed. Settlement waits for the Stream instead of fetching, and a materialization change drains the queue, clears server-derived rows and runs Bootstrap again. Done means no client sends a materialize request, every Mutation still settles, rollover keeps queued Mutations and device-only rows, and Capso's 120-Reply restore test passes in CI.

@@ -4,7 +4,6 @@ use super::*;
 fn batch_body(request: &MutationRequest) -> Result<Value> {
     text(&request.context.store_id)?;
     check_stream(&request.context.stream)?;
-    text(&request.context.materialization)?;
     positive(request.batch_id)?;
     if request.mutations.is_empty() {
         return Err(invalid("empty Mutation Batch"));
@@ -24,15 +23,17 @@ fn batch_body(request: &MutationRequest) -> Result<Value> {
     let mut value = serde_json::to_value(request)?;
     let body = value.as_object_mut().unwrap();
     body.remove("digest");
-    // The protocol number is transport, not intent: a frozen Batch keeps its
-    // digest across protocol versions.
+    // The protocol number and the materialization are transport, not intent:
+    // a frozen Batch keeps its digest across protocol versions and upgrades.
     body.remove("protocol");
+    body.remove("materialization");
     Ok(value)
 }
-/// Hashes canonical ordered intent, excluding the digest field and the
-/// protocol number. The domain names this definition, never a protocol.
+/// Hashes canonical ordered intent, excluding the digest field, the protocol
+/// number and the materialization. The domain names this definition, never a
+/// protocol.
 pub fn batch_digest(request: &MutationRequest) -> Result<String> {
-    hash("axton:batch-intent:1", &batch_body(request)?)
+    hash("axton:batch-intent:2", &batch_body(request)?)
 }
 pub fn validate_batch(request: &MutationRequest) -> Result<()> {
     request.context.validate()?;
@@ -42,16 +43,17 @@ pub fn validate_batch(request: &MutationRequest) -> Result<()> {
     }
     Ok(())
 }
+/// `required(mutation_id, model)` says whether an accepted Mutation's
+/// operations on `model` must have a settlement target in the receipt.
 pub fn validate_acknowledgement(
     request: &MutationRequest,
     ack: &BatchAcknowledgement,
+    required: impl Fn(u64, &str) -> bool,
 ) -> Result<()> {
     validate_batch(request)?;
     ack.validate()?;
-    if ack.context != request.context
-        || ack.batch_id != request.batch_id
-        || ack.digest != request.digest
-    {
+    ack.context.admit_store(&request.context)?;
+    if ack.batch_id != request.batch_id || ack.digest != request.digest {
         return Err(invalid("Batch acknowledgement mismatch"));
     }
     let expected: BTreeSet<_> = request.mutations.iter().map(|m| m.id).collect();
@@ -73,6 +75,7 @@ pub fn validate_acknowledgement(
                 .collect::<Result<_>>()?;
             for op in &mutation.operations {
                 if let Some(model) = &op.model
+                    && required(mutation.id, model)
                     && !supplied.contains(
                         &RecordKey {
                             model: model.clone(),

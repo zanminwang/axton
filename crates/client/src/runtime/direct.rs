@@ -349,7 +349,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         if let Err(error) = self.begin_read05(request_id, invocation, store) {
             let kind = match error.as_str() {
                 UNAVAILABLE => FETCH_UNAVAILABLE,
-                "read.schema_pending" => "fetch.schema_pending",
                 _ => FETCH_INVALID_OPTIONS,
             };
             self.fail(request_id.into(), kind, caused(kind, error));
@@ -361,13 +360,6 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         invocation: crate::v05::ReadInvocation,
         store: &Option<Value>,
     ) -> std::result::Result<(), String> {
-        if self
-            .client
-            .rollover_pending05()
-            .map_err(|e| e.to_string())?
-        {
-            return Err("read.schema_pending".into());
-        }
         let store = match store {
             None => true,
             Some(Value::Bool(value)) => *value,
@@ -437,6 +429,9 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             // Correlation and snapshot agreement use the caller's retained read
             // contract. The cache record remains its separate local projection.
             response.admit_correlation(&request, &active)?;
+            // A response read in an earlier context (an upgrade committed while
+            // it was in flight) is returned and not installed.
+            let install = request.store && request.context == active;
             let mut admitted = response.clone();
             if let crate::v05::ReadInvocation::Fetch { key, version } = &request.invocation
                 && let crate::v05::ReadOutcome::Succeeded { result } = &mut response.outcome
@@ -505,7 +500,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             {
                 admitted.admit(&request, &active)?;
             }
-            if request.store {
+            if install {
                 for record in &response.records {
                     self.client
                         .schema
@@ -517,9 +512,9 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                     }
                 }
             }
-            Ok::<_, crate::Error>((request, response))
+            Ok::<_, crate::Error>((install, response))
         })();
-        let (request, response) = match decoded {
+        let (install, response) = match decoded {
             Ok(value) => value,
             Err(error) => {
                 let kind = if fetch && snapshot_mismatch {
@@ -534,9 +529,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             }
         };
         let generation = self.client.generation();
-        if request.store
-            && let Err(error) = self.client.install_cache05(&response.records, true)
-        {
+        if install && let Err(error) = self.client.install_cache05(&response.records, true) {
             let kind = if fetch {
                 FETCH_STORE_FAILED
             } else {

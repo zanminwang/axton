@@ -40,12 +40,11 @@ impl<S: ClientStore> Client<S> {
         })
     }
     /// Commit a handshake: adopt the backend's projection generation, then
-    /// its head. A due rollover clears in the same commit, so the fresh Store
-    /// starts at this head without another handshake.
+    /// its head. A changed generation upgrades the Store in the same commit;
+    /// the head becomes `S` and `C` only for a Store that has no `C` yet.
     pub fn initialize_stream05(&mut self, start: u64, projection_generation: &str) -> Result<()> {
         self.write(|e| {
             e.adopt_generation05(projection_generation)?;
-            e.rollover05()?;
             e.initialize_stream05(start)
         })
     }

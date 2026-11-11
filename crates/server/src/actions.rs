@@ -31,7 +31,7 @@ pub(crate) fn input_identities(
             let _ = operation;
             let model_desc = schema
                 .model(model)
-                .map_err(|_| Error::code("action.invalid"))?;
+                .map_err(|e| Error::new("action.invalid", e.to_string()))?;
             let identity = Value::Object(
                 model_desc
                     .identity
@@ -44,7 +44,7 @@ pub(crate) fn input_identities(
             schema
                 .record_key(model, &identity)
                 .map(|key| key.identity)
-                .map_err(|_| Error::code("action.invalid"))
+                .map_err(|e| Error::new("action.invalid", e.to_string()))
         })
         .collect()
 }

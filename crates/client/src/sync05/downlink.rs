@@ -472,18 +472,27 @@ impl Control {
             }
             StoreReport::Snapshot(status) => {
                 if status.context != self.context {
-                    // A reset or a rollover clear made this Store a fresh
-                    // device in a new context. Staging of the old one is void.
+                    // A reset or an upgrade put the Store in a new context.
+                    // Staging of the old one is void.
                     self.queue = DeliveryQueue::new(16 * 1024 * 1024, 32);
                     self.applying = false;
                     self.applying_plan = None;
-                    if status.context.store_id == self.context.store_id
-                        && status.start_cursor.is_some()
-                    {
-                        // The clear committed with a handshake's head. Handshake
-                        // again in the new context: S is never restamped, and it
-                        // retires the old context's pulls, push, socket and any
-                        // Freeze in flight, whose report returns obsolete.
+                    if status.context.store_id == self.context.store_id {
+                        // An upgrade: the same Store in a new materialization.
+                        // Pulls and applies of the old context are dropped and
+                        // a Freeze in flight returns obsolete; a push in flight
+                        // still acknowledges. Scheduling continues from the
+                        // committed positions with no second handshake.
+                        let pulls = self
+                            .flights
+                            .iter()
+                            .filter(|(_, f)| matches!(f, Flight::Delta(r) if r.context != status.context))
+                            .map(|(id, _)| id.clone())
+                            .collect::<Vec<_>>();
+                        for id in pulls {
+                            self.flights.remove(&id);
+                            self.events.push(Event::CancelEffect { effect_id: id });
+                        }
                         self.jobs
                             .retain(|job| !matches!(job, StoreCommand::Apply { .. }));
                         // A pull parked for an auth refresh would be resent in
@@ -491,10 +500,8 @@ impl Control {
                         self.refresh_waiters.retain(
                             |flight| !matches!(flight, Flight::Delta(r) if r.context != status.context),
                         );
-                        self.context = status.context.clone();
-                        if self.connected && !self.paused {
-                            self.handshake()?;
-                        }
+                        self.freezing = false;
+                        self.waiting_push = None;
                     } else {
                         let reconnect = self.connected;
                         self.stop();

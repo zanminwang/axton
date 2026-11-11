@@ -260,24 +260,21 @@ impl DeliveryProgress {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TargetEvidence {
+    /// The position the Stream last delivered the record at, in whatever
+    /// contract: settlement does not ask in which.
     pub content_cursor: Option<u64>,
-    pub materialization: Option<String>,
     pub removed_cursor: Option<u64>,
+    /// The record's `current` protection was installed in the active
+    /// materialization; protection from another contract does not count.
     pub protected: bool,
 }
 impl Validate for TargetEvidence {
     fn validate(&self) -> Result<()> {
-        if self.content_cursor.is_some() != self.materialization.is_some() {
-            return Err(invalid("incomplete target evidence"));
-        }
         if let Some(c) = self.content_cursor {
             positive(c)?;
         }
         if let Some(c) = self.removed_cursor {
             positive(c)?;
-        }
-        if let Some(m) = &self.materialization {
-            text(m)?;
         }
         Ok(())
     }
@@ -293,16 +290,16 @@ pub enum TargetDisposition {
 /// positive Stream evidence and no permission to overwrite later local work.
 /// A Stream target at or below the Store's start `S` in a Model its active
 /// materialization does not Bootstrap is never delivered to this Store, so it
-/// finalizes from the receipt like a Private target.
+/// finalizes from the receipt like a Private target. A Stream target is
+/// installed once the Stream delivered the record at or after its position,
+/// in any contract.
 pub fn target_disposition(
     target: &SettlementTarget,
-    materialization: &str,
     start_cursor: Option<u64>,
     bootstrap: bool,
     evidence: &TargetEvidence,
 ) -> Result<TargetDisposition> {
     target.validate()?;
-    text(materialization)?;
     evidence.validate()?;
     let receipt_owned = || {
         if evidence.protected {
@@ -313,9 +310,7 @@ pub fn target_disposition(
     };
     Ok(match target {
         SettlementTarget::Stream { cursor, .. } => {
-            if evidence.materialization.as_deref() == Some(materialization)
-                && evidence.content_cursor.is_some_and(|c| c >= *cursor)
-            {
+            if evidence.content_cursor.is_some_and(|c| c >= *cursor) {
                 TargetDisposition::InstalledAuthority
             } else if evidence.removed_cursor.is_some_and(|c| c > *cursor)
                 || (!bootstrap && start_cursor.is_some_and(|start| *cursor <= start))
@@ -333,7 +328,6 @@ pub fn settlement_ready(
     normal_cursor: Option<u64>,
     start_cursor: Option<u64>,
     targets: &[SettlementTarget],
-    materialization: &str,
     bootstrap_models: &BTreeSet<String>,
     evidence: &BTreeMap<String, TargetEvidence>,
 ) -> Result<bool> {
@@ -341,7 +335,6 @@ pub fn settlement_ready(
     if let Some(c) = normal_cursor {
         counter(c)?;
     }
-    text(materialization)?;
     let mut ready = normal_cursor.is_some_and(|c| c >= sync_cursor);
     let mut keys = BTreeSet::new();
     for target in targets {
@@ -351,7 +344,6 @@ pub fn settlement_ready(
         }
         if target_disposition(
             target,
-            materialization,
             start_cursor,
             bootstrap_models.contains(&target.key().model),
             evidence.get(&key).unwrap_or(&TargetEvidence::default()),

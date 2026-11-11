@@ -374,7 +374,6 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
             Some(40),
             Some(10),
             std::slice::from_ref(&target),
-            "m1",
             &none,
             &evidence
         )
@@ -384,7 +383,6 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
         key("Entry", "e").encoded().unwrap(),
         TargetEvidence {
             content_cursor: Some(21),
-            materialization: Some("m1".into()),
             removed_cursor: None,
             protected: true,
         },
@@ -395,7 +393,6 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
             Some(19),
             Some(10),
             std::slice::from_ref(&target),
-            "m1",
             &none,
             &evidence
         )
@@ -407,19 +404,23 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
             Some(40),
             Some(10),
             std::slice::from_ref(&target),
-            "m1",
             &none,
             &evidence
         )
         .unwrap()
     );
+    // The delivery counts in whichever contract installed it; one below the
+    // target's position does not.
+    evidence
+        .get_mut(&key("Entry", "e").encoded().unwrap())
+        .unwrap()
+        .content_cursor = Some(19);
     assert!(
         !settlement_ready(
             20,
             Some(40),
             Some(10),
             std::slice::from_ref(&target),
-            "m2",
             &none,
             &evidence
         )
@@ -427,12 +428,11 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
     );
     let removed = TargetEvidence {
         content_cursor: None,
-        materialization: None,
         removed_cursor: Some(22),
         protected: false,
     };
     assert_eq!(
-        target_disposition(&target, "m1", Some(10), false, &removed).unwrap(),
+        target_disposition(&target, Some(10), false, &removed).unwrap(),
         TargetDisposition::FinalizeOwned
     );
     let protected = TargetEvidence {
@@ -440,7 +440,7 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
         ..removed
     };
     assert_eq!(
-        target_disposition(&target, "m1", Some(10), false, &protected).unwrap(),
+        target_disposition(&target, Some(10), false, &protected).unwrap(),
         TargetDisposition::PreserveAuthority
     );
     let private = SettlementTarget::Private {
@@ -450,18 +450,7 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
             state: json!({"text":"private"}),
         },
     };
-    assert!(
-        settlement_ready(
-            40,
-            Some(40),
-            Some(10),
-            &[private],
-            "m1",
-            &none,
-            &BTreeMap::new()
-        )
-        .unwrap()
-    );
+    assert!(settlement_ready(40, Some(40), Some(10), &[private], &none, &BTreeMap::new()).unwrap());
     // A historical position at or below S is never delivered to this Store
     // unless its Model is Bootstrapped; such a target finalizes from the receipt.
     let historical = SettlementTarget::Stream {
@@ -475,15 +464,15 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
     };
     let none_evidence = TargetEvidence::default();
     assert_eq!(
-        target_disposition(&historical, "m1", Some(10), false, &none_evidence).unwrap(),
+        target_disposition(&historical, Some(10), false, &none_evidence).unwrap(),
         TargetDisposition::FinalizeOwned
     );
     assert_eq!(
-        target_disposition(&historical, "m1", Some(10), true, &none_evidence).unwrap(),
+        target_disposition(&historical, Some(10), true, &none_evidence).unwrap(),
         TargetDisposition::AwaitAuthority
     );
     assert_eq!(
-        target_disposition(&historical, "m1", Some(4), false, &none_evidence).unwrap(),
+        target_disposition(&historical, Some(4), false, &none_evidence).unwrap(),
         TargetDisposition::AwaitAuthority
     );
     let marked = BTreeSet::from(["Entry".to_string()]);
@@ -493,7 +482,6 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
             Some(40),
             Some(10),
             std::slice::from_ref(&historical),
-            "m1",
             &none,
             &BTreeMap::new()
         )
@@ -505,14 +493,13 @@ fn a8_receipt_and_authority_orders_owned_private_remove_and_old_targets() {
             Some(40),
             Some(10),
             &[historical],
-            "m1",
             &marked,
             &BTreeMap::new()
         )
         .unwrap()
     );
-    assert!(settlement_ready(40, Some(40), Some(10), &[], "m1", &none, &BTreeMap::new()).unwrap());
-    assert!(!settlement_ready(40, None, Some(10), &[], "m1", &none, &BTreeMap::new()).unwrap());
+    assert!(settlement_ready(40, Some(40), Some(10), &[], &none, &BTreeMap::new()).unwrap());
+    assert!(!settlement_ready(40, None, Some(10), &[], &none, &BTreeMap::new()).unwrap());
 }
 #[test]
 fn a15_one_publication_position_per_affected_stream_and_overflow_is_atomic() {

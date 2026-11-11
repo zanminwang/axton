@@ -77,6 +77,11 @@ pub(crate) fn derive<S: ClientStore>(
                     let Some(prior_policy) = policy_fn(schema, &prior.mutation) else {
                         continue;
                     };
+                    // Its input is keyed under the current schema, which only
+                    // a prior sharing every slot Model can do.
+                    if !slots_shared(engine, prior.ordinal, &prior.mutation)? {
+                        continue;
+                    }
                     let targets = slots(schema, &prior.mutation, &prior_policy)?;
                     let mut matches = true;
                     for (target, path) in arguments {
@@ -105,6 +110,30 @@ pub(crate) fn derive<S: ClientStore>(
     mutation.lifecycle_dependencies = lifecycle.into_iter().collect();
     mutation.sequence_dependencies = sequences.into_iter().collect();
     Ok(())
+}
+/// Whether every Model a queued Mutation's input slots name is shared by the
+/// Mutation with the current schema.
+fn slots_shared<S: ClientStore>(
+    engine: &mut Engine<'_, S>,
+    ordinal: u64,
+    mutation: &Mutation,
+) -> Result<bool> {
+    let action = engine.schema.action(&mutation.name, mutation.version)?;
+    let models: BTreeSet<String> = action
+        .inputs
+        .iter()
+        .filter_map(|input| match input {
+            axton_core::ActionInputDescriptor::Model { model, .. } => Some(model.clone()),
+            _ => None,
+        })
+        .collect();
+    let descriptor = engine.mutation_descriptor05(ordinal)?;
+    for model in &models {
+        if !engine.shared05(&descriptor, model)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 fn policy_fn(schema: &Schema, mutation: &Mutation) -> Option<Value> {
     if mutation.call_id.is_some() {

@@ -92,6 +92,7 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
             mutation_id: call.ordinal,
             outcome: v05::MutationOutcome::Accepted {
                 sync_cursor: 7,
+                materialization: batch.context.materialization.clone(),
                 result: Value::Null,
                 targets: vec![if private {
                     v05::SettlementTarget::Private {

@@ -18,7 +18,7 @@ fn store() -> (tempfile::TempDir, SqliteStore) {
     let dir = tempfile::tempdir().unwrap();
     let mut s = SqliteStore::open(dir.path().join("db")).unwrap();
     s.begin().unwrap();
-    reconcile(&mut s, &schema()).unwrap();
+    reconcile(&mut s, None, &schema()).unwrap();
     s.commit().unwrap();
     (dir, s)
 }

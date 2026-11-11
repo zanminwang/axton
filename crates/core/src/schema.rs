@@ -526,6 +526,37 @@ impl Schema {
     /// storage and do not take part.
     pub fn compatibility(stored: &Schema, incoming: &Schema) -> Compatibility {
         let mut steps = vec![];
+        for old in &stored.models {
+            if let Some(new) = incoming.models.iter().find(|m| m.name == old.name)
+                && new.version != old.version
+            {
+                return Compatibility::Incompatible(format!(
+                    "model {} changed version from {} to {}",
+                    old.name, old.version, new.version
+                ));
+            }
+            match Self::model_compatibility(stored, incoming, &old.name) {
+                Compatibility::Identical => {}
+                Compatibility::Additive(more) => steps.extend(more),
+                incompatible => return incompatible,
+            }
+        }
+        for new in &incoming.models {
+            if !stored.models.iter().any(|m| m.name == new.name) {
+                steps.push(AdditiveStep::AddModel(new.name.clone()));
+            }
+        }
+        if steps.is_empty() {
+            Compatibility::Identical
+        } else {
+            Compatibility::Additive(steps)
+        }
+    }
+
+    /// Classify one Model's storage shape in `incoming` against `stored`.
+    /// A Model missing from `incoming` is incompatible; one only `incoming`
+    /// has is added. The Model version is not storage shape and takes no part.
+    pub fn model_compatibility(stored: &Schema, incoming: &Schema, model: &str) -> Compatibility {
         let enum_of = |schema: &Schema, name: &str| -> Option<Vec<String>> {
             schema
                 .enums
@@ -533,95 +564,79 @@ impl Schema {
                 .find(|e| e.name == name)
                 .map(|e| e.values.clone())
         };
-        for old in &stored.models {
-            let Some(new) = incoming.models.iter().find(|m| m.name == old.name) else {
-                return Compatibility::Incompatible(format!("model {} was removed", old.name));
+        let Some(new) = incoming.models.iter().find(|m| m.name == model) else {
+            return Compatibility::Incompatible(format!("model {model} was removed"));
+        };
+        let Some(old) = stored.models.iter().find(|m| m.name == model) else {
+            return Compatibility::Additive(vec![AdditiveStep::AddModel(model.into())]);
+        };
+        if new.identity != old.identity {
+            return Compatibility::Incompatible(format!("model {} changed its identity", old.name));
+        }
+        if new.unique != old.unique {
+            return Compatibility::Incompatible(format!(
+                "model {} changed its unique constraints",
+                old.name
+            ));
+        }
+        let relation = |r: &RelationDescriptor| {
+            (
+                r.name.clone(),
+                r.target.clone(),
+                r.fields.clone(),
+                r.target_fields.clone(),
+                r.on_delete.clone(),
+            )
+        };
+        let mut old_relations: Vec<_> = old.relations.iter().map(relation).collect();
+        let mut new_relations: Vec<_> = new.relations.iter().map(relation).collect();
+        old_relations.sort();
+        new_relations.sort();
+        if old_relations != new_relations {
+            return Compatibility::Incompatible(format!(
+                "model {} changed its relations",
+                old.name
+            ));
+        }
+        for field in &old.fields {
+            let Some(next) = new.fields.iter().find(|f| f.name == field.name) else {
+                return Compatibility::Incompatible(format!(
+                    "field {}.{} was removed or renamed",
+                    old.name, field.name
+                ));
             };
-            if new.version != old.version {
+            let same_type = serde_json::to_value(&next.value_type).ok()
+                == serde_json::to_value(&field.value_type).ok();
+            if !same_type || next.nullable != field.nullable {
                 return Compatibility::Incompatible(format!(
-                    "model {} changed version from {} to {}",
-                    old.name, old.version, new.version
+                    "field {}.{} changed its type or nullability",
+                    old.name, field.name
                 ));
             }
-            if new.identity != old.identity {
+            if let ValueType::Enum { name } = &field.value_type
+                && enum_of(stored, name) != enum_of(incoming, name)
+            {
                 return Compatibility::Incompatible(format!(
-                    "model {} changed its identity",
-                    old.name
+                    "enum {name} used by {}.{} changed its values",
+                    old.name, field.name
                 ));
-            }
-            if new.unique != old.unique {
-                return Compatibility::Incompatible(format!(
-                    "model {} changed its unique constraints",
-                    old.name
-                ));
-            }
-            let relation = |r: &RelationDescriptor| {
-                (
-                    r.name.clone(),
-                    r.target.clone(),
-                    r.fields.clone(),
-                    r.target_fields.clone(),
-                    r.on_delete.clone(),
-                )
-            };
-            let mut old_relations: Vec<_> = old.relations.iter().map(relation).collect();
-            let mut new_relations: Vec<_> = new.relations.iter().map(relation).collect();
-            old_relations.sort();
-            new_relations.sort();
-            if old_relations != new_relations {
-                return Compatibility::Incompatible(format!(
-                    "model {} changed its relations",
-                    old.name
-                ));
-            }
-            for field in &old.fields {
-                match new.fields.iter().find(|f| f.name == field.name) {
-                    None => {
-                        return Compatibility::Incompatible(format!(
-                            "field {}.{} was removed or renamed",
-                            old.name, field.name
-                        ));
-                    }
-                    Some(next) => {
-                        let same_type = serde_json::to_value(&next.value_type).ok()
-                            == serde_json::to_value(&field.value_type).ok();
-                        if !same_type || next.nullable != field.nullable {
-                            return Compatibility::Incompatible(format!(
-                                "field {}.{} changed its type or nullability",
-                                old.name, field.name
-                            ));
-                        }
-                        if let ValueType::Enum { name } = &field.value_type
-                            && enum_of(stored, name) != enum_of(incoming, name)
-                        {
-                            return Compatibility::Incompatible(format!(
-                                "enum {name} used by {}.{} changed its values",
-                                old.name, field.name
-                            ));
-                        }
-                    }
-                }
-            }
-            for field in &new.fields {
-                if old.fields.iter().any(|f| f.name == field.name) {
-                    continue;
-                }
-                if field.nullable || field.default.is_some() {
-                    steps.push(AdditiveStep::AddField {
-                        model: new.name.clone(),
-                        field: field.name.clone(),
-                    });
-                } else {
-                    return Compatibility::Incompatible(format!(
-                        "field {}.{} is required and has no default",
-                        new.name, field.name
-                    ));
-                }
             }
         }
-        for new in &incoming.models {
-            if !stored.models.iter().any(|m| m.name == new.name) {
-                steps.push(AdditiveStep::AddModel(new.name.clone()));
+        let mut steps = vec![];
+        for field in &new.fields {
+            if old.fields.iter().any(|f| f.name == field.name) {
+                continue;
+            }
+            if field.nullable || field.default.is_some() {
+                steps.push(AdditiveStep::AddField {
+                    model: new.name.clone(),
+                    field: field.name.clone(),
+                });
+            } else {
+                return Compatibility::Incompatible(format!(
+                    "field {}.{} is required and has no default",
+                    new.name, field.name
+                ));
             }
         }
         if steps.is_empty() {

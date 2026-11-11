@@ -66,6 +66,7 @@ fn scalar_calls_share_commit_but_own_companions_and_independent_outcomes() {
             if accepted {
                 v05::MutationOutcome::Accepted {
                     sync_cursor: 0,
+                    materialization: batch.context.materialization.clone(),
                     result: Value::Null,
                     targets: vec![],
                 }
@@ -196,6 +197,7 @@ fn finish(c: &mut Client<SqliteStore>, accepted: bool) {
             outcome: if accepted {
                 v05::MutationOutcome::Accepted {
                     sync_cursor: 0,
+                    materialization: b.context.materialization.clone(),
                     result: Value::Null,
                     targets: vec![v05::SettlementTarget::Private {
                         record: v05::ReadRecord {
@@ -392,6 +394,7 @@ fn overlapping_companions_keep_local_order_across_outcome_order_and_reopen() {
                     } else {
                         v05::MutationOutcome::Accepted {
                             sync_cursor: 0,
+                            materialization: b.context.materialization.clone(),
                             result: Value::Null,
                             targets: vec![v05::SettlementTarget::Private {
                                 record: v05::ReadRecord {

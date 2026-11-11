@@ -1,7 +1,7 @@
 {
   "batchAcknowledgement": {
     "batchId": 1,
-    "digest": "2ecc56bed16fa22a88b260c91ad7e226998e86c8c5f97202afe460b7f923198c",
+    "digest": "028d1c05ade1a149997804e630f0fb02cffd554b6446f3c294ef21c4478a6d86",
     "materialization": "schema1",
     "protocol": 6,
     "results": [
@@ -9,6 +9,7 @@
         "mutationId": 1,
         "outcome": {
           "kind": "accepted",
+          "materialization": "schema1",
           "result": {
             "appOpaque": [
               1,
@@ -277,7 +278,7 @@
   },
   "mutationRequest": {
     "batchId": 1,
-    "digest": "2ecc56bed16fa22a88b260c91ad7e226998e86c8c5f97202afe460b7f923198c",
+    "digest": "028d1c05ade1a149997804e630f0fb02cffd554b6446f3c294ef21c4478a6d86",
     "materialization": "schema1",
     "mutations": [
       {
@@ -403,7 +404,7 @@
   },
   "rejectedAcknowledgement": {
     "batchId": 1,
-    "digest": "2ecc56bed16fa22a88b260c91ad7e226998e86c8c5f97202afe460b7f923198c",
+    "digest": "028d1c05ade1a149997804e630f0fb02cffd554b6446f3c294ef21c4478a6d86",
     "materialization": "schema1",
     "protocol": 6,
     "results": [

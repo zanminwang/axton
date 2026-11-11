@@ -9,13 +9,12 @@ import {
   devAuth,
   CallRejected as MutationRejected,
 } from "./backend.ts";
-import { createBackend as createRolloverBackend } from "./rollover/backend.ts";
+import { createBackend as createUpgradedBackend } from "./upgraded/backend.ts";
 import { createBackend as createVersionedBackend } from "./versioned/backend.ts";
 
 export async function host({
-  rollover = false,
+  upgraded = false,
   versioned = false,
-  materializations = {},
   projectionGeneration = "1",
   mixed = false,
   unbootstrapped = false,
@@ -80,7 +79,6 @@ export async function host({
     authenticate: devAuth(),
     protocol5: {
       projectionGeneration,
-      materializations,
       authorizeStream: (owner, stream) => stream === `User:${owner}`,
     },
     onError: (error) => {
@@ -193,8 +191,8 @@ export async function host({
     ? undefined
     : (versioned
         ? createVersionedBackend
-        : rollover
-          ? createRolloverBackend
+        : upgraded
+          ? createUpgradedBackend
           : createBackend)(options);
   const serving = mixed || unbootstrapped
     ? createRuntimeBackend({ ...options, config: mixedConfig })

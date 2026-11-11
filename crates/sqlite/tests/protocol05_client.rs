@@ -213,3 +213,96 @@ fn watch_fires_only_for_declared_tables() {
     assert!(queue.try_recv().is_ok());
     assert!(other.try_recv().is_err());
 }
+#[test]
+fn a_file_written_by_0_6_0_opens_without_its_three_dead_columns_and_keeps_digest_and_outcome_labels()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open(&path);
+    c.initialize_stream05(0, "1").unwrap();
+    seed(&mut c, "A");
+    let call = c
+        .transaction(|tx| {
+            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"P"}}), vec![])
+        })
+        .unwrap();
+    let b = c.freeze_batch05().unwrap().unwrap();
+    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+        context: b.context.clone(),
+        batch_id: b.batch_id,
+        digest: b.digest.clone(),
+        results: vec![v05::MutationResult {
+            mutation_id: call.ordinal,
+            outcome: v05::MutationOutcome::Accepted {
+                sync_cursor: 1,
+                materialization: b.context.materialization.clone(),
+                result: serde_json::Value::Null,
+                targets: vec![v05::SettlementTarget::Private {
+                    record: v05::ReadRecord {
+                        key: v05::RecordKey {
+                            model: "Entry".into(),
+                            identity: json!({"id":"e"}),
+                        },
+                        cursor: (),
+                        state: json!({"text":"server","note":null}),
+                    },
+                }],
+            },
+        }],
+    })
+    .unwrap();
+    drop(c);
+    // The Store and queue tables and the envelope trigger as 0.6.0 wrote them.
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.execute_batch(
+        "ALTER TABLE axton_store ADD COLUMN desired_materialization TEXT NOT NULL DEFAULT '';
+         ALTER TABLE axton_store ADD COLUMN enabled_descriptor TEXT NOT NULL DEFAULT '';
+         UPDATE axton_store SET desired_materialization=materialization,enabled_descriptor=schema_descriptor;
+         DROP TRIGGER axton_queue_envelope;
+         ALTER TABLE axton_mutation_queue ADD COLUMN batch_materialization TEXT;
+         UPDATE axton_mutation_queue SET batch_materialization=outcome_materialization;
+         ALTER TABLE axton_mutation_queue DROP COLUMN outcome_materialization;
+         CREATE TRIGGER axton_queue_envelope BEFORE UPDATE OF batch_materialization,batch_digest ON axton_mutation_queue WHEN OLD.batch_digest IS NOT NULL AND (NEW.batch_digest IS NOT OLD.batch_digest OR NEW.batch_materialization IS NOT OLD.batch_materialization) BEGIN SELECT RAISE(ABORT,'Batch envelope is immutable'); END;",
+    )
+    .unwrap();
+    drop(raw);
+    let mut c = open(&path);
+    let columns: Vec<String> = c
+        .read_sql(
+            "SELECT name FROM pragma_table_info('axton_mutation_queue')",
+            &[],
+        )
+        .unwrap()
+        .into_iter()
+        .map(|r| r["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(!columns.iter().any(|n| n == "batch_materialization"));
+    let store: Vec<String> = c
+        .read_sql("SELECT name FROM pragma_table_info('axton_store')", &[])
+        .unwrap()
+        .into_iter()
+        .map(|r| r["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(
+        !store
+            .iter()
+            .any(|n| n == "desired_materialization" || n == "enabled_descriptor"),
+        "{store:?}"
+    );
+    drop(c);
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    let error = raw
+        .execute(
+            "UPDATE axton_mutation_queue SET batch_digest=?",
+            [b.digest.replace(&b.digest[..1], "x")],
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("Batch envelope is immutable"));
+    drop(raw);
+    let mut c = open(&path);
+    let context = c.request_context05().unwrap();
+    c.install_authority05(&context, &[], Some((0, 1))).unwrap();
+    c.settle_ready05().unwrap();
+    assert!(c.call_completion05(&call.call_id).unwrap().is_some());
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "server");
+}

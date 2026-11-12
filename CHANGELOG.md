@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.0](https://github.com/zanminwang/axton/compare/v0.5.8...v0.6.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* a Store holds a projection and a Mutation queue, nothing else ([#289](https://github.com/zanminwang/axton/issues/289))
+* upgrade a Store by overwrite; the Batch carries no schema version ([#288](https://github.com/zanminwang/axton/issues/288))
+* stream-only downlink, removing /sync/materialize ([#285](https://github.com/zanminwang/axton/issues/285))
+
+### Features
+
+* stream-only downlink, removing /sync/materialize ([#285](https://github.com/zanminwang/axton/issues/285)) ([6cb382a](https://github.com/zanminwang/axton/commit/6cb382a322567d763cfdf291dfe7d8eafa8ef1e6))
+* upgrade a Store by overwrite; the Batch carries no schema version ([#288](https://github.com/zanminwang/axton/issues/288)) ([bf64dab](https://github.com/zanminwang/axton/commit/bf64dab7e288bb414bc73fdd99615520e4181a1f))
+
+
+### Code Refactoring
+
+* a Store holds a projection and a Mutation queue, nothing else ([#289](https://github.com/zanminwang/axton/issues/289)) ([bd46f42](https://github.com/zanminwang/axton/commit/bd46f42b2fcec3d81fbd3e271b8b22c61de79923))
+
 ## [0.5.8](https://github.com/zanminwang/axton/compare/v0.5.7...v0.5.8) (2026-10-29)
 
 

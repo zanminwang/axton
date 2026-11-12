@@ -856,6 +856,20 @@ if (process.argv[2] === "enqueue-child") {
         (await client.models.entry.get({ id: "settle-fault-entry" })).text,
         "later local",
       );
+      // The Retext is the next Batch: it freezes only once the first settles.
+      await until(
+        async () =>
+          (
+            await client.readSql(
+              "SELECT reconciled FROM axton_mutation_queue WHERE id=2",
+            )
+          )[0].reconciled === 1,
+        "later Retext settlement",
+      );
+      assert.equal(
+        (await client.models.entry.get({ id: "settle-fault-entry" })).text,
+        "later local",
+      );
       assert.deepEqual(h.executions, ["settle-fault-entry"]);
       assert.deepEqual(h.retexts, ["settle-fault-entry"]);
     } finally {

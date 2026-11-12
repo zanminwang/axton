@@ -194,8 +194,6 @@ fn typescript_create_inputs_make_only_defaulted_fields_optional() {
     assert!(ts.contains(" ...(value.createdAt !== undefined ? { createdAt: value.createdAt.toISOString() } : {}),"), "{ts}");
     assert!(ts.contains(" ...(value.note !== undefined ? { note: value.note == null ? null : value.note } : {}),"), "{ts}");
     assert!(ts.contains(" rank: value.rank,\n}; }"), "{ts}");
-    assert!(ts.contains("export function encodeTodoCreateIdentity(value:TodoCreate):Record<string,unknown> { return {\n ...(value.id !== undefined ? { id: value.id } : {}),\n}; }"), "{ts}");
-    assert!(ts.contains(" create(value:TodoCreate):Promise<void> { return this.port.direct({model:'Todo',op:'create',identity:encodeTodoCreateIdentity(value),values:encodeTodoPatch(value)}); }"), "{ts}");
     let input = section(&ts, "export interface AddTodoInput {");
     assert!(
         input.contains(" todo: TodoCreate;\n maybe?: TodoCreate | null;\n many: TodoCreate[];"),
@@ -259,10 +257,6 @@ fn dart_create_inputs_distinguish_omission_from_explicit_null() {
         "{input}"
     );
     assert!(
-        dart.contains(" Future<void> create(TodoCreateInput value) {"),
-        "{dart}"
-    );
-    assert!(
         !dart.contains("r'''"),
         "the schema is embedded as an escaped string"
     );
@@ -279,19 +273,14 @@ fn model_only_schemas_expose_create_inputs() {
         ts.contains("export interface NoteCreate {\n id?: string;\n body?: string;\n}"),
         "{ts}"
     );
-    assert!(
-        ts.contains(" create(value:NoteCreate):Promise<void>"),
-        "{ts}"
-    );
+    // A create input is a Mutation operand; no Model facade writes.
+    assert!(!ts.contains(" create(value:NoteCreate)"), "{ts}");
     let dart = axton_compiler::dart(&config);
     assert!(
         dart.contains("class NoteCreate implements NoteCreateInput {"),
         "{dart}"
     );
-    assert!(
-        dart.contains(" Future<void> create(NoteCreateInput value) {"),
-        "{dart}"
-    );
+    assert!(!dart.contains("Future<void> create("), "{dart}");
 }
 
 #[test]

@@ -40,7 +40,6 @@ impl Scenario {
                     "Write",
                     1,
                     json!({"entry": {"id": "e", "text": "optimistic", "note": null}}),
-                    vec![],
                 )
             })
             .unwrap();

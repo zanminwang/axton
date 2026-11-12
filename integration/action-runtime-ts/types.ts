@@ -51,7 +51,6 @@ const sharedCall: Promise<
 const sharedOutcome: Promise<
   SdkCallOutcome<{ todo: Todo; echoed: Date; status: "open" | "closed" }>
 > = outcome;
-const local: Promise<void> = client.models.todo.create(todo);
 const optional = client.mutations.change({ at: new Date() });
 const identity = client.mutations.mark({
   moment: { at: new Date(), title: "changed" },
@@ -64,7 +63,6 @@ void [
   outcome,
   sharedCall,
   sharedOutcome,
-  local,
   optional,
   identity,
   removed,
@@ -286,11 +284,8 @@ const enqueued: Promise<{
   put: Call<PutOutput>;
   cleared: Call<void>;
 }> = client.transaction(async (tx) => {
-  const put = await tx.mutations.put(async (local) => {
-    const at: Date | undefined = (await local.models.moment.get({ at: new Date(0) }))?.at;
-    await local.models.pin.delete({ todo: todo.id, at: at ?? new Date(0) });
-    return { todo, when: new Date(), statuses: ["open"], note: null };
-  });
+  const at: Date | undefined = (await tx.models.moment.get({ at: new Date(0) }))?.at;
+  const put = await tx.mutations.put({ todo, when: at ?? new Date(), statuses: ["open"], note: null });
   const cleared = await tx.mutations.clear({ todo: [{ id: todo.id }] });
   return { put, cleared };
 });
@@ -302,8 +297,6 @@ enqueued.then(async ({ put }) => {
 client.transaction(async (tx) => {
   // @ts-expect-error a DateTime arg is a Date
   await tx.mutations.change({ todo: null, at: "2026-01-01T00:00:00.000Z" });
-  // @ts-expect-error a DateTime identity component is a Date in the callback too
-  await tx.mutations.ping(async (local) => { await local.models.moment.delete({ at: "2026" }); return {}; });
-  // @ts-expect-error the callback queues no Mutation
-  await tx.mutations.ping(async (local) => { await local.mutations.ping({}); return {}; });
+  // @ts-expect-error the Mutation input callback is retired
+  await tx.mutations.put(async () => ({ todo, when: new Date(), statuses: ["open"], note: null }));
 });

@@ -43,24 +43,40 @@ const schema = {
     { name: "Note", identity: ["id"], fields: [text("id"), text("body")] },
   ],
 };
+/** The seeds: `Put<Model>` creates one row and `Change<Model>` updates it. */
+schema.actions = schema.models.flatMap((model) =>
+  ["create", "update"].map((operation) => ({
+    name: `${operation === "create" ? "Put" : "Change"}${model.name}`,
+    version: 1,
+    kind: "mutation",
+    inputs: [
+      {
+        kind: "model",
+        name: "row",
+        model: model.name,
+        operation,
+        cardinality: "single",
+      },
+    ],
+    outputs: [],
+  })),
+);
 /** A Journal page: each Entry with its Media and its Person. */
 const JOURNAL =
   "SELECT e.id AS entry, e.text AS text, m.url AS media, p.name AS person " +
   "FROM Entry e JOIN Media m ON m.entryId = e.id JOIN Person p ON p.entryId = e.id ORDER BY e.id";
 /** Every re-run publishes: its `random()` column differs. */
 const PROBE = "SELECT count(*) AS n, random() AS r FROM Entry";
-const put = (model, id, values) => ({
-  model,
-  op: "create",
-  identity: { id },
-  values,
-});
-const change = (model, id, values) => ({
-  model,
-  op: "update",
-  identity: { id },
-  values,
-});
+/** Offline Mutations: each commits its optimistic row and stays pending. */
+const put = (client, model, id, values) =>
+  client.submitMutation(`Put${model}`, 1, { row: { id, ...values } }, (x) => x);
+const change = (client, model, id, values) =>
+  client.submitMutation(
+    `Change${model}`,
+    1,
+    { row: { id, ...values } },
+    (x) => x,
+  );
 async function until(predicate, what) {
   const deadline = Date.now() + 5000;
   while (!predicate()) {
@@ -95,9 +111,9 @@ export function watchSqlTests(test, Transaction, { exactGuard }) {
 
   test("watchSql re-emits a join over three Models after a commit to each, and never for another table", async () => {
     await run(async (client) => {
-      await client.direct(put("Entry", "e", { text: "first" }));
-      await client.direct(put("Media", "m", { entryId: "e", url: "a.jpg" }));
-      await client.direct(put("Person", "p", { entryId: "e", name: "Ann" }));
+      await put(client, "Entry", "e", { text: "first", note: null });
+      await put(client, "Media", "m", { entryId: "e", url: "a.jpg", caption: null });
+      await put(client, "Person", "p", { entryId: "e", name: "Ann" });
       const page = [];
       const probe = [];
       const errors = [];
@@ -116,11 +132,11 @@ export function watchSqlTests(test, Transaction, { exactGuard }) {
       await until(() => page.length === 1 && probe.length === 1, "the first rows");
       const row = (text, media, person) => ({ entry: "e", text, media, person });
       assert.deepEqual(page, [[row("first", "a.jpg", "Ann")]]);
-      await client.direct(change("Entry", "e", { text: "second" }));
+      await change(client, "Entry", "e", { text: "second" });
       await until(() => page.length === 2 && probe.length === 2, "the Entry commit");
-      await client.direct(change("Media", "m", { url: "b.jpg" }));
+      await change(client, "Media", "m", { url: "b.jpg" });
       await until(() => page.length === 3, "the Media commit");
-      await client.direct(change("Person", "p", { name: "Bea" }));
+      await change(client, "Person", "p", { name: "Bea" });
       await until(() => page.length === 4, "the Person commit");
       assert.deepEqual(page.slice(1), [
         [row("second", "a.jpg", "Ann")],
@@ -129,14 +145,14 @@ export function watchSqlTests(test, Transaction, { exactGuard }) {
       ]);
       // A commit to an unrelated Model re-runs neither; one that leaves the
       // join's answer unchanged publishes nothing.
-      await client.direct(put("Note", "n", { body: "aside" }));
-      await client.direct(change("Media", "m", { caption: "unselected" }));
+      await put(client, "Note", "n", { body: "aside" });
+      await change(client, "Media", "m", { caption: "unselected" });
       await settle();
       assert.equal(page.length, 4);
       assert.deepEqual(probe, [1, 1], "only the Entry commit re-ran the probe");
       stopPage();
       stopProbe();
-      await client.direct(change("Entry", "e", { text: "after" }));
+      await change(client, "Entry", "e", { text: "after" });
       await settle();
       assert.equal(page.length, 4, "a stopped watch hears nothing");
       assert.deepEqual(errors, []);
@@ -145,7 +161,7 @@ export function watchSqlTests(test, Transaction, { exactGuard }) {
 
   test("watchSql binds parameters and refuses a write, an engine table and a missing table through onError", async () => {
     await run(async (client) => {
-      await client.direct(put("Entry", "e", { text: "bound" }));
+      await put(client, "Entry", "e", { text: "bound", note: null });
       const bound = [];
       const stop = client.watchSql(
         "SELECT text FROM Entry WHERE id = ?",
@@ -176,11 +192,11 @@ export function watchSqlTests(test, Transaction, { exactGuard }) {
       : "watchSql from inside a transaction callback waits for the commit and sees only committed rows",
     async () => {
       await run(async (client) => {
-        await client.direct(put("Entry", "e", { text: "before" }));
+        await put(client, "Entry", "e", { text: "before", note: null });
         const rows = [];
         let refusal;
         await client.transaction(async (tx) => {
-          await tx.direct(change("Entry", "e", { text: "inside" }));
+          await change(tx, "Entry", "e", { text: "inside" });
           client.watchSql(
             "SELECT text FROM Entry",
             [],
@@ -225,7 +241,7 @@ export function watchSqlTests(test, Transaction, { exactGuard }) {
       await settle();
       assert.deepEqual(rows, [[{ n: 0 }]], "the last rows are not delivered again");
       assert.deepEqual(errors, []);
-      await assert.rejects(client.direct(put("Entry", "e", { text: "x" })));
+      await assert.rejects(put(client, "Entry", "e", { text: "x", note: null }));
     } finally {
       await client.close();
       await rm(directory, { recursive: true, force: true });

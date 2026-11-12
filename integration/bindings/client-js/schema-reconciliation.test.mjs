@@ -4,14 +4,20 @@ import {mkdtemp,readFile,rm,stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Client} from '../../../packages/frontend/client-js/index.mts';
-import {openStore} from './store-fixture.mjs';
+import {createRequire} from 'node:module';
+import {createClient} from '../../../packages/frontend/client-js/api/runtime.mts';
+import {Transaction} from '../../../packages/frontend/client-js/api/transaction.mts';
+import {openStore,deliveringNetwork,deliver} from './store-fixture.mjs';
+const native=createRequire(import.meta.url)('../../../bindings/node/axton-node.node');
 const schema=JSON.parse(await readFile(new URL('../../../fixtures/schemas/entry.json',import.meta.url),'utf8'));
 schema.actions=[{name:'Edit',kind:'mutation',version:1,inputs:[{kind:'model',name:'entry',model:'Entry',operation:'update',cardinality:'single',allowedFields:['text','note']}],outputs:[]}];
+// The base row is delivered, so the queue holds only the edit.
+const Seeder=createClient(native,Transaction,deliveringNetwork([{model:'Entry',identity:{id:'e'},state:{text:'A',note:null}}]));
 test('offline schema evolution retains named pending work in the same physical Store',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'axton-schema-evolution-'));const path=join(dir,'client.sqlite');let client;
  try{
+  await deliver(Seeder,{path,schema});
   client=await openStore(Client,{path,schema});
-  await client.direct({model:'Entry',op:'create',identity:{id:'e'},values:{text:'A'}});
   await client.submitMutation('Edit',1,{entry:{id:'e',text:'pending'}},x=>x);
   await client.close();
   const evolved=structuredClone(schema);const entry=evolved.models[0];const old=structuredClone(entry);

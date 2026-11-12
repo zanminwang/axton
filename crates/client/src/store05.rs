@@ -21,8 +21,6 @@ CREATE TABLE axton_mutation_prerequisite(ordinal INTEGER NOT NULL REFERENCES axt
 CREATE TABLE axton_local_write(sequence INTEGER PRIMARY KEY, ordinal INTEGER NOT NULL,position INTEGER,disposition TEXT NOT NULL,model TEXT NOT NULL,identity TEXT NOT NULL,op TEXT NOT NULL,"values" TEXT);
 CREATE INDEX axton_local_write_record ON axton_local_write(model,identity,sequence);
 CREATE INDEX axton_queue_operation_record ON axton_mutation_queue_operation(model,identity,mutation_id,step);
-
-CREATE TABLE axton_local_replica_layer(model TEXT NOT NULL,identity TEXT NOT NULL,operations TEXT NOT NULL,PRIMARY KEY(model,identity));
 CREATE TABLE axton_authority(model TEXT NOT NULL,identity TEXT NOT NULL,evidence TEXT NOT NULL,base TEXT NOT NULL DEFAULT 'null',PRIMARY KEY(model,identity));
 CREATE TRIGGER axton_queue_frozen_update BEFORE UPDATE OF name,descriptor_version,descriptor,batch_id ON axton_mutation_queue WHEN OLD.batch_id IS NOT NULL AND (NEW.name<>OLD.name OR NEW.descriptor_version<>OLD.descriptor_version OR NEW.descriptor<>OLD.descriptor OR NEW.batch_id IS NOT OLD.batch_id) BEGIN SELECT RAISE(ABORT,'assigned mutation is immutable'); END;
 CREATE TRIGGER axton_operation_frozen_update BEFORE UPDATE ON axton_mutation_queue_operation WHEN OLD.input_path IS NOT NULL AND EXISTS(SELECT 1 FROM axton_mutation_queue WHERE id=OLD.mutation_id AND batch_id IS NOT NULL) BEGIN SELECT RAISE(ABORT,'assigned input is immutable'); END;
@@ -42,6 +40,9 @@ const DROP_BATCH_MATERIALIZATION: &str = "DROP TRIGGER axton_queue_envelope; ALT
 /// descriptor in `axton_store`. Open compares the schema with
 /// `materialization` alone, so they carry nothing.
 const DROP_DESIRED_MATERIALIZATION: &str = "ALTER TABLE axton_store DROP COLUMN desired_materialization; ALTER TABLE axton_store DROP COLUMN enabled_descriptor;";
+/// Files written while direct Model writes existed have
+/// `axton_local_replica_layer`, which nothing reads; open drops it.
+const DROP_LOCAL_REPLICA_LAYER: &str = "DROP TABLE IF EXISTS axton_local_replica_layer;";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoreStatus05 {
@@ -206,6 +207,7 @@ impl<S: ClientStore> Client<S> {
                 store.execute_batch(DROP_BATCH_MATERIALIZATION)?;
                 store.execute_batch(QUEUE_ENVELOPE)?;
             }
+            store.execute_batch(DROP_LOCAL_REPLICA_LAYER)?;
             let reset = ddl::reconcile(&mut store, stored.as_ref(), &schema)?;
             for model in &reset {
                 for table in RECORD_STATE {
@@ -234,6 +236,7 @@ impl<S: ClientStore> Client<S> {
                 .is_empty();
             let mut changes = BTreeSet::new();
             let mut engine = Engine::new(&mut store, &schema, &mut changes, false);
+            engine.purge_retired_writes05()?;
             if !unchanged || !reset.is_empty() {
                 engine.upgrade05(&descriptor.materialization)?;
             } else {
@@ -324,11 +327,7 @@ impl<S: ClientStore> Engine<'_, S> {
     }
 }
 /// Engine tables that hold state for one record, keyed by Model and identity.
-const RECORD_STATE: [&str; 3] = [
-    "axton_local_replica_layer",
-    "axton_local_write",
-    "axton_authority",
-];
+const RECORD_STATE: [&str; 2] = ["axton_local_write", "axton_authority"];
 impl<S: ClientStore> Engine<'_, S> {
     /// Delete every record: all Model rows, before-images and engine state.
     pub(crate) fn delete_records05(&mut self) -> Result<()> {

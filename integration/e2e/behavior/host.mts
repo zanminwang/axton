@@ -175,7 +175,6 @@ export async function host({ projected = false } = {}) {
             : null;
         });
       },
-      draft: undefined,
     },
     bootstrap: async () => {},
   });

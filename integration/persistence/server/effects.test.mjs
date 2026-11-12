@@ -10,13 +10,12 @@ const track=(stream,model,identity)=>({kind:'track',stream,record:ref(model,iden
 const invalid=(streams,model,identity)=>({kind:'invalidate',streams,record:ref(model,identity)});
 const empty={changes:[],declarations:[]};
 test('Bootstrap retains track-only validation, atomic declarations, sticky failures and lifetime checks',()=>{
- const e=bootstrapEffectsFor(models,[],new Set(['Todo']))(),h=e.stream('S');
+ const e=bootstrapEffectsFor(models)(),h=e.stream('S');
  assert.equal(h.invalidate,undefined);assert.equal(e.invalidate,undefined);
  h.track.todo(['kept','kept']);assert.deepEqual(e.tracking(),[track('S','Todo',{id:'kept'})]);
  let caught;try{h.track.todo(['prefix',{}]);}catch(error){caught=error;}
  assert.deepEqual(e.failure(),{kind:'invalid',error:caught});
  assert.deepEqual(e.tracking(),[track('S','Todo',{id:'kept'})]);
- assert.throws(()=>h.track.moment(new Date(0)),/no Loader/);
  assert.throws(()=>h.track.todo('\ud800'),/Unicode/);
  e.close();assert.throws(()=>h.track.todo([]),/closed/);
 });
@@ -40,9 +39,6 @@ test('ordinary invalid calls append no prefix and preserve prior declarations',(
 test('empty arrays are no-ops and escaped empty handles still check lifetime',()=>{
  const e=fresh(),h=e.stream([]);h.track.todo('t');h.invalidate.todo('t');e.invalidate([]);e.stream('S').track.todo([]);assert.deepEqual(e.settlement(),empty);
  e.close();for(const call of [()=>h.track.todo([]),()=>h.invalidate([]),()=>e.invalidate([]),()=>e.stream([])])assert.throws(call,/closed/);
-});
-test('Loader-less declarations are refused before append',()=>{
- const e=createEffects(models,[],new Set(['Todo']));assert.throws(()=>e.stream('S').track([ref('Todo',{id:'t'}),ref('Moment',{at:new Date(0)})]),/no Loader/);assert.throws(()=>e.invalidate.moment(new Date(0)),/no Loader/);assert.deepEqual(e.settlement(),empty);
 });
 test('names are nonblank opaque case-sensitive strings and sparse names fail',()=>{
  const e=fresh();for(const names of ['', ' ',null,1,['S',null],['S',,'T']])assert.throws(()=>e.stream(names));e.stream(['S','s',' S']).track.todo('t');assert.deepEqual(e.settlement().declarations.map(d=>d.stream),['S','s',' S']);

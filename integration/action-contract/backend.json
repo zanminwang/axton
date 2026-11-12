@@ -1545,11 +1545,6 @@
   ],
   "deprecations": [],
   "inverses": [],
-  "loaders": [
-    "Todo",
-    "Project",
-    "Note"
-  ],
   "models": [
     {
       "enums": [],

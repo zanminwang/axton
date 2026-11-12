@@ -1,6 +1,6 @@
 pub mod common05;
 use axton_client::ddl::reconcile;
-use axton_client::{Client, ClientStore, Operation, OperationKind, RecordKey, v05};
+use axton_client::{Client, ClientStore, RecordKey, v05};
 use axton_core::Schema;
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
@@ -204,7 +204,7 @@ fn key(model: &str, id: &str) -> v05::RecordKey {
     }
 }
 /// Rows per engine table for one Model: the table, its before-image,
-/// authority evidence, the local replica layer and local writes.
+/// authority evidence and local writes.
 fn state(path: &std::path::Path, model: &str) -> Vec<i64> {
     let raw = rusqlite::Connection::open(path).unwrap();
     let count = |sql: &str| -> i64 {
@@ -231,7 +231,6 @@ fn state(path: &std::path::Path, model: &str) -> Vec<i64> {
         table(model),
         table(&format!("axton_before_{model}")),
         count("SELECT COUNT(*) FROM axton_authority WHERE model=?"),
-        count("SELECT COUNT(*) FROM axton_local_replica_layer WHERE model=?"),
         count("SELECT COUNT(*) FROM axton_local_write WHERE model=?"),
     ]
 }
@@ -262,9 +261,8 @@ fn queue(path: &std::path::Path) -> Vec<Vec<Value>> {
     }
     rows
 }
-/// A Store holding Stream rows of both Models, a cache install on `Task`,
-/// queued Mutations on each Model, and direct writes on a dirty and a clean
-/// `Task` row.
+/// A Store holding Stream rows of both Models, a cache install on `Task` and
+/// queued Mutations on each Model.
 fn populated(path: &std::path::Path) {
     let mut c = Client::open05(SqliteStore::open(path).unwrap(), pair(None), "User:u").unwrap();
     c.initialize_stream05(10, "1").unwrap();
@@ -296,36 +294,15 @@ fn populated(path: &std::path::Path) {
     )
     .unwrap();
     c.transaction(|tx| {
-        tx.submit_mutation05(
-            "TouchTask",
-            1,
-            json!({"task":{"id":"t","title":"queued"}}),
-            vec![],
-        )?;
+        tx.submit_mutation05("TouchTask", 1, json!({"task":{"id":"t","title":"queued"}}))?;
         tx.submit_mutation05(
             "TouchOther",
             1,
             json!({"other":{"id":"o","title":"queued"}}),
-            vec![],
         )
     })
     .unwrap();
     c.freeze_batch05().unwrap().unwrap();
-    c.transaction(|tx| {
-        tx.direct(Operation {
-            model: "Task".into(),
-            identity: json!({"id":"t"}),
-            op: OperationKind::Update,
-            values: Some(json!({"mood":"busy"})),
-        })?;
-        tx.direct(Operation {
-            model: "Task".into(),
-            identity: json!({"id":"device"}),
-            op: OperationKind::Create,
-            values: Some(json!({"title":"device","mood":null,"otherId":null})),
-        })
-    })
-    .unwrap();
 }
 #[test]
 fn reopen_resets_only_the_model_whose_storage_changed() {
@@ -334,7 +311,7 @@ fn reopen_resets_only_the_model_whose_storage_changed() {
         let path = dir.path().join("db");
         populated(&path);
         let task = state(&path, "Task");
-        assert!(task.iter().all(|n| *n > 0), "{reset:?}: {task:?}");
+        assert!(task[..3].iter().all(|n| *n > 0), "{reset:?}: {task:?}");
         let other = state(&path, "Other");
         let queued = queue(&path);
         let mut c = Client::open05(
@@ -348,11 +325,7 @@ fn reopen_resets_only_the_model_whose_storage_changed() {
         } else {
             0
         };
-        assert_eq!(
-            state(&path, "Task"),
-            vec![empty, empty, 0, 0, 0],
-            "{reset:?}"
-        );
+        assert_eq!(state(&path, "Task"), vec![empty, empty, 0, 0], "{reset:?}");
         assert_eq!(state(&path, "Other"), other, "{reset:?}");
         assert_eq!(queue(&path), queued, "{reset:?}");
         assert_eq!(
@@ -452,15 +425,8 @@ fn reopen_with_an_added_nullable_field_keeps_rows_and_asks_for_bootstrap_from_c(
         assert_eq!((&row["text"], &row["label"]), (&json!(text), &Value::Null));
     }
     assert_eq!(c.query("Note", &json!({})).unwrap().len(), 2);
-    c.transaction(|tx| {
-        tx.submit_mutation05(
-            "Edit",
-            1,
-            json!({"note":{"id":"n","text":"edited"}}),
-            vec![],
-        )
-    })
-    .unwrap();
+    c.transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"note":{"id":"n","text":"edited"}})))
+        .unwrap();
     let batch = c.freeze_batch05().unwrap().unwrap();
     assert_eq!(batch.context, after.context);
 }

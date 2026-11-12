@@ -43,7 +43,7 @@ Each client is one Rust runtime on its own thread, reached through the [native m
 
 ## Client behavior
 
-Generated reads, watches, local CRUD, named Mutations, Queries and Fetch use the same engine as Node and Dart. `client.mutations.<name>(inputOrCallback)` and `tx.mutations.<name>(inputOrCallback)` commit an owned local scope before returning its `Call`. The callback receives only `tx.models`, executes before its returned typed input is applied optimistically, and its device-only writes are companions of that Mutation. `Call.wait()` waits for the backend outcome and required local settlement; it rejects before the outer transaction commits.
+Generated reads, watches, named Mutations, Queries and Fetch use the same engine as Node and Dart. `client.mutations.<name>(input)` and `tx.mutations.<name>(input)` commit the input and its optimism locally before returning its `Call`. To build input from local data, read it in `client.transaction` and call `tx.mutations.<name>(input)` there. `Call.wait()` waits for the backend outcome and required local settlement; it rejects before the outer transaction commits.
 
 Await every operation. Failed commands poison their scope even if caught; unawaited work prevents commit and expired or foreign handles fail promptly. Hermes has no Node async context: this adapter conservatively refuses overlapping async transaction callbacks across clients with `overlapping transaction callbacks require async context support`. Independent ordinary reads on another Store remain available. Use the supplied `tx` inside its callback. There is no mobile savepoint API.
 

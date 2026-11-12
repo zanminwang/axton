@@ -9,6 +9,7 @@ const options: Options<object> = {
   },
   mutations: {
     publish: async ({ args }) => ({ entry: { id: args.entry.id } }),
+    retext: async ({ args }) => ({ entry: { id: args.entry.id } }),
   },
   queries: {
     find: async ({ ctx, args }) => {
@@ -17,6 +18,9 @@ const options: Options<object> = {
     },
     peek: async () => ({ entry: null }),
   },
-  loaders: { entry: async ({ ids }) => ids.map(() => null) },
+  loaders: {
+    entry: async ({ ids }) => ids.map(() => null),
+    snapshot: async ({ ids }) => ids.map(() => null),
+  },
 };
 createBackend(options);

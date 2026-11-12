@@ -1,4 +1,4 @@
-import {openStore} from './store-fixture.mjs';
+import {openStore, deliveringNetwork, deliver, streamServer} from './store-fixture.mjs';
 // Unsent work (#186, #205, #204): refused and failed acts as change streams,
 // their resolutions on the client and inside a transaction, over the native
 // runtime and SQLite. Shared by the Node and React Native suites: each passes
@@ -125,20 +125,27 @@ function recorder() {
 /** Register the scenarios with `test`, for a host's adapters. */
 export function unsentSuite(test, { Transaction, createServerConnection }) {
   const Client = createClient(native, Transaction, createServerConnection);
+  // The base Note is delivered, so the queue holds only each test's own work.
+  const Seeder = createClient(
+    native,
+    Transaction,
+    deliveringNetwork([
+      {
+        model: "Note",
+        identity: { id: "n" },
+        state: { text: "base", blob: null },
+      },
+    ]),
+  );
   async function harness(body, prerequisites = {}) {
     const directory = await mkdtemp(join(tmpdir(), "axton-unsent-"));
+    await deliver(Seeder, { path: join(directory, "db"), schema });
     const client = await openStore(Client,{
       path: join(directory, "db"),
       schema,
       prerequisites,
     });
     try {
-      await client.direct({
-        model: "Note",
-        op: "create",
-        identity: { id: "n" },
-        values: { text: "base", blob: null },
-      });
       await body(client);
     } finally {
       await client.close();
@@ -146,8 +153,27 @@ export function unsentSuite(test, { Transaction, createServerConnection }) {
     }
   }
   const text = async (client) => (await client.read("Note", { id: "n" })).text;
+  /** A client of a live fake server that delivered the base Note; it uploads nothing. */
+  async function live(body) {
+    const directory = await mkdtemp(join(tmpdir(), "axton-unsent-"));
+    const server = streamServer([
+      { model: "Note", identity: { id: "n" }, state: { text: "base", blob: null } },
+    ]);
+    const client = await openStore(createClient(native, Transaction, server.network), {
+      path: join(directory, "db"),
+      schema,
+      connection: { url: "http://fixture", token: "fixture" },
+    });
+    try {
+      await client.bootstrap();
+      await body(client, server);
+    } finally {
+      await client.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
 
-  // Business refusal and companion rollback run through the real backend in
+  // Business refusal and its rollback run through the real backend in
   // integration/v05-sdk. These fixtures inspect native unsent dependency fates.
   test("a terminal handler failure lists the act; a retry runs the handler again", () => {
     let calls = 0;
@@ -352,16 +378,15 @@ export function unsentSuite(test, { Transaction, createServerConnection }) {
     ));
 
   test("a stream delivers the first result, then distinct results; stop and close end it", () =>
-    harness(async (client) => {
+    live(async (client, server) => {
       const counts = [];
       const stop = client.outbound.watchPending((count) => counts.push(count));
       await until(() => counts.length === 1);
-      await client.direct({
-        model: "Note",
-        op: "update",
-        identity: { id: "n" },
-        values: { text: "local" },
-      });
+      // A commit that leaves the count as it was: a delivered change.
+      const cursor = await server.send([
+        { model: "Note", identity: { id: "n" }, state: { text: "local", blob: null } },
+      ]);
+      await until(async () => (await client.syncState()).cursors["User:viewer"] === cursor);
       await client.submitMutation("Write", 1, write("one"));
       await until(() => counts.length === 2);
       stop();

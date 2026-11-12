@@ -6,7 +6,7 @@ Define the JSON messages between a Frontend SDK and its Rust ClientRuntime: task
 
 ## 3. Context and Scope
 
-`requestId` routes a submitted command, `effectId` routes an effect, `transactionId` and `scope` admit transaction work, `companionId` admits Mutation-local callbacks, `callId` identifies a durable Mutation and `observerId` routes watch events. Their allocation, cancellation and completion are runtime responsibilities. Extraction preserves these identities and all null/omitted-field distinctions.
+`requestId` routes a submitted command, `effectId` routes an effect, `transactionId` and `scope` admit transaction work, `callId` identifies a durable Mutation and `observerId` routes watch events. Their allocation, cancellation and completion are runtime responsibilities. Extraction preserves these identities and all null/omitted-field distinctions.
 
 ## 5. Building Block View
 

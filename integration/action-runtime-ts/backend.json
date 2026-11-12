@@ -827,11 +827,6 @@
   ],
   "deprecations": [],
   "inverses": [],
-  "loaders": [
-    "Todo",
-    "Moment",
-    "Pin"
-  ],
   "models": [
     {
       "enums": [],

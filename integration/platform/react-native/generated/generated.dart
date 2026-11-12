@@ -2,7 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:axton/axton.dart';
-export 'package:axton/axton.dart' show RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, StoreIdentity, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
+export 'package:axton/axton.dart' show AxtonDiagnostics, AxtonTraceRecord, RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
 class Present<T> { final T value; const Present(this.value); }
 final Map<String,dynamic> schema = jsonDecode('{"actions":[],"clientPolicies":[{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","text","note"]},"name":"AddEntry","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"single","model":"Entry","name":"entry","operation":"create"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","text","note"]},"name":"Edit","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"allowedPatchFields":["text","note"],"cardinality":"single","model":"Entry","name":"entry","operation":"update"}],"version":1}],"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":1}]}') as Map<String,dynamic>;
 /// What a fresh create of Entry accepts: a complete [Entry], or a [EntryCreate] that may omit fields with creation defaults.
@@ -36,15 +36,6 @@ class EntryIdentity {
  id: row['id'] as String,
  );
 }
-class EntryPatch {
- final Present<String>? text;
- final Present<String?>? note;
- const EntryPatch({this.text,this.note});
- Map<String,dynamic> toRecord() => {
- if (text != null) 'text': text!.value,
- if (note != null) 'note': note!.value == null ? null : note!.value!,
- };
-}
 class EntryCreate implements EntryCreateInput {
  final String id;
  final String text;
@@ -57,25 +48,6 @@ class EntryCreate implements EntryCreateInput {
  'note': note == null ? null : note!,
  };
 }
-Map<String,dynamic> addEntry({required EntryCreateInput entry}) { final operations=<Map<String,dynamic>>[];
- for (final value in [entry]) {
- final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)};
- operations.add({'model':'Entry','op':'create','identity':identity,'values':state}); }
- return {'name':'AddEntry','version':1,'operations':operations}; }
-class EditEntryUpdate {
- final EntryIdentity identity;
- final Present<String>? text;
- final Present<String?>? note;
- const EditEntryUpdate({required this.identity,this.text,this.note});
- Map<String,dynamic> toRecord() => {
- if (text != null) 'text': text!.value,
- if (note != null) 'note': note!.value == null ? null : note!.value!,
- };
-}
-Map<String,dynamic> edit({required EditEntryUpdate entry}) { final operations=<Map<String,dynamic>>[];
- for (final value in [entry]) {
- operations.add({'model':'Entry','op':'update','identity':value.identity.toRecord(),'values':value.toRecord()}); }
- return {'name':'Edit','version':1,'operations':operations}; }
 class EntryFilter {
  final Present<String>? id;
  final Present<String>? text;
@@ -89,25 +61,21 @@ class EntryFilter {
 }
 enum EntryOrderField {byId('id'),byText('text'),byNote('note'); final String wireName; const EntryOrderField(this.wireName);}
 class EntryOrder { final EntryOrderField field; final bool descending; const EntryOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
+Entry _copyEntryWatch(Entry value) => value;
 class EntryModel { final ReadPort port; EntryModel(this.port);
  Future<Entry?> get(EntryIdentity identity) async { final row=await port.read('Entry',identity.toRecord()); return row == null ? null : Entry.fromRecord(row); }
  Future<List<Entry>> query({EntryFilter? where,List<EntryOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Entry',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Entry.fromRecord).toList();
 }
-class EntryLiveModel extends EntryTxModel { final Client client; EntryLiveModel(this.client) : super(client);
- Stream<List<Entry>> watch({EntryFilter? where}) => client.watch('Entry', where:where?.toRecord()??{}).map((rows) => rows.map(Entry.fromRecord).toList());
+class EntryLiveModel extends EntryModel { final Client client; EntryLiveModel(this.client) : super(client);
+ Stream<List<Entry>> watch({EntryFilter? where}) => client.watchDecoded<Entry>('Entry', where:where?.toRecord()??{},decode:Entry.fromRecord,copy:_copyEntryWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(EntryIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Entry', identity.toRecord()));
-}
-class EntryTxModel extends EntryModel { final WritePort writer; EntryTxModel(this.writer) : super(writer);
- Future<void> create(EntryCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Entry','op':'create','identity':identity,'values':state}); }
- Future<void> update(EntryIdentity identity, EntryPatch patch) => writer.direct({'model':'Entry','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(EntryIdentity identity) => writer.direct({'model':'Entry','op':'delete','identity':identity.toRecord()});
 }
 class LiveModels { final Client port; LiveModels(this.port);
  late final EntryLiveModel entry = EntryLiveModel(port);
 }
-class TxModels { final WritePort port; TxModels(this.port);
- late final EntryTxModel entry = EntryTxModel(port);
+class TxModels { final ReadPort port; TxModels(this.port);
+ late final EntryModel entry = EntryModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);
@@ -118,7 +86,7 @@ class GeneratedClient {
  final Client client; RuntimeConnection? get connection => client.connection; late final LiveModels models=LiveModels(client);
  late final FetchModels fetch=FetchModels(client);
  GeneratedClient._(this.client);
- static Future<GeneratedClient> open({required String path, required String stream, required StoreConnection connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites));
+ static Future<GeneratedClient> open({required String path, required String stream, StoreConnection? connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites, AxtonDiagnostics? diagnostics}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites,diagnostics:diagnostics));
  Future<void> bootstrap() => client.bootstrap();
  Future<RuntimeConnection> connect(SyncServer server,{void Function(Object)? onError,Future<void> Function()? refreshAuth,Duration directTimeout=const Duration(seconds:30)}) => client.connect(server,onError:onError,refreshAuth:refreshAuth,directTimeout:directTimeout);
  Future<void> resetStore({bool discardPending=false}) => client.resetStore(discardPending:discardPending);
@@ -127,8 +95,6 @@ class GeneratedClient {
  String get clientId => client.clientId;
  /// The client's sync state: a local snapshot, not a network probe.
  Future<Map<String,dynamic>> syncState() => client.syncState();
- /// Leave an incompatible database behind for a fresh file; refused while unsent work remains unless [discardPending].
- Future<Map<String,dynamic>> rebuild({bool discardPending = false}) => client.rebuild(discardPending: discardPending);
  /// Remove a handled rejection from the local inbox; it is not retried.
  Future<void> dismissRejection(int ordinal) => client.dismissRejection(ordinal);
  /// Remove unsent work and recompute local state; frozen work cannot be dropped.

@@ -1,10 +1,13 @@
-use axton_client::{Client, Operation, OperationKind, RecordKey, Schema, v05};
+use axton_client::{Client, RecordKey, Schema, v05};
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 fn schema() -> Schema {
     let mut s: Value =
         serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
-    s["actions"] = json!([{"name":"Write","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"create","cardinality":"single"}],"outputs":[]}]);
+    s["actions"] = json!([
+        {"name":"Write","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"create","cardinality":"single"}],"outputs":[]},
+        {"name":"Edit","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"update","cardinality":"single"}],"outputs":[]}
+    ]);
     Schema::from_value(s).unwrap()
 }
 fn open(p: &std::path::Path) -> Client<SqliteStore> {
@@ -16,13 +19,15 @@ fn key() -> RecordKey {
         identity: json!({"id":"e"}),
     }
 }
-fn direct(text: &str) -> Operation {
-    Operation {
-        model: "Entry".into(),
-        identity: json!({"id":"e"}),
-        op: OperationKind::Update,
-        values: Some(json!({"text":text})),
-    }
+// Later local work on the record: an `Edit` queued after the frozen Batch
+// and never sent. Its ordinal discards it.
+fn later(c: &mut Client<SqliteStore>, text: &str) -> u64 {
+    c.transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":text}})))
+        .unwrap()
+        .ordinal
+}
+fn discard(c: &mut Client<SqliteStore>, ordinal: u64) {
+    c.transaction(|tx| tx.discard_mutation05(ordinal)).unwrap();
 }
 fn ack(b: &v05::MutationRequest, outcome: v05::MutationOutcome) -> v05::BatchAcknowledgement {
     v05::BatchAcknowledgement {
@@ -36,7 +41,7 @@ fn ack(b: &v05::MutationRequest, outcome: v05::MutationOutcome) -> v05::BatchAck
     }
 }
 #[test]
-fn rejected_owner_preserves_later_direct_and_completion_after_reopen() {
+fn rejected_owner_completes_after_reopen_beneath_a_later_pending_mutation() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = open(&p);
@@ -47,12 +52,11 @@ fn rejected_owner_preserves_later_direct_and_completion_after_reopen() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
-    c.transaction(|tx| tx.direct(direct("B"))).unwrap();
+    later(&mut c, "B");
     let a = ack(
         &b,
         v05::MutationOutcome::Rejected {
@@ -61,7 +65,9 @@ fn rejected_owner_preserves_later_direct_and_completion_after_reopen() {
         },
     );
     c.acknowledge_batch05(&a).unwrap();
+    // The later Edit of the refused creation is its lifecycle dependent.
     assert_eq!(c.read(&key()).unwrap(), None);
+    assert_eq!(c.pending_count().unwrap(), 0);
     drop(c);
     let mut c = open(&p);
     assert!(c.call_completion05(&call.call_id).unwrap().is_some());
@@ -69,7 +75,7 @@ fn rejected_owner_preserves_later_direct_and_completion_after_reopen() {
     c.acknowledge_batch05(&a).unwrap();
 }
 #[test]
-fn accepted_private_result_waits_for_coverage_then_settles_later_direct() {
+fn accepted_private_result_waits_for_coverage_beneath_a_later_pending_mutation() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = open(&p);
@@ -80,12 +86,11 @@ fn accepted_private_result_waits_for_coverage_then_settles_later_direct() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
-    c.transaction(|tx| tx.direct(direct("B"))).unwrap();
+    later(&mut c, "B");
     let a = ack(
         &b,
         v05::MutationOutcome::Accepted {
@@ -107,6 +112,29 @@ fn accepted_private_result_waits_for_coverage_then_settles_later_direct() {
     c.acknowledge_batch05(&a).unwrap();
     assert!(c.call_completion05(&call.call_id).unwrap().is_none());
     assert!(c.settle_ready05().unwrap().completions.is_empty());
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
+    let context = c.request_context05().unwrap();
+    c.install_authority05(&context, &[], Some((0, 1))).unwrap();
+    c.settle_ready05().unwrap();
+    assert!(c.call_completion05(&call.call_id).unwrap().is_some());
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
+    assert_eq!(c.pending_count().unwrap(), 1);
+}
+fn cache_row(c: &mut Client<SqliteStore>, model: &str, id: &str, state: Value) {
+    let report = c
+        .install_cache05(
+            &[v05::ReadRecord {
+                key: v05::RecordKey {
+                    model: model.into(),
+                    identity: json!({ "id": id }),
+                },
+                cursor: (),
+                state,
+            }],
+            true,
+        )
+        .unwrap();
+    assert_eq!(report.applied, 1, "{model} {id} installed as cache");
 }
 fn stream_key(id: &str) -> v05::RecordKey {
     v05::RecordKey {
@@ -131,34 +159,7 @@ fn install(c: &mut Client<SqliteStore>, id: &str, cursor: u64, text: Option<&str
     .unwrap();
 }
 #[test]
-fn direct_delete_clears_current_tombstone_but_retains_stream_history() {
-    let d = tempfile::tempdir().unwrap();
-    let mut c = open(&d.path().join("db"));
-    install(&mut c, "e", 7, None);
-    c.transaction(|tx| {
-        tx.direct(Operation {
-            model: "Entry".into(),
-            identity: json!({"id":"e"}),
-            op: OperationKind::Delete,
-            values: None,
-        })
-    })
-    .unwrap();
-    c.install_cache05(
-        &[v05::ReadRecord {
-            key: stream_key("e"),
-            cursor: (),
-            state: state("cache"),
-        }],
-        true,
-    )
-    .unwrap();
-    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "cache");
-    install(&mut c, "e", 7, Some("stale"));
-    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "cache");
-}
-#[test]
-fn newer_stream_supersedes_private_fallback_even_after_direct_releases_protection() {
+fn newer_stream_supersedes_private_fallback_beneath_a_later_pending_mutation() {
     let d = tempfile::tempdir().unwrap();
     let mut c = open(&d.path().join("db"));
     c.initialize_stream05(0, "1").unwrap();
@@ -168,13 +169,12 @@ fn newer_stream_supersedes_private_fallback_even_after_direct_releases_protectio
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     install(&mut c, "e", 5, Some("server"));
-    c.transaction(|tx| tx.direct(direct("B"))).unwrap();
+    let edit = later(&mut c, "B");
     let a = ack(
         &b,
         v05::MutationOutcome::Accepted {
@@ -196,9 +196,92 @@ fn newer_stream_supersedes_private_fallback_even_after_direct_releases_protectio
     c.settle_ready05().unwrap();
     assert!(c.call_completion05(&call.call_id).unwrap().is_some());
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
+    // Beneath the later Edit, the Stream's newer state stayed the base.
+    discard(&mut c, edit);
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "server");
+}
+// Two Edits of one cached record share a Batch. The later one's Private
+// receipt settles first, while the earlier one waits for the Stream: its accepted
+// state is retained at its own position above the earlier pending Edit and
+// outlives its settlement, until the earlier Edit settles beneath it.
+#[test]
+fn an_accepted_state_outlives_its_settlement_above_an_earlier_pending_mutation() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("db");
+    let mut c = open(&p);
+    c.initialize_stream05(0, "1").unwrap();
+    cache_row(&mut c, "Entry", "e", state("base"));
+    let first = later(&mut c, "first");
+    let second = later(&mut c, "second");
+    let b = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(
+        b.mutations.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![first, second]
+    );
+    let accepted = |sync_cursor, target| v05::MutationOutcome::Accepted {
+        sync_cursor,
+        materialization: b.context.materialization.clone(),
+        result: Value::Null,
+        targets: vec![target],
+    };
+    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+        context: b.context.clone(),
+        batch_id: b.batch_id,
+        digest: b.digest.clone(),
+        results: vec![
+            v05::MutationResult {
+                mutation_id: first,
+                outcome: accepted(
+                    5,
+                    v05::SettlementTarget::Stream {
+                        key: stream_key("e"),
+                        cursor: 5,
+                        fallback: v05::ReadRecord {
+                            key: stream_key("e"),
+                            cursor: (),
+                            state: state("first fallback"),
+                        },
+                    },
+                ),
+            },
+            v05::MutationResult {
+                mutation_id: second,
+                outcome: accepted(
+                    1,
+                    v05::SettlementTarget::Private {
+                        record: v05::ReadRecord {
+                            key: stream_key("e"),
+                            cursor: (),
+                            state: state("second accepted"),
+                        },
+                    },
+                ),
+            },
+        ],
+    })
+    .unwrap();
+    axton_sim::scenario05::assert_projection05(&mut c, &schema());
+    let context = c.request_context05().unwrap();
+    c.install_authority05(&context, &[], Some((0, 1))).unwrap();
+    c.settle_ready05().unwrap();
+    let retained = "SELECT COUNT(*) AS n FROM axton_local_write WHERE disposition='accepted'";
+    assert_eq!(c.pending_count().unwrap(), 1);
+    assert_eq!(c.read_sql(retained, &[]).unwrap()[0]["n"], 1);
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "second accepted");
+    axton_sim::scenario05::assert_projection05(&mut c, &schema());
+    drop(c);
+    let mut c = open(&p);
+    axton_sim::scenario05::assert_projection05(&mut c, &schema());
+    install(&mut c, "e", 5, Some("first server"));
+    let context = c.request_context05().unwrap();
+    c.install_authority05(&context, &[], Some((1, 5))).unwrap();
+    c.settle_ready05().unwrap();
+    assert_eq!(c.pending_count().unwrap(), 0);
+    assert_eq!(c.read_sql(retained, &[]).unwrap()[0]["n"], 0);
+    axton_sim::scenario05::assert_projection05(&mut c, &schema());
 }
 #[test]
-fn rejected_update_preserves_later_direct_b_and_historical_evidence() {
+fn rejected_update_keeps_a_later_pending_mutation_on_the_protected_base() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut s = schema();
@@ -209,12 +292,10 @@ fn rejected_update_preserves_later_direct_b_and_historical_evidence() {
     c.initialize_stream05(0, "1").unwrap();
     install(&mut c, "e", 3, Some("base"));
     let call = c
-        .transaction(|tx| {
-            tx.submit_mutation05("Write", 1, json!({"entry":{"id":"e","text":"A"}}), vec![])
-        })
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entry":{"id":"e","text":"A"}})))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
-    c.transaction(|tx| tx.direct(direct("B"))).unwrap();
+    later(&mut c, "B");
     let a = ack(
         &b,
         v05::MutationOutcome::Rejected {
@@ -224,7 +305,11 @@ fn rejected_update_preserves_later_direct_b_and_historical_evidence() {
     );
     c.acknowledge_batch05(&a).unwrap();
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
-    assert!(c.record_evidence05(&key()).unwrap().current.is_none());
+    assert_eq!(
+        c.record_evidence05(&key()).unwrap().current.unwrap().cursor,
+        3
+    );
+    assert_eq!(c.pending_count().unwrap(), 1);
     drop(c);
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s, "User:u").unwrap();
     c.acknowledge_batch05(&a).unwrap();
@@ -232,7 +317,7 @@ fn rejected_update_preserves_later_direct_b_and_historical_evidence() {
     assert!(c.call_completion05(&call.call_id).unwrap().is_some());
 }
 #[test]
-fn private_acceptance_finalizes_at_original_position_and_retains_result_after_cleanup() {
+fn private_acceptance_finalizes_at_original_position_beneath_a_later_pending_mutation() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = open(&p);
@@ -243,12 +328,11 @@ fn private_acceptance_finalizes_at_original_position_and_retains_result_after_cl
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
-    c.transaction(|tx| tx.direct(direct("B"))).unwrap();
+    let edit = later(&mut c, "B");
     let a = ack(
         &b,
         v05::MutationOutcome::Accepted {
@@ -273,16 +357,20 @@ fn private_acceptance_finalizes_at_original_position_and_retains_result_after_cl
     let mut c = open(&p);
     assert!(c.call_completion05(&call.call_id).unwrap().is_some());
     c.acknowledge_batch05(&a).unwrap();
-    let db = rusqlite::Connection::open(&p).unwrap();
-    assert_eq!(
-        db.query_row(
-            "SELECT COUNT(*) FROM axton_mutation_queue_operation o JOIN axton_mutation_queue q ON q.id=o.mutation_id WHERE o.model IS NOT NULL AND q.reconciled=0 AND q.rejection_code IS NULL",
-            [],
-            |r| r.get::<_, i64>(0)
-        )
-        .unwrap(),
-        0
-    );
+    let count = |sql: &str| {
+        rusqlite::Connection::open(&p)
+            .unwrap()
+            .query_row(sql, [], |r| r.get::<_, i64>(0))
+            .unwrap()
+    };
+    let pending = "SELECT COUNT(*) FROM axton_mutation_queue_operation o JOIN axton_mutation_queue q ON q.id=o.mutation_id WHERE o.model IS NOT NULL AND q.reconciled=0 AND q.rejection_code IS NULL";
+    let accepted = "SELECT COUNT(*) FROM axton_local_write WHERE disposition='accepted'";
+    // No earlier pending work needs the receipt's state at its position, so
+    // it became the base beneath the Edit.
+    assert_eq!((count(pending), count(accepted)), (1, 0));
+    discard(&mut c, edit);
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "accepted");
+    assert_eq!((count(pending), count(accepted)), (0, 0));
 }
 use axton_client::{ClientStore, Result, SqlRows, invalid};
 use std::sync::{
@@ -365,7 +453,6 @@ fn commit_failure_rolls_back_assignment_and_acknowledgement() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -400,7 +487,6 @@ fn partial_duplicate_or_foreign_acknowledgement_changes_nothing() {
             "Write",
             1,
             json!({"entry":{"id":"e","text":"A","note":null}}),
-            vec![],
         )
     })
     .unwrap();
@@ -452,7 +538,7 @@ fn abrupt_ack_child() {
     panic!("fault boundary did not terminate child")
 }
 #[test]
-fn abrupt_process_exit_before_ack_commit_restores_exact_batch_and_later_direct() {
+fn abrupt_process_exit_before_ack_commit_restores_exact_batch_beneath_later_work() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
@@ -469,12 +555,10 @@ fn abrupt_process_exit_before_ack_commit_restores_exact_batch_and_later_direct()
     )
     .unwrap();
     let call = c
-        .transaction(|tx| {
-            tx.submit_mutation05("Write", 1, json!({"entry":{"id":"e","text":"A"}}), vec![])
-        })
+        .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entry":{"id":"e","text":"A"}})))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
-    c.transaction(|tx| tx.direct(direct("B"))).unwrap();
+    later(&mut c, "B");
     drop(c);
     let status = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "abrupt_ack_child", "--ignored", "--nocapture"])
@@ -498,6 +582,7 @@ fn abrupt_process_exit_before_ack_commit_restores_exact_batch_and_later_direct()
     );
     c.acknowledge_batch05(&a).unwrap();
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
+    assert_eq!(c.pending_count().unwrap(), 1);
     assert!(c.call_completion05(&call.call_id).unwrap().is_some());
 }
 #[test]
@@ -521,12 +606,7 @@ fn pending_optimism_keeps_authoritative_base_protection() {
     )
     .unwrap();
     c.transaction(|tx| {
-        tx.submit_mutation05(
-            "Write",
-            1,
-            json!({"entry":{"id":"e","text":"optimistic"}}),
-            vec![],
-        )
+        tx.submit_mutation05("Write", 1, json!({"entry":{"id":"e","text":"optimistic"}}))
     })
     .unwrap();
     assert_eq!(
@@ -555,7 +635,6 @@ fn target_moved_past_sync_cursor_keeps_local_layer_until_newer_position_lands() 
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -593,17 +672,7 @@ fn target_moved_past_sync_cursor_keeps_local_layer_until_newer_position_lands() 
 fn lifecycle_dependents_are_rejected_atomically_and_retained_but_not_replayed() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
-    let mut s = serde_json::to_value(schema()).unwrap();
-    let mut update = s["actions"][0].clone();
-    update["name"] = json!("Edit");
-    update["inputs"][0]["operation"] = json!("update");
-    s["actions"].as_array_mut().unwrap().push(update);
-    let mut c = Client::open05(
-        SqliteStore::open(&p).unwrap(),
-        Schema::from_value(s).unwrap(),
-        "User:u",
-    )
-    .unwrap();
+    let mut c = open(&p);
     c.initialize_stream05(0, "1").unwrap();
     let first = c
         .transaction(|tx| {
@@ -611,13 +680,12 @@ fn lifecycle_dependents_are_rejected_atomically_and_retained_but_not_replayed() 
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
     let second = c
         .transaction(|tx| {
-            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"edit"}}), vec![])
+            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"edit"}}))
         })
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
@@ -657,96 +725,6 @@ fn lifecycle_dependents_are_rejected_atomically_and_retained_but_not_replayed() 
     );
 }
 #[test]
-fn accepted_companion_keeps_original_order_and_later_authority_supersedes_it() {
-    let d = tempfile::tempdir().unwrap();
-    let mut c = Client::open05(
-        SqliteStore::open(d.path().join("db")).unwrap(),
-        update_schema(),
-        "User:u",
-    )
-    .unwrap();
-    c.initialize_stream05(0, "1").unwrap();
-    let ctx = c.request_context05().unwrap();
-    c.install_authority05(
-        &ctx,
-        &[
-            v05::AuthorityChange::Record {
-                key: stream_key("e"),
-                cursor: 1,
-                state: state("base"),
-            },
-            v05::AuthorityChange::Record {
-                key: stream_key("other"),
-                cursor: 1,
-                state: state("other"),
-            },
-        ],
-        None,
-    )
-    .unwrap();
-    let companion = Operation {
-        model: "Entry".into(),
-        identity: json!({"id":"other"}),
-        op: OperationKind::Update,
-        values: Some(json!({"text":"companion"})),
-    };
-    c.transaction(|tx| {
-        tx.submit_mutation05(
-            "Write",
-            1,
-            json!({"entry":{"id":"e","text":"A"}}),
-            vec![companion],
-        )
-    })
-    .unwrap();
-    let b = c.freeze_batch05().unwrap().unwrap();
-    c.install_authority05(
-        &ctx,
-        &[
-            v05::AuthorityChange::Record {
-                key: stream_key("other"),
-                cursor: 2,
-                state: state("new-authority"),
-            },
-            v05::AuthorityChange::Record {
-                key: stream_key("e"),
-                cursor: 2,
-                state: state("accepted"),
-            },
-        ],
-        Some((0, 2)),
-    )
-    .unwrap();
-    let a = ack(
-        &b,
-        v05::MutationOutcome::Accepted {
-            sync_cursor: 2,
-            materialization: b.context.materialization.clone(),
-            result: Value::Null,
-            targets: vec![v05::SettlementTarget::Stream {
-                key: stream_key("e"),
-                cursor: 2,
-                fallback: v05::ReadRecord {
-                    key: stream_key("e"),
-                    cursor: (),
-                    state: state("accepted"),
-                },
-            }],
-        },
-    );
-    c.acknowledge_batch05(&a).unwrap();
-    c.settle_ready05().unwrap();
-    let key = RecordKey {
-        model: "Entry".into(),
-        identity: json!({"id":"other"}),
-    };
-    assert_eq!(c.read(&key).unwrap().unwrap()["text"], "new-authority");
-    assert_eq!(
-        c.record_evidence05(&key).unwrap().current.unwrap().cursor,
-        2
-    );
-}
-#[test]
 fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
@@ -754,22 +732,13 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     s.models[0].unique.push(vec!["text".into()]);
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
-    c.transaction(|tx| {
-        tx.direct(Operation {
-            model: "Entry".into(),
-            identity: json!({"id":"other"}),
-            op: OperationKind::Create,
-            values: Some(state("taken")),
-        })
-    })
-    .unwrap();
+    cache_row(&mut c, "Entry", "other", state("taken"));
     let call = c
         .transaction(|tx| {
             tx.submit_mutation05(
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -798,15 +767,7 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     drop(c);
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s, "User:u").unwrap();
     assert!(c.settle_ready05().unwrap().completions.is_empty());
-    c.transaction(|tx| {
-        tx.direct(Operation {
-            model: "Entry".into(),
-            identity: json!({"id":"other"}),
-            op: OperationKind::Update,
-            values: Some(json!({"text":"free"})),
-        })
-    })
-    .unwrap();
+    cache_row(&mut c, "Entry", "other", state("free"));
     let ctx = c.request_context05().unwrap();
     c.install_authority05(&ctx, &[], Some((0, 1))).unwrap();
     assert!(c.call_completion05(&call.call_id).unwrap().is_some());
@@ -843,7 +804,6 @@ fn abrupt_assignment_commit_boundaries_preserve_canonical_retry() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"A","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -926,18 +886,12 @@ fn discarded_mutation_and_lifecycle_dependent_keep_public_codes_after_reopen() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"created","note":null}}),
-                vec![],
             )
         })
         .unwrap();
     let dependent = client
         .transaction(|tx| {
-            tx.submit_mutation05(
-                "Edit",
-                1,
-                json!({"entry":{"id":"e","text":"dependent"}}),
-                vec![],
-            )
+            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"dependent"}}))
         })
         .unwrap();
     let report = client
@@ -990,7 +944,6 @@ fn dismissed_rejection_keeps_durable_completion_but_retires_input_after_reopen()
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"denied","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1050,7 +1003,6 @@ fn incomplete_format5_is_refused_without_upgrade_or_file_changes() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"unsent","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1114,7 +1066,6 @@ fn legacy_drop_retains_own_refusal_until_explicit_acknowledgement() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"drop","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1172,7 +1123,7 @@ fn dismiss_missing_is_noop_but_pending_and_accepted_outcomes_are_protected() {
     client.initialize_stream05(0, "1").unwrap();
     client.transaction(|tx| tx.dismiss_rejection05(99)).unwrap();
     let call = client
-        .transaction(|tx| tx.submit_mutation05("Ping", 1, json!({}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Ping", 1, json!({})))
         .unwrap();
     assert!(
         client
@@ -1279,7 +1230,6 @@ fn retained_private_snapshot_never_evaluates_new_creation_defaults() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"queued","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1333,9 +1283,9 @@ fn retained_private_snapshot_never_evaluates_new_creation_defaults() {
 }
 
 #[test]
-fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_later_direct() {
+fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_later_work() {
     use axton_client::sync05::DeliveryQueue;
-    for later_direct in [false, true] {
+    for later_work in [false, true] {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("db");
         let mut c =
@@ -1372,7 +1322,6 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
                     "Write",
                     1,
                     json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                    vec![],
                 )
             })
             .unwrap();
@@ -1417,19 +1366,14 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
         q.receive(&removed.header, &removed.parts, &context, 1)
             .unwrap();
         c.apply_next_delivery05(&mut q, 1).unwrap().unwrap();
-        if later_direct {
-            c.transaction(|tx| tx.direct(direct("later-direct")))
-                .unwrap();
+        if later_work {
+            later(&mut c, "later");
         }
         c.acknowledge_batch05(&a).unwrap();
         assert_eq!(c.settle_ready05().unwrap().completions.len(), 1);
         assert_eq!(
             c.read(&key()).unwrap().unwrap()["text"],
-            if later_direct {
-                "later-direct"
-            } else {
-                "accepted"
-            }
+            if later_work { "later" } else { "accepted" }
         );
         let e = c.record_evidence05(&key()).unwrap();
         assert!(e.current.is_none());
@@ -1437,7 +1381,7 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
         assert_eq!(e.membership.as_ref().unwrap().cursor, 3);
         assert!(!e.membership.unwrap().live);
         assert_eq!(c.store_status05().unwrap().cursor, Some(3));
-        assert_eq!(c.pending_count().unwrap(), 0);
+        assert_eq!(c.pending_count().unwrap(), usize::from(later_work));
         assert!(c.call_completion05(&call.call_id).unwrap().is_some());
         assert!(c.settle_ready05().unwrap().completions.is_empty());
         drop(c);
@@ -1445,11 +1389,7 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
             Client::open05(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
         assert_eq!(
             c.read(&key()).unwrap().unwrap()["text"],
-            if later_direct {
-                "later-direct"
-            } else {
-                "accepted"
-            }
+            if later_work { "later" } else { "accepted" }
         );
         assert!(c.call_completion05(&call.call_id).unwrap().is_some());
         c.acknowledge_batch05(&a).unwrap();
@@ -1476,7 +1416,6 @@ fn historical_target_finalizes_from_receipt_unless_bootstrap_will_deliver_it() {
                     "Write",
                     1,
                     json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                    vec![],
                 )
             })
             .unwrap();
@@ -1572,7 +1511,6 @@ fn failed_local_settlement_retains_previous_batch_window_after_reopen() {
                 "Write",
                 1,
                 json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1599,7 +1537,6 @@ fn failed_local_settlement_retains_previous_batch_window_after_reopen() {
                 "Write",
                 1,
                 json!({"entry":{"id":"other","text":"independent","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1640,7 +1577,6 @@ fn receipt_snapshot_installs_only_when_labelled_with_the_store_materialization()
                         "Write",
                         1,
                         json!({"entry":{"id":"e","text":"optimistic","note":null}}),
-                        vec![],
                     )
                 })
                 .unwrap();
@@ -1707,7 +1643,6 @@ fn a_batch_partly_executed_before_an_upgrade_settles_each_outcome_by_its_own_lab
                 "Write",
                 1,
                 json!({"entry":{"id":id,"text":"optimistic","note":null}}),
-                vec![],
             )
         })
         .unwrap();
@@ -1776,12 +1711,7 @@ fn a_target_protected_only_under_the_previous_materialization_finalizes_from_the
         install(&mut c, "e", 57, Some("stream"));
         let call = c
             .transaction(|tx| {
-                tx.submit_mutation05(
-                    "Edit",
-                    1,
-                    json!({"entry":{"id":"e","text":"edited"}}),
-                    vec![],
-                )
+                tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"edited"}}))
             })
             .unwrap();
         c.freeze_batch05().unwrap().unwrap();
@@ -1848,12 +1778,7 @@ fn a_target_the_stream_delivered_before_an_upgrade_settles_after_it_without_boot
             .unwrap();
         let call = c
             .transaction(|tx| {
-                tx.submit_mutation05(
-                    "Edit",
-                    1,
-                    json!({"entry":{"id":"e","text":"edited"}}),
-                    vec![],
-                )
+                tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"edited"}}))
             })
             .unwrap();
         let b = c.freeze_batch05().unwrap().unwrap();
@@ -1917,10 +1842,8 @@ fn a_noncanonical_target_identity_is_refused_whatever_the_outcome_label() {
         )
         .unwrap();
         c.initialize_stream05(0, "1").unwrap();
-        c.transaction(|tx| {
-            tx.submit_mutation05("Add", 1, json!({"tally":{"n":1,"text":"one"}}), vec![])
-        })
-        .unwrap();
+        c.transaction(|tx| tx.submit_mutation05("Add", 1, json!({"tally":{"n":1,"text":"one"}})))
+            .unwrap();
         let b = c.freeze_batch05().unwrap().unwrap();
         let target = |n: Value| v05::SettlementTarget::Private {
             record: v05::ReadRecord {

@@ -8,20 +8,12 @@ import {
   type TransactionRejections,
 } from "./unsent.mts";
 import {
-  callbackRefusal,
-  expiredRefusal,
   submitMutation,
-  type MutationInput,
   type MutationPort,
   type SubmissionHost,
-} from "./local.mts";
+} from "./submission.mts";
 export { strictJson, type RecordValue, type QuerySpec } from "./values.mts";
-export {
-  LocalTransaction,
-  type LocalCallback,
-  type MutationInput,
-  type MutationPort,
-} from "./local.mts";
+export type { MutationPort } from "./submission.mts";
 /** One open savepoint: the scope token the runtime issued for it, once known. */
 const callbackOwner = new AsyncLocalStorage<object>();
 type Frame = { scope?: string };
@@ -29,16 +21,13 @@ type Frame = { scope?: string };
  * The commands of one application transaction callback. The runtime runs
  * them in submission order inside the transaction it owns, and refuses them
  * once the callback finished; this object keeps the language-side evidence:
- * async-context ownership of savepoints, unawaited work, first failure and
- * which submissions still run a `local` callback.
+ * async-context ownership of savepoints, unawaited work and first failure.
  */
 export class Transaction {
   /** `inCallback()` knows the callback's own async context. */
   static readonly exactCallbackGuard = true;
   #send: (command: RecordValue, scope?: string) => Promise<any>;
   #open = true;
-  /** Submissions with a `local` callback that have not settled. */
-  #locals = 0;
   #commands = new CommandAccounting();
   #structural: unknown;
   #context = new AsyncLocalStorage<Frame>();
@@ -55,10 +44,7 @@ export class Transaction {
     this.#host = {
       admit: () => this.#admit(),
       track: (submit) => this.#track(submit),
-      running: (delta) => void (this.#locals += delta),
-      expired: () => expiredRefusal(this.#open, this.#poison),
       mutations,
-      localAdmit: () => this.#foreign(),
     };
   }
   /** Record a structural refusal: the transaction fails whatever is caught. */
@@ -117,10 +103,6 @@ export class Transaction {
     if (foreign) return Promise.reject(foreign);
     // Object lifetime: an escaped transaction object refuses before admission.
     if (!this.#open) return Promise.reject(Error("transaction_closed"));
-    // A `local` callback owns the transaction until its submission settles:
-    // a captured or pipelined parent command is refused as the runtime would.
-    const refused = callbackRefusal(this.#locals, this.#poison);
-    if (refused) return refused;
     // Async-context guard: work from outside the innermost savepoint's context
     // would carry the wrong scope token.
     if (this.#active && this.#context.getStore() !== this.#active) {
@@ -131,14 +113,13 @@ export class Transaction {
   }
   /**
    * Queue a named Mutation in this transaction. It settles after the
-   * Mutation's optimism and its `local` callback ran, with a Call that stays
-   * provisional until the transaction commits. The callback runs in this
-   * async context; outer commands are refused until the submission settled.
+   * Mutation's optimism ran, with a Call that stays provisional until the
+   * transaction commits.
    */
   submitMutation<T>(
     name: string,
     version: number,
-    input: MutationInput,
+    input: object,
     decode: (value: unknown) => T,
   ): Promise<Call<T>> {
     return submitMutation(this.#host, name, version, input, decode);
@@ -189,15 +170,10 @@ export class Transaction {
       relation,
     });
   }
-  direct(operation: object) {
-    return this.#call({ kind: "direct", operation });
-  }
   savepoint<T>(body: () => Promise<T>): Promise<T> {
     const foreign = this.#foreign();
     if (foreign) return Promise.reject(foreign);
     if (!this.#open) return Promise.reject(Error("transaction_closed"));
-    const refused = callbackRefusal(this.#locals, this.#poison);
-    if (refused) return refused;
     // Async-context guard, as in `#call`.
     if (this.#active && this.#context.getStore() !== this.#active) {
       this.#structural = Error("overlapping savepoints");

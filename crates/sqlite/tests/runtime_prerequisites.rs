@@ -3,6 +3,7 @@
 //! ([#185](https://github.com/zanminwang/axton/issues/185)). The test is the
 //! host over a real SQLite store: it answers every effect with a fixed clock
 //! that a fired timer advances. No sleeps, no threads.
+pub mod common05;
 use axton_client::runtime::{ClientRuntime, Input};
 use axton_client::*;
 use axton_sqlite::SqliteStore;
@@ -137,12 +138,19 @@ impl Host {
         self.now += millis;
         self.succeed(timer);
     }
+    /// Seed `e`, unprotected and unpending, as a cache install: a Mutation
+    /// would queue the `Scan` task its `text` requires.
+    fn seed(&mut self) {
+        common05::cached(
+            self.runtime.client(),
+            "Entry",
+            "e",
+            json!({"text":"A","note":null}),
+        );
+    }
     /// Seed `e` and queue a Mutation that sets its note to `key`.
     fn attach(&mut self, key: &str) {
-        self.task(
-            "seed",
-            json!({"kind":"direct","operation":{"model":"Entry","op":"create","identity":{"id":"e"},"values":{"text":"A"}}}),
-        );
+        self.seed();
         self.edit("attach", key);
     }
     fn edit(&mut self, id: &str, key: &str) {
@@ -342,10 +350,7 @@ fn close_during_a_run_cancels_it_and_ignores_a_late_answer() {
 fn a_prerequisite_without_a_handler_is_left_for_the_app() {
     let mut h = Host::new(&["RemoteBlob"]);
     // `text` requires Scan, which has no handler: its task stays pending.
-    h.task(
-        "seed",
-        json!({"kind":"direct","operation":{"model":"Entry","op":"create","identity":{"id":"e"},"values":{"text":"A"}}}),
-    );
+    h.seed();
     h.task(
         "scan",
         json!({"kind":"submitAction","name":"ScanEntry","version":1,"args":{"entry":{"id":"e","text":"scanned"}}}),
@@ -433,10 +438,7 @@ fn explicit_reset_cancels_the_run_and_rescans_the_store() {
     );
     // The fresh replica has no task; a new one runs as usual.
     assert!(h.outstanding("prerequisite").is_empty());
-    h.task(
-        "seed",
-        json!({"kind":"direct","operation":{"model":"Entry","op":"create","identity":{"id":"e"},"values":{"text":"A"}}}),
-    );
+    h.seed();
     h.edit("attach", "fresh");
     h.run();
     assert_eq!(h.one("prerequisite").1["arguments"], json!({"key":"fresh"}));

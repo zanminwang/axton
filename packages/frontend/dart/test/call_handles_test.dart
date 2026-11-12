@@ -242,7 +242,7 @@ void main() {
     },
   );
   test(
-    'typed creation defaults are resolved once for direct CRUD and named optimism',
+    'typed creation defaults are resolved once for named optimism',
     () async {
       final directory = await Directory.systemTemp.createTemp(
         'axton-dart-defaults05-',
@@ -254,14 +254,6 @@ void main() {
         libraryPath: Platform.environment['AXTON_LIBRARY']!,
       );
       try {
-        await client.models.note.create(const generated.NoteCreate(memo: null));
-        final direct = (await client.models.note.query()).single;
-        expect(direct.body, '');
-        expect(direct.pinned, isFalse);
-        expect(direct.tag, 't');
-        expect(direct.memo, isNull);
-        expect(direct.id, matches(RegExp(r'^[0-9a-f-]{36}$')));
-        expect(direct.at.isUtc, isTrue);
         await client.mutations.addNotes(
           const generated.AddNotesInput(
             note: generated.NoteCreate(memo: null),
@@ -269,10 +261,14 @@ void main() {
             many: [],
           ),
         );
-        final identities = (await client.models.note.query())
-            .map((n) => n.id)
-            .toSet();
-        expect(identities.length, 2);
+        final note = (await client.models.note.query()).single;
+        expect(note.body, '');
+        expect(note.pinned, isFalse);
+        expect(note.tag, 't');
+        expect(note.memo, isNull);
+        expect(note.id, matches(RegExp(r'^[0-9a-f-]{36}$')));
+        expect(note.at.isUtc, isTrue);
+        final identities = {note.id};
         await client.close();
         client = await generated.GeneratedClient.open(
           path: '${directory.path}/db',

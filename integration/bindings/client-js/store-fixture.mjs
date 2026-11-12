@@ -105,3 +105,91 @@ export function emptyMutation(text) {
       outcome: {kind: "accepted", syncCursor: 0, materialization: request.materialization, result: null, targets: []}})),
   });
 }
+/**
+ * A fake server for seeding delivered rows: the Handshake reports head 1 and
+ * the Bootstrap delivers `records` (`{ model, identity, state }`) at cursor 1.
+ * Use it with `deliver` only where a test needs a delivered, non-pending row.
+ */
+export const deliveringNetwork = (records) => () => ({
+  open() {},
+  async push(route, text) {
+    const request = request05(text);
+    if (route === "handshake")
+      return JSON.stringify({ ...emptyHandshake(request), head: 1 });
+    if (route !== "pull") throw Error("offline");
+    const changes = request.bootstrap
+      ? records.map(({ model, identity, state }) => ({
+          kind: "record",
+          cursor: 1,
+          key: { model, identity },
+          state,
+        }))
+      : [];
+    return JSON.stringify(delivery05(request, changes, 1));
+  },
+});
+/** Open the Store with `Client` over `deliveringNetwork`, take its Bootstrap, and close it. */
+export async function deliver(Client, options) {
+  const client = await openStore(Client, options);
+  try {
+    const connection = await client.connect({ url: "http://fixture", token: "fixture" });
+    await client.bootstrap();
+    await connection.close();
+  } finally {
+    await client.close();
+  }
+}
+/**
+ * An in-process fake server with a Stream log, for a test that needs
+ * delivered rows and later delivered changes. Its Bootstrap delivers
+ * `initial` (`{ model, identity, state }` each) at cursor 1; `send(rows)`
+ * appends one unit and delivers it over every open socket, answering its
+ * cursor. Uploads fail, so submitted work stays unsettled.
+ */
+export function streamServer(initial = []) {
+  const record =
+    (cursor) =>
+    ({ model, identity, state }) => ({
+      kind: "record",
+      cursor,
+      key: { model, identity },
+      state,
+    });
+  const log = initial.length ? [initial.map(record(1))] : [];
+  const sockets = new Set();
+  let context;
+  return {
+    network: () => ({
+      open(subscribe, signal, on) {
+        sockets.add(on);
+        signal.addEventListener("abort", () => sockets.delete(on), {
+          once: true,
+        });
+        const handshake = { ...emptyHandshake(JSON.parse(subscribe)), head: log.length };
+        void Promise.resolve().then(() => on.message(JSON.stringify(handshake)));
+      },
+      async push(route, text) {
+        const request = request05(text);
+        if (route === "handshake")
+          return JSON.stringify({ ...emptyHandshake(request), head: log.length });
+        if (route !== "pull") throw Error("offline");
+        context = context05(request);
+        const from = request.bootstrap ? 0 : request.after;
+        return JSON.stringify(
+          delivery05(request, log.slice(from, request.through).flat(), log.length),
+        );
+      },
+    }),
+    async send(rows) {
+      log.push(rows.map(record(log.length + 1)));
+      const through = log.length;
+      const page = delivery05(
+        { ...context, bootstrap: false, after: through - 1, through },
+        log[through - 1],
+        through,
+      );
+      for (const on of sockets) await on.message(JSON.stringify(page));
+      return through;
+    },
+  };
+}

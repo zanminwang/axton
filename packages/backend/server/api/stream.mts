@@ -25,7 +25,6 @@ export interface StreamCollector {
   guard<T>(body: () => T): T;
   check(caller: string): void;
   name(name: unknown): void;
-  publishable(model: string, caller: string): void;
   list(
     records: unknown,
     caller: string,
@@ -52,7 +51,6 @@ function operands(
         ({ entry, identity }) =>
           Object.freeze({ model: entry.name, identity }) as HostRecordRef,
       );
-  c.publishable(entry.name, caller);
   const values = Array.isArray(value) ? value : [value];
   return Array.from(
     values,

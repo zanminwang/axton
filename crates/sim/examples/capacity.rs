@@ -41,7 +41,6 @@ fn main() {
                         "Edit",
                         1,
                         json!({"entry":{"id":"one","text":format!("local-{i}")}}),
-                        vec![],
                     )?;
                     Ok(())
                 })

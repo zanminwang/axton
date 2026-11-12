@@ -7,34 +7,21 @@ import {
   type TransactionRejections,
 } from "../../client-js/api/unsent.mts";
 import {
-  callbackRefusal,
-  expiredRefusal,
   submitMutation,
-  type MutationInput,
   type MutationPort,
   type SubmissionHost,
-} from "../../client-js/api/local.mts";
-export {
-  LocalTransaction,
-  type LocalCallback,
-  type MutationInput,
-} from "../../client-js/api/local.mts";
+} from "../../client-js/api/submission.mts";
 const scopedCallbacks = new Set<object>();
 /**
  * The commands of one application transaction callback. The runtime runs
  * them in submission order inside the transaction it owns, and refuses them
- * once the callback finished; this object tracks unawaited work, the first
- * failure and which submissions still run a `local` callback. It has no
- * savepoint API.
+ * once the callback finished; this object tracks unawaited work and the
+ * first failure. It has no savepoint API.
  */
 export class Transaction {
   #send: (command: RecordValue, scope?: string) => Promise<any>;
   #host: SubmissionHost;
   #open = true;
-  /** Submissions with a `local` callback that have not settled. */
-  #locals = 0;
-  /** An outer command refused while a `local` callback ran. */
-  #structural: unknown;
   #commands = new CommandAccounting();
   /**
    * Without AsyncLocalStorage the callback guard is coarse: while a callback
@@ -49,15 +36,9 @@ export class Transaction {
     this.#host = {
       admit: () => this.#admit(),
       track: (submit) => this.#commands.track(() => submit(undefined)),
-      running: (delta) => void (this.#locals += delta),
-      expired: () => expiredRefusal(this.#open, this.#poison),
       mutations,
     };
   }
-  /** Record a structural refusal: the transaction fails whatever is caught. */
-  #poison = (error: Error): void => {
-    this.#structural ??= error;
-  };
   cancel(): void {
     this.#open = false;
   }
@@ -96,9 +77,7 @@ export class Transaction {
   #admit(): Promise<never> | undefined {
     // Object lifetime: an escaped transaction object refuses before admission.
     if (!this.#open) return Promise.reject(Error("transaction_closed"));
-    // A `local` callback owns the transaction until its submission settles:
-    // a captured or pipelined parent command is refused as the runtime would.
-    return callbackRefusal(this.#locals, this.#poison);
+    return undefined;
   }
   /**
    * Queue a named Mutation in this transaction; see the Node transaction.
@@ -107,7 +86,7 @@ export class Transaction {
   submitMutation<T>(
     name: string,
     version: number,
-    input: MutationInput,
+    input: object,
     decode: (value: unknown) => T,
   ): Promise<Call<T>> {
     return submitMutation(this.#host, name, version, input, decode);
@@ -121,7 +100,6 @@ export class Transaction {
     const outstanding = this.#commands.outstanding;
     this.#open = false;
     await this.#commands.drain();
-    if (this.#structural) throw this.#structural;
     if (outstanding) throw Error("unawaited transaction operation");
     if (this.#commands.failure) throw this.#commands.failure;
   }
@@ -156,8 +134,5 @@ export class Transaction {
       source,
       relation,
     });
-  }
-  direct(operation: object) {
-    return this.#call({ kind: "direct", operation });
   }
 }

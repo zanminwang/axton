@@ -6,6 +6,7 @@ import 'package:axton/src/bindings/bridge.dart';
 import 'package:axton/src/api/diagnostics.dart' show TraceEmitter;
 import 'package:test/test.dart';
 import 'fake_carrier.dart';
+import 'store_fixture.dart';
 
 class Sink implements AxtonDiagnostics {
   final void Function(AxtonTraceRecord) callback;
@@ -131,6 +132,7 @@ void main() {
                 ).readAsString(),
               )
               as Map<String, dynamic>;
+      declareRowMutations(schema);
       final records = <AxtonTraceRecord>[];
       Client? a, b;
       StreamSubscription<List<Map<String, dynamic>>>? watch;
@@ -158,12 +160,7 @@ void main() {
             throw StateError('sink fault');
           }),
         );
-        final operation = {
-          'model': 'Entry',
-          'op': 'create',
-          'identity': {'id': 'e'},
-          'values': {'text': 'kept', 'note': null},
-        };
+        const row = {'id': 'e', 'text': 'kept', 'note': null};
         final first = Completer<void>(), changed = Completer<void>();
         watch = a.watch('Entry').listen((rows) {
           if (!first.isCompleted) first.complete();
@@ -171,7 +168,7 @@ void main() {
             changed.complete();
         });
         await first.future;
-        await a.transaction((tx) => tx.direct(operation));
+        await a.transaction((tx) => createRow(tx, 'Entry', row));
         await changed.future;
         for (final name in [
           'watch.read',
@@ -188,7 +185,7 @@ void main() {
           );
         }
         expect(records.any((r) => r.name == 'watch.invalidate'), true);
-        await b.transaction((tx) => tx.direct(operation));
+        await b.transaction((tx) => createRow(tx, 'Entry', row));
         expect((await a.read('Entry', {'id': 'e'}))?['text'], 'kept');
         expect((await b.read('Entry', {'id': 'e'}))?['text'], 'kept');
         expect(records.where((r) => r.name == 'store.open'), hasLength(1));

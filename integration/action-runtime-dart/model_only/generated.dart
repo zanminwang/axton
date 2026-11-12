@@ -2,7 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:axton/axton.dart';
-export 'package:axton/axton.dart' show RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
+export 'package:axton/axton.dart' show AxtonDiagnostics, AxtonTraceRecord, RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
 class Present<T> { final T value; const Present(this.value); }
 final Map<String,dynamic> schema = jsonDecode('{"actions":[],"clientPolicies":[],"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","version":1}]}') as Map<String,dynamic>;
 /// What a fresh create of Item accepts: a complete [Item], or a [ItemCreate] that may omit fields with creation defaults.
@@ -33,13 +33,6 @@ class ItemIdentity {
  id: row['id'] as String,
  );
 }
-class ItemPatch {
- final Present<String>? label;
- const ItemPatch({this.label});
- Map<String,dynamic> toRecord() => {
- if (label != null) 'label': label!.value,
- };
-}
 class ItemCreate implements ItemCreateInput {
  final String id;
  final String label;
@@ -61,25 +54,21 @@ class ItemFilter {
 }
 enum ItemOrderField {byId('id'),byLabel('label'); final String wireName; const ItemOrderField(this.wireName);}
 class ItemOrder { final ItemOrderField field; final bool descending; const ItemOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
+Item _copyItemWatch(Item value) => value;
 class ItemModel { final ReadPort port; ItemModel(this.port);
  Future<Item?> get(ItemIdentity identity) async { final row=await port.read('Item',identity.toRecord()); return row == null ? null : Item.fromRecord(row); }
  Future<List<Item>> query({ItemFilter? where,List<ItemOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Item',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Item.fromRecord).toList();
 }
-class ItemLiveModel extends ItemTxModel { final Client client; ItemLiveModel(this.client) : super(client);
- Stream<List<Item>> watch({ItemFilter? where}) => client.watch('Item', where:where?.toRecord()??{}).map((rows) => rows.map(Item.fromRecord).toList());
+class ItemLiveModel extends ItemModel { final Client client; ItemLiveModel(this.client) : super(client);
+ Stream<List<Item>> watch({ItemFilter? where}) => client.watchDecoded<Item>('Item', where:where?.toRecord()??{},decode:Item.fromRecord,copy:_copyItemWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(ItemIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Item', identity.toRecord()));
-}
-class ItemTxModel extends ItemModel { final WritePort writer; ItemTxModel(this.writer) : super(writer);
- Future<void> create(ItemCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Item','op':'create','identity':identity,'values':state}); }
- Future<void> update(ItemIdentity identity, ItemPatch patch) => writer.direct({'model':'Item','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(ItemIdentity identity) => writer.direct({'model':'Item','op':'delete','identity':identity.toRecord()});
 }
 class LiveModels { final Client port; LiveModels(this.port);
  late final ItemLiveModel item = ItemLiveModel(port);
 }
-class TxModels { final WritePort port; TxModels(this.port);
- late final ItemTxModel item = ItemTxModel(port);
+class TxModels { final ReadPort port; TxModels(this.port);
+ late final ItemModel item = ItemModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);
@@ -90,7 +79,7 @@ class GeneratedClient {
  final Client client; RuntimeConnection? get connection => client.connection; late final LiveModels models=LiveModels(client);
  late final FetchModels fetch=FetchModels(client);
  GeneratedClient._(this.client);
- static Future<GeneratedClient> open({required String path, required String stream, StoreConnection? connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites));
+ static Future<GeneratedClient> open({required String path, required String stream, StoreConnection? connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites, AxtonDiagnostics? diagnostics}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites,diagnostics:diagnostics));
  Future<void> bootstrap() => client.bootstrap();
  Future<RuntimeConnection> connect(SyncServer server,{void Function(Object)? onError,Future<void> Function()? refreshAuth,Duration directTimeout=const Duration(seconds:30)}) => client.connect(server,onError:onError,refreshAuth:refreshAuth,directTimeout:directTimeout);
  Future<void> resetStore({bool discardPending=false}) => client.resetStore(discardPending:discardPending);

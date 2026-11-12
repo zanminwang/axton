@@ -10,7 +10,7 @@ import { GeneratedClient } from "./fixtures/round-trip/generated/client.ts";
 import { connection } from "./protocol-fixture.mjs";
 
 test(
-  "Node and Dart agree on typed optimism, acceptance, rejection and device-only content",
+  "Node and Dart agree on typed optimism, acceptance and rejection",
   { timeout: 60000 },
   async () => {
     const app = await createExample();
@@ -33,13 +33,6 @@ test(
         entry: { id: "entry-1", text: "reject" },
       });
       assert.equal((await no.wait()).error.code, "entry.denied");
-      await client.transaction(async (tx) => {
-        await tx.models.entry.create({
-          id: "local",
-          text: "device-only",
-          note: null,
-        });
-      });
       const expected = (await client.models.entry.query())
         .map(({ id, text, note }) => ({ id, text, note }))
         .sort((a, b) => a.id.localeCompare(b.id));
@@ -62,11 +55,6 @@ test(
         .find((x) => x.startsWith("PARITY "));
       assert.ok(output, result.stdout);
       assert.deepEqual(JSON.parse(output.slice(7)), expected);
-      assert.equal(
-        await app.db.entry.findUnique({ where: { id: "local" } }),
-        null,
-        "direct local writes never reach backend",
-      );
     } finally {
       await client?.close();
       await app.close();

@@ -25,6 +25,7 @@ class Fixture {
               await File('../../../fixtures/schemas/entry.json').readAsString(),
             )
             as Map<String, dynamic>;
+    declareRowMutations(schema);
     return Fixture(dir, schema);
   }
 
@@ -49,19 +50,12 @@ class Fixture {
   Future<void> dispose() => dir.delete(recursive: true);
 }
 
-Map<String, dynamic> create(String text) => {
-  'model': 'Entry',
-  'op': 'create',
-  'identity': {'id': 'e'},
-  'values': {'text': text},
-};
+/// Entry `e` created or changed by an offline Mutation.
+Future<Call<void>> create(SubmitMutationPort port, String text) =>
+    createRow(port, 'Entry', {'id': 'e', 'text': text, 'note': null});
 
-Map<String, dynamic> update(String text) => {
-  'model': 'Entry',
-  'op': 'update',
-  'identity': {'id': 'e'},
-  'values': {'text': text},
-};
+Future<Call<void>> update(SubmitMutationPort port, String text) =>
+    updateRow(port, 'Entry', {'id': 'e', 'text': text});
 
 Future<String?> text(Client client) async =>
     (await client.read('Entry', {'id': 'e'}))?['text'] as String?;
@@ -89,16 +83,16 @@ void main() {
   test('overlapping tasks return to the waiter that submitted them', () async {
     final client = await fixture.client();
     try {
-      await client.transaction((tx) => tx.direct(create('hello')));
+      await client.transaction((tx) => create(tx, 'hello'));
       final gate = Completer<void>();
       final entered = Completer<void>();
       final order = <String>[];
       final transaction = client.transaction((tx) async {
-        await tx.direct(update('inside'));
+        await update(tx, 'inside');
         expect((await tx.read('Entry', {'id': 'e'}))!['text'], 'inside');
         entered.complete();
         await gate.future;
-        await tx.direct(update('committed'));
+        await update(tx, 'committed');
       });
       unawaited(transaction.then((_) => order.add('transaction')));
       await entered.future;
@@ -111,7 +105,8 @@ void main() {
       gate.complete();
       await transaction;
       expect((await read)!['text'], 'committed');
-      expect((await state)['pending'], 0);
+      // The seed and both edits, committed before syncState ran.
+      expect((await state)['pending'], 3);
       expect(order, ['transaction', 'read', 'syncState']);
       expect(await text(client), 'committed');
     } finally {
@@ -138,12 +133,12 @@ void main() {
     () async {
       final client = await fixture.client();
       try {
-        await client.transaction((tx) => tx.direct(create('hello')));
+        await client.transaction((tx) => create(tx, 'hello'));
         final thrown = _Thrown();
         Object? caught;
         try {
           await client.transaction((tx) async {
-            await tx.direct(update('rolled back'));
+            await update(tx, 'rolled back');
             throw thrown;
           });
         } catch (error) {
@@ -157,11 +152,11 @@ void main() {
         try {
           await client.transaction((tx) async {
             try {
-              await tx.direct(create('duplicate'));
+              await create(tx, 'duplicate');
             } catch (error) {
               engine = error;
             }
-            await tx.direct(update('after failure'));
+            await update(tx, 'after failure');
           });
         } catch (error) {
           failed = error;
@@ -186,17 +181,17 @@ void main() {
     final client = await fixture.client();
     try {
       await client.transaction((tx) async {
-        await tx.direct(create('top'));
+        await create(tx, 'top');
         await tx.savepoint(() async {
-          await tx.direct(update('outer'));
+          await update(tx, 'outer');
           try {
             await tx.savepoint(() async {
-              await tx.direct(update('inner'));
+              await update(tx, 'inner');
               throw StateError('inner');
             });
           } on StateError catch (_) {}
           expect((await tx.read('Entry', {'id': 'e'}))!['text'], 'outer');
-          await tx.savepoint(() => tx.direct(update('released')));
+          await tx.savepoint(() => update(tx, 'released'));
         });
         expect((await tx.read('Entry', {'id': 'e'}))!['text'], 'released');
       });
@@ -220,7 +215,7 @@ void main() {
     expect(Bridge.attached.toSet(), before);
     final client = await fixture.client();
     try {
-      await client.transaction((tx) => tx.direct(create('after')));
+      await client.transaction((tx) => create(tx, 'after'));
       expect(await text(client), 'after');
     } finally {
       await client.close();
@@ -234,7 +229,7 @@ void main() {
     final entered = Completer<void>();
     final later = Completer<Object>();
     final transaction = client.transaction((tx) async {
-      await tx.direct(create('never'));
+      await create(tx, 'never');
       entered.complete();
       await gate.future;
       try {
@@ -282,7 +277,7 @@ void main() {
       final entered = Completer<void>();
       final later = Completer<Object>();
       final transaction = client.transaction((tx) async {
-        await tx.direct(create('never'));
+        await create(tx, 'never');
         entered.complete();
         await gate.future;
         try {
@@ -498,39 +493,117 @@ void main() {
     );
   });
 
-  test('a local callback effect for an unrouted request is refused', () async {
-    // The same answer as the Node bridge gives, so diagnostics agree.
-    final carrier = FakeCarrier((_) => null);
-    final client = await Client.open(
-      stream: 'User:viewer',
-      connection: offlineStoreConnection(),
-      path: 'unused',
-      schema: const {},
-      carrier: carrier,
+  test('the runtime refuses the retired Mutation callback fields', () async {
+    // A stale SDK's `local` flag fails its command and so the transaction;
+    // its `companionId` on a command and `input` on a callback result refuse
+    // the whole envelope with a protocol report.
+    final bridge = await fixture.bridge();
+    try {
+      final reports = <Map<String, dynamic>>[];
+      bridge.reports.listen(reports.add);
+      Object? refused;
+      await expectLater(
+        bridge.transaction((transactionId) async {
+          refused = await bridge
+              .transactionCommand(transactionId, null, {
+                'kind': 'submitMutation',
+                'name': 'CreateEntry',
+                'version': 1,
+                'args': {
+                  'row': {'id': 'p', 'text': 'A', 'note': null},
+                },
+                'local': true,
+              })
+              .then<Object?>((_) => null, onError: (Object error) => error);
+          for (final envelope in [
+            {
+              ...Bridge.transactionCommandEnvelope(
+                '999999',
+                transactionId,
+                null,
+                {
+                  'kind': 'read',
+                  'key': {
+                    'model': 'Entry',
+                    'identity': {'id': 'p'},
+                  },
+                },
+              ),
+              'companionId': 'c1',
+            },
+            {
+              ...Bridge.callbackResultEnvelope('1', transactionId, ok: true),
+              'input': <String, dynamic>{},
+            },
+          ]) {
+            expect(bridge.submitRaw(envelope), isNull);
+          }
+          for (var turn = 0; reports.length < 2 && turn < 200; turn++) {
+            await Future<void>.delayed(const Duration(milliseconds: 5));
+          }
+        }),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown field `local`'),
+          ),
+        ),
+      );
+      expect('$refused', contains('unknown field `local`'));
+      expect(
+        [
+          for (final report in reports)
+            (
+              report['kind'],
+              RegExp(
+                r'unknown field `(\w+)`',
+              ).firstMatch(report['message'] as String)?.group(1),
+            ),
+        ],
+        [('protocol', 'companionId'), ('protocol', 'input')],
+      );
+    } finally {
+      await bridge.close();
+    }
+  });
+
+  test('the runtime refuses the retired direct Model write', () async {
+    // A stale SDK's `direct` fails its own request, as a task and inside a
+    // transaction, and writes nothing.
+    final bridge = await fixture.bridge();
+    final unknown = throwsA(
+      predicate((Object e) => '$e'.contains('unknown variant `direct`')),
     );
-    carrier.publish([
-      {
-        'type': 'effect',
-        'effectId': '13',
-        'operation': {
-          'kind': 'mutationLocal',
-          'transactionId': 'tx7',
-          'companionId': 'c9',
-          'requestId': 'nobody',
-        },
+    final direct = {
+      'kind': 'direct',
+      'operation': {
+        'model': 'Entry',
+        'op': 'create',
+        'identity': {'id': 'd'},
+        'values': {'text': 'direct', 'note': null},
       },
-    ]);
-    await pumpEventQueue();
-    expect(carrier.admitted.where((e) => e['type'] == 'callbackResult'), [
-      Bridge.callbackResultEnvelope(
-        '13',
-        'tx7',
-        ok: false,
-        error: 'unknown mutation',
-        companionId: 'c9',
-      ),
-    ]);
-    await client.close();
+    };
+    final read = {
+      'kind': 'read',
+      'key': {
+        'model': 'Entry',
+        'identity': {'id': 'd'},
+      },
+    };
+    try {
+      await expectLater(bridge.task(direct), unknown);
+      await expectLater(
+        bridge.transaction(
+          (transactionId) =>
+              bridge.transactionCommand(transactionId, null, direct),
+        ),
+        unknown,
+      );
+      expect(await bridge.task(read), isNull);
+    } finally {
+      await bridge.close();
+    }
   });
 
   test('a cancelled callback effect never runs its callback', () async {
@@ -595,14 +668,12 @@ void main() {
             input['transactionId'] as String,
             input['scope'] as String?,
             input['command'] as Map<String, dynamic>,
-            companionId: input['companionId'] as String?,
           ),
           'callbackResult' => Bridge.callbackResultEnvelope(
             input['effectId'] as String,
             input['transactionId'] as String,
             ok: input['ok'] as bool,
             error: input['error'] as String?,
-            companionId: input['companionId'] as String?,
           ),
           'effectResult' => Bridge.effectResultEnvelope(
             input['effectId'] as String,
@@ -647,11 +718,7 @@ void main() {
             expect(operation['transactionId'], isA<String>());
             expect(operation['requestId'], isA<String>());
           }
-          if (operation['kind'] == 'mutationLocal') {
-            expect(operation['transactionId'], isA<String>());
-            expect(operation['companionId'], isA<String>());
-            expect(operation['requestId'], isA<String>());
-          }
+          expect(operation['kind'], isNot('mutationLocal'));
         case 'cancelEffect':
           expect(event['effectId'], isA<String>());
         case 'callCompleted':

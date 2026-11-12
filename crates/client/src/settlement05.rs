@@ -11,7 +11,10 @@ impl<S: ClientStore> Engine<'_, S> {
         .transpose()
         .map(|v| v.unwrap_or_default())
     }
-    pub(crate) fn direct_evidence05(&mut self, key: &RecordKey) -> Result<()> {
+    // A child a delivered deletion cascaded to: its row went with its parent
+    // without Stream content of its own, so it keeps its history and has no
+    // current evidence.
+    fn cascaded_evidence05(&mut self, key: &RecordKey) -> Result<()> {
         let mut e = self.evidence05(key)?;
         e.current = None;
         self.set_evidence05(key, &e)
@@ -383,19 +386,6 @@ impl<S: ClientStore> Engine<'_, S> {
                 }
                 self.retain_owned05(id, position, &op)?;
             }
-            for op in ops.iter().filter(|o| o.kind == OpKind::Companion) {
-                let key = self.schema.record_key(&op.op.model, &op.op.identity)?;
-                if targets
-                    .iter()
-                    .any(|t| t.key().model == key.model && t.key().identity == key.identity)
-                {
-                    continue;
-                }
-                if self.owned05(id, op.position, &key)? {
-                    self.retain_owned05(id, op.position, &op.op)?;
-                    self.direct_evidence05(&key)?;
-                }
-            }
             self.exec(
                 "axton_mutation_queue",
                 "UPDATE axton_mutation_queue SET reconciled=1 WHERE id=?",
@@ -543,7 +533,7 @@ impl<S: ClientStore> Engine<'_, S> {
                                 <= *cursor)
                         })? {
                             self.stage_one(&child, None, held)?;
-                            self.direct_evidence05(&child)?;
+                            self.cascaded_evidence05(&child)?;
                         }
                     }
                     applied += 1;

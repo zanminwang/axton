@@ -15,16 +15,9 @@ pub fn create(model: &str, id: &str, values: Value) -> Operation {
         values: Some(values),
     }
 }
+/// Entry `e` at `text`, unprotected and unpending.
 pub fn seed(c: &mut Client<SqliteStore>, text: &str) {
-    c.transaction(|tx| {
-        tx.direct(Operation {
-            model: "Entry".into(),
-            op: OperationKind::Create,
-            identity: json!({"id":"e"}),
-            values: Some(json!({"text":text,"note":null})),
-        })
-    })
-    .unwrap();
+    cached(c, "Entry", "e", json!({"text":text,"note":null}));
 }
 pub fn key() -> RecordKey {
     schema().record_key("Entry", &json!({"id":"e"})).unwrap()
@@ -152,4 +145,112 @@ pub fn before_upgrade(path: &std::path::Path) -> store05::StoreStatus05 {
         (Some(25), Some(25), Some(40))
     );
     status
+}
+
+// Seed routes that survive the removal of direct Model writes. Pick the one
+// whose evidence state the test needs.
+
+/// Start the Stream at 0 unless the Store already has a start.
+pub fn start_stream(c: &mut Client<SqliteStore>) {
+    if c.store_status05().unwrap().start_cursor.is_none() {
+        c.initialize_stream05(0, "1").unwrap();
+    }
+}
+/// An authority change for `model` row `id` at `cursor`; a null `state`
+/// is a delivered deletion.
+pub fn record(model: &str, id: &str, cursor: u64, state: Value) -> v05::AuthorityChange {
+    v05::AuthorityChange::Record {
+        key: v05::RecordKey {
+            model: model.into(),
+            identity: json!({ "id": id }),
+        },
+        cursor,
+        state,
+    }
+}
+/// A protected row: the Stream delivers `changes` in the Store's context,
+/// with no coverage. Starts the Stream first when it has no start.
+pub fn protected(c: &mut Client<SqliteStore>, changes: &[v05::AuthorityChange]) -> ApplyReport {
+    start_stream(c);
+    let context = c.request_context05().unwrap();
+    c.install_authority05(&context, changes, None).unwrap()
+}
+/// An unprotected, unpending row: a store-mode Query or Fetch read installs
+/// `state` (every required field) as cache, as a direct write left it.
+pub fn cached(c: &mut Client<SqliteStore>, model: &str, id: &str, state: Value) {
+    let report = c
+        .install_cache05(
+            &[v05::ReadRecord {
+                key: v05::RecordKey {
+                    model: model.into(),
+                    identity: json!({ "id": id }),
+                },
+                cursor: (),
+                state,
+            }],
+            true,
+        )
+        .unwrap();
+    assert_eq!(report.applied, 1, "cache install of {model} {id} applied");
+}
+/// An offline Mutation: queued and applied optimistically, never sent while
+/// the test holds no connection.
+pub fn offline(c: &mut Client<SqliteStore>, name: &str, input: Value) -> SubmittedCall {
+    c.transaction(|tx| tx.submit_mutation05(name, 1, input))
+        .unwrap()
+}
+/// `schema` with `Create<Model>`, `Update<Model>` and `Delete<Model>`
+/// Mutations for every Model, each taking one record as `row`.
+pub fn with_crud(schema: Schema) -> Schema {
+    let mut value = serde_json::to_value(&schema).unwrap();
+    let models: Vec<String> = value["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["name"].as_str().unwrap().to_owned())
+        .collect();
+    let mut actions = value["actions"].as_array().cloned().unwrap_or_default();
+    for model in models {
+        for (verb, operation) in [
+            ("Create", "create"),
+            ("Update", "update"),
+            ("Delete", "delete"),
+        ] {
+            actions.push(json!({"name":format!("{verb}{model}"),"version":1,"outputs":[],
+                "inputs":[{"kind":"model","name":"row","model":model,"operation":operation,"cardinality":"single"}]}));
+        }
+    }
+    value["actions"] = Value::Array(actions);
+    Schema::from_value(value).unwrap()
+}
+fn row(id: &str, values: Value) -> Value {
+    let mut row = values;
+    row["id"] = json!(id);
+    json!({ "row": row })
+}
+/// Inside a transaction, the `with_crud` Mutation creating `model` row `id`.
+pub fn create_call<S: ClientStore>(
+    tx: &mut ClientTransaction<'_, S>,
+    model: &str,
+    id: &str,
+    values: Value,
+) -> Result<SubmittedCall> {
+    tx.submit_mutation05(&format!("Create{model}"), 1, row(id, values))
+}
+/// Inside a transaction, the `with_crud` Mutation updating `model` row `id`.
+pub fn update_call<S: ClientStore>(
+    tx: &mut ClientTransaction<'_, S>,
+    model: &str,
+    id: &str,
+    values: Value,
+) -> Result<SubmittedCall> {
+    tx.submit_mutation05(&format!("Update{model}"), 1, row(id, values))
+}
+/// Inside a transaction, the `with_crud` Mutation deleting `model` row `id`.
+pub fn delete_call<S: ClientStore>(
+    tx: &mut ClientTransaction<'_, S>,
+    model: &str,
+    id: &str,
+) -> Result<SubmittedCall> {
+    tx.submit_mutation05(&format!("Delete{model}"), 1, row(id, json!({})))
 }

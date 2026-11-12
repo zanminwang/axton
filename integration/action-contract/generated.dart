@@ -2,7 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:axton/axton.dart';
-export 'package:axton/axton.dart' show RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
+export 'package:axton/axton.dart' show AxtonDiagnostics, AxtonTraceRecord, RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
 class Present<T> { final T value; const Present(this.value); }
 abstract interface class _DartActionRecord { Map<String,dynamic> toRecord(); }
 final Map<String,dynamic> schema = jsonDecode('{"actions":[{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"body","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"pinned","nullable":false,"type":{"kind":"scalar","name":"boolean"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"tag","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"memo","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Note"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Note","name":"note","operation":"create"},{"cardinality":"optional","kind":"model","model":"Note","name":"maybe","operation":"create"},{"cardinality":"list","kind":"model","model":"Note","name":"many","operation":"create"}],"kind":"mutation","name":"AddNotes","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Note"},"kind":"model","model":"Note","modelReadVersion":1,"name":"saved","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[{"name":"Status","values":["open","closed"]},{"name":"Status","values":["open","closed"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"state","nullable":false,"type":{"kind":"enum","name":"Status"}}],"identity":["id"],"name":"Todo"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Todo","name":"todo","operation":"create"},{"allowedPatchFields":["title"],"cardinality":"optional","kind":"model","model":"Todo","name":"patch","operation":"update"},{"cardinality":"list","kind":"model","model":"Todo","name":"gone","operation":"delete"},{"cardinality":"single","kind":"value","list":false,"name":"status","nullable":true,"required":true,"type":{"kind":"enum","name":"Status"}},{"cardinality":"list","kind":"value","list":true,"name":"tags","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"AddTodo","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":1,"name":"relatedTodo","source":"handlerIdentity"},{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":1,"name":"matches","source":"handlerIdentity"},{"cardinality":"single","kind":"value","name":"count","source":"handlerValue","type":{"kind":"scalar","name":"int"}}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[{"name":"Status","values":["open","closed","archived"]},{"name":"Status","values":["open","closed","archived"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"state","nullable":false,"type":{"kind":"enum","name":"Status"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Todo","name":"todo","operation":"create"},{"allowedPatchFields":["title"],"cardinality":"optional","kind":"model","model":"Todo","name":"patch","operation":"update"},{"cardinality":"list","kind":"model","model":"Todo","name":"gone","operation":"delete"},{"cardinality":"single","kind":"value","list":false,"name":"status","nullable":true,"required":true,"type":{"kind":"enum","name":"Status"}},{"cardinality":"list","kind":"value","list":true,"name":"tags","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"AddTodo","outputEnums":[{"name":"Status","values":["open","closed","archived"]}],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":2,"name":"relatedTodo","source":"handlerIdentity"},{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":2,"name":"matches","source":"handlerIdentity"},{"cardinality":"single","kind":"value","name":"count","source":"handlerValue","type":{"kind":"scalar","name":"int"}},{"cardinality":"optional","kind":"value","name":"state","source":"handlerValue","type":{"kind":"enum","name":"Status"}}],"prerequisites":[],"requirements":[],"sequence":null,"version":2},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"client","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"ClientTodos","outputEnums":[],"outputs":[{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":2,"name":"todos","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Todo","name":"todo","operation":"delete"}],"kind":"mutation","name":"DeleteTodo","outputEnums":[],"outputs":[],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[{"name":"Status","values":["open","closed","archived"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"state","nullable":false,"type":{"kind":"enum","name":"Status"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo"}]},"inputs":[{"allowedPatchFields":["title","state","note"],"cardinality":"single","kind":"model","model":"Todo","name":"todo","operation":"update"}],"kind":"mutation","name":"Edit","outputEnums":[],"outputs":[],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[{"name":"Status","values":["open","closed","archived"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"state","nullable":false,"type":{"kind":"enum","name":"Status"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo"}]},"inputs":[{"allowedPatchFields":["title","state","note"],"cardinality":"single","kind":"model","model":"Todo","name":"todo","operation":"update"}],"kind":"mutation","name":"EditAndRead","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":2,"name":"todo","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo"}]},"inputs":[{"allowedPatchFields":["title"],"cardinality":"list","kind":"model","model":"Todo","name":"todos","operation":"update"}],"kind":"mutation","name":"EditMany","outputEnums":[],"outputs":[],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"text","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}},{"cardinality":"single","kind":"value","list":false,"name":"cursor","nullable":true,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"FindTodos","outputEnums":[],"outputs":[{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":2,"name":"todos","source":"handlerIdentity"},{"cardinality":"optional","kind":"value","name":"nextCursor","source":"handlerValue","type":{"kind":"scalar","name":"string"}}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"once","nullable":false,"required":true,"type":{"kind":"scalar","name":"boolean"}},{"cardinality":"single","kind":"value","list":false,"name":"refresh","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"FlaggedTodos","outputEnums":[],"outputs":[{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":2,"name":"todos","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[],"kind":"mutation","name":"GetTodos","outputEnums":[],"outputs":[{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":2,"name":"todos","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[],"kind":"query","name":"GetTodos","outputEnums":[],"outputs":[{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":2,"name":"todos","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":2},{"input":{"enums":[],"models":[{"fields":[{"name":"tenantId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["tenantId","id"],"name":"Project"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Project","name":"project","operation":"create"}],"kind":"mutation","name":"Link","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"tenantId","type":{"kind":"scalar","name":"string"}},{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Project"},"kind":"model","model":"Project","modelReadVersion":1,"name":"relatedProject","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"store","nullable":true,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"OpenTodo","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":2,"name":"mainTodo","source":"handlerIdentity"},{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":2,"name":"suggestions","source":"handlerIdentity"},{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":2,"name":"related","source":"handlerIdentity"},{"cardinality":"single","kind":"value","name":"count","source":"handlerValue","type":{"kind":"scalar","name":"int"}}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[],"kind":"mutation","name":"Ping","outputEnums":[],"outputs":[],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[{"name":"Status","values":["open","closed","archived"]}],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"projectId","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}},{"cardinality":"single","kind":"value","list":false,"name":"status","nullable":true,"required":true,"type":{"kind":"enum","name":"Status"}},{"cardinality":"list","kind":"value","list":true,"name":"tags","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"ProjectTodos","outputEnums":[],"outputs":[{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":2,"name":"todos","source":"handlerIdentity"},{"cardinality":"list","handlerType":{"fields":[{"name":"tenantId","type":{"kind":"scalar","name":"string"}},{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Project"},"kind":"model","model":"Project","modelReadVersion":1,"name":"projects","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[],"kind":"query","name":"RecentTodos","outputEnums":[],"outputs":[{"cardinality":"list","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":2,"name":"todos","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Todo","name":"todo","operation":"delete"}],"kind":"mutation","name":"RemoveTodo","outputEnums":[],"outputs":[],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"query","nullable":true,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"Search","outputEnums":[],"outputs":[],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"to","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}},{"cardinality":"single","kind":"value","list":false,"name":"subject","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}},{"cardinality":"single","kind":"value","list":false,"name":"body","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"mutation","name":"SendEmail","outputEnums":[],"outputs":[],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[],"kind":"mutation","name":"StateList","outputEnums":[{"name":"Status","values":["open","closed"]}],"outputs":[{"cardinality":"list","kind":"value","name":"states","source":"handlerValue","type":{"kind":"enum","name":"Status"}}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[],"kind":"mutation","name":"StateList","outputEnums":[{"name":"Status","values":["open","closed","archived"]}],"outputs":[{"cardinality":"list","kind":"value","name":"states","source":"handlerValue","type":{"kind":"enum","name":"Status"}}],"prerequisites":[],"requirements":[],"sequence":null,"version":2}],"clientPolicies":[],"enums":[{"name":"Status","values":["open","closed","archived"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"state","nullable":false,"type":{"kind":"enum","name":"Status"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo","relations":[],"unique":[],"version":2},{"fields":[{"name":"tenantId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["tenantId","id"],"name":"Project","relations":[],"unique":[],"version":1},{"fields":[{"createDefault":{"kind":"uuid"},"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"createDefault":{"kind":"literal","value":""},"name":"body","nullable":false,"type":{"kind":"scalar","name":"string"}},{"createDefault":{"kind":"literal","value":false},"name":"pinned","nullable":false,"type":{"kind":"scalar","name":"boolean"}},{"createDefault":{"kind":"now"},"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"createDefault":{"kind":"literal","value":"t"},"name":"tag","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"memo","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Note","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"body","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"pinned","nullable":false,"type":{"kind":"scalar","name":"boolean"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"tag","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"memo","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Note","version":1},{"enums":[],"fields":[{"name":"tenantId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["tenantId","id"],"name":"Project","version":1},{"enums":[{"name":"Status","values":["open","closed"]}],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"state","nullable":false,"type":{"kind":"enum","name":"Status"}}],"identity":["id"],"name":"Todo","version":1},{"enums":[{"name":"Status","values":["open","closed","archived"]}],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"state","nullable":false,"type":{"kind":"enum","name":"Status"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo","version":2}]}') as Map<String,dynamic>;
@@ -41,17 +41,6 @@ class TodoIdentity {
  id: row['id'] as String,
  );
 }
-class TodoPatch {
- final Present<String>? title;
- final Present<Status>? state;
- final Present<String?>? note;
- const TodoPatch({this.title,this.state,this.note});
- Map<String,dynamic> toRecord() => {
- if (title != null) 'title': title!.value,
- if (state != null) 'state': state!.value.name,
- if (note != null) 'note': note!.value == null ? null : note!.value!,
- };
-}
 /// What a fresh create of Project accepts: a complete [Project], or a [ProjectCreate] that may omit fields with creation defaults.
 abstract interface class ProjectCreateInput { Map<String,dynamic> toCreateRecord(); }
 class Project implements ProjectCreateInput {
@@ -85,13 +74,6 @@ class ProjectIdentity {
  tenantId: row['tenantId'] as String,
  id: row['id'] as String,
  );
-}
-class ProjectPatch {
- final Present<String>? title;
- const ProjectPatch({this.title});
- Map<String,dynamic> toRecord() => {
- if (title != null) 'title': title!.value,
- };
 }
 /// What a fresh create of Note accepts: a complete [Note], or a [NoteCreate] that may omit fields with creation defaults.
 abstract interface class NoteCreateInput { Map<String,dynamic> toCreateRecord(); }
@@ -132,21 +114,6 @@ class NoteIdentity {
  factory NoteIdentity.fromRecord(Map<String,dynamic> row) => NoteIdentity(
  id: row['id'] as String,
  );
-}
-class NotePatch {
- final Present<String>? body;
- final Present<bool>? pinned;
- final Present<DateTime>? at;
- final Present<String?>? tag;
- final Present<String?>? memo;
- const NotePatch({this.body,this.pinned,this.at,this.tag,this.memo});
- Map<String,dynamic> toRecord() => {
- if (body != null) 'body': body!.value,
- if (pinned != null) 'pinned': pinned!.value,
- if (at != null) 'at': at!.value.toAxtonPrecision().toIso8601String(),
- if (tag != null) 'tag': tag!.value == null ? null : tag!.value!,
- if (memo != null) 'memo': memo!.value == null ? null : memo!.value!,
- };
 }
 class TodoCreate implements TodoCreateInput {
  final String id;
@@ -239,47 +206,35 @@ class NoteFilter {
 }
 enum NoteOrderField {byId('id'),byBody('body'),byPinned('pinned'),byAt('at'),byTag('tag'),byMemo('memo'); final String wireName; const NoteOrderField(this.wireName);}
 class NoteOrder { final NoteOrderField field; final bool descending; const NoteOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
+Todo _copyTodoWatch(Todo value) => value;
 class TodoModel { final ReadPort port; TodoModel(this.port);
  Future<Todo?> get(TodoIdentity identity) async { final row=await port.read('Todo',identity.toRecord()); return row == null ? null : Todo.fromRecord(row); }
  Future<List<Todo>> query({TodoFilter? where,List<TodoOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Todo',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Todo.fromRecord).toList();
 }
-class TodoLiveModel extends TodoTxModel { final Client client; TodoLiveModel(this.client) : super(client);
- Stream<List<Todo>> watch({TodoFilter? where}) => client.watch('Todo', where:where?.toRecord()??{}).map((rows) => rows.map(Todo.fromRecord).toList());
+class TodoLiveModel extends TodoModel { final Client client; TodoLiveModel(this.client) : super(client);
+ Stream<List<Todo>> watch({TodoFilter? where}) => client.watchDecoded<Todo>('Todo', where:where?.toRecord()??{},decode:Todo.fromRecord,copy:_copyTodoWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(TodoIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Todo', identity.toRecord()));
 }
-class TodoTxModel extends TodoModel { final WritePort writer; TodoTxModel(this.writer) : super(writer);
- Future<void> create(TodoCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Todo','op':'create','identity':identity,'values':state}); }
- Future<void> update(TodoIdentity identity, TodoPatch patch) => writer.direct({'model':'Todo','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(TodoIdentity identity) => writer.direct({'model':'Todo','op':'delete','identity':identity.toRecord()});
-}
+Project _copyProjectWatch(Project value) => value;
 class ProjectModel { final ReadPort port; ProjectModel(this.port);
  Future<Project?> get(ProjectIdentity identity) async { final row=await port.read('Project',identity.toRecord()); return row == null ? null : Project.fromRecord(row); }
  Future<List<Project>> query({ProjectFilter? where,List<ProjectOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Project',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Project.fromRecord).toList();
 }
-class ProjectLiveModel extends ProjectTxModel { final Client client; ProjectLiveModel(this.client) : super(client);
- Stream<List<Project>> watch({ProjectFilter? where}) => client.watch('Project', where:where?.toRecord()??{}).map((rows) => rows.map(Project.fromRecord).toList());
+class ProjectLiveModel extends ProjectModel { final Client client; ProjectLiveModel(this.client) : super(client);
+ Stream<List<Project>> watch({ProjectFilter? where}) => client.watchDecoded<Project>('Project', where:where?.toRecord()??{},decode:Project.fromRecord,copy:_copyProjectWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(ProjectIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Project', identity.toRecord()));
 }
-class ProjectTxModel extends ProjectModel { final WritePort writer; ProjectTxModel(this.writer) : super(writer);
- Future<void> create(ProjectCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['tenantId','id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Project','op':'create','identity':identity,'values':state}); }
- Future<void> update(ProjectIdentity identity, ProjectPatch patch) => writer.direct({'model':'Project','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(ProjectIdentity identity) => writer.direct({'model':'Project','op':'delete','identity':identity.toRecord()});
-}
+Note _copyNoteWatch(Note value) => value;
 class NoteModel { final ReadPort port; NoteModel(this.port);
  Future<Note?> get(NoteIdentity identity) async { final row=await port.read('Note',identity.toRecord()); return row == null ? null : Note.fromRecord(row); }
  Future<List<Note>> query({NoteFilter? where,List<NoteOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Note',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Note.fromRecord).toList();
 }
-class NoteLiveModel extends NoteTxModel { final Client client; NoteLiveModel(this.client) : super(client);
- Stream<List<Note>> watch({NoteFilter? where}) => client.watch('Note', where:where?.toRecord()??{}).map((rows) => rows.map(Note.fromRecord).toList());
+class NoteLiveModel extends NoteModel { final Client client; NoteLiveModel(this.client) : super(client);
+ Stream<List<Note>> watch({NoteFilter? where}) => client.watchDecoded<Note>('Note', where:where?.toRecord()??{},decode:Note.fromRecord,copy:_copyNoteWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(NoteIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Note', identity.toRecord()));
-}
-class NoteTxModel extends NoteModel { final WritePort writer; NoteTxModel(this.writer) : super(writer);
- Future<void> create(NoteCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Note','op':'create','identity':identity,'values':state}); }
- Future<void> update(NoteIdentity identity, NotePatch patch) => writer.direct({'model':'Note','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(NoteIdentity identity) => writer.direct({'model':'Note','op':'delete','identity':identity.toRecord()});
 }
 /// Public Action lifecycle types are owned by the SDK.
 typedef TodoDelete = TodoIdentity;
@@ -1108,10 +1063,10 @@ class LiveModels { final Client port; LiveModels(this.port);
  late final ProjectLiveModel project = ProjectLiveModel(port);
  late final NoteLiveModel note = NoteLiveModel(port);
 }
-class TxModels { final WritePort port; TxModels(this.port);
- late final TodoTxModel todo = TodoTxModel(port);
- late final ProjectTxModel project = ProjectTxModel(port);
- late final NoteTxModel note = NoteTxModel(port);
+class TxModels { final ReadPort port; TxModels(this.port);
+ late final TodoModel todo = TodoModel(port);
+ late final ProjectModel project = ProjectModel(port);
+ late final NoteModel note = NoteModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);
@@ -1120,7 +1075,6 @@ class FetchModels { final Client _client; FetchModels(this._client);
  Future<Note?> note(NoteIdentity identity, {bool store = true}) => _client.fetchModel('Note', 1, identity.toRecord(), Note.fromRecord, store: store);
 }
 class GeneratedTransaction { final Transaction transaction; late final TxModels models=TxModels(transaction); GeneratedTransaction(this.transaction); }
-class CompanionContext { final TxModels models; CompanionContext(WritePort port) : models = TxModels(port); }
 class TransactionMutations {
  final SubmitMutationPort port; TransactionMutations(this.port);
  late final AddNotesMutation addNotes = AddNotesMutation(port);
@@ -1141,79 +1095,66 @@ class AddNotesMutation {
  final SubmitMutationPort port; AddNotesMutation(this.port);
  Map<String,dynamic> _encode(AddNotesInput input) => {'note': _dartActionEncode(input.note), 'maybe': _dartActionEncode(input.maybe), 'many': _dartActionEncode(input.many)};
  Future<Call<AddNotesOutput>> call(AddNotesInput input) => port.submitMutation<AddNotesOutput>('AddNotes', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return AddNotesOutput(saved: Note.fromRecord((row['saved'] as Map).cast<String,dynamic>())); });
- Future<Call<AddNotesOutput>> withTransaction(FutureOr<AddNotesInput> Function(CompanionContext tx) body) => port.submitMutation<AddNotesOutput>('AddNotes', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return AddNotesOutput(saved: Note.fromRecord((row['saved'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class AddTodoMutation {
  final SubmitMutationPort port; AddTodoMutation(this.port);
  Map<String,dynamic> _encode(AddTodoInput input) => {'todo': _dartActionEncode(input.todo), 'patch': _dartActionEncode(input.patch), 'gone': _dartActionEncode(input.gone), 'status': _dartActionEncode(input.status), 'tags': _dartActionEncode(input.tags)};
  Future<Call<AddTodoOutput>> call(AddTodoInput input) => port.submitMutation<AddTodoOutput>('AddTodo', 2, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return AddTodoOutput(relatedTodo: row['relatedTodo'] == null ? null : Todo.fromRecord((row['relatedTodo'] as Map).cast<String,dynamic>()), matches: (row['matches'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList(), count: row['count'] as int, state: row['state'] == null ? null : Status.values.byName(row['state'] as String)); });
- Future<Call<AddTodoOutput>> withTransaction(FutureOr<AddTodoInput> Function(CompanionContext tx) body) => port.submitMutation<AddTodoOutput>('AddTodo', 2, null, (value) { final row = (value as Map).cast<String,dynamic>(); return AddTodoOutput(relatedTodo: row['relatedTodo'] == null ? null : Todo.fromRecord((row['relatedTodo'] as Map).cast<String,dynamic>()), matches: (row['matches'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList(), count: row['count'] as int, state: row['state'] == null ? null : Status.values.byName(row['state'] as String)); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class DeleteTodoMutation {
  final SubmitMutationPort port; DeleteTodoMutation(this.port);
  Map<String,dynamic> _encode(DeleteTodoInput input) => {'todo': _dartActionEncode(input.todo)};
  Future<Call<DeleteTodoOutput>> call(DeleteTodoInput input) => port.submitMutation<DeleteTodoOutput>('DeleteTodo', 1, _encode(input), (_) {});
- Future<Call<DeleteTodoOutput>> withTransaction(FutureOr<DeleteTodoInput> Function(CompanionContext tx) body) => port.submitMutation<DeleteTodoOutput>('DeleteTodo', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class EditMutation {
  final SubmitMutationPort port; EditMutation(this.port);
  Map<String,dynamic> _encode(EditInput input) => {'todo': _dartActionEncode(input.todo)};
  Future<Call<EditOutput>> call(EditInput input) => port.submitMutation<EditOutput>('Edit', 1, _encode(input), (_) {});
- Future<Call<EditOutput>> withTransaction(FutureOr<EditInput> Function(CompanionContext tx) body) => port.submitMutation<EditOutput>('Edit', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class EditAndReadMutation {
  final SubmitMutationPort port; EditAndReadMutation(this.port);
  Map<String,dynamic> _encode(EditAndReadInput input) => {'todo': _dartActionEncode(input.todo)};
  Future<Call<EditAndReadOutput>> call(EditAndReadInput input) => port.submitMutation<EditAndReadOutput>('EditAndRead', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return EditAndReadOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
- Future<Call<EditAndReadOutput>> withTransaction(FutureOr<EditAndReadInput> Function(CompanionContext tx) body) => port.submitMutation<EditAndReadOutput>('EditAndRead', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return EditAndReadOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class EditManyMutation {
  final SubmitMutationPort port; EditManyMutation(this.port);
  Map<String,dynamic> _encode(EditManyInput input) => {'todos': _dartActionEncode(input.todos)};
  Future<Call<EditManyOutput>> call(EditManyInput input) => port.submitMutation<EditManyOutput>('EditMany', 1, _encode(input), (_) {});
- Future<Call<EditManyOutput>> withTransaction(FutureOr<EditManyInput> Function(CompanionContext tx) body) => port.submitMutation<EditManyOutput>('EditMany', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class LinkMutation {
  final SubmitMutationPort port; LinkMutation(this.port);
  Map<String,dynamic> _encode(LinkInput input) => {'project': _dartActionEncode(input.project)};
  Future<Call<LinkOutput>> call(LinkInput input) => port.submitMutation<LinkOutput>('Link', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return LinkOutput(relatedProject: row['relatedProject'] == null ? null : Project.fromRecord((row['relatedProject'] as Map).cast<String,dynamic>())); });
- Future<Call<LinkOutput>> withTransaction(FutureOr<LinkInput> Function(CompanionContext tx) body) => port.submitMutation<LinkOutput>('Link', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return LinkOutput(relatedProject: row['relatedProject'] == null ? null : Project.fromRecord((row['relatedProject'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class OpenTodoMutation {
  final SubmitMutationPort port; OpenTodoMutation(this.port);
  Map<String,dynamic> _encode(OpenTodoInput input) => {'store': _dartActionEncode(input.store)};
  Future<Call<OpenTodoOutput>> call(OpenTodoInput input) => port.submitMutation<OpenTodoOutput>('OpenTodo', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return OpenTodoOutput(mainTodo: Todo.fromRecord((row['mainTodo'] as Map).cast<String,dynamic>()), suggestions: (row['suggestions'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList(), related: row['related'] == null ? null : Todo.fromRecord((row['related'] as Map).cast<String,dynamic>()), count: row['count'] as int); });
- Future<Call<OpenTodoOutput>> withTransaction(FutureOr<OpenTodoInput> Function(CompanionContext tx) body) => port.submitMutation<OpenTodoOutput>('OpenTodo', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return OpenTodoOutput(mainTodo: Todo.fromRecord((row['mainTodo'] as Map).cast<String,dynamic>()), suggestions: (row['suggestions'] as List).map((e) => Todo.fromRecord((e as Map).cast<String,dynamic>())).toList(), related: row['related'] == null ? null : Todo.fromRecord((row['related'] as Map).cast<String,dynamic>()), count: row['count'] as int); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class PingMutation {
  final SubmitMutationPort port; PingMutation(this.port);
  Map<String,dynamic> _encode(PingInput input) => {};
  Future<Call<PingOutput>> call(PingInput input) => port.submitMutation<PingOutput>('Ping', 1, _encode(input), (_) {});
- Future<Call<PingOutput>> withTransaction(FutureOr<PingInput> Function(CompanionContext tx) body) => port.submitMutation<PingOutput>('Ping', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class RemoveTodoMutation {
  final SubmitMutationPort port; RemoveTodoMutation(this.port);
  Map<String,dynamic> _encode(RemoveTodoInput input) => {'todo': _dartActionEncode(input.todo)};
  Future<Call<RemoveTodoOutput>> call(RemoveTodoInput input) => port.submitMutation<RemoveTodoOutput>('RemoveTodo', 1, _encode(input), (_) {});
- Future<Call<RemoveTodoOutput>> withTransaction(FutureOr<RemoveTodoInput> Function(CompanionContext tx) body) => port.submitMutation<RemoveTodoOutput>('RemoveTodo', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class SearchMutation {
  final SubmitMutationPort port; SearchMutation(this.port);
  Map<String,dynamic> _encode(SearchInput input) => {'query': _dartActionEncode(input.query)};
  Future<Call<SearchOutput>> call(SearchInput input) => port.submitMutation<SearchOutput>('Search', 1, _encode(input), (_) {});
- Future<Call<SearchOutput>> withTransaction(FutureOr<SearchInput> Function(CompanionContext tx) body) => port.submitMutation<SearchOutput>('Search', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class SendEmailMutation {
  final SubmitMutationPort port; SendEmailMutation(this.port);
  Map<String,dynamic> _encode(SendEmailInput input) => {'to': _dartActionEncode(input.to), 'subject': _dartActionEncode(input.subject), 'body': _dartActionEncode(input.body)};
  Future<Call<SendEmailOutput>> call(SendEmailInput input) => port.submitMutation<SendEmailOutput>('SendEmail', 1, _encode(input), (_) {});
- Future<Call<SendEmailOutput>> withTransaction(FutureOr<SendEmailInput> Function(CompanionContext tx) body) => port.submitMutation<SendEmailOutput>('SendEmail', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class StateListMutation {
  final SubmitMutationPort port; StateListMutation(this.port);
  Map<String,dynamic> _encode(StateListInput input) => {};
  Future<Call<StateListOutput>> call(StateListInput input) => port.submitMutation<StateListOutput>('StateList', 2, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return StateListOutput(states: (row['states'] as List).map((e) => Status.values.byName(e as String)).toList()); });
- Future<Call<StateListOutput>> withTransaction(FutureOr<StateListInput> Function(CompanionContext tx) body) => port.submitMutation<StateListOutput>('StateList', 2, null, (value) { final row = (value as Map).cast<String,dynamic>(); return StateListOutput(states: (row['states'] as List).map((e) => Status.values.byName(e as String)).toList()); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class ApplicationTransaction extends GeneratedTransaction { late final TransactionMutations mutations = TransactionMutations(transaction); late final rejections = transaction.rejections; late final failures = transaction.failures; ApplicationTransaction(super.transaction); }
 class GeneratedClient {
@@ -1222,7 +1163,7 @@ class GeneratedClient {
  late final Queries queries=Queries(client);
  late final FetchModels fetch=FetchModels(client);
  GeneratedClient._(this.client);
- static Future<GeneratedClient> open({required String path, required String stream, StoreConnection? connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites));
+ static Future<GeneratedClient> open({required String path, required String stream, StoreConnection? connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites, AxtonDiagnostics? diagnostics}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites,diagnostics:diagnostics));
  Future<void> bootstrap() => client.bootstrap();
  Future<RuntimeConnection> connect(SyncServer server,{void Function(Object)? onError,Future<void> Function()? refreshAuth,Duration directTimeout=const Duration(seconds:30)}) => client.connect(server,onError:onError,refreshAuth:refreshAuth,directTimeout:directTimeout);
  Future<void> resetStore({bool discardPending=false}) => client.resetStore(discardPending:discardPending);

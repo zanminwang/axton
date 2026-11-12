@@ -1,4 +1,5 @@
 import 'store_fixture.dart';
+import 'protocol5_transport.dart';
 // Unsent work (#186, #205, #204): refused and failed acts as streams, their
 // resolutions on the client and inside a transaction. The real runtime and
 // SQLite underneath.
@@ -85,6 +86,13 @@ Map<String, dynamic> _write(String text, [String? blob]) => {
 
 dynamic _identity(dynamic value) => value;
 
+/// Note `n` as the Stream delivers it.
+Map<String, Object?> _note(String text) => {
+  'model': 'Note',
+  'identity': {'id': 'n'},
+  'state': {'text': text, 'blob': null},
+};
+
 void main() {
   late Directory dir;
   setUp(() async {
@@ -103,13 +111,9 @@ void main() {
       libraryPath: Platform.environment['AXTON_LIBRARY']!,
       prerequisites: prerequisites,
     );
+    // A delivered base row: no pending count or ordinal below includes it.
+    await deliverRecords(client, [_note('base')]);
     await client.connection!.pause();
-    await client.direct({
-      'model': 'Note',
-      'op': 'create',
-      'identity': {'id': 'n'},
-      'values': {'text': 'base', 'blob': null},
-    });
     return client;
   }
 
@@ -327,12 +331,9 @@ void main() {
       final counts = <int>[];
       final sub = client.outbound.watchPending().listen(counts.add);
       await until(() => counts.length == 1);
-      await client.direct({
-        'model': 'Note',
-        'op': 'update',
-        'identity': {'id': 'n'},
-        'values': {'text': 'local'},
-      });
+      // A commit that leaves the pending count unchanged publishes nothing.
+      await deliverRecords(client, [_note('local')], after: 1);
+      await client.connection!.pause();
       await client.submitMutation('Write', 1, _write('one'), _identity);
       await until(() => counts.length == 2);
       await sub.cancel();

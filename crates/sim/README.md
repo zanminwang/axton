@@ -1,9 +1,8 @@
 # Simulation
 
-`cargo test -p axton-sim` runs the named scenarios for guarantees L, P, A, D and R and a
-quick random run (60 seeds, 120 steps, 3 clients, once with direct writes off and once with
-them on; every invariant is checked after every step). `SIM_SEEDS=5000 SIM_STEPS=300 cargo test -p axton-sim --test invariants` is the long
-form. A failure prints the seed, the full trace and the minimal trace that still fails.
+`cargo test -p axton-sim` runs deterministic protocol-5 scenarios over real SQLite: receipts,
+authority, delivery and reopen at every persisted boundary. After every step, each Model row
+equals the rebuild of its key from its base, its pending operations and its accepted writes.
 
 See the [simulation testing guide](../../docs/engineering/testing/simulation/README.md) and [guarantees](../../docs/engineering/guarantees.md).
 

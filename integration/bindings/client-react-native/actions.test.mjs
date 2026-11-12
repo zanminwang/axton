@@ -15,6 +15,8 @@ import {
   offlineNetwork,
   emptyPull as encodeEmptyPull,
   read05,
+  deliveringNetwork,
+  deliver,
 } from "../client-js/store-fixture.mjs";
 import {
   fetchModels,
@@ -99,19 +101,33 @@ test("throwing mobile diagnostic listener does not stop later native Query compl
 test("generated mobile Mutation has one durable entry and dropping it settles its Call", async () => {
   const Client = createClient(native, Transaction, offlineNetwork),
     directory = await mkdtemp(join(tmpdir(), "axton-rn-generated-"));
+  // The Todo is delivered, so the queue holds only the Mutation under test.
+  const Seeder = createClient(
+    native,
+    Transaction,
+    deliveringNetwork([
+      {
+        model: "Todo",
+        identity: { id: "one" },
+        state: {
+          title: "local",
+          at: "2026-01-01T00:00:00.000Z",
+          status: "open",
+          note: null,
+        },
+      },
+    ]),
+  );
+  await deliver(Seeder, {
+    path: join(directory, "store"),
+    schema: generatedSchema,
+  });
   const client = await openStore(Client, {
     path: join(directory, "store"),
     schema: generatedSchema,
   });
   try {
     const models = liveModels(client);
-    await models.todo.create({
-      id: "one",
-      title: "local",
-      at: new Date("2026-01-01T00:00:00Z"),
-      status: "open",
-      note: null,
-    });
     assert.equal((await client.syncState()).pending, 0);
     const mutations = makeMutations(client),
       queries = makeQueries(client);

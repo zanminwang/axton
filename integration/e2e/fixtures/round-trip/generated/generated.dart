@@ -2,7 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:axton/axton.dart';
-export 'package:axton/axton.dart' show RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
+export 'package:axton/axton.dart' show AxtonDiagnostics, AxtonTraceRecord, RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
 class Present<T> { final T value; const Present(this.value); }
 abstract interface class _DartActionRecord { Map<String,dynamic> toRecord(); }
 final Map<String,dynamic> schema = jsonDecode('{"actions":[{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"inputs":[{"allowedPatchFields":["text","note"],"cardinality":"single","kind":"model","model":"Entry","name":"entry","operation":"update"}],"kind":"mutation","name":"EditEntry","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[]},"inputs":[{"cardinality":"single","kind":"value","list":false,"name":"id","nullable":false,"required":true,"type":{"kind":"scalar","name":"string"}}],"kind":"query","name":"FindEntry","outputEnums":[],"outputs":[{"cardinality":"optional","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Entry"},"kind":"model","model":"Entry","modelReadVersion":1,"name":"entry","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","text","note"]},"name":"Edit","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"allowedPatchFields":["text","note"],"cardinality":"single","model":"Entry","name":"entry","operation":"update"}],"version":1}],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry","version":1}]}') as Map<String,dynamic>;
@@ -37,15 +37,6 @@ class EntryIdentity {
  id: row['id'] as String,
  );
 }
-class EntryPatch {
- final Present<String>? text;
- final Present<String?>? note;
- const EntryPatch({this.text,this.note});
- Map<String,dynamic> toRecord() => {
- if (text != null) 'text': text!.value,
- if (note != null) 'note': note!.value == null ? null : note!.value!,
- };
-}
 class EntryCreate implements EntryCreateInput {
  final String id;
  final String text;
@@ -71,19 +62,15 @@ class EntryFilter {
 }
 enum EntryOrderField {byId('id'),byText('text'),byNote('note'); final String wireName; const EntryOrderField(this.wireName);}
 class EntryOrder { final EntryOrderField field; final bool descending; const EntryOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
+Entry _copyEntryWatch(Entry value) => value;
 class EntryModel { final ReadPort port; EntryModel(this.port);
  Future<Entry?> get(EntryIdentity identity) async { final row=await port.read('Entry',identity.toRecord()); return row == null ? null : Entry.fromRecord(row); }
  Future<List<Entry>> query({EntryFilter? where,List<EntryOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Entry',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Entry.fromRecord).toList();
 }
-class EntryLiveModel extends EntryTxModel { final Client client; EntryLiveModel(this.client) : super(client);
- Stream<List<Entry>> watch({EntryFilter? where}) => client.watch('Entry', where:where?.toRecord()??{}).map((rows) => rows.map(Entry.fromRecord).toList());
+class EntryLiveModel extends EntryModel { final Client client; EntryLiveModel(this.client) : super(client);
+ Stream<List<Entry>> watch({EntryFilter? where}) => client.watchDecoded<Entry>('Entry', where:where?.toRecord()??{},decode:Entry.fromRecord,copy:_copyEntryWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(EntryIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Entry', identity.toRecord()));
-}
-class EntryTxModel extends EntryModel { final WritePort writer; EntryTxModel(this.writer) : super(writer);
- Future<void> create(EntryCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Entry','op':'create','identity':identity,'values':state}); }
- Future<void> update(EntryIdentity identity, EntryPatch patch) => writer.direct({'model':'Entry','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(EntryIdentity identity) => writer.direct({'model':'Entry','op':'delete','identity':identity.toRecord()});
 }
 /// Public Action lifecycle types are owned by the SDK.
 typedef EntryDelete = EntryIdentity;
@@ -200,15 +187,14 @@ class Queries {
 class LiveModels { final Client port; LiveModels(this.port);
  late final EntryLiveModel entry = EntryLiveModel(port);
 }
-class TxModels { final WritePort port; TxModels(this.port);
- late final EntryTxModel entry = EntryTxModel(port);
+class TxModels { final ReadPort port; TxModels(this.port);
+ late final EntryModel entry = EntryModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);
  Future<Entry?> entry(EntryIdentity identity, {bool store = true}) => _client.fetchModel('Entry', 1, identity.toRecord(), Entry.fromRecord, store: store);
 }
 class GeneratedTransaction { final Transaction transaction; late final TxModels models=TxModels(transaction); GeneratedTransaction(this.transaction); }
-class CompanionContext { final TxModels models; CompanionContext(WritePort port) : models = TxModels(port); }
 class TransactionMutations {
  final SubmitMutationPort port; TransactionMutations(this.port);
  late final EditEntryMutation editEntry = EditEntryMutation(port);
@@ -217,7 +203,6 @@ class EditEntryMutation {
  final SubmitMutationPort port; EditEntryMutation(this.port);
  Map<String,dynamic> _encode(EditEntryInput input) => {'entry': _dartActionEncode(input.entry)};
  Future<Call<EditEntryOutput>> call(EditEntryInput input) => port.submitMutation<EditEntryOutput>('EditEntry', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return EditEntryOutput(entry: Entry.fromRecord((row['entry'] as Map).cast<String,dynamic>())); });
- Future<Call<EditEntryOutput>> withTransaction(FutureOr<EditEntryInput> Function(CompanionContext tx) body) => port.submitMutation<EditEntryOutput>('EditEntry', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return EditEntryOutput(entry: Entry.fromRecord((row['entry'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class ApplicationTransaction extends GeneratedTransaction { late final TransactionMutations mutations = TransactionMutations(transaction); late final rejections = transaction.rejections; late final failures = transaction.failures; ApplicationTransaction(super.transaction); }
 class GeneratedClient {
@@ -226,7 +211,7 @@ class GeneratedClient {
  late final Queries queries=Queries(client);
  late final FetchModels fetch=FetchModels(client);
  GeneratedClient._(this.client);
- static Future<GeneratedClient> open({required String path, required String stream, StoreConnection? connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites));
+ static Future<GeneratedClient> open({required String path, required String stream, StoreConnection? connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites, AxtonDiagnostics? diagnostics}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites,diagnostics:diagnostics));
  Future<void> bootstrap() => client.bootstrap();
  Future<RuntimeConnection> connect(SyncServer server,{void Function(Object)? onError,Future<void> Function()? refreshAuth,Duration directTimeout=const Duration(seconds:30)}) => client.connect(server,onError:onError,refreshAuth:refreshAuth,directTimeout:directTimeout);
  Future<void> resetStore({bool discardPending=false}) => client.resetStore(discardPending:discardPending);

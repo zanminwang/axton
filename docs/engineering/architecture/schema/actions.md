@@ -25,7 +25,7 @@ Queries accept ordinary inputs and cannot declare Model mutations or sequence de
 
 | Generated call | Returns | Completion |
 | --- | --- | --- |
-| `mutations.<name>` | `Call<Output>` | Local durable acceptance of input, optimism and companions |
+| `mutations.<name>` | `Call<Output>` | Local durable acceptance of input and optimism |
 | `queries.<name>` | `Output` | Fresh backend invocation snapshot |
 | `Call.wait()` | Final outcome | Required accepted settlement has committed locally, or refusal is known |
 

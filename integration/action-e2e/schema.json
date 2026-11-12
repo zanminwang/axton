@@ -1209,41 +1209,6 @@
       "identity": [
         "id"
       ],
-      "name": "Composition",
-      "relations": [],
-      "unique": [],
-      "version": 1
-    },
-    {
-      "fields": [
-        {
-          "name": "id",
-          "nullable": false,
-          "type": {
-            "kind": "scalar",
-            "name": "string"
-          }
-        },
-        {
-          "name": "title",
-          "nullable": false,
-          "type": {
-            "kind": "scalar",
-            "name": "string"
-          }
-        },
-        {
-          "name": "body",
-          "nullable": false,
-          "type": {
-            "kind": "scalar",
-            "name": "string"
-          }
-        }
-      ],
-      "identity": [
-        "id"
-      ],
       "name": "Entry",
       "relations": [],
       "unique": [],
@@ -1331,40 +1296,6 @@
   "prerequisites": [],
   "requirements": [],
   "resultModels": [
-    {
-      "enums": [],
-      "fields": [
-        {
-          "name": "id",
-          "nullable": false,
-          "type": {
-            "kind": "scalar",
-            "name": "string"
-          }
-        },
-        {
-          "name": "title",
-          "nullable": false,
-          "type": {
-            "kind": "scalar",
-            "name": "string"
-          }
-        },
-        {
-          "name": "body",
-          "nullable": false,
-          "type": {
-            "kind": "scalar",
-            "name": "string"
-          }
-        }
-      ],
-      "identity": [
-        "id"
-      ],
-      "name": "Composition",
-      "version": 1
-    },
     {
       "enums": [],
       "fields": [

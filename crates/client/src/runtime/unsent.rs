@@ -129,10 +129,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     /// A resolution of the open application transaction: run it in the
     /// session and keep what it announces for the commit. A discard answers
     /// `null`; its completions are final only once the transaction commits.
-    pub(super) fn resolve_in_transaction(
-        &mut self,
-        command: &TransactionCommand,
-    ) -> Result<Option<Value>> {
+    pub(super) fn resolve_in_transaction(&mut self, command: &TransactionCommand) -> Result<Value> {
         let resolved = match command {
             TransactionCommand::Dismiss { ordinal } => {
                 self.client.session(|tx| tx.dismiss_rejection05(*ordinal))?;
@@ -156,7 +153,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         if let Some(open) = &mut self.transaction {
             open.resolved.extend(resolved);
         }
-        Ok(Some(Value::Null))
+        Ok(Value::Null)
     }
     /// The transaction committed: announce its resolutions.
     pub(super) fn announce_resolved(&mut self, resolved: Vec<Resolved>) {

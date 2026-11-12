@@ -59,7 +59,6 @@ fn position(declarations: Option<&Declarations>, owner: &str) -> Option<Pos> {
 /// bind to.
 const TRANSACTION_HELPERS: &[&str] = &[
     "ApplicationTransaction",
-    "CompanionContext",
     "SubmitMutationPort",
     "TransactionMutations",
     "UnsentResolutionPort",
@@ -122,7 +121,6 @@ pub(crate) fn check(config: &Value, declarations: Option<&Declarations>) -> Resu
             "OrderField",
             "Model",
             "LiveModel",
-            "TxModel",
         ] {
             add(format!("{n}{suffix}"), owner.clone())?;
         }

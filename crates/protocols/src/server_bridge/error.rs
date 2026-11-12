@@ -39,8 +39,6 @@ pub mod code {
     /// A loader threw an error that is not a business rejection; the error
     /// reached `onError`. Aborts the acceptance transaction.
     pub const LOADER_FAILED: &str = "loader.failed";
-    /// A loader is not registered for the model.
-    pub const LOADER_UNREGISTERED: &str = "loader.unregistered";
     /// A loader returned rows the schema cannot accept.
     pub const LOADER_INVALID: &str = "loader.invalid";
     /// A publish request is malformed.

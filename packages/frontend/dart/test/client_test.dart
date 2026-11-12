@@ -4,19 +4,13 @@ import 'dart:io';
 import 'package:axton/axton.dart';
 import 'package:test/test.dart';
 import 'store_fixture.dart';
+import 'protocol5_transport.dart';
 
-Map<String, dynamic> create(String id, String text) => {
-  'model': 'Entry',
-  'op': 'create',
-  'identity': {'id': id},
-  'values': {'text': text, 'note': null},
-};
-Map<String, dynamic> update(String text) => {
-  'model': 'Entry',
-  'op': 'update',
-  'identity': {'id': 'e'},
-  'values': {'text': text},
-};
+/// The named `Edit` of Entry `e`, the seed route for a text change.
+Future<Call<void>> edit(SubmitMutationPort port, String text) =>
+    port.submitMutation<void>('Edit', 1, {
+      'entry': {'id': 'e', 'text': text},
+    }, (_) {});
 Map<String, dynamic> input(String id) => {
   'entry': {'id': id, 'text': 'published', 'note': null},
 };
@@ -38,17 +32,8 @@ void main() {
   );
   Future<String?> text([String id = 'e']) async =>
       (await client.read('Entry', {'id': id}))?['text'] as String?;
-  Future<Call<void>> publish(
-    Transaction tx,
-    String id, {
-    Future<Map<String, dynamic>> Function(WritePort)? callback,
-  }) => tx.submitMutation<void>(
-    'Publish',
-    1,
-    callback == null ? input(id) : null,
-    (_) {},
-    input: callback,
-  );
+  Future<Call<void>> publish(Transaction tx, String id) =>
+      tx.submitMutation<void>('Publish', 1, input(id), (_) {});
   setUp(() async {
     dir = await Directory.systemTemp.createTemp('axton-dart-client05-');
     schema =
@@ -89,7 +74,14 @@ void main() {
       },
     ]);
     client = await open();
-    await client.direct(create('e', 'hello'));
+    // A delivered row: the base no pending count below includes.
+    await deliverRecords(client, [
+      {
+        'model': 'Entry',
+        'identity': {'id': 'e'},
+        'state': {'text': 'hello', 'note': null},
+      },
+    ]);
   });
   tearDown(() async {
     await client.close();
@@ -123,7 +115,7 @@ void main() {
     () async {
       await expectLater(
         client.transaction((tx) async {
-          await tx.direct(update('bad'));
+          await edit(tx, 'bad');
           expect((await tx.read('Entry', {'id': 'e'}))!['text'], 'bad');
           throw StateError('rollback');
         }),
@@ -163,7 +155,7 @@ void main() {
           client.submitMutation<void>('Ping', 1, {}, (_) {}),
           stateError('transaction_active'),
         );
-        await tx.direct(update('inside'));
+        await edit(tx, 'inside');
       });
       expect(await text(), 'inside');
     },
@@ -172,16 +164,16 @@ void main() {
     'savepoint rolls back its writes while prior and later writes commit',
     () async {
       await client.transaction((tx) async {
-        await tx.direct(update('before'));
+        await edit(tx, 'before');
         await expectLater(
           tx.savepoint(() async {
-            await tx.direct(update('discard'));
+            await edit(tx, 'discard');
             throw StateError('undo');
           }),
           stateError('undo'),
         );
         expect((await tx.read('Entry', {'id': 'e'}))!['text'], 'before');
-        await tx.direct(update('after'));
+        await edit(tx, 'after');
       });
       expect(await text(), 'after');
     },
@@ -191,158 +183,18 @@ void main() {
     await client.transaction((tx) async {
       escaped = tx;
     });
-    await expectLater(escaped.direct(update('escaped')), throwsStateError);
+    await expectLater(edit(escaped, 'escaped'), throwsStateError);
     expect(await text(), 'hello');
   });
   test('unawaited native write poisons the entire transaction', () async {
     await expectLater(
       client.transaction((tx) async {
-        unawaited(tx.direct(update('unawaited')).catchError((Object _) {}));
+        unawaited(edit(tx, 'unawaited').then((_) {}, onError: (Object _) {}));
       }),
       throwsStateError,
     );
     expect(await text(), 'hello');
   });
-  test(
-    'named callback reads before optimism, returns input and atomically saves companions',
-    () async {
-      final call = await client.transaction((tx) async {
-        final call = await publish(
-          tx,
-          'p',
-          callback: (local) async {
-            expect(await local.read('Entry', {'id': 'p'}), isNull);
-            await local.direct(create('companion', 'local'));
-            return input('p');
-          },
-        );
-        expect((await tx.read('Entry', {'id': 'p'}))!['text'], 'published');
-        await expectLater(call.wait(), callError('transaction_uncommitted'));
-        return call;
-      });
-      expect(call.status, CallStatus.pending);
-      expect(await text('companion'), 'local');
-      expect((await client.syncState())['pending'], 1);
-      await client.close();
-      expect((await call.wait()), isA<CallFailure<void>>());
-      client = await open();
-      expect(await text('p'), 'published');
-      expect(await text('companion'), 'local');
-      expect((await client.syncState())['pending'], 1);
-    },
-  );
-  test(
-    'callback exception undoes companions and creates no queue entry',
-    () async {
-      await expectLater(
-        client.submitMutation<void>(
-          'Publish',
-          1,
-          null,
-          (_) {},
-          input: (tx) async {
-            await tx.direct(create('companion', 'bad'));
-            throw StateError('callback failed');
-          },
-        ),
-        stateError('callback failed'),
-      );
-      expect(await text('companion'), isNull);
-      expect((await client.syncState())['pending'], 0);
-    },
-  );
-  test(
-    'invalid returned typed input rolls back earlier companion work',
-    () async {
-      await expectLater(
-        client.submitMutation<void>(
-          'Publish',
-          1,
-          null,
-          (_) {},
-          input: (tx) async {
-            await tx.direct(create('companion', 'bad'));
-            return {
-              'entry': {'id': 'p', 'text': 42, 'note': null},
-            };
-          },
-        ),
-        throwsA(anything),
-      );
-      expect(await text('companion'), isNull);
-      expect(await text('p'), isNull);
-      expect((await client.syncState())['pending'], 0);
-    },
-  );
-  for (final invalid in [
-    double.infinity,
-    double.negativeInfinity,
-    double.nan,
-  ]) {
-    test(
-      'unencodable callback input ($invalid) rejects and rolls back',
-      () async {
-        await client.close();
-        final entry = (schema['models'] as List).single as Map;
-        (entry['fields'] as List).add({
-          'name': 'score',
-          'nullable': true,
-          'type': {'kind': 'scalar', 'name': 'float'},
-        });
-        client = await open('encoding');
-        await client.direct(create('e', 'before'));
-        await expectLater(
-          client
-              .transaction((tx) async {
-                await tx.direct(update('outer change'));
-                await publish(
-                  tx,
-                  'p',
-                  callback: (local) async {
-                    await local.direct(create('companion', 'temporary'));
-                    return {
-                      'entry': {
-                        'id': 'p',
-                        'text': 'published',
-                        'note': null,
-                        'score': invalid,
-                      },
-                    };
-                  },
-                );
-              })
-              .timeout(const Duration(seconds: 1)),
-          throwsA(isA<JsonUnsupportedObjectError>()),
-        );
-        expect(await text(), 'before');
-        expect(await text('companion'), isNull);
-        expect(await text('p'), isNull);
-        expect((await client.syncState())['pending'], 0);
-        // The failed callback releases the runtime's transaction; a valid
-        // submission still commits its own input and companion normally.
-        await client.submitMutation<void>(
-          'Publish',
-          1,
-          null,
-          (_) {},
-          input: (local) async {
-            await local.direct(create('kept', 'local'));
-            return input('p');
-          },
-        );
-        expect(await text('p'), 'published');
-        expect(await text('kept'), 'local');
-        expect((await client.syncState())['pending'], 1);
-        await client.close();
-        client = await open('encoding');
-        expect(await text(), 'before');
-        expect(await text('companion'), isNull);
-        expect(await text('kept'), 'local');
-        expect((await client.syncState())['pending'], 1);
-      },
-    );
-  }
-
   test(
     'several named calls commit together and stay independently durable',
     () async {
@@ -374,6 +226,38 @@ void main() {
       expect((await client.syncState())['pending'], 0);
     },
   );
+  test(
+    'a Mutation built from a read commits with its transaction and a rollback discards the Call',
+    () async {
+      Future<Call<void>> copy(Transaction tx) async {
+        final row = await tx.read('Entry', {'id': 'e'});
+        final call = await tx.submitMutation<void>('Publish', 1, {
+          'entry': {'id': 'copy', 'text': row!['text'], 'note': null},
+        }, (_) {});
+        expect((await tx.read('Entry', {'id': 'copy'}))!['text'], 'hello');
+        return call;
+      }
+
+      late Call<void> rolledBack;
+      await expectLater(
+        client.transaction((tx) async {
+          rolledBack = await copy(tx);
+          throw StateError('undo');
+        }),
+        stateError('undo'),
+      );
+      await expectLater(
+        rolledBack.wait(),
+        callError('transaction_rolled_back'),
+      );
+      expect(await text('copy'), isNull);
+      expect((await client.syncState())['pending'], 0);
+      final committed = await client.transaction(copy);
+      expect(committed.status, CallStatus.pending);
+      expect(await text('copy'), 'hello');
+      expect((await client.syncState())['pending'], 1);
+    },
+  );
   test('savepoint ends only Calls owned by its scope', () async {
     late Call<void> discarded;
     final kept = await client.transaction((tx) async {
@@ -394,64 +278,6 @@ void main() {
     expect(await text('p'), 'published');
     expect(await text('q'), isNull);
   });
-  test('companion adapter expires after returning its input', () async {
-    late WritePort escaped;
-    await client.submitMutation<void>(
-      'Publish',
-      1,
-      null,
-      (_) {},
-      input: (tx) async {
-        escaped = tx;
-        return input('p');
-      },
-    );
-    await expectLater(escaped.direct(create('late', 'bad')), throwsStateError);
-    expect(await text('late'), isNull);
-  });
-  test('parent commands cannot join an active Mutation callback', () async {
-    await expectLater(
-      client.transaction((tx) async {
-        await publish(
-          tx,
-          'p',
-          callback: (local) async {
-            await expectLater(
-              tx.read('Entry', {'id': 'e'}),
-              stateError('invalid transaction capability'),
-            );
-            return input('p');
-          },
-        );
-      }),
-      stateError('invalid transaction capability'),
-    );
-    expect(await text('p'), isNull);
-    expect((await client.syncState())['pending'], 0);
-  });
-  test(
-    'unawaited companion command rolls back its owned input and companion',
-    () async {
-      await expectLater(
-        client.submitMutation<void>(
-          'Publish',
-          1,
-          null,
-          (_) {},
-          input: (tx) async {
-            unawaited(
-              tx.direct(create('late', 'bad')).catchError((Object _) {}),
-            );
-            return input('p');
-          },
-        ),
-        throwsStateError,
-      );
-      expect(await text('late'), isNull);
-      expect(await text('p'), isNull);
-      expect((await client.syncState())['pending'], 0);
-    },
-  );
   for (final savepoint in [false, true]) {
     test(
       'foreign captured ${savepoint ? 'empty savepoint' : 'write'} refuses before body/admission and poisons its owner',
@@ -471,7 +297,7 @@ void main() {
                   );
                 } else {
                   await expectLater(
-                    a.direct(create('foreign', 'bad')),
+                    publish(a, 'foreign'),
                     stateError('foreign transaction scope'),
                   );
                 }
@@ -493,40 +319,13 @@ void main() {
     try {
       await client.transaction((tx) async {
         expect(await other.read('Entry', {'id': 'e'}), isNull);
-        await tx.direct(update('inside'));
+        await edit(tx, 'inside');
       });
       expect(await text(), 'inside');
     } finally {
       await other.close();
     }
   });
-  test(
-    'close during callback rolls back input, companions and queue before reopen',
-    () async {
-      final entered = Completer<void>(), gate = Completer<void>();
-      final running = client.submitMutation<void>(
-        'Publish',
-        1,
-        null,
-        (_) {},
-        input: (tx) async {
-          await tx.direct(create('companion', 'bad'));
-          entered.complete();
-          await gate.future;
-          return input('p');
-        },
-      );
-      await entered.future;
-      final closed = client.close();
-      gate.complete();
-      await expectLater(running, throwsA(anything));
-      await closed;
-      client = await open();
-      expect(await text('companion'), isNull);
-      expect(await text('p'), isNull);
-      expect((await client.syncState())['pending'], 0);
-    },
-  );
   test(
     'offline schema evolution retains named queue and local view under a new materialization',
     () async {
@@ -567,10 +366,10 @@ void main() {
     },
   );
   test(
-    'one physical owner, ordinary close and offline reopen retain direct state',
+    'one physical owner, ordinary close and offline reopen retain local state',
     () async {
       await expectLater(open(), throwsA(anything));
-      await client.direct(update('retained'));
+      await edit(client, 'retained');
       await client.close();
       await client.close();
       client = await open();
@@ -584,8 +383,8 @@ void main() {
       final done = Completer<void>();
       final sub = client.watch('Entry').listen(rows.add, onDone: done.complete);
       await Future<void>.delayed(Duration.zero);
-      await client.direct(update('changed'));
-      await client.direct(update('changed'));
+      await edit(client, 'changed');
+      await edit(client, 'changed');
       await Future<void>.delayed(Duration.zero);
       expect(rows.map((r) => r.single['text']), ['hello', 'changed']);
       await client.close();
@@ -599,8 +398,10 @@ void main() {
       final rows = <List<Map<String, dynamic>>>[];
       final sub = client.watch('Entry', where: {'id': 'e'}).listen(rows.add);
       await Future<void>.delayed(Duration.zero);
-      await client.direct(create('other', 'irrelevant'));
-      await client.direct(update('filtered'));
+      await client.submitMutation<void>('Publish', 1, {
+        'entry': {'id': 'other', 'text': 'irrelevant', 'note': null},
+      }, (_) {});
+      await edit(client, 'filtered');
       await Future<void>.delayed(Duration.zero);
       expect(rows.map((r) => r.single['text']), ['hello', 'filtered']);
       await sub.cancel();

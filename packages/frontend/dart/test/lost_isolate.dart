@@ -35,7 +35,7 @@ Future<void> main(List<String> args) async {
         stream: 'User:viewer',
         connection: offlineStoreConnection(),
         path: path,
-        schema: jsonDecode(schema) as Map<String, dynamic>,
+        schema: _schema(schema),
         libraryPath: library,
       );
       break;
@@ -49,12 +49,8 @@ Future<void> main(List<String> args) async {
   }
   try {
     await client.transaction(
-      (tx) => tx.direct({
-        'model': 'Entry',
-        'op': 'create',
-        'identity': {'id': 'e'},
-        'values': {'text': 'after'},
-      }),
+      (tx) =>
+          createRow(tx, 'Entry', {'id': 'e', 'text': 'after', 'note': null}),
     );
     final row = await client.read('Entry', {'id': 'e'});
     if (row?['text'] != 'after') throw StateError('unexpected row $row');
@@ -71,18 +67,13 @@ Future<void> _holdAndExit((String, String, String, SendPort) args) async {
     stream: 'User:viewer',
     connection: offlineStoreConnection(),
     path: path,
-    schema: jsonDecode(schema) as Map<String, dynamic>,
+    schema: _schema(schema),
     libraryPath: library,
   );
   final inside = Completer<void>();
   unawaited(
     client.transaction((tx) async {
-      await tx.direct({
-        'model': 'Entry',
-        'op': 'create',
-        'identity': {'id': 'e'},
-        'values': {'text': 'never'},
-      });
+      await createRow(tx, 'Entry', {'id': 'e', 'text': 'never', 'note': null});
       inside.complete();
       await Completer<void>().future;
     }),
@@ -93,4 +84,11 @@ Future<void> _holdAndExit((String, String, String, SendPort) args) async {
   unawaited(client.syncState());
   entered.send(null);
   Isolate.exit();
+}
+
+/// The fixture schema with the row Mutations both processes write through.
+Map<String, dynamic> _schema(String json) {
+  final schema = jsonDecode(json) as Map<String, dynamic>;
+  declareRowMutations(schema);
+  return schema;
 }

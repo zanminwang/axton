@@ -2,13 +2,12 @@
 //!
 //! Source `@default` fills a field only when a fresh create omits it. This is
 //! the one place that evaluates `uuid()` and `now()`: the client prepares a
-//! fresh local create, low-level enqueue or Mutation call here, before strict
-//! normalization, persistence or dispatch. Everything downstream (optimism,
-//! persisted intent, frozen bytes, the direct request, retries, reopen,
-//! replay and settlement) consumes the concrete values produced once here.
+//! fresh Mutation call here, before strict normalization, persistence or
+//! dispatch. Everything downstream (optimism, persisted intent, frozen bytes,
+//! retries, reopen, replay and settlement) consumes the concrete values
+//! produced once here.
 //! Updates, deletes, reads, Loader records, incoming authority and migration
 //! never come through this module.
-use crate::{Operation, OperationKind};
 use axton_core::{ActionDescriptor, ActionInputDescriptor, CreateDefault, ModelDescriptor, Schema};
 use chrono::SecondsFormat;
 use serde_json::{Map, Value};
@@ -39,42 +38,6 @@ fn fill(
         if admits(&field.name) && !present(&field.name) {
             insert(&field.name, materialize(default));
         }
-    }
-}
-
-/// A fresh create operation split into identity and values: an omitted
-/// identity field is filled into the identity, an omitted state field into
-/// the values. A field named on either side counts as supplied, so a
-/// misplaced identity key is left for normalization to refuse rather than
-/// replaced by a generated one. Anything that is not an object is left for
-/// normalization to refuse as well.
-pub(crate) fn fill_operation(schema: &Schema, op: &mut Operation) {
-    if op.op != OperationKind::Create {
-        return;
-    }
-    let Ok(policy) = schema.model(&op.model) else {
-        return;
-    };
-    let (Some(identity), Some(Some(values))) = (
-        op.identity.as_object(),
-        op.values.as_ref().map(Value::as_object),
-    ) else {
-        return;
-    };
-    let mut additions: Vec<(String, Value)> = vec![];
-    fill(
-        policy,
-        |_| true,
-        |name| identity.contains_key(name) || values.contains_key(name),
-        |name, value| additions.push((name.to_string(), value)),
-    );
-    for (name, value) in additions {
-        let side = if policy.identity.contains(&name) {
-            &mut op.identity
-        } else {
-            op.values.as_mut().unwrap()
-        };
-        side.as_object_mut().unwrap().insert(name, value);
     }
 }
 

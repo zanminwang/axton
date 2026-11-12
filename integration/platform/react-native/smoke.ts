@@ -110,10 +110,8 @@ export async function runSmoke(show: (message: string) => void) {
       let rolledBack = false;
       try {
         await current.transaction(async (tx) => {
-          await tx.models.entry.create({
-            id: "rollback",
-            text: "discard",
-            note: null,
+          await tx.mutations.addEntry({
+            entry: { id: "rollback", text: "discard", note: null },
           });
           throw Error("rollback test");
         });

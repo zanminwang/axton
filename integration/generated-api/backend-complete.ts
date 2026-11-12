@@ -1,7 +1,7 @@
 import { Book, Entry, createBackend, devAuth, type Loaders, type Mutations } from "./backend.ts";
 type Tx = { rows: Map<string, object> };
 // Transactional Mutation enqueue: the handler receives only the declared
-// business args; a local companion never reaches the backend.
+// business args.
 export const mutations: Mutations<Tx> = {
   async publishEntry({ ctx, args }) { ctx.tx.rows.set(args.entry.id, args.entry); ctx.invalidate.entry(args.entry); return { published: { id: args.entry.id } }; },
   async rename({ ctx, args }) { ctx.tx.rows.set(args.id, { title: args.title }); ctx.invalidate.entry({id:args.id}); },

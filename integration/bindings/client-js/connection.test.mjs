@@ -767,7 +767,7 @@ test("client close is priority control while a callback holds the transaction", 
     const finished = deferred();
     const transaction = client.transaction(async (tx) => {
       try {
-        await tx.direct({ model: "Entry", op: "create", identity: { id: "c" }, values: { text: "A", note: null } });
+        await tx.submitMutation("PingMutation", 1, {}, (value) => value);
         entered.resolve();
         // External I/O the callback waits on while it holds the transaction.
         await gate.promise;

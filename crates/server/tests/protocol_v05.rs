@@ -4,7 +4,7 @@ use axton_protocols::sync::{
 use axton_server::{Config, validate_mutation_batch};
 use serde_json::json;
 fn config() -> Config {
-    Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[{"name":"Say","version":1,"kind":"mutation","inputs":[{"kind":"value","name":"text","type":{"kind":"scalar","name":"string"},"nullable":false,"list":false}],"outputs":[]}]},"mutations":[],"loaders":[]})).unwrap()
+    Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[{"name":"Say","version":1,"kind":"mutation","inputs":[{"kind":"value","name":"text","type":{"kind":"scalar","name":"string"},"nullable":false,"list":false}],"outputs":[]}]},"mutations":[]})).unwrap()
 }
 fn request() -> MutationRequest {
     let c = config();
@@ -54,7 +54,10 @@ fn rejects_noncanonical_input_before_execution() {
 fn compatible_field_reorder_admits_frozen_old_artifact() {
     let model = json!({"name":"Todo","version":1,"identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}]});
     let action = json!({"name":"Write","version":1,"kind":"mutation","inputs":[{"kind":"model","name":"todo","model":"Todo","operation":"create","cardinality":"single"}],"outputs":[],"input":{"models":[model.clone()],"enums":[]}});
-    let old=Config::decode(json!({"schema":{"enums":[],"models":[model],"actions":[action]},"mutations":[],"loaders":["Todo"]})).unwrap();
+    let old = Config::decode(
+        json!({"schema":{"enums":[],"models":[model],"actions":[action]},"mutations":[]}),
+    )
+    .unwrap();
     let mut new = old.clone();
     new.schema.models[0].fields.reverse();
     new.schema.actions[0].input.as_mut().unwrap().models[0]

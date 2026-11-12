@@ -16,7 +16,7 @@ Successful but uncommitted handlers may run again on retry.
 
 Independent calls have independent outcomes. A local transaction, backend commit group, declared dependency or required authority group defines a shared atomic boundary. Failure rolls back that boundary, never unrelated calls. A network page can contain several units: earlier committed units survive a later failure, but progress cannot cross the failed unit. A fresh smaller request may recover an independent prefix; required groups are never split.
 
-The bound API has no custom `onStore` callbacks. Local transactions, Mutation companions, observers and declared relations remain.
+The bound API has no custom `onStore` callbacks. Local transactions, observers and declared relations remain.
 
 ## L. Local writes
 
@@ -25,7 +25,6 @@ The bound API has no custom `onStore` callbacks. Local transactions, Mutation co
 | L1 | Reads show the settled base with pending operations replayed in order. Transactions see their own writes; other readers see committed state. |
 | L2 | Committed Models, queued Mutations, rejections, saved requests and completions survive reopen. |
 | L3 | Transaction failure rolls back its writes and queued calls. Nested savepoints can roll back their scope without discarding the outer transaction. |
-| L4 | Direct writes are device-only and carry no Stream content version. They release live-content protection but retain historical evidence and true Stream tombstones. Older Mutation settlement cannot retimestamp companions or undo later independent writes. Newer Stream positions replace settled direct state; older/equal duplicates do not. |
 | L5 | Local deletion follows declared cascades in the initiating rollback scope. Device cascades manufacture no authoritative child version; backends publish canonical child deletions explicitly. |
 
 Pending optimism changes the projection without clearing base protection. Ordinary reads may refill local absence, but not current Stream tombstones.
@@ -38,7 +37,7 @@ Pending optimism changes the projection without clearing base protection. Ordina
 | P2 | Authenticated Store context, Mutation identity and exact frozen intent reject foreign or conflicting replay before business work. Each immutable Batch contains named Mutations with individually saved outcomes; members in one commit group become durable together. |
 | P3 | Unready prerequisites block dependent calls; lifecycle and sequence dependencies retain their declared meaning. Independent ready work can proceed. |
 | P4 | Frozen intent, call identity and original descriptor survive retries, reopen, supported retained-schema reconciliation and wire protocol changes unchanged; the Batch digest excludes the protocol number. |
-| P5 | Rejection removes only that Mutation's optimism and companions, rejects lifecycle dependents and retains a readable refusal. Other pending work replays. |
+| P5 | Rejection removes only that Mutation's optimism, rejects lifecycle dependents and retains a readable refusal. Other pending work replays. |
 | P6 | A Mutation-level refusal rolls back its savepoint and effects, preserving successful independent calls. Infrastructure failure rolls back the current uncommitted backend group or enclosing local delivery/receipt and stays retryable. |
 | P7 | Unsupported Mutation versions are per-call refusals. Backend acceptance followed by local failure remains accepted-awaiting-settlement; it never becomes business rejection. |
 
@@ -48,7 +47,7 @@ Dropping an unsent call is an explicit local decision. Dismissal, retry and drop
 
 | ID | Required behavior |
 | --- | --- |
-| Q1 | Named Mutations atomically commit typed input, optimism, callback-owned local writes and durable intent. Query/Fetch are direct reads, not queued Mutations. |
+| Q1 | Named Mutations atomically commit typed input, optimism and durable intent. Query/Fetch are direct reads, not queued Mutations. |
 | Q2 | Durable calls have one immutable backend outcome; business work, publications and saved outcome commit together. Replay allocates no new position or membership. |
 | Q3 | Awaiting a Mutation invocation waits for local acceptance and returns a Call. `Call.wait()` waits for backend outcome and the initiating Store's local settlement. Waiting before the enclosing commit fails promptly. |
 | Q4 | Query/Fetch await response validation and durable completion. `store:true` also waits for permitted Model writes; false writes no Models/authority and waits for no unrelated Stream progress. |
@@ -86,12 +85,12 @@ A Batch freezes only after the handshake commits `S`, so every `syncCursor` is a
 
 ## D. Distribution
 
-Convergence assumes correct publication, valid contracts and resumed delivery. Device-only content and deliberate cache-only reads are outside the authority comparison.
+Convergence assumes correct publication, valid contracts and resumed delivery. Deliberate cache-only reads are outside the authority comparison.
 
 | ID | Required behavior |
 | --- | --- |
 | D1 | Stores with the same Stream and compatible viewer/materialization context converge after delivery and settlement. Their queues, observers and progress remain independent. |
-| D2 | Higher Stream positions replace older authority; older/equal duplicates cannot undo direct state. |
+| D2 | Higher Stream positions replace older authority; older/equal duplicates cannot undo it. |
 | D3 | Explicit track enrolls missing pairs with real positions. Repeated live pairs do not move the cursor. Invalidation updates affected existing pairs without enrolling them. |
 | D4 | Content and position come from one Serializable canonical view. Preparation publications settle before final reads. Saved Mutation replay runs no preparation; cursor read retries construct a fresh view. |
 | D5 | True Stream absence retains protected identity/position evidence. Older Stream content and cursor-null cache reads cannot revive it. Newer child authority survives an older parent cascade. |
@@ -105,9 +104,9 @@ Bootstrap selects initial Models through concrete `@@bootstrap` declarations aft
 
 An upgrade runs when the materialization changes (a schema change, or a projection generation a handshake reports) or a Model is reset. It is one local transaction with no network: the Store adopts the new contract, clears `B`, sets `S = C` and drops delivery staging. Rows, evidence and the queue are kept, and reads, Queries, Fetches and Batch freezing continue at once. Queued Mutations are never deleted and are uploaded; a frozen Batch keeps its digest, which excludes the materialization, and is sent in the new context. The Stream's records of `@@bootstrap` Models are pulled again by Bootstrap over `(0, S]`, and Sync continues from `C`.
 
-Evidence belongs to one contract. A delivery in the new contract overwrites a held row at its unchanged position, and current protection, absence included, holds only in the materialization that installed it. A kept row of an unmarked Model is cache: a later Stream change or Query result replaces it. "Pulled again" covers the records the Stream already tracks; the backend's Bootstrap handler does not run again for an existing Store. Until Bootstrap completes, rows show the previous contract's content, with an added field empty or defaulted. A record a new projection generation hides is not redelivered, so its row stays until a later Stream change replaces or deletes it. A reset Model is empty until it is delivered or queried again. A receipt snapshot is installed only when its outcome's materialization is the Store's. A queued Mutation's operation, target or snapshot on a Model whose shape changed since it was enqueued is not used, and the Mutation reads as diverged.
+Evidence belongs to one contract. A delivery in the new contract overwrites a held row at its unchanged position, and current protection, absence included, holds only in the materialization that installed it. A kept row of an unmarked Model is cache: a later Stream change or Query result replaces it. A row an older version wrote directly also has empty evidence and stays as cache until a Stream change or Query result replaces it. "Pulled again" covers the records the Stream already tracks; the backend's Bootstrap handler does not run again for an existing Store. Until Bootstrap completes, rows show the previous contract's content, with an added field empty or defaulted. A record a new projection generation hides is not redelivered, so its row stays until a later Stream change replaces or deletes it. A reset Model is empty until it is delivered or queried again. A receipt snapshot is installed only when its outcome's materialization is the Store's. A queued Mutation's operation, target or snapshot on a Model whose shape changed since it was enqueued is not used, and the Mutation reads as diverged.
 
-Query/Fetch Model snapshots always carry `cursor:null`. Storage checks current protection at commit, not whether an ID ever appeared in the Stream. Declared delete-cascade references to a currently Stream-deleted parent suppress stale child cache writes without inventing child authority. Missing or device-deleted parents do not imply that guard.
+Query/Fetch Model snapshots always carry `cursor:null`. Storage checks current protection at commit, not whether an ID ever appeared in the Stream. Declared delete-cascade references to a currently Stream-deleted parent suppress stale child cache writes without inventing child authority. Missing or locally deleted parents do not imply that guard.
 
 ## N. Native Loads
 

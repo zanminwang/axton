@@ -424,7 +424,7 @@ fn cli_writes_backend_ts_with_the_requested_runtime_import() {
     assert!(backend.contains("from \"../../packages/backend/server/index.mts\""));
     assert!(!backend.contains("HandlerCall<Tx, SaveInput>"));
     assert!(!backend.contains("options.handlers"));
-    assert!(backend.contains(" a?: { v1(call: LoaderCall<Tx, AIdentity>)"));
+    assert!(backend.contains(" a: { v1(call: LoaderCall<Tx, AIdentity>)"));
     let client = fs::read_to_string(out.join("client.ts")).unwrap();
     assert!(client.contains("from \"../../packages/frontend/client-js/index.mts\""));
     assert!(client.contains(" static async open(options: {path:string;"));

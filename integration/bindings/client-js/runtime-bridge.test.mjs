@@ -24,6 +24,22 @@ const schemaUrl = new URL(
   import.meta.url,
 );
 const schema = JSON.parse(await readFile(schemaUrl, "utf8"));
+schema.actions = ["Edit", "Create"].map((name) => ({
+  name,
+  version: 1,
+  kind: "mutation",
+  inputs: [
+    {
+      kind: "model",
+      name: "entry",
+      model: "Entry",
+      operation: name === "Edit" ? "update" : "create",
+      cardinality: "single",
+      allowedFields: ["text", "note"],
+    },
+  ],
+  outputs: [],
+}));
 const envelopes = JSON.parse(
   await readFile(
     new URL("../../../fixtures/bridge/envelopes.json", import.meta.url),
@@ -31,24 +47,24 @@ const envelopes = JSON.parse(
   ),
 );
 const key = (id) => ({ model: "Entry", identity: { id } });
+// Seeds: offline Mutations, submitted as transaction commands.
 const create = (id, text) => ({
-  kind: "direct",
-  operation: {
-    model: "Entry",
-    op: "create",
-    identity: { id },
-    values: { text },
-  },
+  kind: "submitMutation",
+  name: "Create",
+  version: 1,
+  args: { entry: { id, text, note: null } },
 });
 const update = (id, text) => ({
-  kind: "direct",
-  operation: {
-    model: "Entry",
-    op: "update",
-    identity: { id },
-    values: { text },
-  },
+  kind: "submitMutation",
+  name: "Edit",
+  version: 1,
+  args: { entry: { id, text } },
 });
+/** One transaction that runs `command` and commits. */
+const committed = (bridge, command) =>
+  bridge.transaction((transactionId) =>
+    bridge.transactionCommand(transactionId, undefined, command),
+  );
 const read = (id) => ({ kind: "read", key: key(id) });
 const deferred = () => {
   let resolve;
@@ -102,7 +118,7 @@ test("open answers the client id and bound protocol 6 context", async () => {
 
 test("overlapping tasks return to the correct waiter while a callback owns the transaction", async () => {
   await withBridge(async (bridge) => {
-    await bridge.task(create("e", "A"));
+    await committed(bridge, create("e", "A"));
     const order = [];
     const entered = deferred();
     const inside = deferred();
@@ -229,6 +245,79 @@ test("admission failure rejects its waiter and leaves the bridge usable; after c
   await closedBridge.close();
 });
 
+test("the runtime refuses the retired Mutation callback fields", async () => {
+  // A stale SDK's `local` flag fails its command and so the transaction; its
+  // `companionId` on a command and `input` on a callback result refuse the
+  // whole envelope with a protocol report.
+  let runtimeId;
+  const carrier = {
+    runtimeOpen: (request, wake) => (runtimeId = native.runtimeOpen(request, wake)),
+    runtimeSubmit: (id, message) => native.runtimeSubmit(id, message),
+    runtimeDrain: (id) => native.runtimeDrain(id),
+    runtimeDetach: (id) => native.runtimeDetach(id),
+  };
+  await withBridge(async (bridge) => {
+    const reports = [];
+    bridge.on("report", (event) => reports.push(event.diagnostic));
+    let refused;
+    await assert.rejects(
+      bridge.transaction(async (transactionId) => {
+        refused = await bridge
+          .transactionCommand(transactionId, undefined, {
+            ...create("p", "A"),
+            local: true,
+          })
+          .catch((error) => error);
+        for (const envelope of [
+          {
+            type: "transactionCommand",
+            requestId: "999999",
+            transactionId,
+            companionId: "c1",
+            command: read("p"),
+          },
+          { type: "callbackResult", effectId: "1", transactionId, ok: true, input: {} },
+        ])
+          native.runtimeSubmit(runtimeId, JSON.stringify(envelope));
+        for (let turn = 0; reports.length < 2 && turn < 200; turn++)
+          await new Promise((resolve) => setTimeout(resolve, 5));
+      }),
+      /unknown field `local`/,
+    );
+    assert.match(refused.message, /unknown field `local`/);
+    assert.deepEqual(
+      reports.map((report) => [report.kind, /unknown field `(\w+)`/.exec(report.message)?.[1]]),
+      [
+        ["protocol", "companionId"],
+        ["protocol", "input"],
+      ],
+    );
+    assert.equal(await bridge.task(read("p")), null);
+  }, carrier);
+});
+
+test("the runtime refuses the retired direct Model write as an unknown command", async () => {
+  // A stale SDK's `direct` fails its own request, as a task and inside a
+  // transaction, and writes nothing.
+  const operation = {
+    model: "Entry",
+    op: "create",
+    identity: { id: "d" },
+    values: { text: "direct", note: null },
+  };
+  await withBridge(async (bridge) => {
+    await assert.rejects(
+      bridge.task({ kind: "direct", operation }),
+      /unknown variant `direct`/,
+    );
+    await assert.rejects(
+      committed(bridge, { kind: "direct", operation }),
+      /unknown variant `direct`/,
+    );
+    assert.equal(await bridge.task(read("d")), null);
+  });
+});
+
 test("a throwing callback rejects with the same value and rolls back", async () => {
   await withBridge(async (bridge) => {
     const thrown = Error("abort");
@@ -297,13 +386,10 @@ test("a caught command failure rejects at commit with the engine message", async
         );
         await bridge
           .transactionCommand(transactionId, undefined, {
-            kind: "direct",
-            operation: {
-              model: "Missing",
-              op: "create",
-              identity: { id: "m" },
-              values: {},
-            },
+            kind: "submitMutation",
+            name: "Missing",
+            version: 1,
+            args: {},
           })
           .catch((error) => {
             caught = error;
@@ -462,30 +548,25 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
       case "task":
         assert.equal(typeof input.requestId, "string");
         assert.equal(typeof input.command.kind, "string");
+        // The retired direct Model write.
+        assert.notEqual(input.command.kind, "direct");
         break;
       case "transactionCommand":
         assert.equal(typeof input.requestId, "string");
         assert.equal(typeof input.transactionId, "string");
         assert.ok(input.scope === undefined || typeof input.scope === "string");
-        // A local callback's commands carry its companion capability.
-        assert.ok(
-          input.companionId === undefined ||
-            typeof input.companionId === "string",
-        );
+        // The retired Mutation input callback's capability and flag.
+        assert.equal("companionId" in input, false);
         assert.equal(typeof input.command.kind, "string");
+        assert.notEqual(input.command.kind, "direct");
         if (input.command.kind === "submitMutation")
-          assert.ok(
-            input.command.local === undefined ||
-              typeof input.command.local === "boolean",
-          );
+          assert.equal("local" in input.command, false);
         break;
       case "callbackResult":
         assert.equal(typeof input.effectId, "string");
         assert.equal(typeof input.transactionId, "string");
-        assert.ok(
-          input.companionId === undefined ||
-            typeof input.companionId === "string",
-        );
+        assert.equal("companionId" in input, false);
+        assert.equal("input" in input, false);
         assert.equal(typeof input.ok, "boolean");
         assert.ok(
           input.ok ? !("error" in input) : typeof input.error === "string",
@@ -543,11 +624,6 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
         operations.add(event.operation.kind);
         if (event.operation.kind === "callback") {
           assert.equal(typeof event.operation.transactionId, "string");
-          assert.equal(typeof event.operation.requestId, "string");
-        }
-        if (event.operation.kind === "mutationLocal") {
-          assert.equal(typeof event.operation.transactionId, "string");
-          assert.equal(typeof event.operation.companionId, "string");
           assert.equal(typeof event.operation.requestId, "string");
         }
         break;
@@ -628,7 +704,6 @@ test("the shared envelope fixtures carry the shapes the bridge sends and switche
   assert.deepEqual([...operations].sort(), [
     "callback",
     "http",
-    "mutationLocal",
     "prerequisite",
     "refreshAuth",
     "socket",
@@ -745,14 +820,6 @@ test("the bridge dispatches every fixture event and answers effects it has no ha
         transactionId: "tx7",
         ok: false,
         error: "unknown transaction",
-      },
-      {
-        type: "callbackResult",
-        effectId: "13",
-        transactionId: "tx7",
-        companionId: "c9",
-        ok: false,
-        error: "unknown mutation",
       },
     ],
   );
@@ -982,14 +1049,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 const { Bridge } = await import(${JSON.stringify(bridgeModule)});
 const native = createRequire(import.meta.url)(${JSON.stringify(addon)});
-const schema = JSON.parse(readFileSync(${JSON.stringify(fileURLToPath(schemaUrl))}, "utf8"));
+const schema = ${JSON.stringify(schema)};
 const path = join(mkdtempSync(join(tmpdir(), "axton-bridge-exit-")), "client.sqlite");
 `;
 
 test("an outstanding task keeps the process alive until it settles", async () => {
   const { code, stdout, stderr } = await script(`${prelude}
 const { bridge } = await openBridge(native, { path, schema });
-await bridge.task(${JSON.stringify(create("x", "kept"))});
+await bridge.transaction((id) => bridge.transactionCommand(id, undefined, ${JSON.stringify(create("x", "kept"))}));
 const row = await bridge.task(${JSON.stringify(read("x"))});
 console.log("read " + row.text);
 `);

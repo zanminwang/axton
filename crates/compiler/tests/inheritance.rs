@@ -32,7 +32,6 @@ fn abstract_fields_expand_without_inheriting_model_directives() {
     assert_eq!(models[1]["identity"], json!(["journalId", "id"]));
     assert_eq!(models[1]["bootstrap"], true);
     assert_eq!(models[1]["version"], 2);
-    assert_eq!(c["loaders"], json!(["Draft", "Entry"]));
     assert!(
         c["deprecations"]
             .as_array()

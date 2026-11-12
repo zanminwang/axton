@@ -1,7 +1,5 @@
 //! Original released files remain recoverable; format5 adopts a fresh file.
-use axton_client::{
-    Client, ClientStore, Operation, OperationKind, RecordKey, Schema, sync05::DeliveryQueue, v05,
-};
+use axton_client::{Client, ClientStore, RecordKey, Schema, sync05::DeliveryQueue, v05};
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 fn schema() -> Schema {
@@ -68,15 +66,20 @@ fn original_v02_layout_is_refused_unchanged_and_fresh_file_is_independent() {
         assert!(c.query("Todo", &json!({})).unwrap().is_empty());
         assert_eq!(c.pending_count().unwrap(), 0);
         assert_eq!(c.read_sql("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name IN ('axton_stream_member','axton_record','axton_v04_call','axton_call','axton_query_cache','axton_load','axton_mutation')", &[]).unwrap()[0]["n"], 0);
-        c.transaction(|tx| {
-            tx.direct(Operation {
-                model: "Todo".into(),
-                op: OperationKind::Create,
-                identity: json!({"id":"new"}),
-                values: Some(json!({"title":"fresh","channel":"opaque Channel business field"})),
-            })
-        })
-        .unwrap();
+        let report = c
+            .install_cache05(
+                &[v05::ReadRecord {
+                    key: v05::RecordKey {
+                        model: "Todo".into(),
+                        identity: json!({"id":"new"}),
+                    },
+                    cursor: (),
+                    state: json!({"title":"fresh","channel":"opaque Channel business field"}),
+                }],
+                true,
+            )
+            .unwrap();
+        assert_eq!(report.applied, 1);
         drop(c);
         let mut c = Client::open05(SqliteStore::open(&fresh).unwrap(), schema(), "User:u").unwrap();
         assert_eq!(

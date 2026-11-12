@@ -24,13 +24,11 @@ for (let run = 0; run < 2; run++) {
   await c.client.connection?.pause();
   try {
     if (run === 0) {
-      await c.models.todo.create({
-        id: "live",
-        title: "persisted",
-        channel: "opaque Channel",
+      await c.mutations.add({
+        todo: { id: "live", title: "persisted", channel: "opaque Channel" },
       });
       await c.transaction((tx) =>
-        tx.models.todo.update({ id: "live" }, { title: "local edited" }),
+        tx.mutations.retitle({ todo: { id: "live", title: "local edited" } }),
       );
       await c.mutations.edit({
         todo: { id: "live", channel: "pending Channel" },
@@ -44,12 +42,13 @@ for (let run = 0; run < 2; run++) {
       (await c.models.todo.get({ id: "live" })).channel,
       "pending Channel",
     );
-    assert.equal((await c.syncState()).pending, 1);
+    // The two seed Mutations (Add, Retitle) and Edit.
+    assert.equal((await c.syncState()).pending, 3);
     const saved = await c.client.readSql(
       "SELECT q.*, d.descriptor AS retained_descriptor, o.* FROM axton_mutation_queue q JOIN axton_descriptor d ON d.context=q.descriptor JOIN axton_mutation_queue_operation o ON o.mutation_id=q.id ORDER BY q.id,o.step",
       [],
     );
-    assert.equal(saved.length, 1);
+    assert.equal(saved.length, 3);
     if (run === 0) first = saved;
     else assert.deepEqual(saved, first);
   } finally {
@@ -57,5 +56,5 @@ for (let run = 0; run < 2; run++) {
   }
 }
 console.log(
-  "generated JS: legacy adoption refused twice; bound local CRUD and exact queued intent survive reopen",
+  "generated JS: legacy adoption refused twice; bound local Mutations and exact queued intent survive reopen",
 );

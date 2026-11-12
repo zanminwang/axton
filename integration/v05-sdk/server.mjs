@@ -33,6 +33,7 @@ export async function host({
   );
 
   const executions = [],
+    retexts = [],
     queries = [],
     batches = [],
     requests = [],
@@ -135,6 +136,17 @@ export async function host({
     },
     bootstrap: async () => {},
   };
+  // Later local work on an Entry: a private update. Only the base fixture
+  // declares it.
+  if (!upgraded && !versioned)
+    options.mutations.retext = async ({ ctx, args }) => {
+      retexts.push(args.entry.id);
+      await ctx.tx.query(
+        "UPDATE sdk05_entry SET text=$2 WHERE id=$1 AND owner=$3",
+        [args.entry.id, args.entry.text, ctx.userId],
+      );
+      return { entry: { id: args.entry.id } };
+    };
   if (versioned) {
     options.mutations.publish = {
       v1: options.mutations.publish,
@@ -341,6 +353,7 @@ export async function host({
       for (const send of pending) send();
     },
     executions,
+    retexts,
     queries,
     batches,
     requests,

@@ -2,7 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:axton/axton.dart';
-export 'package:axton/axton.dart' show RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
+export 'package:axton/axton.dart' show AxtonDiagnostics, AxtonTraceRecord, RuntimeConnection, SyncServer, AdmissionRefused, Call, CallOutcome, CallSuccess, CallFailure, CallStatus, CallError, StoreConnection, BootstrapStatus, BootstrapPhase, BootstrapError, BootstrapFailedException, ClientClosedException, PrerequisiteRetry, PrerequisiteHandler, AxtonDateTime, RefusedAct, FailedAct, FailedTask, SubmittedAct, ActOperation;
 class Present<T> { final T value; const Present(this.value); }
 abstract interface class _DartActionRecord { Map<String,dynamic> toRecord(); }
 final Map<String,dynamic> schema = jsonDecode('{"actions":[{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"done","nullable":false,"type":{"kind":"scalar","name":"boolean"}},{"name":"createdById","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo"}]},"inputs":[{"cardinality":"single","kind":"model","model":"Todo","name":"todo","operation":"create"}],"kind":"mutation","name":"AddTodo","outputEnums":[],"outputs":[],"prerequisites":[],"requirements":[],"sequence":null,"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"done","nullable":false,"type":{"kind":"scalar","name":"boolean"}}],"identity":["id"],"name":"Todo"}]},"inputs":[{"allowedPatchFields":["done"],"cardinality":"single","kind":"model","model":"Todo","name":"todo","operation":"update"}],"kind":"mutation","name":"SetTodoDone","outputEnums":[],"outputs":[{"cardinality":"single","handlerType":{"fields":[{"name":"id","type":{"kind":"scalar","name":"string"}}],"kind":"identity","model":"Todo"},"kind":"model","model":"Todo","modelReadVersion":1,"name":"todo","source":"handlerIdentity"}],"prerequisites":[],"requirements":[],"sequence":null,"version":1}],"clientPolicies":[],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"name","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"User","relations":[],"unique":[],"version":1},{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"done","nullable":false,"type":{"kind":"scalar","name":"boolean"}},{"name":"createdById","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo","relations":[{"fields":["createdById"],"name":"createdBy","onDelete":"none","target":"User","targetFields":["id"]}],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"done","nullable":false,"type":{"kind":"scalar","name":"boolean"}},{"name":"createdById","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Todo","version":1},{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"name","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"User","version":1}]}') as Map<String,dynamic>;
@@ -33,13 +33,6 @@ class UserIdentity {
  factory UserIdentity.fromRecord(Map<String,dynamic> row) => UserIdentity(
  id: row['id'] as String,
  );
-}
-class UserPatch {
- final Present<String>? name;
- const UserPatch({this.name});
- Map<String,dynamic> toRecord() => {
- if (name != null) 'name': name!.value,
- };
 }
 /// What a fresh create of Todo accepts: a complete [Todo], or a [TodoCreate] that may omit fields with creation defaults.
 abstract interface class TodoCreateInput { Map<String,dynamic> toCreateRecord(); }
@@ -74,17 +67,6 @@ class TodoIdentity {
  factory TodoIdentity.fromRecord(Map<String,dynamic> row) => TodoIdentity(
  id: row['id'] as String,
  );
-}
-class TodoPatch {
- final Present<String>? title;
- final Present<bool>? done;
- final Present<String>? createdById;
- const TodoPatch({this.title,this.done,this.createdById});
- Map<String,dynamic> toRecord() => {
- if (title != null) 'title': title!.value,
- if (done != null) 'done': done!.value,
- if (createdById != null) 'createdById': createdById!.value,
- };
 }
 class UserCreate implements UserCreateInput {
  final String id;
@@ -136,34 +118,26 @@ class TodoFilter {
 }
 enum TodoOrderField {byId('id'),byTitle('title'),byDone('done'),byCreatedById('createdById'); final String wireName; const TodoOrderField(this.wireName);}
 class TodoOrder { final TodoOrderField field; final bool descending; const TodoOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
+User _copyUserWatch(User value) => value;
 class UserModel { final ReadPort port; UserModel(this.port);
  Future<User?> get(UserIdentity identity) async { final row=await port.read('User',identity.toRecord()); return row == null ? null : User.fromRecord(row); }
  Future<List<User>> query({UserFilter? where,List<UserOrder> orderBy=const [],int? limit}) async => (await port.querySpec('User',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(User.fromRecord).toList();
 }
-class UserLiveModel extends UserTxModel { final Client client; UserLiveModel(this.client) : super(client);
- Stream<List<User>> watch({UserFilter? where}) => client.watch('User', where:where?.toRecord()??{}).map((rows) => rows.map(User.fromRecord).toList());
+class UserLiveModel extends UserModel { final Client client; UserLiveModel(this.client) : super(client);
+ Stream<List<User>> watch({UserFilter? where}) => client.watchDecoded<User>('User', where:where?.toRecord()??{},decode:User.fromRecord,copy:_copyUserWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(UserIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('User', identity.toRecord()));
 }
-class UserTxModel extends UserModel { final WritePort writer; UserTxModel(this.writer) : super(writer);
- Future<void> create(UserCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'User','op':'create','identity':identity,'values':state}); }
- Future<void> update(UserIdentity identity, UserPatch patch) => writer.direct({'model':'User','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(UserIdentity identity) => writer.direct({'model':'User','op':'delete','identity':identity.toRecord()});
-}
+Todo _copyTodoWatch(Todo value) => value;
 class TodoModel { final ReadPort port; TodoModel(this.port);
  Future<Todo?> get(TodoIdentity identity) async { final row=await port.read('Todo',identity.toRecord()); return row == null ? null : Todo.fromRecord(row); }
  Future<List<Todo>> query({TodoFilter? where,List<TodoOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Todo',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Todo.fromRecord).toList();
  Future<User?> createdBy(TodoIdentity identity) async { final row=await port.related('Todo',identity.toRecord(),'createdBy');return row==null?null:User.fromRecord(row); }
 }
-class TodoLiveModel extends TodoTxModel { final Client client; TodoLiveModel(this.client) : super(client);
- Stream<List<Todo>> watch({TodoFilter? where}) => client.watch('Todo', where:where?.toRecord()??{}).map((rows) => rows.map(Todo.fromRecord).toList());
+class TodoLiveModel extends TodoModel { final Client client; TodoLiveModel(this.client) : super(client);
+ Stream<List<Todo>> watch({TodoFilter? where}) => client.watchDecoded<Todo>('Todo', where:where?.toRecord()??{},decode:Todo.fromRecord,copy:_copyTodoWatch);
  /// This record's sync state: its pending mutations and retained rejections. Local only.
  Future<SyncState> syncState(TodoIdentity identity) async => SyncState.fromRecord(await client.recordSyncState('Todo', identity.toRecord()));
-}
-class TodoTxModel extends TodoModel { final WritePort writer; TodoTxModel(this.writer) : super(writer);
- Future<void> create(TodoCreateInput value) { final state=value.toCreateRecord(); final identity=<String,dynamic>{for (final key in const <String>['id']) if (state.containsKey(key)) key: state.remove(key)}; return writer.direct({'model':'Todo','op':'create','identity':identity,'values':state}); }
- Future<void> update(TodoIdentity identity, TodoPatch patch) => writer.direct({'model':'Todo','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
- Future<void> delete(TodoIdentity identity) => writer.direct({'model':'Todo','op':'delete','identity':identity.toRecord()});
 }
 /// Public Action lifecycle types are owned by the SDK.
 typedef UserDelete = UserIdentity;
@@ -281,9 +255,9 @@ class LiveModels { final Client port; LiveModels(this.port);
  late final UserLiveModel user = UserLiveModel(port);
  late final TodoLiveModel todo = TodoLiveModel(port);
 }
-class TxModels { final WritePort port; TxModels(this.port);
- late final UserTxModel user = UserTxModel(port);
- late final TodoTxModel todo = TodoTxModel(port);
+class TxModels { final ReadPort port; TxModels(this.port);
+ late final UserModel user = UserModel(port);
+ late final TodoModel todo = TodoModel(port);
 }
 /// One-shot remote reads: the complete snapshot through the Model's Loader, or null. `store: false` skips local cache writes.
 class FetchModels { final Client _client; FetchModels(this._client);
@@ -291,7 +265,6 @@ class FetchModels { final Client _client; FetchModels(this._client);
  Future<Todo?> todo(TodoIdentity identity, {bool store = true}) => _client.fetchModel('Todo', 1, identity.toRecord(), Todo.fromRecord, store: store);
 }
 class GeneratedTransaction { final Transaction transaction; late final TxModels models=TxModels(transaction); GeneratedTransaction(this.transaction); }
-class CompanionContext { final TxModels models; CompanionContext(WritePort port) : models = TxModels(port); }
 class TransactionMutations {
  final SubmitMutationPort port; TransactionMutations(this.port);
  late final AddTodoMutation addTodo = AddTodoMutation(port);
@@ -301,13 +274,11 @@ class AddTodoMutation {
  final SubmitMutationPort port; AddTodoMutation(this.port);
  Map<String,dynamic> _encode(AddTodoInput input) => {'todo': _dartActionEncode(input.todo)};
  Future<Call<AddTodoOutput>> call(AddTodoInput input) => port.submitMutation<AddTodoOutput>('AddTodo', 1, _encode(input), (_) {});
- Future<Call<AddTodoOutput>> withTransaction(FutureOr<AddTodoInput> Function(CompanionContext tx) body) => port.submitMutation<AddTodoOutput>('AddTodo', 1, null, (_) {}, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class SetTodoDoneMutation {
  final SubmitMutationPort port; SetTodoDoneMutation(this.port);
  Map<String,dynamic> _encode(SetTodoDoneInput input) => {'todo': _dartActionEncode(input.todo)};
  Future<Call<SetTodoDoneOutput>> call(SetTodoDoneInput input) => port.submitMutation<SetTodoDoneOutput>('SetTodoDone', 1, _encode(input), (value) { final row = (value as Map).cast<String,dynamic>(); return SetTodoDoneOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); });
- Future<Call<SetTodoDoneOutput>> withTransaction(FutureOr<SetTodoDoneInput> Function(CompanionContext tx) body) => port.submitMutation<SetTodoDoneOutput>('SetTodoDone', 1, null, (value) { final row = (value as Map).cast<String,dynamic>(); return SetTodoDoneOutput(todo: Todo.fromRecord((row['todo'] as Map).cast<String,dynamic>())); }, input: (port) async => _encode(await body(CompanionContext(port))));
 }
 class ApplicationTransaction extends GeneratedTransaction { late final TransactionMutations mutations = TransactionMutations(transaction); late final rejections = transaction.rejections; late final failures = transaction.failures; ApplicationTransaction(super.transaction); }
 class GeneratedClient {
@@ -316,7 +287,7 @@ class GeneratedClient {
  late final Queries queries=Queries(client);
  late final FetchModels fetch=FetchModels(client);
  GeneratedClient._(this.client);
- static Future<GeneratedClient> open({required String path, required String stream, StoreConnection? connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites));
+ static Future<GeneratedClient> open({required String path, required String stream, StoreConnection? connection, String? libraryPath, Map<String,PrerequisiteHandler>? prerequisites, AxtonDiagnostics? diagnostics}) async => GeneratedClient._(await Client.open(path:path,stream:stream,connection:connection,schema:schema,libraryPath:libraryPath,prerequisites:prerequisites,diagnostics:diagnostics));
  Future<void> bootstrap() => client.bootstrap();
  Future<RuntimeConnection> connect(SyncServer server,{void Function(Object)? onError,Future<void> Function()? refreshAuth,Duration directTimeout=const Duration(seconds:30)}) => client.connect(server,onError:onError,refreshAuth:refreshAuth,directTimeout:directTimeout);
  Future<void> resetStore({bool discardPending=false}) => client.resetStore(discardPending:discardPending);

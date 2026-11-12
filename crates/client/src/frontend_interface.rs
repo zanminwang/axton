@@ -20,8 +20,6 @@ pub struct Mutation {
     // The named Mutation's operations, derived from its normalized input.
     pub operations: Vec<Operation>,
     #[serde(default)]
-    pub companion: Vec<Operation>,
-    #[serde(default)]
     pub effects: Vec<Operation>,
     #[serde(default)]
     pub prerequisites: Vec<String>,
@@ -52,7 +50,6 @@ impl Mutation {
             call_id: None,
             args: None,
             operations,
-            companion: vec![],
             effects: vec![],
             prerequisites: vec![],
             lifecycle_dependencies: vec![],
@@ -87,15 +84,12 @@ pub(crate) struct Session {
     model_changes: ModelChanges,
     savepoints: Vec<SessionSavepoint>,
     counter: u64,
-    // Ordinals of the calls submitted in this transaction.
-    submitted: BTreeSet<u64>,
 }
 
 struct SessionSavepoint {
     name: String,
     changed: BTreeSet<String>,
     model_changes: ModelChanges,
-    submitted: BTreeSet<u64>,
 }
 
 pub struct Client<S: ClientStore> {
@@ -261,11 +255,9 @@ impl<S: ClientStore> Client<S> {
         body: impl FnOnce(&mut ClientTransaction<'_, S>) -> Result<T>,
     ) -> Result<T> {
         self.write(|engine| {
-            let mut submitted = BTreeSet::new();
             let mut tx = ClientTransaction {
                 engine: engine.reborrow(),
                 depth: 0,
-                submitted: &mut submitted,
             };
             body(&mut tx)
         })
@@ -280,7 +272,6 @@ impl<S: ClientStore> Client<S> {
             model_changes: ModelChanges::default(),
             savepoints: vec![],
             counter: 0,
-            submitted: BTreeSet::new(),
         });
         Ok(())
     }
@@ -303,7 +294,6 @@ impl<S: ClientStore> Client<S> {
                 .tracking(&mut session.model_changes)
                 .sharing(shared),
             depth: 0,
-            submitted: &mut session.submitted,
         };
         body(&mut tx)
     }
@@ -354,7 +344,6 @@ impl<S: ClientStore> Client<S> {
             name,
             changed: session.changed.clone(),
             model_changes: session.model_changes.clone(),
-            submitted: session.submitted.clone(),
         });
         Ok(())
     }
@@ -378,9 +367,6 @@ impl<S: ClientStore> Client<S> {
             .savepoints
             .pop()
             .ok_or_else(|| invalid("no savepoint"))?;
-        // The scope's calls are discarded even when the physical rollback
-        // fails: nothing may attach a companion to them afterwards.
-        session.submitted = savepoint.submitted;
         self.store.rollback_to(&savepoint.name)?;
         session.changed = savepoint.changed;
         session.model_changes = savepoint.model_changes;
@@ -522,7 +508,6 @@ impl<S: ClientStore> Client<S> {
                     .mutation
                     .operations
                     .iter()
-                    .chain(&q.mutation.companion)
                     .chain(&q.mutation.effects)
                     .any(|op| op.model == key.model && op.identity == key.identity);
                 if !touches {
@@ -564,9 +549,6 @@ impl<S: ClientStore> Client<S> {
 pub struct ClientTransaction<'a, S: ClientStore> {
     pub(crate) engine: Engine<'a, S>,
     depth: u64,
-    // Ordinals of the calls [`Self::submit_mutation05`] queued in this
-    // transaction and not rolled back: the only calls that take companions.
-    pub(crate) submitted: &'a mut BTreeSet<u64>,
 }
 impl<S: ClientStore> ClientTransaction<'_, S> {
     pub fn read(&mut self, key: &RecordKey) -> Result<Option<Value>> {
@@ -577,7 +559,6 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
         self.depth += 1;
         let name = format!("tx_{}", self.depth);
         self.engine.store.savepoint(&name)?;
-        let submitted = self.submitted.clone();
         let model_changes = self.engine.model_changes.as_deref().cloned();
         let result = body(self);
         self.depth -= 1;
@@ -587,9 +568,6 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
                 Ok(v)
             }
             Err(e) => {
-                // Calls made in the discarded scope are gone with it, even
-                // when the physical rollback fails and fails the rest.
-                *self.submitted = submitted;
                 self.engine.store.rollback_to(&name)?;
                 if let (Some(current), Some(saved)) =
                     (self.engine.model_changes.as_deref_mut(), model_changes)
@@ -601,25 +579,6 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
         }
     }
 
-    pub(crate) fn preview_callback(&mut self, operation: Operation) -> Result<Vec<Operation>> {
-        self.savepoint(|tx| tx.engine.preview_callback(operation))
-    }
-
-    // Record `operation` as a local companion of call `ordinal`: applied
-    // now, stored with the call and settled with its outcome, never sent.
-    // The call must be the latest this transaction submitted, and no
-    // independent write may have followed it, so the companion keeps its
-    // place in local order. Reserved for the runtime's companion
-    // capability; it is not an application API.
-    #[doc(hidden)]
-    pub fn append_companion(&mut self, ordinal: u64, operation: Operation) -> Result<()> {
-        if !self.submitted.contains(&ordinal) {
-            return Err(invalid(
-                "a companion belongs to a Mutation submitted in this transaction",
-            ));
-        }
-        self.savepoint(|tx| tx.engine.append_companion(ordinal, operation))
-    }
     pub fn query(&mut self, model: &str, filter: &Value) -> Result<Vec<Value>> {
         let filter: BTreeMap<String, Value> = serde_json::from_value(filter.clone())?;
         query::evaluate(
@@ -639,9 +598,6 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
     }
     pub fn referencing(&mut self, key: &RecordKey, source: &str, name: &str) -> Result<Vec<Value>> {
         query::referencing(&mut self.engine, key, source, name)
-    }
-    pub fn direct(&mut self, operation: Operation) -> Result<()> {
-        self.savepoint(|tx| tx.engine.direct(operation))
     }
     // Make the tasks pending again as part of this transaction; nothing runs
     // them before it commits.

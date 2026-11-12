@@ -32,13 +32,13 @@ export interface TransactionCall<Tx> {
  streams(names: readonly string[]): Stream;
  invalidate: RecordDeclaration;
 }
-const schema = {"actions":[],"deprecations":[],"inverses":[],"loaders":["Item"],"models":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","version":1}],"prerequisites":[],"requirements":[],"schema":{"actions":[],"clientPolicies":[],"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","version":1}]},"uniqueConstraints":[]} as const;
+const schema = {"actions":[],"deprecations":[],"inverses":[],"models":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","version":1}],"prerequisites":[],"requirements":[],"schema":{"actions":[],"clientPolicies":[],"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[],"resultModels":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"label","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Item","version":1}]},"uniqueConstraints":[]} as const;
 export interface Mutations<Tx> {
 }
 export interface Queries<Tx> {
 }
 export interface Loaders<Tx> {
- item?: { v1(call: LoaderCall<Tx, ItemIdentity>): Promise<readonly (Item | null)[]> } | ((call: LoaderCall<Tx, ItemIdentity>) => Promise<readonly (Item | null)[]>) | undefined;
+ item: { v1(call: LoaderCall<Tx, ItemIdentity>): Promise<readonly (Item | null)[]> } | ((call: LoaderCall<Tx, ItemIdentity>) => Promise<readonly (Item | null)[]>);
 }
 export interface PreparationContext<Tx> { tx:Tx; userId:string; streams(names:readonly string[]):Stream; invalidate:RecordDeclaration; }
 export interface LoaderHooks<Tx> {

@@ -167,24 +167,36 @@ test("missing target, duplicate create and invalid creator reject independently 
   scenario(async (ctx) => {
     const alice = await ctx.open("alice", "alice");
     const id = randomUUID();
-    await alice.transaction(async (tx) => {
-      await tx.models.todo.create(todo(id));
-    });
+    // The device holds the row; the backend loses it without publishing.
+    const created = await alice.mutations.addTodo({ todo: todo(id) });
+    assert.equal((await created.wait()).error, null);
+    await ctx.app.db.todo.delete({ where: { id } });
     const missing = await alice.mutations.setTodoDone({
       todo: { id, done: true },
     });
     assert.equal((await missing.wait()).error.code, "todo.missing");
     assert.equal((await alice.models.todo.get({ id })).done, false);
     // A separate create reaches the backend only when the device does not
-    // already hold that identity. Release its local content before testing
-    // the server's independent primary-key refusal.
-    await alice.transaction(async (tx) => {
-      await tx.models.todo.delete({ id: "seed-1" });
+    // already hold that identity: a fresh Store that never bootstrapped
+    // submits it offline, then connects, for the server's independent
+    // primary-key refusal.
+    const fresh = await GeneratedClient.open({
+      path: join(ctx.dir, "fresh"),
+      stream: SCOPE,
     });
-    const duplicate = await alice.mutations.addTodo({
-      todo: todo("seed-1", "replacement"),
-    });
-    assert.equal((await duplicate.wait()).error.code, "todo.id_conflict");
+    try {
+      const duplicate = await fresh.mutations.addTodo({
+        todo: todo("seed-1", "replacement"),
+      });
+      const connection = await fresh.connect({
+        url: ctx.proxy.url,
+        token: "alice",
+      });
+      assert.equal((await duplicate.wait()).error.code, "todo.id_conflict");
+      await connection.close();
+    } finally {
+      await fresh.close();
+    }
     assert.notEqual(
       (await ctx.app.db.todo.findUnique({ where: { id: "seed-1" } })).title,
       "replacement",

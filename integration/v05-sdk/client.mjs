@@ -78,7 +78,6 @@ const publish = (client, id, text, mode = "normal") =>
 if (process.argv[2] === "enqueue-child") {
   const client = await open(process.argv[3]);
   await client.transaction(async (tx) => {
-    await tx.models.draft.create({ id: "restart-companion", text: "keep" });
     await tx.mutations.publish({
       entry: { id: "restart-entry", text: " normalized restart " },
       call: "private",
@@ -579,57 +578,43 @@ if (process.argv[2] === "enqueue-child") {
           entry: { id: "joined-accepted", text: " canonical " },
           call: "multi",
         });
-        refused = await tx.mutations.publish(async (local) => {
-          await local.models.draft.create({
-            id: "refused-companion",
-            text: "undo",
-          });
-          return {
-            entry: { id: "joined-refused", text: "refuse" },
-            call: "normal",
-          };
+        refused = await tx.mutations.publish({
+          entry: { id: "joined-refused", text: "refuse" },
+          call: "normal",
         });
-        privateCall = await tx.mutations.publish(async (local) => {
-          await local.models.draft.create({
-            id: "accepted-companion",
-            text: "keep",
-          });
-          return {
-            entry: { id: "joined-private", text: " private " },
-            call: "private",
-          };
+        privateCall = await tx.mutations.publish({
+          entry: { id: "joined-private", text: " private " },
+          call: "private",
         });
       });
       assert.equal(
         (await a.models.entry.get({ id: "joined-accepted" })).text,
         " canonical ",
       );
-      await a.models.entry.update(
-        { id: "joined-private" },
-        { text: "later direct" },
-      );
+      // Later local work on the private Entry: a pending update queued
+      // after its creation. Its receipt settles beneath it.
+      const later = await a.mutations.retext({
+        entry: { id: "joined-private", text: "later local" },
+      });
       h.loseNext();
       await b.connect({ url: h.url, token: "alice" });
       await b.bootstrap();
       await a.connect({ url: h.url, token: "alice" });
-      const [yes, no, priv] = await Promise.all([
+      const [yes, no, priv, retexted] = await Promise.all([
         accepted.wait(),
         refused.wait(),
         privateCall.wait(),
+        later.wait(),
       ]);
       assert.equal(yes.error, null);
       assert.equal(yes.result.entry.text, "canonical");
       assert.equal(no.error.code, "publish.refused");
       assert.equal(priv.result.entry.text, "private");
+      assert.equal(retexted.result.entry.text, "later local");
       assert.equal(await a.models.entry.get({ id: "joined-refused" }), null);
       assert.equal(
         (await a.models.entry.get({ id: "joined-private" })).text,
-        "later direct",
-      );
-      assert.equal(await a.models.draft.get({ id: "refused-companion" }), null);
-      assert.equal(
-        (await a.models.draft.get({ id: "accepted-companion" })).text,
-        "keep",
+        "later local",
       );
       assert.equal(h.batches.length >= 2, true);
       assert.equal(
@@ -642,8 +627,10 @@ if (process.argv[2] === "enqueue-child") {
         "joined-refused",
         "joined-private",
       ]);
+      assert.deepEqual(h.retexts, ["joined-private"]);
       const submitted = JSON.parse(h.batches[0]);
       assert.equal(submitted.protocol, 6);
+      // The later update waits for its creation and follows in its own Batch.
       assert.equal(submitted.mutations.length, 3);
       await b.bootstrap();
       // A's receipt and B's initial Bootstrap do not fence B's live delivery.
@@ -707,10 +694,6 @@ if (process.argv[2] === "enqueue-child") {
       assert.equal(
         (await client.models.entry.get({ id: "restart-entry" })).text,
         " normalized restart ",
-      );
-      assert.equal(
-        (await client.models.draft.get({ id: "restart-companion" })).text,
-        "keep",
       );
       await client.connect({ url: h.url, token: "alice" });
       await until(
@@ -827,10 +810,9 @@ if (process.argv[2] === "enqueue-child") {
         " canonical settle ",
         "private",
       );
-      await client.models.entry.update(
-        { id: "settle-fault-entry" },
-        { text: "later local" },
-      );
+      await client.mutations.retext({
+        entry: { id: "settle-fault-entry", text: "later local" },
+      });
       await sqliteFault(
         path,
         "CREATE TRIGGER task7_settlement_failure BEFORE UPDATE OF reconciled ON axton_mutation_queue WHEN NEW.reconciled=1 BEGIN SELECT RAISE(ABORT,'task7 settlement commit failure');END;",
@@ -874,14 +856,29 @@ if (process.argv[2] === "enqueue-child") {
         (await client.models.entry.get({ id: "settle-fault-entry" })).text,
         "later local",
       );
+      // The Retext is the next Batch: it freezes only once the first settles.
+      await until(
+        async () =>
+          (
+            await client.readSql(
+              "SELECT reconciled FROM axton_mutation_queue WHERE id=2",
+            )
+          )[0].reconciled === 1,
+        "later Retext settlement",
+      );
+      assert.equal(
+        (await client.models.entry.get({ id: "settle-fault-entry" })).text,
+        "later local",
+      );
       assert.deepEqual(h.executions, ["settle-fault-entry"]);
+      assert.deepEqual(h.retexts, ["settle-fault-entry"]);
     } finally {
       await client?.close();
       await h.close();
       await rm(dir, { recursive: true, force: true });
     }
   });
-  test("A5/A9/A12/A13: zero Bootstrap, fresh Query snapshots, direct-delete refill and Store aliases", async () => {
+  test("A5/A9/A12/A13: zero Bootstrap, fresh Query snapshots, Query cache install and Store aliases", async () => {
     const h = await host(),
       dir = await mkdtemp(join(tmpdir(), "axton-sdk05-reads-"));
     let client;
@@ -936,15 +933,6 @@ if (process.argv[2] === "enqueue-child") {
           .text,
         "fresh",
       );
-      assert.equal(
-        await client.models.entry.get({ id: "snapshot-read" }),
-        null,
-      );
-      assert.equal(
-        (await client.queries.find({ id: "snapshot-read" })).entry.text,
-        "fresh",
-      );
-      await client.models.entry.delete({ id: "snapshot-read" });
       assert.equal(
         await client.models.entry.get({ id: "snapshot-read" }),
         null,
@@ -1111,9 +1099,10 @@ if (process.argv[2] === "enqueue-child") {
         await client.fetch.entry({ id: "not-held" }, { store: false }),
         null,
       );
-      await client.models.draft.create({ id: "local", text: "independent" });
+      // Local work proceeds while the Fetch is parked: an offline Mutation.
+      await publish(client, "local", "independent");
       assert.equal(
-        (await client.models.draft.get({ id: "local" })).text,
+        (await client.models.entry.get({ id: "local" })).text,
         "independent",
       );
       assert.equal(

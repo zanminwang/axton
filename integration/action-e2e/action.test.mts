@@ -229,11 +229,13 @@ test("A-returns-B receipt reconciles A but preserves the immutable B business sn
       shown: "result-b",
     });
     await hold.arrived;
+    // Later local work: a pending Mutation of B, applied optimistically while
+    // A's receipt (which snapshots B) is still in flight.
+    let later!: Awaited<ReturnType<typeof s.client.mutations.updateTodo>>;
     await s.client.transaction(async (tx) => {
-      await tx.models.todo.update(
-        { id: "result-b" },
-        { title: "later direct B" },
-      );
+      later = await tx.mutations.updateTodo({
+        todo: { id: "result-b", title: "later direct B" },
+      });
     });
     hold.release();
     const output = await call.wait();
@@ -246,6 +248,7 @@ test("A-returns-B receipt reconciles A but preserves the immutable B business sn
       (await s.client.models.todo.get({ id: "result-b" }))?.title,
       "later direct B",
     );
+    assert.equal((await later.wait()).error, null);
   } finally {
     proxy.releaseAll();
     await s.close();
@@ -432,56 +435,26 @@ test("fresh Query retains complete scalar/list/date/model codecs across reopen a
   }
 });
 
-test("atomic PublishEntry optimism and backend rows accept or roll back together; device-only Composition never reaches wire", async () => {
+test("atomic PublishEntry optimism and backend rows accept or roll back together", async () => {
   const s = await session();
-  let runs = 0;
   try {
     await s.client.bootstrap();
-    await s.client.transaction(async (tx) => {
-      await tx.models.composition.create(draft("comp-ok"));
-      await tx.models.composition.create(draft("comp-no"));
-    });
     fixture.rejectedEntries.add("entry-no");
     await s.client.connection!.pause();
-    let okCall:
-      Awaited<ReturnType<typeof s.client.mutations.publishEntry>> | undefined;
     await s.client.transaction(async (tx) => {
-      okCall = await tx.mutations.publishEntry(async (local) => {
-        runs++;
-        const source = (await local.models.composition.get({ id: "comp-ok" }))!;
-        await local.models.composition.delete({ id: "comp-ok" });
-        return publishInput("entry-ok", source);
-      });
+      const okCall = await tx.mutations.publishEntry(
+        publishInput("entry-ok", draft("comp-ok")),
+      );
       await assert.rejects(okCall.wait(), /transaction_uncommitted/);
-      await tx.mutations.publishEntry(async (local) => {
-        runs++;
-        const source = (await local.models.composition.get({ id: "comp-no" }))!;
-        await local.models.composition.delete({ id: "comp-no" });
-        return publishInput("entry-no", source);
-      });
+      await tx.mutations.publishEntry(
+        publishInput("entry-no", draft("comp-no")),
+      );
     });
     assert.equal((await s.client.syncState()).pending, 2);
-    assert.equal(
-      await s.client.models.composition.get({ id: "comp-ok" }),
-      null,
-    );
-    assert.equal(
-      await s.client.models.composition.get({ id: "comp-no" }),
-      null,
-    );
     await s.reopen();
     await wait(
       async () => (await s.client.syncState()).pending === 0,
       "independent aggregate fates",
-    );
-    assert.equal(runs, 2);
-    assert.equal(
-      await s.client.models.composition.get({ id: "comp-ok" }),
-      null,
-    );
-    assert.deepEqual(
-      await s.client.models.composition.get({ id: "comp-no" }),
-      draft("comp-no"),
     );
     assert.equal(
       (await s.client.models.entry.get({ id: "entry-ok" }))?.title,
@@ -527,52 +500,8 @@ test("atomic PublishEntry optimism and backend rows accept or roll back together
         ].sort(),
         ["entry", "media", "placement"],
       );
-    assert.equal(
-      fixture.publishes.some((input) =>
-        JSON.stringify(input).includes("Composition"),
-      ),
-      false,
-    );
   } finally {
     fixture.rejectedEntries.delete("entry-no");
-    await s.close();
-  }
-});
-
-test("typed callbacks commit device-only companions atomically before accepted Call result and observers", async () => {
-  const s = await session();
-  try {
-    await (
-      await s.client.mutations.addTodo({
-        todo: { id: "callback-a", title: "A" },
-      })
-    ).wait();
-    await (
-      await s.client.mutations.addTodo({
-        todo: { id: "callback-b", title: "B" },
-      })
-    ).wait();
-    let observed: string[][] = [];
-    const stop = s.client.models.composition.watch({}, (rows) =>
-      observed.push(rows.map((row) => row.id)),
-    );
-    const call = await s.client.mutations.editAndShow(async (tx) => {
-      await tx.models.composition.create(draft("derived"));
-      return { todo: { id: "callback-a", title: " A1 " }, shown: "callback-b" };
-    });
-    assert.ok(await s.client.models.composition.get({ id: "derived" }));
-    const output = await call.wait();
-    assert.equal(output.result?.todo.title, "B");
-    assert.equal(
-      (await s.client.models.todo.get({ id: "callback-a" }))?.title,
-      "A1",
-    );
-    await wait(
-      async () => observed.some((rows) => rows.includes("derived")),
-      "committed companion observer",
-    );
-    stop();
-  } finally {
     await s.close();
   }
 });
@@ -633,18 +562,12 @@ test("retired hook, enqueue-Query, anonymous write and multistream facades are a
   }
 });
 
-test("Dart named callbacks/default/date codecs execute against the same actual host", async () => {
+test("Dart default/date codecs execute against the same actual host", async () => {
   const dir = await mkdtemp(join(tmpdir(), "axton-action-dart-"));
   try {
-    fixture.rejectedEntries.add("dart-entry-no");
-    fixture.rejectedEntries.add("dart-entry-live-no");
     const library =
       process.env.AXTON_LIBRARY ?? process.env.AXTON_DART_LIBRARY!;
-    for (const script of [
-      "action_e2e_publish.dart",
-      "action_e2e_datetime.dart",
-      "action_e2e_hook.dart",
-    ]) {
+    for (const script of ["action_e2e_datetime.dart"]) {
       const result = await promisify(execFile)(
         "dart",
         ["run", script, proxy.url, join(dir, script), library],
@@ -677,8 +600,6 @@ test("Dart named callbacks/default/date codecs execute against the same actual h
       }
     }
   } finally {
-    fixture.rejectedEntries.delete("dart-entry-no");
-    fixture.rejectedEntries.delete("dart-entry-live-no");
     await rm(dir, { recursive: true, force: true });
   }
 });
@@ -706,11 +627,11 @@ test("a suspended real Query handler leaves Stream sync and committed local tran
     pending.catch(() => {});
     await arrived;
     await s.client.transaction(async (tx) => {
-      await tx.models.composition.create(draft("responsive-local"));
+      await tx.mutations.addTodo({
+        todo: { id: "responsive-local", title: "local" },
+      });
     });
-    assert.ok(
-      await s.client.models.composition.get({ id: "responsive-local" }),
-    );
+    assert.ok(await s.client.models.todo.get({ id: "responsive-local" }));
     const mutation = await s.client.mutations.addTodo({
       todo: { id: "responsive-live", title: "responsive" },
     });

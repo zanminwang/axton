@@ -6,19 +6,6 @@ import { Transaction as MobileTransaction } from '../client-react-native/api/tra
 const adapters = [
   ['Node', (send, body) => runTransaction(NodeTransaction, send, body)],
   ['RN', (send, body) => runTransaction(MobileTransaction, send, body)],
-  ['local companion', async (send, body) => {
-    const parent = new NodeTransaction(async () => undefined, {
-      submit: async (_command, _scope, _decode, local) => {
-        await local(send);
-        return {};
-      },
-    });
-    await parent.submitMutation('Publish', 1, async local => {
-      await body(local);
-      return {};
-    }, value => value);
-    await parent.finish();
-  }],
 ];
 
 async function runTransaction(Type, send, body) {
@@ -34,9 +21,9 @@ for (const [name, run] of adapters) {
     await run(async command => { sent.push(command); return { text: 'read' }; }, async tx => {
       handle = tx;
       assert.deepEqual(await tx.read('Entry', { id: 'e' }), { text: 'read' });
-      await tx.direct({ model: 'Entry', id: 'e' });
+      await tx.query('Entry', { id: 'e' });
     });
-    assert.deepEqual(sent.map(command => command.kind), ['read', 'direct']);
+    assert.deepEqual(sent.map(command => command.kind), ['read', 'query']);
     await assert.rejects(handle.read('Entry', { id: 'e' }), /closed/);
     assert.equal(sent.length, 2);
   });
@@ -44,7 +31,7 @@ for (const [name, run] of adapters) {
   test(`${name}: synchronous command failure remains the original finish failure`, async () => {
     const failure = Error('synchronous send failure');
     await assert.rejects(run(() => { throw failure; }, async tx => {
-      await assert.rejects(tx.direct({}), error => error === failure);
+      await assert.rejects(tx.read('Entry', { id: 'e' }), error => error === failure);
     }), error => error === failure);
   });
 
@@ -53,8 +40,8 @@ for (const [name, run] of adapters) {
     const second = Error('second command failure');
     let sends = 0;
     await assert.rejects(run(async () => { throw ++sends === 1 ? first : second; }, async tx => {
-      await tx.direct({}).catch(() => {});
-      await tx.direct({}).catch(() => {});
+      await tx.read('Entry', { id: 'e' }).catch(() => {});
+      await tx.read('Entry', { id: 'e' }).catch(() => {});
     }), error => error === first);
     assert.equal(sends, 2);
   });
@@ -66,7 +53,7 @@ for (const [name, run] of adapters) {
     const entered = new Promise(resolve => { started = resolve; });
     let completed = false;
     const ending = run(async () => { await gate; completed = true; }, async tx => {
-      void tx.direct({});
+      void tx.read('Entry', { id: 'e' });
       started();
     });
     let settled = false;
@@ -86,9 +73,9 @@ for (const [name, Type] of [['Node', NodeTransaction], ['RN', MobileTransaction]
     const gate = new Promise(resolve => { release = resolve; });
     let sends = 0;
     const tx = new Type(async () => { sends++; await gate; });
-    const work = tx.direct({});
+    const work = tx.read('Entry', { id: 'e' });
     tx.cancel();
-    await assert.rejects(tx.direct({}), /transaction_closed/);
+    await assert.rejects(tx.read('Entry', { id: 'e' }), /transaction_closed/);
     const refused = assert.rejects(tx.finish(), /unawaited transaction operation/);
     release();
     await work;
@@ -103,13 +90,13 @@ test('Node: savepoint rollback restores outer failure accounting for later work'
   const tx = new NodeTransaction(async command => {
     sent.push(command.kind);
     if (command.kind === 'savepoint') return { scope: 'inner' };
-    if (command.kind === 'direct') throw failure;
+    if (command.kind === 'query') throw failure;
     return { text: 'after rollback' };
   });
   await assert.rejects(tx.savepoint(async () => {
-    await tx.direct({}).catch(() => {});
+    await tx.query('Entry').catch(() => {});
   }), error => error === failure);
   assert.deepEqual(await tx.read('Entry', { id: 'e' }), { text: 'after rollback' });
   await tx.finish();
-  assert.deepEqual(sent, ['savepoint', 'direct', 'rollbackSavepoint', 'read']);
+  assert.deepEqual(sent, ['savepoint', 'query', 'rollbackSavepoint', 'read']);
 });

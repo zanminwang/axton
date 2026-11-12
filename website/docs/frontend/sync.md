@@ -8,11 +8,11 @@ Open each Store with one Stream and a fresh format-5 SQLite file. Opening binds 
 
 ## Submit and settle
 
-The first await of a named Mutation returns its durable `Call` after the local transaction commits. Its declared Model changes appear optimistically. A callback returns the typed input and may use `tx.models` for device-only companion writes before optimism is applied. A callback failure rolls back both contributions.
+The first await of a named Mutation returns its durable `Call` after the local transaction commits. Its declared Model changes appear optimistically. A caller that reads before building the input does so in `client.transaction` and submits with `tx.mutations`; a failure rolls back the whole transaction.
 
 `await call.wait()` observes terminal settlement. Server acceptance can precede installation of the required Stream authority, so acceptance alone does not complete the Call. The runtime can recover saved settlement targets through a complete current-state owned response without rerunning the public Bootstrap handler or enrolling new records. The result is the invocation's saved snapshot; later local edits may make the current Model view different.
 
-A refusal removes that call's owned optimism and companions while retaining later independent work. Several named Mutations in one local transaction commit together and settle independently. Direct `tx.models` writes never enter the remote queue.
+A refusal removes that call's optimism while retaining later pending Mutations. Several named Mutations in one local transaction commit together and settle independently.
 
 ## Work offline
 
@@ -20,15 +20,15 @@ Pause the connection to keep local work available while delaying network deliver
 
 ```ts title="v05-sdk"
 await client.connection!.pause();
-const call = await client.mutations.publish(async tx => {
-  await tx.models.draft.delete({ id: 'draft-1' });
-  return { entry: { id: 'entry-1', text: 'Draft' }, call: 'publish' };
+const call = await client.mutations.publish({
+  entry: { id: 'entry-1', text: 'Draft' },
+  call: 'publish',
 });
 await client.connection!.resume();
 const outcome = await call.wait();
 ```
 
-Dart uses the same typed invoker with `.withTransaction((tx) async => input)`. A plain typed input uses `.publish(input)`.
+Dart uses the same typed invoker: `.publish(input)`.
 
 The same database can reopen offline with the same binding and projection generation. Frozen Mutation requests survive reopen and supported schema evolution under retained contracts. Query and Fetch are finite requests; they do not queue for later delivery. `store: false` returns the read snapshot without changing the cache. Each invocation has a fresh request and snapshot; there are no saved Query-result controls.
 

@@ -12,6 +12,7 @@ rusqlite = { workspace = true, features = ["hooks"] }
 serde_json.workspace = true
 tempfile.workspace = true
 [dev-dependencies]
+axton-sim = { path = "../sim" }
 sha2.workspace = true
 chrono.workspace = true
 uuid.workspace = true

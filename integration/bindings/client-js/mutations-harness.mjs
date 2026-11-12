@@ -15,18 +15,11 @@ const schema = JSON.parse(
 );
 const connection = { url: "http://127.0.0.1:1", token: "offline" };
 const input = (id) => ({ entry: { id, text: "published" }, call: "legal" });
-const create = (id, text) => ({
-  model: "Draft",
-  op: "create",
-  identity: { id },
-  values: { text },
-});
-const remove = (id) => ({ model: "Draft", op: "delete", identity: { id } });
 const code = (expected) => (error) => {
   assert.equal(error.code, expected);
   return true;
 };
-export function mutationTests(test, Transaction, { savepoints, exactGuard }) {
+export function mutationTests(test, Transaction, { savepoints }) {
   const Client = createClient(native, Transaction, () => ({
     open() {},
     push: async () => {
@@ -110,34 +103,6 @@ export function mutationTests(test, Transaction, { savepoints, exactGuard }) {
         assert.equal((await call.wait()).error.code, "abandoned"),
       );
     }));
-  test("Mutation callback precedes optimism and commits companions and durable input together", () =>
-    run(async ({ client, queued }) => {
-      await client.direct(create("d", "draft"));
-      const result = await client.transaction(async (tx) => {
-        const call = await tx.submitMutation(
-          "Publish",
-          1,
-          async (local) => {
-            assert.equal(await local.read("Entry", { id: "p" }), null);
-            assert.equal(
-              (await local.read("Draft", { id: "d" })).text,
-              "draft",
-            );
-            await local.direct(remove("d"));
-            return input("p");
-          },
-          (value) => value,
-        );
-        assert.equal(queued(), 0);
-        await assert.rejects(call.wait(), code("transaction_uncommitted"));
-        assert.equal((await tx.read("Entry", { id: "p" })).text, "published");
-        return { call, value: 7 };
-      });
-      assert.equal(result.value, 7);
-      assert.equal(queued(), 1);
-      assert.equal(result.call.status, "pending");
-      assert.equal(await client.read("Draft", { id: "d" }), null);
-    }));
   test("several named Calls commit together and retain independent durable identities", () =>
     run(async ({ client, queued, reopen }) => {
       const calls = await client.transaction(async (tx) => [
@@ -163,126 +128,6 @@ export function mutationTests(test, Transaction, { savepoints, exactGuard }) {
       assert.equal(queued(), 0);
       await assert.rejects(call.wait(), code("transaction_rolled_back"));
       assert.equal(await client.read("Entry", { id: "p" }), null);
-    }));
-  test("a failed or invalid-input callback rolls back its companions", () =>
-    run(async ({ client, queued }) => {
-      await assert.rejects(
-        client.submitMutation(
-          "Publish",
-          1,
-          async (local) => {
-            await local.direct(create("bad", "rollback"));
-            throw Error("body failed");
-          },
-          (x) => x,
-        ),
-        /body failed/,
-      );
-      await assert.rejects(
-        client.submitMutation(
-          "Publish",
-          1,
-          async (local) => {
-            await local.direct(create("invalid", "rollback"));
-            return { entry: { id: "p" }, call: "bad" };
-          },
-          (x) => x,
-        ),
-      );
-      assert.equal(await client.read("Draft", { id: "bad" }), null);
-      assert.equal(await client.read("Draft", { id: "invalid" }), null);
-      assert.equal(queued(), 0);
-    }));
-  test("companion capability exposes only local operations and expires after its callback", () =>
-    run(async ({ client }) => {
-      let escaped;
-      await client.submitMutation(
-        "Publish",
-        1,
-        async (local) => {
-          escaped = local;
-          for (const name of [
-            "submitMutation",
-            "streams",
-            "fetch",
-            "transaction",
-            "savepoint",
-          ])
-            assert.equal(name in local, false);
-          return input("p");
-        },
-        (x) => x,
-      );
-      await assert.rejects(
-        escaped.read("Entry", { id: "p" }),
-        /transaction_closed|closed/,
-      );
-    }));
-  test("captured parent and outer-client remote reads fail during the owned callback", () =>
-    run(async ({ client, queued }) => {
-      await assert.rejects(
-        client.transaction(async (tx) => {
-          await tx.submitMutation(
-            "Publish",
-            1,
-            async (local) => {
-              await assert.rejects(
-                tx.read("Entry", { id: "p" }),
-                /invalid transaction capability/,
-              );
-              await assert.rejects(
-                client.fetchModel("Entry", 1, { id: "p" }, (x) => x),
-                (error) =>
-                  error.code === "transaction_active" ||
-                  /transaction_active/.test(String(error)),
-              );
-              return input("p");
-            },
-            (x) => x,
-          );
-        }),
-        /invalid transaction capability/,
-      );
-      assert.equal(queued(), 0);
-    }));
-  test("unawaited companion operations prevent commit", () =>
-    run(async ({ client, queued }) => {
-      await assert.rejects(
-        client.submitMutation(
-          "Publish",
-          1,
-          async (local) => {
-            void local.direct(create("bad", "rollback"));
-            return input("p");
-          },
-          (x) => x,
-        ),
-        /unawaited/,
-      );
-      assert.equal(queued(), 0);
-      assert.equal(await client.read("Draft", { id: "bad" }), null);
-    }));
-  test("close during a callback releases the Store and commits no pending scope", () =>
-    run(async ({ client, queued }) => {
-      let release, entered;
-      const gate = new Promise((r) => (release = r)),
-        started = new Promise((r) => (entered = r));
-      const pending = client.submitMutation(
-        "Publish",
-        1,
-        async (local) => {
-          entered();
-          await gate;
-          return input("p");
-        },
-        (x) => x,
-      );
-      const rejected = assert.rejects(pending);
-      await started;
-      await client.close();
-      release();
-      await rejected;
-      assert.equal(queued(), 0);
     }));
   if (savepoints)
     test("savepoint rollback discards only its named Call scopes", () =>

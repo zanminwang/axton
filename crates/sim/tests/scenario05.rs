@@ -11,9 +11,12 @@ fn receipt_and_authority_permutations_reopen_every_persisted_boundary() {
         );
         assert!(trace.durable_completion, "completion lost original waiter");
         assert_eq!(
-            trace.visible["text"],
-            if private { "later direct" } else { "canonical" },
-            "private receipt preserves local owner; later Stream authority wins"
+            trace.optimistic["text"], "later",
+            "a later pending Mutation stays on top of the settled record"
+        );
+        assert_eq!(
+            trace.visible["text"], "canonical",
+            "the private receipt or the Stream authority settled beneath it"
         );
         assert_eq!(trace.boundaries.len(), 5);
     }

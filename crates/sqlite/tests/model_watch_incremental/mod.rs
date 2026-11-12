@@ -72,7 +72,7 @@ fn measured(schema: Schema) -> (Harness<MeasuredStore>, Arc<Probe>) {
         inner: SqliteStore::open(dir.path().join("db")).unwrap(),
         probe: probe.clone(),
     };
-    let client = Client::open05(store, schema, "User:u").unwrap();
+    let client = Client::open05(store, common05::with_crud(schema), "User:u").unwrap();
     (
         Harness {
             runtime: ClientRuntime::new(client),
@@ -95,13 +95,21 @@ fn watch(h: &mut Harness<MeasuredStore>, model: &str, filter: Value) -> (Value, 
     );
     (id, events)
 }
-fn op(id: &str, values: Value) -> Operation {
-    Operation {
-        model: "Entry".into(),
-        op: OperationKind::Update,
-        identity: json!({"id":id}),
-        values: Some(values),
-    }
+/// Entry `id` with `values`, as the `row` of a test Mutation.
+fn op(id: &str, mut values: Value) -> Value {
+    values["id"] = json!(id);
+    values
+}
+/// Submit the `with_crud` Mutation `{verb}{model}` of `row` inside `tx`: the
+/// write each change below commits.
+fn submit<S: ClientStore>(
+    tx: &mut ClientTransaction<'_, S>,
+    verb: &str,
+    model: &str,
+    row: Value,
+) -> Result<()> {
+    tx.submit_mutation05(&format!("{verb}{model}"), 1, json!({ "row": row }))
+        .map(|_| ())
 }
 fn publish(h: &mut Harness<MeasuredStore>) -> Vec<Value> {
     h.call("publish", json!({"kind":"status"})).1
@@ -120,11 +128,12 @@ fn metadata_does_no_model_read_and_a_changed_identity_does_not_reread_the_result
         .client()
         .transaction(|tx| {
             for i in 0..1000 {
-                tx.direct(common05::create(
+                submit(
+                    tx,
+                    "Create",
                     "Entry",
-                    &format!("e{i:04}"),
-                    json!({"text":"before","note":null}),
-                ))?;
+                    op(&format!("e{i:04}"), json!({"text":"before","note":null})),
+                )?;
             }
             Ok(())
         })
@@ -152,8 +161,13 @@ fn metadata_does_no_model_read_and_a_changed_identity_does_not_reread_the_result
     h.runtime
         .client()
         .transaction(|tx| {
-            tx.direct(op("e0999", json!({"text":"intermediate"})))?;
-            tx.direct(op("e0999", json!({"text":"after"})))
+            submit(
+                tx,
+                "Update",
+                "Entry",
+                op("e0999", json!({"text":"intermediate"})),
+            )?;
+            submit(tx, "Update", "Entry", op("e0999", json!({"text":"after"})))
         })
         .unwrap();
     let events = publish(&mut h);
@@ -171,7 +185,7 @@ fn metadata_does_no_model_read_and_a_changed_identity_does_not_reread_the_result
     clear(&probe);
     h.runtime
         .client()
-        .transaction(|tx| tx.direct(op("e0999", json!({"text":"after"}))))
+        .transaction(|tx| submit(tx, "Update", "Entry", op("e0999", json!({"text":"after"}))))
         .unwrap();
     assert!(
         rows(&publish(&mut h), &observer).is_empty(),
@@ -187,17 +201,18 @@ fn filters_enter_and_exit_with_sql_null_rules_and_multiple_commits_keep_identity
     h.runtime
         .client()
         .transaction(|tx| {
-            tx.direct(common05::create(
+            submit(
+                tx,
+                "Create",
                 "Entry",
-                "e",
-                json!({"text":"excluded","note":"x"}),
-            ))
+                op("e", json!({"text":"excluded","note":"x"})),
+            )
         })
         .unwrap();
     assert!(rows(&publish(&mut h), &observer).is_empty());
     h.runtime
         .client()
-        .transaction(|tx| tx.direct(op("e", json!({"note":null}))))
+        .transaction(|tx| submit(tx, "Update", "Entry", op("e", json!({"note":null}))))
         .unwrap();
     assert_eq!(
         rows(&publish(&mut h), &observer),
@@ -205,7 +220,7 @@ fn filters_enter_and_exit_with_sql_null_rules_and_multiple_commits_keep_identity
     );
     h.runtime
         .client()
-        .transaction(|tx| tx.direct(op("e", json!({"note":"outside"}))))
+        .transaction(|tx| submit(tx, "Update", "Entry", op("e", json!({"note":"outside"}))))
         .unwrap();
     assert_eq!(rows(&publish(&mut h), &observer), [json!([])]);
     clear(&probe);
@@ -214,11 +229,12 @@ fn filters_enter_and_exit_with_sql_null_rules_and_multiple_commits_keep_identity
         h.runtime
             .client()
             .transaction(|tx| {
-                tx.direct(common05::create(
+                submit(
+                    tx,
+                    "Create",
                     "Entry",
-                    id,
-                    json!({"text":id,"note":null}),
-                ))
+                    op(id, json!({"text":id,"note":null})),
+                )
             })
             .unwrap();
     }
@@ -252,14 +268,14 @@ fn filters_enter_and_exit_with_sql_null_rules_and_multiple_commits_keep_identity
 #[test]
 fn failed_commit_and_rolled_back_savepoints_do_not_leak_model_candidates() {
     let (mut h, probe) = measured(schema());
-    h.commit("seed", create("e", "base"));
+    h.commit("seed", put("Entry", "e", json!({"text":"base"})));
     let (observer, _) = watch(&mut h, "Entry", json!({}));
     clear(&probe);
     h.runtime
         .client()
         .transaction(|tx| {
             let failed = tx.savepoint(|tx| {
-                tx.direct(op("e", json!({"text":"discarded"})))?;
+                submit(tx, "Update", "Entry", op("e", json!({"text":"discarded"})))?;
                 Err::<(), _>(invalid("discard"))
             });
             assert!(failed.is_err());
@@ -275,7 +291,14 @@ fn failed_commit_and_rolled_back_savepoints_do_not_leak_model_candidates() {
     h.runtime.client().session_savepoint().unwrap();
     h.runtime
         .client()
-        .session(|tx| tx.direct(op("e", json!({"text":"discard session scope"}))))
+        .session(|tx| {
+            submit(
+                tx,
+                "Update",
+                "Entry",
+                op("e", json!({"text":"discard session scope"})),
+            )
+        })
         .unwrap();
     h.runtime.client().session_rollback_savepoint().unwrap();
     h.runtime.client().commit_session().unwrap();
@@ -284,14 +307,26 @@ fn failed_commit_and_rolled_back_savepoints_do_not_leak_model_candidates() {
     h.runtime.client().begin_session().unwrap();
     h.runtime
         .client()
-        .session(|tx| tx.direct(op("e", json!({"text":"discard session"}))))
+        .session(|tx| {
+            submit(
+                tx,
+                "Update",
+                "Entry",
+                op("e", json!({"text":"discard session"})),
+            )
+        })
         .unwrap();
     h.runtime.client().rollback_session().unwrap();
     probe.fail_commit.store(true, Ordering::SeqCst);
     assert!(
         h.runtime
             .client()
-            .transaction(|tx| tx.direct(op("e", json!({"text":"failed commit"}))))
+            .transaction(|tx| submit(
+                tx,
+                "Update",
+                "Entry",
+                op("e", json!({"text":"failed commit"}))
+            ))
             .is_err()
     );
     assert!(rows(&publish(&mut h), &observer).is_empty());
@@ -323,7 +358,7 @@ fn authority_replay_rejection_cache_and_reset_refresh_the_committed_projection()
     h.runtime
         .client()
         .transaction(|tx| {
-            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"mine"}}), vec![])
+            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"mine"}}))
         })
         .unwrap();
     assert_eq!(rows(&publish(&mut h), &observer), [json!([row("mine")])]);
@@ -405,12 +440,13 @@ fn cascading_deletes_include_child_model_keys() {
     h.runtime
         .client()
         .transaction(|tx| {
-            tx.direct(common05::create("Book", "b", json!({"title":"book"})))?;
-            tx.direct(common05::create(
+            submit(tx, "Create", "Book", op("b", json!({"title":"book"})))?;
+            submit(
+                tx,
+                "Create",
                 "Comment",
-                "c",
-                json!({"bookId":"b","text":"child"}),
-            ))
+                op("c", json!({"bookId":"b","text":"child"})),
+            )
         })
         .unwrap();
     let (observer, _) = watch(&mut h, "Comment", json!({}));
@@ -418,12 +454,12 @@ fn cascading_deletes_include_child_model_keys() {
     h.runtime
         .client()
         .transaction(|tx| {
-            tx.direct(Operation {
-                model: "Book".into(),
-                identity: json!({"id":"b"}),
-                op: OperationKind::Update,
-                values: Some(json!({"title":"unrelated parent update"})),
-            })
+            submit(
+                tx,
+                "Update",
+                "Book",
+                json!({"id":"b","title":"unrelated parent update"}),
+            )
         })
         .unwrap();
     assert!(rows(&publish(&mut h), &observer).is_empty());
@@ -433,14 +469,7 @@ fn cascading_deletes_include_child_model_keys() {
     );
     h.runtime
         .client()
-        .transaction(|tx| {
-            tx.direct(Operation {
-                model: "Book".into(),
-                identity: json!({"id":"b"}),
-                op: OperationKind::Delete,
-                values: None,
-            })
-        })
+        .transaction(|tx| submit(tx, "Delete", "Book", json!({"id":"b"})))
         .unwrap();
     assert_eq!(rows(&publish(&mut h), &observer), [json!([])]);
     assert_eq!(read_sizes(&probe), [0]);
@@ -458,16 +487,11 @@ fn composite_numeric_identity_and_normalized_filters_match_full_queries_across_k
         ]
     }]})).unwrap();
     let (mut h, probe) = measured(schema);
-    let create = |group: &str, seq| Operation {
-        model: "Entry".into(),
-        identity: json!({"group":group,"seq":seq}),
-        op: OperationKind::Create,
-        values: Some(json!({"enabled":true,"when":"2026-10-28T04:00:00Z","tags":["initial"]})),
-    };
+    let create = |group: &str, seq| json!({"group":group,"seq":seq,"enabled":true,"when":"2026-10-28T04:00:00Z","tags":["initial"]});
     for (group, seq) in [("a", 10), ("b", -1), ("a", 2)] {
         h.runtime
             .client()
-            .transaction(|tx| tx.direct(create(group, seq)))
+            .transaction(|tx| submit(tx, "Create", "Entry", create(group, seq)))
             .unwrap();
     }
     let filter = json!({"enabled":true,"when":"2026-10-28T05:00:00+01:00"});
@@ -486,7 +510,7 @@ fn composite_numeric_identity_and_normalized_filters_match_full_queries_across_k
         .client()
         .transaction(|tx| {
             for seq in 1000..1260 {
-                tx.direct(create("a", seq))?;
+                submit(tx, "Create", "Entry", create("a", seq))?;
             }
             Ok(())
         })
@@ -507,12 +531,12 @@ fn composite_numeric_identity_and_normalized_filters_match_full_queries_across_k
     h.runtime
         .client()
         .transaction(|tx| {
-            tx.direct(Operation {
-                model: "Entry".into(),
-                identity: json!({"group":"a","seq":2}),
-                op: OperationKind::Update,
-                values: Some(json!({"enabled":false,"tags":["changed"]})),
-            })
+            submit(
+                tx,
+                "Update",
+                "Entry",
+                json!({"group":"a","seq":2,"enabled":false,"tags":["changed"]}),
+            )
         })
         .unwrap();
     let events = publish(&mut h);
@@ -532,7 +556,7 @@ fn composite_numeric_identity_and_normalized_filters_match_full_queries_across_k
 #[test]
 fn a_failed_incremental_read_keeps_the_watch_and_recovers_from_a_full_result() {
     let (mut h, probe) = measured(schema());
-    h.commit("seed", create("e", "base"));
+    h.commit("seed", put("Entry", "e", json!({"text":"base"})));
     let (observer, _) = watch(&mut h, "Entry", json!({}));
     clear(&probe);
     probe.fail_read.store(true, Ordering::SeqCst);
@@ -596,11 +620,15 @@ fn delta_delivery_moves_only_changed_rows_and_preserves_order_and_legacy_callers
         .client()
         .transaction(|tx| {
             for i in 0..1000 {
-                tx.direct(common05::create(
+                submit(
+                    tx,
+                    "Create",
                     "Entry",
-                    &format!("e{i:04}"),
-                    json!({"text":"x".repeat(512),"note":null}),
-                ))?;
+                    op(
+                        &format!("e{i:04}"),
+                        json!({"text":"x".repeat(512),"note":null}),
+                    ),
+                )?;
             }
             Ok(())
         })
@@ -614,18 +642,19 @@ fn delta_delivery_moves_only_changed_rows_and_preserves_order_and_legacy_callers
     h.runtime
         .client()
         .transaction(|tx| {
-            tx.direct(op("e0523", json!({"text":"changed"})))?;
-            tx.direct(Operation {
-                model: "Entry".into(),
-                identity: json!({"id":"e0000"}),
-                op: OperationKind::Delete,
-                values: None,
-            })?;
-            tx.direct(common05::create(
+            submit(
+                tx,
+                "Update",
                 "Entry",
-                "a",
-                json!({"text":"new","note":null}),
-            ))
+                op("e0523", json!({"text":"changed"})),
+            )?;
+            submit(tx, "Delete", "Entry", json!({"id":"e0000"}))?;
+            submit(
+                tx,
+                "Create",
+                "Entry",
+                op("a", json!({"text":"new","note":null})),
+            )
         })
         .unwrap();
     let events = publish(&mut h);
@@ -649,7 +678,14 @@ fn delta_delivery_moves_only_changed_rows_and_preserves_order_and_legacy_callers
     assert_eq!(read_sizes(&probe), [2, 2, 1000]); // each watch reads only changed keys; explicit comparison reads all
     h.runtime
         .client()
-        .transaction(|tx| tx.direct(op("e0523", json!({"text":"changed"}))))
+        .transaction(|tx| {
+            submit(
+                tx,
+                "Update",
+                "Entry",
+                op("e0523", json!({"text":"changed"})),
+            )
+        })
         .unwrap();
     assert!(
         snapshots(&publish(&mut h), &id).is_empty(),
@@ -659,7 +695,7 @@ fn delta_delivery_moves_only_changed_rows_and_preserves_order_and_legacy_callers
 #[test]
 fn delta_full_recovery_reset_and_close_do_not_require_a_second_query() {
     let (mut h, probe) = measured(schema());
-    h.commit("seed", create("e", "before"));
+    h.commit("seed", put("Entry", "e", json!({"text":"before"})));
     let (id, first) = delta_watch(&mut h, json!({}));
     let mut result = first["rows"].as_array().unwrap().clone();
     let mut version = 1;
@@ -676,13 +712,13 @@ fn delta_full_recovery_reset_and_close_do_not_require_a_second_query() {
     probe.fail_read.store(true, Ordering::SeqCst);
     h.runtime
         .client()
-        .transaction(|tx| tx.direct(op("e", json!({"text":"after"}))))
+        .transaction(|tx| submit(tx, "Update", "Entry", op("e", json!({"text":"after"}))))
         .unwrap();
     let failed = publish(&mut h);
     assert!(snapshots(&failed, &id).is_empty());
     h.runtime
         .client()
-        .transaction(|tx| tx.direct(op("e", json!({"text":"recovered"}))))
+        .transaction(|tx| submit(tx, "Update", "Entry", op("e", json!({"text":"recovered"}))))
         .unwrap();
     let events = publish(&mut h);
     let recovered = snapshots(&events, &id).remove(0);
@@ -705,6 +741,11 @@ fn delta_full_recovery_reset_and_close_do_not_require_a_second_query() {
 #[test]
 fn delta_splice_sequences_match_committed_filter_results() {
     let (mut h, _) = measured(schema());
+    // Deliveries, not Mutations: a key is deleted and created again many
+    // times, which only the Stream does without lifecycle dependencies.
+    h.runtime.client().initialize_stream05(0, "1").unwrap();
+    let context = h.runtime.client().request_context05().unwrap();
+    let mut cursor = 0;
     let filter = json!({"note":null});
     let (id, first) = delta_watch(&mut h, filter.clone());
     let mut result = first["rows"].as_array().unwrap().clone();
@@ -712,22 +753,35 @@ fn delta_splice_sequences_match_committed_filter_results() {
     let mut present = std::collections::BTreeSet::new();
     let mut rng = 17_u64;
     for step in 0..150 {
-        h.runtime.client().transaction(|tx| {
-            for _ in 0..4 {
-                rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
-                let key = format!("{:02}", (rng >> 32) % 30);
-                let pick = (rng >> 40) % 4;
-                let values = json!({"text":format!("step {step}"),"note":if pick == 0 {json!("out")} else {Value::Null}});
-                if !present.contains(&key) {
-                    tx.direct(common05::create("Entry", &key, values))?;
-                    present.insert(key);
-                } else if pick == 1 {
-                    tx.direct(Operation {model:"Entry".into(),identity:json!({"id":key}),op:OperationKind::Delete,values:None})?;
-                    present.remove(&key);
-                } else { tx.direct(op(&key, values))?; }
-            }
-            Ok(())
-        }).unwrap();
+        for _ in 0..4 {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let key = format!("{:02}", (rng >> 32) % 30);
+            let pick = (rng >> 40) % 4;
+            let values = json!({"text":format!("step {step}"),"note":if pick == 0 {json!("out")} else {Value::Null}});
+            let state = if present.contains(&key) && pick == 1 {
+                present.remove(&key);
+                Value::Null
+            } else {
+                present.insert(key.clone());
+                values
+            };
+            cursor += 1;
+            h.runtime
+                .client()
+                .install_authority05(
+                    &context,
+                    &[v05::AuthorityChange::Record {
+                        key: v05::RecordKey {
+                            model: "Entry".into(),
+                            identity: json!({ "id": key }),
+                        },
+                        cursor,
+                        state,
+                    }],
+                    None,
+                )
+                .unwrap();
+        }
         for snapshot in snapshots(&publish(&mut h), &id) {
             apply_splices(&mut result, &snapshot, &mut version);
         }
@@ -738,6 +792,6 @@ fn delta_splice_sequences_match_committed_filter_results() {
         );
     }
     let _ = h.call("unwatch", json!({"kind":"unwatch","observerId":id}));
-    h.commit("late", create("late", "ignored"));
+    h.commit("late", put("Entry", "late", json!({"text":"ignored"})));
     assert!(snapshots(&h.events(), &id).is_empty());
 }

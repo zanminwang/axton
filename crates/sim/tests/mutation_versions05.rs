@@ -78,7 +78,7 @@ fn schema() -> Schema {
         .unwrap()
 }
 fn config() -> Config {
-    Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[action(1)]},"mutations":[],"loaders":[],"protocol5":{"projectionGeneration":"1"}})).unwrap()
+    Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[action(1)]},"mutations":[],"protocol5":{"projectionGeneration":"1"}})).unwrap()
 }
 async fn execute(c: &Config, h: &BatchHost, batch: &v05::MutationRequest) -> String {
     let bytes = v05::encode(batch).unwrap();
@@ -113,9 +113,7 @@ fn mixed_batch(unsupported_name: &str, unsupported_version: u64) {
         ] {
             calls.push(
                 client
-                    .transaction(|tx| {
-                        tx.submit_mutation05(name, version, json!({"text":text}), vec![])
-                    })
+                    .transaction(|tx| tx.submit_mutation05(name, version, json!({"text":text})))
                     .unwrap(),
             );
         }
@@ -169,7 +167,7 @@ fn mixed_batch(unsupported_name: &str, unsupported_version: u64) {
                 .is_some()
         );
         client
-            .transaction(|tx| tx.submit_mutation05("Say", 1, json!({"text":"next"}), vec![]))
+            .transaction(|tx| tx.submit_mutation05("Say", 1, json!({"text":"next"})))
             .unwrap();
         let next = client.freeze_batch05().unwrap().unwrap();
         assert_eq!(next.batch_id, batch.batch_id + 1);
@@ -203,7 +201,7 @@ fn malformed_wire_bound_slot_and_forbidden_patch_remain_structural_request_error
             {"kind":"model","name":"first","model":"Entry","operation":"create","cardinality":"single"},
             {"kind":"model","name":"second","model":"Entry","operation":"update","cardinality":"single","allowedPatchFields":["text"],"bindings":[{"slot":"first","fields":["id"]}]}
         ]}]})).unwrap();
-    let config = Config::decode(json!({"schema":s,"mutations":[],"loaders":["Entry"]})).unwrap();
+    let config = Config::decode(json!({"schema":s,"mutations":[]})).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let mut client = Client::open05(
         SqliteStore::open(directory.path().join("client.sqlite")).unwrap(),
@@ -218,7 +216,6 @@ fn malformed_wire_bound_slot_and_forbidden_patch_remain_structural_request_error
                 "Pair",
                 1,
                 json!({"first":{"id":"e","text":"before"},"second":{"id":"e","text":"after"}}),
-                vec![],
             )
         })
         .unwrap();
@@ -289,15 +286,14 @@ fn retained_query_cannot_enter_a_mutation_batch() {
     .unwrap();
     client.initialize_stream05(0, "1").unwrap();
     client
-        .transaction(|tx| tx.submit_mutation05("Say", 1, json!({"text":"intent"}), vec![]))
+        .transaction(|tx| tx.submit_mutation05("Say", 1, json!({"text":"intent"})))
         .unwrap();
     let batch = client.freeze_batch05().unwrap().unwrap();
     let mut query = action(1);
     query["kind"] = json!("query");
-    let config = Config::decode(
-        json!({"schema":{"enums":[],"models":[],"actions":[query]},"mutations":[],"loaders":[]}),
-    )
-    .unwrap();
+    let config =
+        Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[query]},"mutations":[]}))
+            .unwrap();
     assert_eq!(
         axton_server::validate_mutation_batch(&config, &v05::encode(&batch).unwrap())
             .unwrap_err()

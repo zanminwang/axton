@@ -15,15 +15,12 @@ Future<void> main(List<String> args) async {
   );
   try {
     await client.bootstrap();
-    final accepted = await client.mutations.publish.withTransaction((tx) async {
-      await tx.models.draft.create(
-        const DraftCreate(id: 'dart-companion', text: 'keep'),
-      );
-      return const PublishInput(
+    final accepted = await client.mutations.publish(
+      const PublishInput(
         entry: EntryCreate(id: 'dart-entry', text: ' canonical dart '),
         call: 'private',
-      );
-    });
+      ),
+    );
     final outcome = await accepted.wait();
     check(
       outcome is CallSuccess<PublishOutput> &&
@@ -37,22 +34,12 @@ Future<void> main(List<String> args) async {
           'canonical dart',
       'canonical local write',
     );
-    check(
-      (await client.models.draft.get(
-            const DraftIdentity(id: 'dart-companion'),
-          ))?.text ==
-          'keep',
-      'accepted companion',
-    );
-    final refused = await client.mutations.publish.withTransaction((tx) async {
-      await tx.models.draft.create(
-        const DraftCreate(id: 'dart-refused-companion', text: 'undo'),
-      );
-      return const PublishInput(
+    final refused = await client.mutations.publish(
+      const PublishInput(
         entry: EntryCreate(id: 'dart-refused', text: 'refuse'),
         call: 'normal',
-      );
-    });
+      ),
+    );
     final no = await refused.wait();
     check(
       no is CallFailure<PublishOutput> && no.error.code == 'publish.refused',
@@ -62,13 +49,6 @@ Future<void> main(List<String> args) async {
       await client.models.entry.get(const EntryIdentity(id: 'dart-refused')) ==
           null,
       'refused optimism rolled back',
-    );
-    check(
-      await client.models.draft.get(
-            const DraftIdentity(id: 'dart-refused-companion'),
-          ) ==
-          null,
-      'refused companion rolled back',
     );
     check(
       (await client.queries.find(id: 'dart-entry', store: false)).entry?.text ==

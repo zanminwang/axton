@@ -9,7 +9,7 @@ use crate::validate::{
 use serde_json::{Value, json};
 
 /// The compiler output consumed by the emitters, the history and the CLI:
-/// `{schema, mutations, loaders, uniqueConstraints, inverses, requirements,
+/// `{schema, mutations, uniqueConstraints, inverses, requirements,
 /// prerequisites}`. `schema` is [`schema`]; `mutations` are the mutations as
 /// declared, which the CLI replaces with every retained version.
 pub fn descriptors(v: &Validated) -> Value {
@@ -17,7 +17,6 @@ pub fn descriptors(v: &Validated) -> Value {
         "schema": schema(v),
         "mutations": mutations(v),
         "actions": v.actions.iter().map(|a| action(v, a)).collect::<Vec<_>>(),
-        "loaders": v.models.iter().map(|m| &m.name).collect::<Vec<_>>(),
         "uniqueConstraints": v.unique_constraints.iter().map(|c| json!({"model":c.model,"fields":c.fields})).collect::<Vec<_>>(),
         "inverses": v.inverses.iter().map(|i| json!({
             "model":i.model,"name":i.name,"target":i.target,"list":i.list,"nullable":i.nullable,

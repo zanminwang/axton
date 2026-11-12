@@ -2,34 +2,28 @@
 //! through `authority.rs`.
 use crate::ddl::before_table;
 use crate::engine::Engine;
-use crate::queue::{LocalWrite, LocalWriteKind, OpKind, QueuedOp};
+use crate::queue::{LocalWrite, OpKind, QueuedOp};
 use crate::rows::merge_identity;
 use crate::store::ClientStore;
 use crate::{Operation, OperationKind};
-use axton_core::{RecordKey, Result, Schema, invalid};
+use axton_core::{RecordKey, Result, invalid};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
 // One entry of a record's local history above its base.
 enum Step {
-    // An operation of a call still in the queue: wire, companion or effect.
+    // An operation of a call still in the queue: wire or effect.
     Pending(QueuedOp),
     // A settled local write retained at its place.
     Settled(LocalWrite),
 }
 impl Step {
     // Committed local order: a call's operations by position, an accepted
-    // companion at its owner's position, an independent write after every
-    // operation of the ordinal it followed.
-    fn order(&self) -> (u64, u8, u64, u64) {
+    // write at its wire operation's position, after the operations there.
+    fn order(&self) -> (u64, u64, u64) {
         match self {
-            Step::Pending(q) => (q.ordinal, 0, q.position, 0),
-            Step::Settled(w) => match w.kind {
-                LocalWriteKind::Accepted => {
-                    (w.ordinal, 0, w.position.unwrap_or_default(), w.sequence)
-                }
-                LocalWriteKind::Independent => (w.ordinal, 1, 0, w.sequence),
-            },
+            Step::Pending(q) => (q.ordinal, q.position, 0),
+            Step::Settled(w) => (w.ordinal, w.position, w.sequence),
         }
     }
 }
@@ -95,32 +89,6 @@ pub fn apply_to_row(row: &mut Option<Value>, op: &Operation) -> Result<()> {
         }
         OperationKind::Delete => {
             *row = None;
-        }
-    }
-    Ok(())
-}
-
-fn normalize(schema: &Schema, op: &mut Operation) -> Result<()> {
-    op.identity = schema.record_key(&op.model, &op.identity)?.identity;
-    match op.op {
-        OperationKind::Create => {
-            let values = op
-                .values
-                .as_ref()
-                .ok_or_else(|| invalid("create values missing"))?;
-            op.values = Some(schema.normalize_state(&op.model, values)?);
-        }
-        OperationKind::Update => {
-            let values = op
-                .values
-                .as_ref()
-                .ok_or_else(|| invalid("update values missing"))?;
-            op.values = Some(schema.validate_patch(&op.model, values)?);
-        }
-        OperationKind::Delete => {
-            if op.values.is_some() {
-                return Err(invalid("delete cannot contain values"));
-            }
         }
     }
     Ok(())
@@ -220,7 +188,6 @@ impl<S: ClientStore> Engine<'_, S> {
         for step in steps.drain(..settled) {
             if let Step::Settled(write) = step {
                 apply_settled(&mut base, &write.op);
-                self.retain_local_operation(key, &write.op)?;
                 self.delete_local_write(write.sequence)?;
             }
         }
@@ -303,8 +270,8 @@ impl<S: ClientStore> Engine<'_, S> {
         Ok(result)
     }
     // Whether the last delete of `parent` by call `ordinal` is followed by a
-    // local recreation: a create later in the same call, or a settled local
-    // write (a direct write or an accepted companion) after it. A recreation
+    // local recreation: a create later in the same call, or an accepted
+    // receipt state retained after it. A recreation
     // by a later pending call is not one: the server has yet to answer both.
     fn recreated_locally(&mut self, parent: &RecordKey, ordinal: u64) -> Result<bool> {
         let steps = self.history(parent)?;
@@ -321,26 +288,17 @@ impl<S: ClientStore> Engine<'_, S> {
     // Extend queued deletes to descendants that appeared after they were
     // queued. A parent visible again because a local write recreated it
     // after the delete keeps its current children: they belong to that
-    // recreation, not to the earlier delete. A companion delete's cascade
-    // stays the call's companion.
+    // recreation, not to the earlier delete.
     pub fn refresh_pending(&mut self) -> Result<()> {
         for queued in self.queued()? {
-            let deletes: Vec<(OpKind, Operation)> = queued
+            let deletes: Vec<Operation> = queued
                 .mutation
                 .operations
                 .iter()
-                .map(|op| (OpKind::Effect, op))
-                .chain(
-                    queued
-                        .mutation
-                        .companion
-                        .iter()
-                        .map(|op| (OpKind::Companion, op)),
-                )
-                .filter(|(_, op)| op.op == OperationKind::Delete)
-                .map(|(kind, op)| (kind, op.clone()))
+                .filter(|op| op.op == OperationKind::Delete)
+                .cloned()
                 .collect();
-            for (kind, op) in deletes {
+            for op in deletes {
                 let parent = self.schema.record_key(&op.model, &op.identity)?;
                 if self.read_row(&parent)?.is_some()
                     && self.recreated_locally(&parent, queued.ordinal)?
@@ -348,23 +306,18 @@ impl<S: ClientStore> Engine<'_, S> {
                     continue;
                 }
                 for child in self.descendants(&parent)? {
-                    let already = queued
-                        .mutation
-                        .effects
-                        .iter()
-                        .chain(&queued.mutation.companion)
-                        .any(|e| {
-                            e.op == OperationKind::Delete
-                                && e.model == child.model
-                                && e.identity == child.identity
-                        });
+                    let already = queued.mutation.effects.iter().any(|e| {
+                        e.op == OperationKind::Delete
+                            && e.model == child.model
+                            && e.identity == child.identity
+                    });
                     if already {
                         continue;
                     }
                     self.hold_truth(&child)?;
                     self.append_op(
                         queued.ordinal,
-                        kind,
+                        OpKind::Effect,
                         &Operation {
                             model: child.model.clone(),
                             identity: child.identity.clone(),
@@ -381,50 +334,14 @@ impl<S: ClientStore> Engine<'_, S> {
         Ok(())
     }
 
-    // Append a local companion to queued call `ordinal`, after everything
-    // the call already wrote: a fresh create gets its generated values, the
-    // operation is normalized and applied, a delete cascades to its
-    // descendants, and each record's base is held first. The operations are
-    // stored as the call's companions in the order they were applied, so
-    // they settle with its outcome and are never sent. The call must be the
-    // latest one, unsent and a canonical Action call, with no independent
-    // write journaled after it: a companion then never settles out of local
-    // order.
-    pub(crate) fn append_companion(
-        &mut self,
-        ordinal: u64,
-        mut operation: Operation,
-    ) -> Result<()> {
-        let owner = self
-            .queued_one(ordinal)?
-            .ok_or_else(|| invalid("companion owner is not queued"))?;
-        if owner.mutation.call_id.is_none() || owner.push.is_some() {
-            return Err(invalid("companion owner is not an unsent Mutation call"));
-        }
-        if self.last_ordinal()? != ordinal || self.independent_writes_after(ordinal)? {
-            return Err(invalid(
-                "a companion must follow its Mutation before any later write",
-            ));
-        }
-        crate::defaults::fill_operation(self.schema, &mut operation);
-        normalize(self.schema, &mut operation)?;
-        self.apply_in_order(
-            &operation,
-            OpKind::Companion,
-            OpKind::Companion,
-            |engine, kind, op| engine.append_op(ordinal, kind, &op),
-        )
-    }
     // Apply one queued operation in local order and hand every write to
     // `record` as it happens: each record's base is held first, a delete's
-    // cascade to its descendants comes before the delete (as `cascade`),
-    // then the operation itself (as `own`). Queued calls and appended
-    // companions share it, so a cascade is stored at its trigger either way.
+    // cascade to its descendants comes before the delete (as an `Effect`),
+    // then the operation itself (as a `Wire`), so a cascade is stored at its
+    // trigger.
     pub(crate) fn apply_in_order(
         &mut self,
         op: &Operation,
-        own: OpKind,
-        cascade: OpKind,
         mut record: impl FnMut(&mut Self, OpKind, Operation) -> Result<()>,
     ) -> Result<()> {
         let key = self.schema.record_key(&op.model, &op.identity)?;
@@ -439,73 +356,10 @@ impl<S: ClientStore> Engine<'_, S> {
                     values: None,
                 };
                 self.apply_main(&delete)?;
-                record(self, cascade, delete)?;
+                record(self, OpKind::Effect, delete)?;
             }
         }
         self.apply_main(op)?;
-        record(self, own, op.clone())
-    }
-    // Temporary callback visibility. The enclosing savepoint owns these rows;
-    // concrete operations are recorded once and replayed as owned companions.
-    pub(crate) fn preview_callback(&mut self, mut operation: Operation) -> Result<Vec<Operation>> {
-        crate::defaults::fill_operation(self.schema, &mut operation);
-        normalize(self.schema, &mut operation)?;
-        let key = self
-            .schema
-            .record_key(&operation.model, &operation.identity)?;
-        let mut operations = vec![];
-        if operation.op == OperationKind::Delete {
-            for child in self.descendants(&key)? {
-                operations.push(Operation {
-                    model: child.model,
-                    identity: child.identity,
-                    op: OperationKind::Delete,
-                    values: None,
-                });
-            }
-        }
-        operations.push(operation);
-        for op in &operations {
-            self.apply_main(op)?;
-        }
-        Ok(operations)
-    }
-    // A local write that is never sent: it moves the truth along with the row.
-    pub fn direct(&mut self, mut operation: Operation) -> Result<()> {
-        crate::defaults::fill_operation(self.schema, &mut operation);
-        normalize(self.schema, &mut operation)?;
-        let key = self
-            .schema
-            .record_key(&operation.model, &operation.identity)?;
-        if operation.op == OperationKind::Delete {
-            for child in self.descendants(&key)? {
-                self.direct_one(Operation {
-                    model: child.model,
-                    identity: child.identity,
-                    op: OperationKind::Delete,
-                    values: None,
-                })?;
-            }
-        }
-        self.direct_one(operation)
-    }
-    // On a dirty record the write is retained after everything already
-    // written, so settling earlier work neither undoes nor reorders it; on a
-    // clean record its operation is retained separately for replica release.
-    fn direct_one(&mut self, operation: Operation) -> Result<()> {
-        let key = self
-            .schema
-            .record_key(&operation.model, &operation.identity)?;
-        let is_dirty = self.dirty(&key)?;
-        self.apply_main(&operation)?;
-        self.direct_evidence05(&key)?;
-        if is_dirty {
-            let after = self.last_ordinal()?;
-            self.insert_local_write(after, None, LocalWriteKind::Independent, &operation)?;
-        } else {
-            self.allocate05("next_local_sequence")?;
-            self.retain_local_operation(&key, &operation)?;
-        }
-        Ok(())
+        record(self, OpKind::Wire, op.clone())
     }
 }

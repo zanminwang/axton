@@ -42,18 +42,8 @@ mutation Restamp(note Note.update<createdAt>?, at DateTime) { at DateTime }
 // is not caller authority, so a caller that declares only Todo can run it; the
 // Note reaches its own Scope's subscribers (#140).
 mutation AnnotateTodo(todo Todo.update<title>, note UUID, body String)
-// Transactional Mutation enqueue with a local companion: a client reads a
-// local Composition, submits PublishEntry built from it and deletes the
-// Composition as that call's companion, in one local commit. No Mutation
-// names Composition, so it stays local: the backend never receives or stores
-// one. PublishEntry creates the Entry, its media and its Journal placement in
-// one backend transaction.
-model Composition {
- id String
- title String
- body String
- @@id(id)
-}
+// PublishEntry creates the Entry, its media and its Journal placement in one
+// backend transaction.
 model Entry {
  id String
  title String

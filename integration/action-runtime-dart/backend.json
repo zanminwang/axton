@@ -340,9 +340,6 @@
   ],
   "deprecations": [],
   "inverses": [],
-  "loaders": [
-    "Note"
-  ],
   "models": [
     {
       "enums": [

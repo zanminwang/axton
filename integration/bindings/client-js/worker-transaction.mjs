@@ -9,12 +9,12 @@ let holding = 0;
 for (const path of paths) {
   const client = await openStore(Client, { path, schema: workerData.schema });
   void client.transaction(async (tx) => {
-    await tx.direct({
-      model: "Entry",
-      op: "create",
-      identity: { id: "worker" },
-      values: { text: "held" },
-    });
+    await tx.submitMutation(
+      "Create",
+      1,
+      { entry: { id: "worker", text: "held", note: null } },
+      (value) => value,
+    );
     if (++holding === paths.length) parentPort.postMessage("holding");
     await new Promise(() => {});
   });

@@ -21,7 +21,7 @@ function retired(client: GeneratedClient) {
       url: "http://unused",
       token: "alice",
     },
-    // @ts-expect-error Store hooks were replaced by typed owned companions.
+    // @ts-expect-error Store hooks are retired.
     onStore: () => {},
   });
 }

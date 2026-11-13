@@ -199,6 +199,8 @@ test("listener close drains a held real upgrade admission before database releas
     native,
     database: pg(pool),
     authenticate: () => "admission",
+    // This test never reaches Stream admission.
+    authorizeStream: () => false,
     admit: async (request) => {
       request.socket.once("close", () => peerGone.resolve());
       admissionSocket = request.socket;

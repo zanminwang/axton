@@ -292,7 +292,7 @@ export function createHost<T>(
             } finally {
               effects.close();
             }
-            await native.settleExternal05!(
+            await native.settleExternal05(
               config,
               JSON.stringify(effects.settlement()),
               createHost(dependencies, tx, session),

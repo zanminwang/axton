@@ -351,14 +351,12 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
       : {}),
   });
   const materializationId = options.protocol5
-    ? native.serverMaterializationId05?.(
+    ? native.serverMaterializationId05(
         config,
         options.protocol5.projectionGeneration ?? "1",
       )
     : undefined;
   native.validateConfig(config);
-  if (options.protocol5 && !materializationId)
-    throw new Error("protocol5 native materialization derivation unavailable");
   // Refuses Models whose generated accessors collide.
   const createEffects = effectsFor(schemaModels, descriptor.schema?.enums);
   const createLoadEffects = loadEffectsFor(
@@ -601,7 +599,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
       effects.close();
     }
     await session.track(() =>
-      native.settleExternal05!(
+      native.settleExternal05(
         config,
         JSON.stringify(effects.settlement()),
         host(tx, session),
@@ -700,15 +698,15 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     },
     action: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
-        native.processRead05!(config, owner, text(request), host(tx, session)),
+        native.processRead05(config, owner, text(request), host(tx, session)),
       ),
     fetch: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
-        native.processRead05!(config, owner, text(request), host(tx, session)),
+        native.processRead05(config, owner, text(request), host(tx, session)),
       ),
     pull: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
-        native.processDelivery05!(
+        native.processDelivery05(
           config,
           owner,
           text(request),
@@ -717,11 +715,11 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
       ),
     pull05Live: (owner: string, request: string) =>
       run((tx, session) =>
-        native.processLive05!(config, owner, request, host(tx, session)),
+        native.processLive05(config, owner, request, host(tx, session)),
       ),
     handshake: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
-        native.handshake05!(config, owner, text(request), host(tx, session)),
+        native.handshake05(config, owner, text(request), host(tx, session)),
       ),
     negotiateLive: (
       owner: string,

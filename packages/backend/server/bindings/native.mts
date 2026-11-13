@@ -1,30 +1,30 @@
 import { createRequire } from "node:module";
 export type Native = {
-  processLive05?(
+  processLive05(
     config: string,
     owner: string,
     request: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
-  processDelivery05?(
+  processDelivery05(
     config: string,
     owner: string,
     request: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
-  processRead05?(
+  processRead05(
     config: string,
     owner: string,
     request: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
-  handshake05?(
+  handshake05(
     config: string,
     owner: string,
     request: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
-  serverMaterializationId05?(
+  serverMaterializationId05(
     config: string,
     projectionGeneration: string,
   ): string;
@@ -45,7 +45,7 @@ export type Native = {
     count: number,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
-  settleExternal05?(
+  settleExternal05(
     config: string,
     settlement: string,
     callback: (request: string) => Promise<string>,
@@ -114,7 +114,13 @@ function engineError(error: unknown): unknown {
 }
 /** Wrap every native function so its failures surface as `EngineError`. */
 function typedNative(native: Native): Native {
-  type Async = "negotiateLive";
+  type Async =
+    | "negotiateLive"
+    | "processDelivery05"
+    | "processRead05"
+    | "handshake05"
+    | "processLive05"
+    | "settleExternal05";
   type Sync = "validateConfig" | "liveEvent" | "liveClose";
   const wrap =
     <K extends Async>(key: K) =>
@@ -137,13 +143,7 @@ function typedNative(native: Native): Native {
     };
   return {
     ...Object.fromEntries(
-      [
-        "processDelivery05",
-        "processRead05",
-        "handshake05",
-        "processLive05",
-        "processBatchGroup",
-      ]
+      ["processBatchGroup"]
         .filter((key) => typeof (native as any)[key] === "function")
         .map((key) => [
           key,
@@ -153,12 +153,12 @@ function typedNative(native: Native): Native {
             }),
         ]),
     ),
-    ...(native.serverMaterializationId05
-      ? {
-          serverMaterializationId05:
-            native.serverMaterializationId05.bind(native),
-        }
-      : {}),
+    processDelivery05: wrap("processDelivery05"),
+    processRead05: wrap("processRead05"),
+    handshake05: wrap("handshake05"),
+    processLive05: wrap("processLive05"),
+    serverMaterializationId05: (config: string, projectionGeneration: string) =>
+      native.serverMaterializationId05(config, projectionGeneration),
     ...(native.validateMutationBatch
       ? {
           validateMutationBatch: (config: string, request: string) => {
@@ -191,16 +191,7 @@ function typedNative(native: Native): Native {
           },
         }
       : {}),
-    ...(native.settleExternal05
-      ? {
-          settleExternal05: (
-            ...args: Parameters<NonNullable<Native["settleExternal05"]>>
-          ) =>
-            native.settleExternal05!(...args).catch((error) => {
-              throw engineError(error);
-            }),
-        }
-      : {}),
+    settleExternal05: wrap("settleExternal05"),
     validateConfig: wrapSync("validateConfig"),
     negotiateLive: wrap("negotiateLive"),
     liveEvent: wrapSync("liveEvent"),

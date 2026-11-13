@@ -24,7 +24,7 @@ export type LiveAction =
  * commit hub it asks the executor to use.
  */
 export interface LiveBackend {
-  pull05Live?(owner: string, request: string): Promise<string>;
+  pull05Live(owner: string, request: string): Promise<string>;
   pull?(owner: string, request: string): Promise<string>;
   negotiateLive(
     owner: string,
@@ -206,10 +206,6 @@ async function serveLive(
       } else if (action.type === "send") {
         if (open()) connection.send(action.frame);
       } else if (action.type === "pullV05") {
-        if (!backend.pull05Live) {
-          fail(new Error("v05 live carrier unavailable"));
-          return;
-        }
         trackPull(
           backend
             .pull05Live(owner, action.request)

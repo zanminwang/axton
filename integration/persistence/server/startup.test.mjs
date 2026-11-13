@@ -38,6 +38,17 @@ const schema = {
   actions: [],
 };
 const config = { schema, loaders: ["Task"] };
+test("startup requires authorizeStream and names it", () => {
+  const options = {
+    config,
+    native,
+    database: database(),
+    authenticate,
+    loaders: { task: async () => [] },
+  };
+  assert.throws(() => createBackend(options), /authorizeStream/);
+  createBackend({ ...options, authorizeStream: () => true });
+});
 test("loader registration names every retained model version and a function means v1 only", () => {
   const base = { ...config, schema: structuredClone(schema) };
   const contract = (version) => ({
@@ -55,6 +66,7 @@ test("loader registration names every retained model version and a function mean
       native,
       database: database(),
       authenticate,
+      authorizeStream: () => true,
       loaders,
     });
   };
@@ -185,6 +197,7 @@ test("Mutation registration retains every exact version; a function means v1 onl
       native,
       database: database(),
       authenticate,
+      authorizeStream: () => true,
       mutations,
       loaders: { task: async () => [] },
     });

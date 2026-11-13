@@ -29,7 +29,7 @@ impl Host for TestHost {
     }
 }
 fn config() -> Config {
-    Config::decode(json!({"schema":{"enums":[],"models":[{"name":"Entry","version":1,"bootstrap":true,"identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}]}],"actions":[]},"mutations":[],"protocol5":{"projectionGeneration":"1"}})).unwrap()
+    Config::decode(json!({"schema":{"enums":[],"models":[{"name":"Entry","version":1,"bootstrap":true,"identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}]}],"actions":[]},"mutations":[],"projectionGeneration":"1"})).unwrap()
 }
 #[test]
 fn bootstrap_defers_independent_moved_ahead_authority_to_sync() {

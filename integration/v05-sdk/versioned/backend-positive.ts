@@ -3,9 +3,7 @@ declare const database: Options<object>["database"];
 const options: Options<object> = {
   database,
   authenticate: () => "alice",
-  protocol5: {
-    authorizeStream: (principal, stream) => stream === `User:${principal}`,
-  },
+  authorizeStream: (principal, stream) => stream === `User:${principal}`,
   mutations: {
     publish: {
       v1: async ({ args }) => ({ entry: { id: args.entry.id } }),

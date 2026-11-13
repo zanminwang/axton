@@ -6,7 +6,7 @@ Each client owns one physical SQLite file, one Store and one Stream. Different f
 
 The backend defaults to [sequential commit groups](architecture/server/protocol5.md#sequential-commit-groups)
 of up to eight members when its native addon and database adapter support them;
-otherwise omitted configuration retains size 1. `protocol5.experimentalMutationGroupSize: 1`
+otherwise omitted configuration retains size 1. `experimentalMutationGroupSize: 1`
 explicitly selects per-Mutation commits. Business refusals retain per-Mutation
 savepoints and outcomes. Infrastructure failure rolls back the current uncommitted
 group; earlier committed groups retain their saved outcomes and replay safely.

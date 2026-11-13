@@ -148,13 +148,11 @@ function app(
     config: cfg,
     native,
     database: db,
-    protocol5: {
-      ...(groupSize === "default"
-        ? {}
-        : { experimentalMutationGroupSize: groupSize }),
-      materializations,
-      authorizeStream: (principal, stream) => stream === `User:${principal}`,
-    },
+    ...(groupSize === "default"
+      ? {}
+      : { experimentalMutationGroupSize: groupSize }),
+    materializations,
+    authorizeStream: (principal, stream) => stream === `User:${principal}`,
     authenticate: () => "alice",
     onError: () => {},
     mutations: {
@@ -639,11 +637,9 @@ test("no-op with no Model targets accepts at head zero and replays without busin
     config: cfg,
     native,
     database,
-    protocol5: {
-      authorizeStream: (principal, stream, tx) => {
-        assert.ok(tx);
-        return stream === `User:${principal}`;
-      },
+    authorizeStream: (principal, stream, tx) => {
+      assert.ok(tx);
+      return stream === `User:${principal}`;
     },
     authenticate: () => "fresh",
     loaders: { todo: async () => [] },
@@ -690,7 +686,7 @@ test("process exit after committed member leaves durable prefix and rolls back d
   const s = store(),
     r = batch(s, ["ok", "exit", "ok"]);
   const prior = await streamHeads();
-  const script = `import {createRequire} from 'node:module';import {Pool} from 'pg';import {createBackend} from ${JSON.stringify(new URL("../../../packages/backend/server/index.mts", import.meta.url).href)};import {pg} from ${JSON.stringify(new URL("../../../packages/backend/postgres/index.mts", import.meta.url).href)};const cfg=JSON.parse(process.env.TASK3_CONFIG),r=JSON.parse(process.env.TASK3_REQUEST);const pool=new Pool({connectionString:process.env.DATABASE_URL});const native=createRequire(${JSON.stringify(import.meta.url)})('../../../bindings/node/axton-node.node');const a=createBackend({config:cfg,native,database:pg(pool),protocol5:{experimentalMutationGroupSize:1,authorizeStream:()=>true},authenticate:()=> 'alice',loaders:{todo:async({tx,ids})=>Promise.all(ids.map(async({id})=>(await tx.query('SELECT id,title FROM v05_business WHERE id=$1',[id])).rows[0]??null))},mutations:{write:async({ctx,args})=>{await ctx.tx.query('INSERT INTO v05_business VALUES($1,$2)',[args.todo.id,args.todo.title]);if(args.mode==='exit')process.exit(77);ctx.stream('User:alice').track.todo({id:args.todo.id});return {};}}});await a.push('alice',JSON.stringify(r));`;
+  const script = `import {createRequire} from 'node:module';import {Pool} from 'pg';import {createBackend} from ${JSON.stringify(new URL("../../../packages/backend/server/index.mts", import.meta.url).href)};import {pg} from ${JSON.stringify(new URL("../../../packages/backend/postgres/index.mts", import.meta.url).href)};const cfg=JSON.parse(process.env.TASK3_CONFIG),r=JSON.parse(process.env.TASK3_REQUEST);const pool=new Pool({connectionString:process.env.DATABASE_URL});const native=createRequire(${JSON.stringify(import.meta.url)})('../../../bindings/node/axton-node.node');const a=createBackend({config:cfg,native,database:pg(pool),experimentalMutationGroupSize:1,authorizeStream:()=>true,authenticate:()=> 'alice',loaders:{todo:async({tx,ids})=>Promise.all(ids.map(async({id})=>(await tx.query('SELECT id,title FROM v05_business WHERE id=$1',[id])).rows[0]??null))},mutations:{write:async({ctx,args})=>{await ctx.tx.query('INSERT INTO v05_business VALUES($1,$2)',[args.todo.id,args.todo.title]);if(args.mode==='exit')process.exit(77);ctx.stream('User:alice').track.todo({id:args.todo.id});return {};}}});await a.push('alice',JSON.stringify(r));`;
   const child = spawnSync(
     process.execPath,
     ["--input-type=module", "-e", script],

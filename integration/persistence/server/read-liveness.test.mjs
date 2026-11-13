@@ -139,9 +139,7 @@ for (const kind of ["Query", "Fetch", "Query Model Loader"])
               config: cfg,
               native,
               database,
-              protocol5: {
-                authorizeStream: (owner, stream) => stream === `User:${owner}`,
-              },
+              authorizeStream: (owner, stream) => stream === `User:${owner}`,
               authenticate: () => "alice",
               loaders: {
                 task: async ({ tx, ids }) => {
@@ -320,9 +318,7 @@ test("ordinary read refuses existing Store owner or Stream mismatch before appli
       native,
       database,
       authenticate: () => "alice",
-      protocol5: {
-        authorizeStream: (owner, stream) => stream === `User:${owner}`,
-      },
+      authorizeStream: (owner, stream) => stream === `User:${owner}`,
       mutations: { write: async () => ({}) },
       queries: {
         read: async () => {
@@ -428,10 +424,8 @@ for (const kind of ["handshake", "pull", "live", "cursor_resume"]) {
           native,
           database,
           authenticate: () => "alice",
-          protocol5: {
-            authorizeStream: (owner, stream) =>
-              allow && stream === `User:${owner}`,
-          },
+          authorizeStream: (owner, stream) =>
+            allow && stream === `User:${owner}`,
           queries: { read: async () => ({}) },
           loaders: {
             task: async ({ tx, ids }) => {

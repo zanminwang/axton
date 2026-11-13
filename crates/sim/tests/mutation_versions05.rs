@@ -78,7 +78,7 @@ fn schema() -> Schema {
         .unwrap()
 }
 fn config() -> Config {
-    Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[action(1)]},"mutations":[],"protocol5":{"projectionGeneration":"1"}})).unwrap()
+    Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[action(1)]},"mutations":[],"projectionGeneration":"1"})).unwrap()
 }
 async fn execute(c: &Config, h: &BatchHost, batch: &v05::MutationRequest) -> String {
     let bytes = v05::encode(batch).unwrap();

@@ -59,9 +59,7 @@ async function fixture(body) {
       database,
       onError: () => {},
       authenticate: () => "alice",
-      protocol5: {
-        authorizeStream: (owner, stream) => stream === `User:${owner}`,
-      },
+      authorizeStream: (owner, stream) => stream === `User:${owner}`,
       mutations: {
         publish: async () => ({ entry: { id: "unused" } }),
         retext: async () => ({ entry: { id: "unused" } }),

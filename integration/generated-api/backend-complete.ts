@@ -24,7 +24,7 @@ const unreached = async (): Promise<string> => { throw new Error("not reached by
 export const backend = createBackend<Tx>({
   database: { transaction: async (body) => body({ rows: new Map() }), persistence: () => ({ call: async () => null }) },
   authenticate: devAuth(),
-  protocol5:{authorizeStream:()=>true},
+  authorizeStream:()=>true,
   mutations,
   queries: {readEntry: async () => ({entry:null})},
   loaders,

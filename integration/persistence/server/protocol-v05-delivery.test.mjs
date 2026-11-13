@@ -59,12 +59,10 @@ function appFor(
     config,
     native,
     database,
-    protocol5: {
-      materializations: {
-        [previous]: { schema: config.schema, projectionGeneration: "old" },
-      },
-      authorizeStream: (p, s) => s === `User:${p}`,
+    materializations: {
+      [previous]: { schema: config.schema, projectionGeneration: "old" },
     },
+    authorizeStream: (p, s) => s === `User:${p}`,
     authenticate: () => "alice",
     onError: () => {},
     bootstrap,
@@ -639,7 +637,7 @@ test("Query carrier normalizes result snapshots without enrollment; refusal roll
     config: cfg,
     native,
     database,
-    protocol5: { authorizeStream: (p, s) => s === `User:${p}` },
+    authorizeStream: (p, s) => s === `User:${p}`,
     authenticate: () => "alice",
     onError: (e) => queryErrors.push(e),
     queries: {
@@ -766,12 +764,10 @@ test("retained read context repairs only its known Models while covering unrelat
     config: cfg,
     native,
     database,
-    protocol5: {
-      materializations: {
-        [materialization]: { schema: config.schema, projectionGeneration: "1" },
-      },
-      authorizeStream: (p, s) => s === `User:${p}`,
+    materializations: {
+      [materialization]: { schema: config.schema, projectionGeneration: "1" },
     },
+    authorizeStream: (p, s) => s === `User:${p}`,
     authenticate: () => "alice",
     onError: () => {},
     loaders: {
@@ -805,12 +801,10 @@ test("retained unique metadata keeps 501 distinct positions in one component", a
     config: cfg,
     native,
     database,
-    protocol5: {
-      materializations: {
-        [materialization]: { schema: config.schema, projectionGeneration: "1" },
-      },
-      authorizeStream: (p, s) => s === `User:${p}`,
+    materializations: {
+      [materialization]: { schema: config.schema, projectionGeneration: "1" },
     },
+    authorizeStream: (p, s) => s === `User:${p}`,
     authenticate: () => "alice",
     onError: () => {},
     loaders: {
@@ -841,7 +835,7 @@ test("malformed Fetch Loader aborts the outer transaction and reports infrastruc
     config,
     native,
     database,
-    protocol5: { authorizeStream: (p, s) => s === `User:${p}` },
+    authorizeStream: (p, s) => s === `User:${p}`,
     authenticate: () => "alice",
     onError: (e) => errors.push(e),
     loaders: {
@@ -938,12 +932,10 @@ test("retained cascade metadata keeps related distinct positions in one componen
     config: cfg,
     native,
     database,
-    protocol5: {
-      materializations: {
-        [retained]: { schema: oldSchema, projectionGeneration: "1" },
-      },
-      authorizeStream: (p, s) => s === `User:${p}`,
+    materializations: {
+      [retained]: { schema: oldSchema, projectionGeneration: "1" },
     },
+    authorizeStream: (p, s) => s === `User:${p}`,
     authenticate: () => "alice",
     onError: () => {},
     loaders: {

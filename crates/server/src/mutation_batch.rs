@@ -357,21 +357,13 @@ pub(crate) fn models(
     config: &Config,
     context: &v05::RequestContext,
 ) -> Result<BTreeMap<String, u64>> {
-    let generation = config
-        .protocol5
-        .as_ref()
-        .map(|p| p.projection_generation.as_str())
-        .unwrap_or("1");
-    let active = v05::materialization_id(&config.schema, generation).map_err(internal)?;
+    let active =
+        v05::materialization_id(&config.schema, &config.projection_generation).map_err(internal)?;
     crate::materialization::model_versions(
         config,
         &context.materialization,
         &active,
-        &config
-            .protocol5
-            .as_ref()
-            .map(|p| p.materializations.clone())
-            .unwrap_or_default(),
+        &config.materializations,
         v05::materialization_id,
     )
 }

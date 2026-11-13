@@ -64,13 +64,11 @@ for (const enabled of [false, true])
             };
           },
         },
-        protocol5: {
-          authorizeStream: (owner, stream, retained) => {
-            assert.equal(owner, principal);
-            assert.equal(stream, "User:viewer");
-            assert.strictEqual(retained, tx);
-            return true;
-          },
+        authorizeStream: (owner, stream, retained) => {
+          assert.equal(owner, principal);
+          assert.equal(stream, "User:viewer");
+          assert.strictEqual(retained, tx);
+          return true;
         },
         loaderHooks: {
           task: {

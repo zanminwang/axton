@@ -218,17 +218,3 @@ pub fn encode_batch_acknowledgement(bytes: &[u8], results: &[String]) -> Result<
     v05::validate_acknowledgement(&request, &ack, |_, _| true).map_err(crate::storage_invalid)?;
     String::from_utf8(v05::encode(&ack).map_err(internal)?).map_err(internal)
 }
-
-/// Read contexts retained by the host, independent of Store/principal identity.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProtocolConfig {
-    #[serde(default = "generation")]
-    pub projection_generation: String,
-    #[serde(default)]
-    pub materializations:
-        std::collections::BTreeMap<String, crate::materialization::RetainedMaterialization>,
-}
-fn generation() -> String {
-    "1".into()
-}

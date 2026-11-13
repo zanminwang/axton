@@ -177,9 +177,7 @@ Start the server after defining the handlers and loaders:
 const backend = createBackend({
   database: prisma(new PrismaClient()),
   authenticate: devAuth(),
-  protocol5: {
-    authorizeStream: (principal, stream) => stream === `User:${principal}`,
-  },
+  authorizeStream: (principal, stream) => stream === `User:${principal}`,
   mutations,
   queries,
   loaders,

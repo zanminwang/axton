@@ -48,10 +48,8 @@ function fixture({ nativeGroups = true, adapterGroups = true, size } = {}) {
     },
     authenticate: () => "alice",
     loaders: {},
-    protocol5: {
-      authorizeStream: () => true,
-      ...(size === undefined ? {} : { experimentalMutationGroupSize: size }),
-    },
+    authorizeStream: () => true,
+    ...(size === undefined ? {} : { experimentalMutationGroupSize: size }),
   });
   return { backend, members, groups };
 }

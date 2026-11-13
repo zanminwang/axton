@@ -73,10 +73,8 @@ for (const carrier of ["protocol5"]) {
       native,
       database: pg(pool),
       authenticate: () => viewer,
-      protocol5: {
-        projectionGeneration: "1",
-        authorizeStream: (owner, name) => name === `User:${owner}`,
-      },
+      projectionGeneration: "1",
+      authorizeStream: (owner, name) => name === `User:${owner}`,
       onError: (error) => diagnostics.push(error),
       loaders: {
         space: async ({ tx, ids }) => {
@@ -327,10 +325,8 @@ for (const scenario of ["negotiation", "multiple pulls", "rejected pull"]) {
         },
       },
       authenticate: (request) => request.headers["x-viewer"],
-      protocol5: {
-        projectionGeneration: "1",
-        authorizeStream: (owner, name) => name === `User:${owner}`,
-      },
+      projectionGeneration: "1",
+      authorizeStream: (owner, name) => name === `User:${owner}`,
       onError: (error) => diagnostics.push(error),
       loaders: {
         space: async ({ tx, ids, userId }) => {
@@ -459,10 +455,8 @@ test("throwing upgrade Reporter cannot release another admission or an aborted L
         item.finished.resolve();
       }
     },
-    protocol5: {
-      projectionGeneration: "1",
-      authorizeStream: (viewer, name) => name === `User:${viewer}`,
-    },
+    projectionGeneration: "1",
+    authorizeStream: (viewer, name) => name === `User:${viewer}`,
     onError: (error) => {
       diagnostics.push(error);
       if (error === expected) throw reporterFailure;

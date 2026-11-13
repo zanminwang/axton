@@ -56,9 +56,7 @@ test("listener close drains an admitted HTTP Fetch after the native requester cl
           request.socket.once("close", socketClosed.resolve);
         return authenticate(request);
       },
-      protocol5: {
-        authorizeStream: (viewer, stream) => stream === `User:${viewer}`,
-      },
+      authorizeStream: (viewer, stream) => stream === `User:${viewer}`,
       onError: (error) => diagnostics.push(error),
       mutations: {
         publish: async () => ({ entry: { id: "unused" } }),
@@ -187,9 +185,7 @@ for (const reporterThrows of [false, true]) {
           item.finished.resolve();
         }
       },
-      protocol5: {
-        authorizeStream: (viewer, stream) => stream === `User:${viewer}`,
-      },
+      authorizeStream: (viewer, stream) => stream === `User:${viewer}`,
       onError: (error) => {
         diagnostics.push(error);
         if (reporterThrows && error === expected) throw reporterFailure;

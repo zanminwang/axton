@@ -28,13 +28,21 @@ pub use backend_interface::{Host, HostResult};
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Config {
     pub schema: Schema,
+    /// The projection generation the handshake reports.
+    #[serde(default = "first_generation", rename = "projectionGeneration")]
+    pub projection_generation: String,
+    /// Read contexts retained by the host, independent of Store/principal
+    /// identity, by materialization ID.
     #[serde(default)]
-    pub protocol5: Option<protocol_v05::ProtocolConfig>,
+    pub materializations: BTreeMap<String, RetainedMaterialization>,
     /// Every retained model read contract, one per `(name, version)`. Absent
     /// in a hand-written config, in which case each model is retained at the
     /// schema's own version.
     #[serde(default)]
     pub models: Vec<ModelContract>,
+}
+fn first_generation() -> String {
+    "1".into()
 }
 /// One retained model read contract, as the compiler keeps it in
 /// `history/models.json`: the record structure a loader of `version` returns

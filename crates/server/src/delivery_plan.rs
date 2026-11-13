@@ -110,11 +110,7 @@ pub async fn handshake05(
     raw: &impl Host,
 ) -> Result<String> {
     let r: v05::HandshakeRequest = v05::decode(bytes).map_err(request_invalid)?;
-    let projection_generation = config
-        .protocol5
-        .as_ref()
-        .map_or("1", |p| p.projection_generation.as_str())
-        .to_owned();
+    let projection_generation = config.projection_generation.clone();
     let context = v05::RequestContext {
         protocol: v05::PROTOCOL,
         store_id: r.store_id.clone(),
@@ -144,9 +140,8 @@ struct Position {
 }
 fn context_schema<'a>(config: &'a Config, context: &v05::RequestContext) -> &'a axton_core::Schema {
     config
-        .protocol5
-        .as_ref()
-        .and_then(|p| p.materializations.get(&context.materialization))
+        .materializations
+        .get(&context.materialization)
         .map(|m| &m.schema)
         .unwrap_or(&config.schema)
 }

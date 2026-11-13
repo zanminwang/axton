@@ -6,7 +6,7 @@ The Batch path runs bounded sequential commit groups and resumes a fixed request
 
 ## 3. Context and Scope
 
-`BackendOptions.protocol5` supplies known current/retained read schemas, projection generation and `authorizeStream(principal, stream, tx)`. The server derives the read context through core's protocol-5 materialization helper, and the handshake and socket acknowledgement report its projection generation; clients take the generation only from there. Authentication identifies the principal. Mutation admission/replay and finite authority planning authorize under their Serializable transaction. Ordinary Query/Fetch validate the immutable Store binding and authorize without holding Store progress across arbitrary Handler/Loader awaits. Explicit Query tracking writes membership in its Serializable read transaction and may force a complete retry.
+`BackendOptions` supplies the retained read schemas (`materializations`), the projection generation (`projectionGeneration`) and the required `authorizeStream(principal, stream, tx)`; `createBackend` fails at startup without it. The server derives the read context through core's protocol-5 materialization helper, and the handshake and socket acknowledgement report its projection generation; clients take the generation only from there. Authentication identifies the principal. Mutation admission/replay and finite authority planning authorize under their Serializable transaction. Ordinary Query/Fetch validate the immutable Store binding and authorize without holding Store progress across arbitrary Handler/Loader awaits. Explicit Query tracking writes membership in its Serializable read transaction and may force a complete retry.
 
 The SDK carries one validated immutable request through sequential `processBatchGroup` native calls, each in one Serializable transaction. Size 1 uses `processBatchMember` instead. Rust validates the complete request, selects the trusted Mutation by name/version and normalizes its input. The caller's descriptor fingerprint is immutable intent bound by the Batch digest; it is not an equality gate against today's artifact. Compatible input widening or field reordering therefore does not refuse frozen work.
 
@@ -33,7 +33,7 @@ Fresh work authorizes and performs business work in the same Serializable transa
 
 ### Sequential commit groups
 
-`protocol5.experimentalMutationGroupSize` sets bounded groups of 1–32 members
+`experimentalMutationGroupSize` sets bounded groups of 1–32 members
 per Serializable transaction. The legacy option name is retained. If the native
 addon exports `processBatchGroup` and the adapter declares `mutationCommitGroups`,
 the default is 8; otherwise omitted configuration retains size 1. Explicit size
@@ -99,7 +99,7 @@ backend and client must be upgraded together.
 
 The socket controller advances its connection-local offered cursor only at complete units and requests another fresh cursor page while below the observed head. Reconnect starts at its new handshake head; HTTP repairs missed coverage. Live headers name the backend's active materialization. A client retaining an older descriptor must treat a foreign-context live header as a repair hint and request HTTP authority under its own context, without installing the foreign payload or advancing its cursors.
 
-Delivery is only Stream ranges: Bootstrap and Sync pull pages and live offers. There is no point fetch by key. `protocol5.materializations` lists the earlier materializations the backend still serves, for app versions still in use; a request in a materialization it does not serve is refused with `context_mismatch`. An accepted outcome records the materialization of the request it executed in, and a replay returns it as saved.
+Delivery is only Stream ranges: Bootstrap and Sync pull pages and live offers. There is no point fetch by key. `materializations` lists the earlier materializations the backend still serves, for app versions still in use; a request in a materialization it does not serve is refused with `context_mismatch`. An accepted outcome records the materialization of the request it executed in, and a replay returns it as saved.
 
 Query/Fetch use the shared `ReadRequest`/`ReadResponse` carrier and existing retained descriptor normalization, Loader state normalization and Query snapshot assembly. Records carry explicit null cursors. Query exposes explicit tracking through its authenticated Stream context, settled through Publication05 in the same read transaction. It exposes no invalidate or business-change declaration handles; storing a snapshot never implies enrollment. Repeated live tracking retains its position; a new pair receives a positive Stream position. Business refusal rolls back its read savepoint. Infrastructure failures abort the outer transaction.
 

@@ -218,14 +218,7 @@ pub async fn negotiate05(
         protocol: axton_protocols::sync::PROTOCOL,
         store_id: ack.store_id,
         stream: ack.stream,
-        materialization: crate::materialization_id05(
-            config,
-            config
-                .protocol5
-                .as_ref()
-                .map(|p| p.projection_generation.as_str())
-                .unwrap_or("1"),
-        )?,
+        materialization: crate::materialization_id05(config, &config.projection_generation)?,
     };
     Ok(Subscriptions::open05(context, ack.head, response))
 }

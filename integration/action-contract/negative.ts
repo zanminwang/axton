@@ -1,6 +1,6 @@
 import type {Call,GeneratedClient} from './client.ts';
 import type {AddTodoInput,AddTodoOutput,Todo,TodoIdentity,TodoUpdate,ProjectIdentity} from './generated.ts';
-import type {AddTodoV1Input,AddTodoHandlerOutput,StateListV1HandlerOutput,QueryContext,MutationContext,TransactionCall} from './backend.ts';
+import type {AddTodoV1Input,AddTodoHandlerOutput,StateListV1HandlerOutput,QueryContext,MutationContext,TransactionCall,Options} from './backend.ts';
 declare const client:GeneratedClient;declare const call:Call<AddTodoOutput>;declare const input:AddTodoInput;declare const todo:Todo;
 // @ts-expect-error Call has no early result
 call.result;
@@ -73,3 +73,12 @@ void [patch,identity,old,output,states];
 
 // @ts-expect-error EditMany restricts its named update slot to title
 client.mutations.editMany({todos:[{id:'t',state:'closed'}]});
+
+// Stream authorization is a required top-level backend option.
+declare const withoutAuthorization:Omit<Options<object>,'authorizeStream'>;
+// @ts-expect-error a backend without authorizeStream does not compile
+const unauthorized:Options<object>=withoutAuthorization;
+const authorized:Options<object>={...withoutAuthorization,authorizeStream:()=>true};
+// @ts-expect-error the nested protocol5 option is gone
+authorized.protocol5;
+void [unauthorized,authorized];

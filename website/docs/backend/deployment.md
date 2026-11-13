@@ -53,7 +53,7 @@ Use your own token format and verify it in `authenticate`; `devAuth` trusts the 
 
 - **Everything reaching the listener is trusted to have come through your proxy.** The runtime does not authenticate the proxy and does not read forwarded-for headers, so bind to loopback (or a private interface) and let the proxy be the only route in.
 - **Identity comes from `authenticate` alone.** The user id it returns is the owner used for every host operation in that request. Admission binds the Store to its authenticated principal and Stream; a mismatched binding answers `403 store.binding` ([Errors](api.md#errors)). Give each signed-in user their own local client database ([Authentication and account changes](../frontend/sync.md#accounts-and-cache-authority)).
-- **Authorization is application code.** Required `protocol5.authorizeStream` decides whether the principal may use the bound Stream (`403 stream.forbidden`). Handlers decide what a user may write and Loaders decide what a user may see ([What your backend owns](api.md#what-your-backend-owns)).
+- **Authorization is application code.** The required `authorizeStream` option decides whether the principal may use the bound Stream (`403 stream.forbidden`). Handlers decide what a user may write and Loaders decide what a user may see ([What your backend owns](api.md#what-your-backend-owns)).
 
 ## Verification scope
 

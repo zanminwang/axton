@@ -72,9 +72,7 @@ export async function createExample() {
       unexpected.push(error);
     },
     authenticate: devAuth(),
-    protocol5: {
-      authorizeStream: (viewer, stream) => stream === `User:${viewer}`,
-    },
+    authorizeStream: (viewer, stream) => stream === `User:${viewer}`,
     mutations,
     queries: {
       async findEntry({ ctx, args }) {

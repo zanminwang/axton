@@ -78,10 +78,8 @@ export async function host({
   const options = {
     database,
     authenticate: devAuth(),
-    protocol5: {
-      projectionGeneration,
-      authorizeStream: (owner, stream) => stream === `User:${owner}`,
-    },
+    projectionGeneration,
+    authorizeStream: (owner, stream) => stream === `User:${owner}`,
     onError: (error) => {
       errors.push(String(error));
       rawErrors.push(error);

@@ -6,7 +6,7 @@ Generated backend types connect application handlers and versioned Model Loaders
 
 ## 3. Context and Scope
 
-`createBackend` binds the generated descriptor to a database adapter, authentication, `protocol5` projection context/transaction-bound authorization, retained Mutation/Query handlers, Loaders and optional Bootstrap preparation. [Backend setup](../../../../website/docs/backend/setup.md) and [API guide](../../../../website/docs/backend/api.md) own complete examples.
+`createBackend` binds the generated descriptor to a database adapter, authentication, transaction-bound Stream authorization (`authorizeStream`), the projection context (`projectionGeneration`, `materializations`), retained Mutation/Query handlers, Loaders and optional Bootstrap preparation. [Backend setup](../../../../website/docs/backend/setup.md) and [API guide](../../../../website/docs/backend/api.md) own complete examples.
 
 | Handler/context | Capability |
 | --- | --- |

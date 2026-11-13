@@ -69,7 +69,7 @@ async function fixture(t, { autoPong = true, idleProxy = false, held } = {}) {
         },
       }),
     },
-    protocol5: { projectionGeneration: "1", authorizeStream: () => true },
+    projectionGeneration: "1", authorizeStream: () => true,
     authenticate: () => "fixture",
     loaders: {},
     onError: (error) => diagnostics.push(error),

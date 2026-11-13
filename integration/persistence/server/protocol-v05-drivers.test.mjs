@@ -127,15 +127,13 @@ for (const [name, base] of adapters)
       config,
       native,
       database,
-      protocol5: {
-        authorizeStream: async (principal, stream, tx) => {
-          assert.equal(
-            (await query(tx, "SHOW transaction_isolation"))[0]
-              .transaction_isolation,
-            "serializable",
-          );
-          return stream === `User:${principal}`;
-        },
+      authorizeStream: async (principal, stream, tx) => {
+        assert.equal(
+          (await query(tx, "SHOW transaction_isolation"))[0]
+            .transaction_isolation,
+          "serializable",
+        );
+        return stream === `User:${principal}`;
       },
       authenticate: () => "alice",
       mutations: {

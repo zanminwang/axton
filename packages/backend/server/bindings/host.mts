@@ -129,13 +129,11 @@ export function createHost<T>(
       if (req.op === "release") session.release(req.ordinal);
       if (req.op === "protocol05" && req.request.op === "admit") {
         const context = req.request.context as { stream: string };
-        result =
-          !!options.protocol5 &&
-          (await options.protocol5.authorizeStream(
-            String(req.request.owner),
-            context.stream,
-            tx,
-          ));
+        result = await options.authorizeStream(
+          String(req.request.owner),
+          context.stream,
+          tx,
+        );
       } else if (
         req.op === "protocol05" &&
         req.request.op === "handleBootstrap05"

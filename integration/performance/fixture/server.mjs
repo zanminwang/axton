@@ -27,7 +27,7 @@ export async function startFixture(connectionString, count, diagnostics, databas
     const backend = createBackend({
       native: createRequire(import.meta.url)('../../../bindings/node/axton-node.node'),
       database: databaseFactory(pool), authenticate: devAuth(), diagnostics,
-      protocol5: {experimentalMutationGroupSize:process.env.AXTON_EXPERIMENTAL_MUTATION_GROUP_SIZE===undefined?undefined:Number(process.env.AXTON_EXPERIMENTAL_MUTATION_GROUP_SIZE),authorizeStream: (principal, name) => principal === 'benchmark' && name === stream},
+      experimentalMutationGroupSize:process.env.AXTON_EXPERIMENTAL_MUTATION_GROUP_SIZE===undefined?undefined:Number(process.env.AXTON_EXPERIMENTAL_MUTATION_GROUP_SIZE),authorizeStream: (principal, name) => principal === 'benchmark' && name === stream,
       mutations: {createEntry: async ({ctx,args}) => {
         executions.set(args.entry.id, (executions.get(args.entry.id) ?? 0) + 1);
         assert.equal(ctx.userId, 'benchmark');

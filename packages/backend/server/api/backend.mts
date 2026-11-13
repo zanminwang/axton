@@ -201,20 +201,24 @@ function versioned<F>(
 export interface BackendOptions<T> {
   /** Opt-in performance records. Default: no collection or native tracing. */
   diagnostics?: AxtonDiagnostics;
-  protocol5?: {
-    /** Experimental: members per transaction (1..32). Database failure rolls back the whole group. Default 8 when native/adapter support groups, otherwise 1. */
-    experimentalMutationGroupSize?: number;
-    projectionGeneration?: string;
-    materializations?: Record<
-      string,
-      { schema: object; projectionGeneration?: string }
-    >;
-    authorizeStream(
-      principal: string,
-      stream: string,
-      tx: T,
-    ): boolean | Promise<boolean>;
-  };
+  /**
+   * Whether `principal` may use `stream`, decided in the transaction `tx`.
+   * Every Stream admission asks it; `createBackend` fails without it.
+   */
+  authorizeStream(
+    principal: string,
+    stream: string,
+    tx: T,
+  ): boolean | Promise<boolean>;
+  /** The projection generation the handshake reports. Default "1". */
+  projectionGeneration?: string;
+  /** Prior materializations still served, by materialization ID. */
+  materializations?: Record<
+    string,
+    { schema: object; projectionGeneration?: string }
+  >;
+  /** Experimental: members per transaction (1..32). Database failure rolls back the whole group. Default 8 when native/adapter support groups, otherwise 1. */
+  experimentalMutationGroupSize?: number;
   bootstrap?: (call: { ctx: QueryContext<T> }) => void | Promise<void>;
   config: object;
   database: Database<T>;
@@ -295,7 +299,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
 ) {
   const native = loadNative(options.native);
   const mutationGroupSize =
-    options.protocol5?.experimentalMutationGroupSize ??
+    options.experimentalMutationGroupSize ??
     (native.processBatchGroup && options.database.mutationCommitGroups ? 8 : 1);
   if (
     !Number.isSafeInteger(mutationGroupSize) ||
@@ -339,23 +343,16 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
   for (const key of Object.keys(options.loaders))
     if (!modelNames.some((name) => lowerFirst(name) === key))
       throw new Error(`Unknown loader ${key}: no Model ${key}`);
+  const projectionGeneration = options.projectionGeneration ?? "1";
   const config = JSON.stringify({
     ...options.config,
-    ...(options.protocol5
-      ? {
-          protocol5: {
-            projectionGeneration: options.protocol5.projectionGeneration ?? "1",
-            materializations: options.protocol5.materializations ?? {},
-          },
-        }
-      : {}),
+    projectionGeneration,
+    materializations: options.materializations ?? {},
   });
-  const materializationId = options.protocol5
-    ? native.serverMaterializationId05(
-        config,
-        options.protocol5.projectionGeneration ?? "1",
-      )
-    : undefined;
+  const materializationId = native.serverMaterializationId05(
+    config,
+    projectionGeneration,
+  );
   native.validateConfig(config);
   // Refuses Models whose generated accessors collide.
   const createEffects = effectsFor(schemaModels, descriptor.schema?.enums);
@@ -464,6 +461,12 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
         );
       }
   }
+  // Checked after the descriptor and registrations, whose errors name what
+  // to fix there.
+  if (typeof options.authorizeStream !== "function")
+    throw new Error(
+      "createBackend requires authorizeStream(principal, stream, tx)",
+    );
   const actionTable = new Map(
     (descriptor.schema?.actions ?? []).map((action) => [
       `${action.name}:${action.version}`,

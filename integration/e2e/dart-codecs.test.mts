@@ -29,9 +29,7 @@ test(
     const backend = createBackend<PgClient>({
       database: pg(pool),
       authenticate: devAuth(),
-      protocol5: {
-        authorizeStream: (owner, stream) => stream === `User:${owner}`,
-      },
+      authorizeStream: (owner, stream) => stream === `User:${owner}`,
       mutations: {
         echo: async ({ args }) => ({
           result: args.at,

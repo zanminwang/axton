@@ -183,7 +183,7 @@ test("generated backend decodes Date values and declares canonical identities th
       persistence: () => ({ call: async () => null }),
     },
     authenticate: () => "alice",
-    protocol5: { authorizeStream: () => true },
+    authorizeStream: () => true,
     mutations,
     queries,
     loaders,
@@ -357,7 +357,7 @@ test("Query handlers receive track-only capabilities and no invalidation", async
   const backend = createBackend<Tx>({
     database,
     authenticate: () => "alice",
-    protocol5: { authorizeStream: () => true },
+    authorizeStream: () => true,
     mutations: {
       ...mutationHandlers(),
       find: async ({ ctx, args }) => {
@@ -418,7 +418,7 @@ test("registration is checked per kind at startup: missing, extra and wrong-kind
     createBackend<Tx>({
       database,
       authenticate: () => "alice",
-      protocol5: { authorizeStream: () => true },
+      authorizeStream: () => true,
       mutations: mutationHandlers(),
       queries: {
         ...emptyQueries(),
@@ -540,7 +540,7 @@ test("declaration handles close when the handler or external body settles, even 
   const backend = createBackend<Tx>({
     database,
     authenticate: () => "alice",
-    protocol5: { authorizeStream: () => true },
+    authorizeStream: () => true,
     mutations: {
       ...mutationHandlers(),
       find: async ({ ctx }) => {

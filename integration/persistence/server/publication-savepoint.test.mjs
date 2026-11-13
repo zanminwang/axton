@@ -57,7 +57,7 @@ for (const [name, database] of adapters)
             native,
             database,
             authenticate: () => "alice",
-            protocol5: { authorizeStream: () => true },
+            authorizeStream: () => true,
             mutations: {
               publish: async () => ({ entry: { id: "unused" } }),
               retext: async () => ({ entry: { id: "unused" } }),
@@ -180,7 +180,7 @@ for (const [name, first] of adapters)
           native,
           database,
           authenticate: () => "alice",
-          protocol5: { authorizeStream: () => true },
+          authorizeStream: () => true,
           mutations: {
             publish: async () => ({ entry: { id: "unused" } }),
             retext: async () => ({ entry: { id: "unused" } }),

@@ -71,7 +71,7 @@ async function replay(
     calls = [];
   const backend = createBackend({
     config,
-    protocol5: { authorizeStream: () => true },
+    authorizeStream: () => true,
     authenticate: () => "alice",
     onError,
     database: {

@@ -35,9 +35,7 @@ export async function host({ projected = false } = {}) {
   const backend = createBackend<PgClient>({
     database: lifecycle.database,
     authenticate: devAuth(),
-    protocol5: {
-      authorizeStream: (owner, stream) => stream === `User:${owner}`,
-    },
+    authorizeStream: (owner, stream) => stream === `User:${owner}`,
     onError(error) {
       const message = error instanceof Error ? error.message : String(error);
       if (

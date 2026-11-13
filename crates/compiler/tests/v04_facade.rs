@@ -99,14 +99,15 @@ fn dart_retained_slot_helpers_do_not_emit_unused_private_aliases() {
 }
 
 #[test]
-fn generated_backend_requires_protocol5_without_protocol4_identity() {
+fn generated_backend_options_take_authorize_stream_at_the_top_level() {
     let output = axton_compiler::backend_typescript(&compile(SCHEMA).unwrap(), "@axtonjs/server");
-    assert!(
-        output.contains("protocol5: NonNullable<BackendOptions<Tx>[\"protocol5\"]>"),
-        "new backend lacks required protocol5 authority configuration"
-    );
-    assert!(
-        !output.contains("protocol4: NonNullable<BackendOptions<Tx>[\"protocol4\"]>"),
-        "new generated backend requires retired public identity/config"
-    );
+    let options = output
+        .lines()
+        .find(|line| line.starts_with("export type Options<Tx>"))
+        .expect("generated Options");
+    // `authorizeStream` is required on `BackendOptions`; the generated
+    // options keep it by not omitting it.
+    assert!(!options.contains("authorizeStream"), "{options}");
+    assert!(!options.contains("protocol5"), "{options}");
+    assert!(!options.contains("protocol4"), "{options}");
 }

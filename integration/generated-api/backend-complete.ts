@@ -19,6 +19,8 @@ export const loaders: Loaders<Tx> = {
   // A composite identity keeps every component, DateTime included.
   async placement({ ids }) { return ids.map((id) => ({ ...id, label: id.at.toISOString() })); },
 };
+/** A native entry point this check never reaches. */
+const unreached = async (): Promise<string> => { throw new Error("not reached by this check"); };
 export const backend = createBackend<Tx>({
   database: { transaction: async (body) => body({ rows: new Map() }), persistence: () => ({ call: async () => null }) },
   authenticate: devAuth(),
@@ -26,7 +28,7 @@ export const backend = createBackend<Tx>({
   mutations,
   queries: {readEntry: async () => ({entry:null})},
   loaders,
-  native: { validateConfig() {}, serverMaterializationId05: () => 'test-materialization', negotiateLive: async () => '', liveEvent: () => '[]', liveClose() {} },
+  native: { validateConfig() {}, serverMaterializationId05: () => 'test-materialization', processLive05: unreached, processDelivery05: unreached, processRead05: unreached, handshake05: unreached, settleExternal05: unreached, negotiateLive: async () => '', liveEvent: () => '[]', liveClose() {} },
 });
 // An external write declares through the same handles and answers its own value.
 export const external: Promise<number> = backend.transaction(async ({ tx, streams: scope, invalidate: touch }) => { tx.rows.set("b", {}); touch.book({ id: "b" }); scope(["c"]).track.book({ id: "b" }); return tx.rows.size; });

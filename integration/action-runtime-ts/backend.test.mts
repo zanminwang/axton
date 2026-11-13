@@ -15,6 +15,10 @@ import {
 } from "./backend.ts";
 import type { Todo } from "./generated.ts";
 import type { StreamIntent } from "../../packages/backend/server/bindings/host-contract.mts";
+/** A native entry point these tests never reach. */
+const unreached = async (): Promise<string> => {
+  throw new Error("not reached by this test");
+};
 
 test("generated backend decodes Date values and declares canonical identities through its handles", async () => {
   const first = "2026-01-01T00:00:00.000Z";
@@ -83,6 +87,9 @@ test("generated backend decodes Date values and declares canonical identities th
   };
   const native = {
     validateConfig() {},
+    processLive05: unreached,
+    processDelivery05: unreached,
+    handshake05: unreached,
     serverMaterializationId05() {
       return "fixture-materialization";
     },
@@ -234,6 +241,9 @@ type Tx = { rows: Map<string, Todo> };
 function nativeHost(requests: object[], answers: unknown[]) {
   return {
     validateConfig() {},
+    processLive05: unreached,
+    processDelivery05: unreached,
+    handshake05: unreached,
     serverMaterializationId05() {
       return "fixture-materialization";
     },

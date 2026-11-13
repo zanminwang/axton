@@ -11,7 +11,6 @@ impl<S: ClientStore> Client<S> {
     /// Explicitly retire all local state under the same physical-file lease.
     /// A new Store ID prevents reused Batch counters from aliasing cloud dedup.
     pub fn reset_store05(&mut self, discard_pending: bool) -> Result<ResetStoreReport05> {
-        self.request_context05()?;
         if self.session.is_some() {
             return Err(invalid("client transaction active"));
         }
@@ -36,7 +35,6 @@ impl<S: ClientStore> Client<S> {
             Ok(ResetStoreReport05{context:e.context05()?,abandoned_calls})
         })?;
         self.client_id = report.context.store_id.clone();
-        self.context05 = Some(report.context.clone());
         Ok(report)
     }
 }

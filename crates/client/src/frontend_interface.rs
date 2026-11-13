@@ -94,7 +94,6 @@ struct SessionSavepoint {
 
 pub struct Client<S: ClientStore> {
     pub(crate) store: S,
-    pub(crate) context05: Option<v05::RequestContext>,
     pub(crate) schema: Schema,
     pub(crate) client_id: String,
     pub(crate) generation: u64,

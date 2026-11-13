@@ -361,7 +361,6 @@ impl<S: ClientStore> Engine<'_, S> {
 }
 impl<S: ClientStore> Client<S> {
     pub fn freeze_batch05(&mut self) -> Result<Option<v05::MutationRequest>> {
-        self.request_context05()?;
         self.write(|e| e.freeze05())
     }
 }

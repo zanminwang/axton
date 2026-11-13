@@ -403,11 +403,9 @@ impl<S: ClientStore> Engine<'_, S> {
 }
 impl<S: ClientStore> Client<S> {
     pub fn acknowledge_batch05(&mut self, ack: &v05::BatchAcknowledgement) -> Result<ApplyReport> {
-        self.request_context05()?;
         self.write(|e| e.acknowledge05(ack))
     }
     pub fn settle_ready05(&mut self) -> Result<ApplyReport> {
-        self.request_context05()?;
         self.write(|e| {
             let mut held = Held::new();
             let completions = e.reconcile_ready05(&mut held)?;
@@ -674,7 +672,6 @@ impl<S: ClientStore> Client<S> {
         records: &[v05::ReadRecord],
         store: bool,
     ) -> Result<ApplyReport> {
-        self.request_context05()?;
         self.write(|e| {
             let mut held = Held::new();
             let applied = e.stage_cache05(records, store, &mut held)?;
@@ -687,7 +684,6 @@ impl<S: ClientStore> Client<S> {
         })
     }
     pub fn record_evidence05(&mut self, key: &RecordKey) -> Result<evidence::RecordEvidence> {
-        self.request_context05()?;
         self.view(|e| e.evidence05(key))
     }
 }
@@ -731,7 +727,6 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
 }
 impl<S: ClientStore> Client<S> {
     pub fn mutation_result05(&mut self, id: u64) -> Result<Option<v05::MutationResult>> {
-        self.request_context05()?;
         self.view(|e| {
             if e.scalar(
                 "SELECT reconciled FROM axton_mutation_queue WHERE id=?",

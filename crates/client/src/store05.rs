@@ -244,15 +244,14 @@ impl<S: ClientStore> Client<S> {
                 engine.clear_delivery_staging05()?;
             }
             let rows = store
-                .query("SELECT id,generation,materialization FROM axton_store", &[])?
+                .query("SELECT id,generation FROM axton_store", &[])?
                 .rows;
             Ok::<_, axton_core::Error>((
                 rows[0][0].as_str().unwrap().to_owned(),
                 as_u64(&rows[0][1])?,
-                rows[0][2].as_str().unwrap().to_owned(),
             ))
         })();
-        let (client_id, generation, materialization) = match opened {
+        let (client_id, generation) = match opened {
             Ok(v) => v,
             Err(e) => {
                 store.rollback()?;
@@ -263,15 +262,8 @@ impl<S: ClientStore> Client<S> {
             let _ = store.rollback();
             return Err(e);
         }
-        let context05 = Some(v05::RequestContext {
-            protocol: v05::PROTOCOL,
-            store_id: client_id.clone(),
-            stream: stream.into(),
-            materialization,
-        });
         Ok(Self {
             store,
-            context05,
             schema,
             client_id,
             generation,
@@ -285,9 +277,6 @@ impl<S: ClientStore> Client<S> {
         })
     }
     pub fn request_context05(&mut self) -> Result<v05::RequestContext> {
-        if self.context05.is_none() {
-            return Err(invalid("protocol05 Store required"));
-        }
         self.view(|e| e.context05())
     }
     pub fn store_status05(&mut self) -> Result<StoreStatus05> {

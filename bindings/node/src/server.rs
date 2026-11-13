@@ -122,7 +122,7 @@ pub fn live_event(handle: i64, event_json: String) -> Result<String> {
             .ok()
             .and_then(|handle| sessions.open.get_mut(&handle))
             .ok_or_else(|| live_invalid("live session handle is not open"))?;
-        subscriptions.handle_stream(event).map_err(reason)?
+        subscriptions.handle(event).map_err(reason)?
     };
     serde_json::to_string(&actions).map_err(internal)
 }

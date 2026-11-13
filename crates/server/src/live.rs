@@ -58,8 +58,7 @@ struct Live05Progress {
 /// observed during the pull, queues the next pull.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Subscriptions {
-    #[serde(default)]
-    context05: Option<axton_protocols::sync::RequestContext>,
+    context05: axton_protocols::sync::RequestContext,
     #[serde(default)]
     progress05: Option<Live05Progress>,
     streams: Vec<StreamState>,
@@ -94,7 +93,7 @@ impl Subscriptions {
                 }],
                 running: Some(BTreeMap::from([(stream.clone(), head)])),
                 closed: false,
-                context05: Some(context),
+                context05: context,
                 progress05: None,
             },
             vec![
@@ -104,12 +103,12 @@ impl Subscriptions {
             ],
         )
     }
-    fn handle05(&mut self, event: LiveEvent) -> Result<Vec<LiveAction>> {
+    pub fn handle(&mut self, event: LiveEvent) -> Result<Vec<LiveAction>> {
         use axton_protocols::sync as v05;
         if self.closed {
             return Ok(vec![]);
         }
-        let context = self.context05.clone().unwrap();
+        let context = self.context05.clone();
         match event {
             LiveEvent::Closed => {
                 self.closed = true;
@@ -185,7 +184,7 @@ impl Subscriptions {
                     self.progress05 = None;
                     self.running = None;
                     if self.streams[0].pending || more {
-                        actions.extend(self.handle05(LiveEvent::Committed {
+                        actions.extend(self.handle(LiveEvent::Committed {
                             stream: context.stream,
                         })?);
                     }
@@ -204,12 +203,6 @@ impl Subscriptions {
                     format!("stream {stream} is not subscribed"),
                 )
             })
-    }
-    pub fn handle(&mut self, event: LiveEvent) -> Result<Vec<LiveAction>> {
-        self.handle05(event)
-    }
-    pub fn handle_stream(&mut self, event: LiveEvent) -> Result<Vec<LiveAction>> {
-        self.handle05(event)
     }
 }
 pub async fn negotiate05(

@@ -28,6 +28,48 @@ fn open_creates_tables_persists_identity_and_survives_reopen() {
     assert_eq!(table_count(&mut c, "axton_before_Entry"), 0);
 }
 
+// The values were read from the file when the fixture was written.
+#[test]
+fn a_store_file_written_at_bd46f42_opens_with_its_identity_and_queue() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(include_str!("fixtures/store-bd46f42.sql"))
+        .unwrap();
+    let mut c = Client::open05(
+        SqliteStore::open(&path).unwrap(),
+        upgrade_schema(false, false),
+        "User:u",
+    )
+    .unwrap();
+    let status = c.store_status05().unwrap();
+    assert_eq!(
+        status.context.store_id,
+        "a9cb71da-103e-4504-9ac6-f12d24553729"
+    );
+    assert_eq!(
+        status.context.materialization,
+        "8a54842495b7185c43e9003904a38e683d44432bc78857f705cd378249b36c76"
+    );
+    assert_eq!(
+        (status.start_cursor, status.bootstrap_cursor, status.cursor),
+        (Some(25), Some(25), Some(40))
+    );
+    assert_eq!(c.pending_count().unwrap(), 1);
+    let batch = c.freeze_batch05().unwrap().unwrap();
+    assert_eq!(
+        serde_json::to_value(&batch).unwrap(),
+        json!({"protocol":6,"storeId":"a9cb71da-103e-4504-9ac6-f12d24553729","stream":"User:u",
+            "materialization":"8a54842495b7185c43e9003904a38e683d44432bc78857f705cd378249b36c76",
+            "batchId":1,"digest":"4c50a5ee7384d7b444bf50b9c7d218305c3013e0cc8aea3f5294ae2246447a7d",
+            "mutations":[{"id":1,"name":"Edit","version":1,
+                "descriptor":"4a5d7adaf42ff0152ba8e2058f4beb17579df1ac6f9f331c1e98235f25f61bf9",
+                "operations":[{"step":0,"inputPath":"note","operation":"update","model":"Note",
+                    "identity":{"id":"n"},"value":{"text":"queued"}}]}]})
+    );
+}
+
 #[test]
 fn local_transaction_and_mutation_savepoint_have_independent_fate() {
     let dir = tempfile::tempdir().unwrap();

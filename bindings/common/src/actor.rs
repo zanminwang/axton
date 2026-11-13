@@ -392,11 +392,6 @@ fn open_runtime(request: &Value) -> axton_client::Result<ClientRuntime<SqliteSto
     let path = request["path"]
         .as_str()
         .ok_or_else(|| axton_client::invalid("path must be string"))?;
-    if request.get("storeHooks").is_some() {
-        return Err(axton_client::invalid(
-            "storeHooks are not supported in protocol5",
-        ));
-    }
     let stream = request["stream"]
         .as_str()
         .ok_or_else(|| axton_client::invalid("stream must be string"))?;

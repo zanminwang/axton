@@ -1,6 +1,5 @@
-use axton_client::{Client, ClientStore, Schema};
+use axton_client::{Client, Schema};
 use axton_sqlite::SqliteStore;
-use serde_json::json;
 
 fn locks() {
     static INIT: std::sync::Once = std::sync::Once::new();
@@ -23,24 +22,14 @@ fn reopen_keeps_context_and_rejects_stream_rebinding_before_schema_changes() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");
     let mut client = Client::open05(
-        SqliteStore::open_exclusive(&path).unwrap(),
+        SqliteStore::open_exclusive05(&path, "User:alice").unwrap(),
         schema(),
         "User:alice",
     )
     .unwrap();
     let context = client.request_context05().unwrap().clone();
     drop(client);
-    let mut changed = serde_json::to_value(schema()).unwrap();
-    changed["models"][0]["fields"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"name":"newColumn","nullable":true,"type":{"kind":"scalar","name":"string"}}));
-    let changed = Schema::from_value(changed).unwrap();
-    let failed = Client::open05(
-        SqliteStore::open_exclusive(&path).unwrap(),
-        changed,
-        "User:bob",
-    );
+    let failed = SqliteStore::open_exclusive05(&path, "User:bob");
     assert!(
         failed
             .err()
@@ -48,17 +37,8 @@ fn reopen_keeps_context_and_rejects_stream_rebinding_before_schema_changes() {
             .to_string()
             .contains("Stream mismatch")
     );
-    let mut raw = SqliteStore::open_exclusive(&path).unwrap();
-    assert!(
-        !raw.query("PRAGMA table_info(Entry)", &[])
-            .unwrap()
-            .rows
-            .iter()
-            .any(|r| r[1] == "newColumn")
-    );
-    drop(raw);
     let mut reopened = Client::open05(
-        SqliteStore::open_exclusive(&path).unwrap(),
+        SqliteStore::open_exclusive05(&path, "User:alice").unwrap(),
         schema(),
         "User:alice",
     )
@@ -70,9 +50,9 @@ fn exclusive_store_rejects_another_open_of_the_same_physical_file() {
     locks();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");
-    let first = SqliteStore::open_exclusive(&path).unwrap();
+    let first = SqliteStore::open_exclusive05(&path, "User:a").unwrap();
     assert!(
-        SqliteStore::open_exclusive(&path)
+        SqliteStore::open_exclusive05(&path, "User:a")
             .err()
             .unwrap()
             .to_string()
@@ -83,7 +63,7 @@ fn exclusive_store_rejects_another_open_of_the_same_physical_file() {
         let alias = dir.path().join("alias");
         std::os::unix::fs::symlink(&path, &alias).unwrap();
         assert!(
-            SqliteStore::open_exclusive(&alias)
+            SqliteStore::open_exclusive05(&alias, "User:a")
                 .err()
                 .unwrap()
                 .to_string()
@@ -92,7 +72,7 @@ fn exclusive_store_rejects_another_open_of_the_same_physical_file() {
         let hard = dir.path().join("hard");
         std::fs::hard_link(&path, &hard).unwrap();
         assert!(
-            SqliteStore::open_exclusive(&hard)
+            SqliteStore::open_exclusive05(&hard, "User:a")
                 .err()
                 .unwrap()
                 .to_string()
@@ -100,14 +80,14 @@ fn exclusive_store_rejects_another_open_of_the_same_physical_file() {
         );
     }
     drop(first);
-    SqliteStore::open_exclusive(&path).unwrap();
+    SqliteStore::open_exclusive05(&path, "User:a").unwrap();
 }
 #[test]
 fn exclusive_lock_is_held_across_processes() {
     locks();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");
-    let _first = SqliteStore::open_exclusive(&path).unwrap();
+    let _first = SqliteStore::open_exclusive05(&path, "User:a").unwrap();
     let status = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--ignored",
@@ -127,7 +107,7 @@ fn exclusive_lock_child() {
     locks();
     let path = std::env::var_os("AXTON_LOCK_TEST_PATH").expect("parent supplies database path");
     assert!(
-        SqliteStore::open_exclusive(path)
+        SqliteStore::open_exclusive05(path, "User:a")
             .err()
             .unwrap()
             .to_string()
@@ -150,7 +130,7 @@ fn exclusive_owner_close_releases_lock_while_preexec_child_retains_descriptors()
     locks();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");
-    let first = SqliteStore::open_exclusive(&path).unwrap();
+    let first = SqliteStore::open_exclusive05(&path, "User:a").unwrap();
     let mut ready = [0; 2];
     let mut release = [0; 2];
     assert_eq!(unsafe { pipe(ready.as_mut_ptr()) }, 0);
@@ -180,7 +160,7 @@ fn exclusive_owner_close_releases_lock_while_preexec_child_retains_descriptors()
     let mut byte = 0_u8;
     let child_ready = unsafe { read(ready[0], &mut byte, 1) };
     drop(first);
-    let reopened = SqliteStore::open_exclusive(&path);
+    let reopened = SqliteStore::open_exclusive05(&path, "User:a");
 
     // Always release/reap before asserting the reopen outcome, including the
     // red case. A test failure must not leave the inherited child lock alive.
@@ -197,7 +177,7 @@ fn exclusive_owner_close_releases_lock_while_preexec_child_retains_descriptors()
     assert_eq!(status, 0);
     let second = reopened.expect("closed owner must release ownership before child exec/exit");
     assert!(
-        SqliteStore::open_exclusive(&path)
+        SqliteStore::open_exclusive05(&path, "User:a")
             .err()
             .unwrap()
             .to_string()
@@ -205,5 +185,5 @@ fn exclusive_owner_close_releases_lock_while_preexec_child_retains_descriptors()
         "explicit owner release must preserve exclusivity of the new Store"
     );
     drop(second);
-    SqliteStore::open_exclusive(&path).unwrap();
+    SqliteStore::open_exclusive05(&path, "User:a").unwrap();
 }

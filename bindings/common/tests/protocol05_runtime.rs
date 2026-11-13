@@ -1150,11 +1150,15 @@ fn failed_initial_status_closes_runtime_and_releases_store() {
     );
     let naturally_closed = actor::wait_closed(id, Duration::from_secs(1));
     events.extend(actor::drain(id));
-    // Test the physical lease independently of rejecting the corrupt counter.
-    let lease_result = axton_sqlite::SqliteStore::open_exclusive(&path)
+    // The admitting open also refuses the corrupt counter; the lease is free
+    // when that open fails for any reason but `store_in_use`.
+    let lease_result = axton_sqlite::SqliteStore::open_exclusive05(&path, "User:u")
         .map(|_| ())
         .map_err(|e| e.to_string());
-    let lease_released = lease_result.is_ok();
+    let lease_released = lease_result
+        .as_ref()
+        .err()
+        .is_none_or(|e| !e.contains("store_in_use"));
     actor::detach(id);
     let detached_closed = actor::wait_closed(id, Duration::from_secs(1));
     assert!(
@@ -1211,8 +1215,14 @@ fn startup_failure_closes_runtime_and_releases_store() {
         1,
         "{fault}: {events:?}"
     );
+    // The admitting open refuses the corrupt counter; only `store_in_use`
+    // would mean the failed startup kept the lease.
+    let reopened = axton_sqlite::SqliteStore::open_exclusive05(&path, "User:u");
     assert!(
-        axton_sqlite::SqliteStore::open_exclusive(&path).is_ok(),
+        reopened
+            .as_ref()
+            .err()
+            .is_none_or(|e| !e.to_string().contains("store_in_use")),
         "{fault}: retained lease"
     );
     actor::detach(id);

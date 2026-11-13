@@ -27,8 +27,8 @@ fn native_host_fixes_one_durable_application_directory_before_any_store_open() {
     );
     unsafe { axton_binding::ffi::free(error) };
     let db = directory.path().join("db");
-    let first = axton_sqlite::SqliteStore::open_exclusive(&db).unwrap();
-    assert!(axton_sqlite::SqliteStore::open_exclusive(&db).is_err());
+    let first = axton_sqlite::SqliteStore::open_exclusive05(&db, "User:u").unwrap();
+    assert!(axton_sqlite::SqliteStore::open_exclusive05(&db, "User:u").is_err());
     drop(first);
     let locks = directory.path().join("axton-store-locks");
     assert_eq!(std::fs::read_dir(locks).unwrap().count(), 1);

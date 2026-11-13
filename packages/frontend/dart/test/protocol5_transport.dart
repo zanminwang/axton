@@ -7,11 +7,11 @@ import 'package:axton/axton.dart';
 import 'package:crypto/crypto.dart';
 import 'store_fixture.dart';
 
-Map<String, Object?> context05(Map body) => {
+Map<String, Object?> contextOf(Map body) => {
   for (final key in ['protocol', 'storeId', 'stream', 'materialization'])
     key: body[key],
 };
-String _hash05(String domain, Object value) => sha256.convert([
+String _domainHash(String domain, Object value) => sha256.convert([
   ...utf8.encode(domain),
   0,
   ...utf8.encode(_canonical(value)),
@@ -23,7 +23,7 @@ Map<String, Object?> emptyHandshake(Map body) => {
   'head': 0,
   'projectionGeneration': '1',
 };
-Map<String, Object?> delivery05(Map body, [List<Object?> changes = const []]) {
+Map<String, Object?> deliveryPage(Map body, [List<Object?> changes = const []]) {
   final unit = {'index': 0, 'through': body['through'], 'changes': changes};
   final manifest = {
     'through': body['through'],
@@ -32,9 +32,9 @@ Map<String, Object?> delivery05(Map body, [List<Object?> changes = const []]) {
         : changes
               .map((c) => (c as Map)['cursor'] as int)
               .reduce((a, b) => a < b ? a : b),
-    'digest': _hash05('axton:delivery-unit:5', unit),
+    'digest': _domainHash('axton:delivery-unit:5', unit),
     'parts': [
-      _hash05('axton:delivery-part:5', {
+      _domainHash('axton:delivery-part:5', {
         'unit': 0,
         'part': 0,
         'changes': changes,
@@ -42,7 +42,7 @@ Map<String, Object?> delivery05(Map body, [List<Object?> changes = const []]) {
     ],
   };
   final header = <String, Object?>{
-    ...context05(body),
+    ...contextOf(body),
     'planId': 'transport-${body['storeId']}',
     'bootstrap': body['bootstrap'],
     'after': body['after'],
@@ -51,7 +51,7 @@ Map<String, Object?> delivery05(Map body, [List<Object?> changes = const []]) {
     'expiresAt': DateTime.now().millisecondsSinceEpoch + 300000,
     'units': [manifest],
   };
-  header['digest'] = _hash05('axton:delivery-plan:5', header);
+  header['digest'] = _domainHash('axton:delivery-plan:5', header);
   return {
     'header': header,
     'parts': [
@@ -66,19 +66,19 @@ Map<String, Object?> delivery05(Map body, [List<Object?> changes = const []]) {
   };
 }
 
-Map<String, Object?> read05(Map body, Object? result, List<Object?> records) =>
+Map<String, Object?> readResponse(Map body, Object? result, List<Object?> records) =>
     {
-      ...context05(body),
+      ...contextOf(body),
       'requestId': body['requestId'],
       'outcome': {'kind': 'succeeded', 'result': result},
       'records': records,
     };
 
 Map<String, Object?> emptyPull(Map body) => body.containsKey('materialization')
-    ? delivery05(body)
+    ? deliveryPage(body)
     : emptyHandshake(body);
 
-Map<String, Object?> emptyRead(Map body) => read05(
+Map<String, Object?> emptyRead(Map body) => readResponse(
   body,
   null,
   body['invocation']['kind'] == 'fetch'
@@ -98,7 +98,7 @@ String _canonical(Object? value) {
 }
 
 Map<String, Object?> emptyMutation(Map body) => {
-  ...context05(body),
+  ...contextOf(body),
   'batchId': body['batchId'],
   'digest': body['digest'],
   'results': [
@@ -174,7 +174,7 @@ Future<void> deliverRecords(
     request.response.write(
       jsonEncode(switch (request.uri.path) {
         '/sync/handshake' => handshake(body),
-        '/sync/pull' => delivery05(body, [
+        '/sync/pull' => deliveryPage(body, [
           for (final change in changes)
             if ((change['cursor'] as int) > (body['after'] as int) &&
                 (change['cursor'] as int) <= (body['through'] as int))

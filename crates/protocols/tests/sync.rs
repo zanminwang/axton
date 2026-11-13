@@ -10,7 +10,7 @@ fn ctx() -> RequestContext {
     }
 }
 fn request() -> MutationRequest {
-    let mut request: MutationRequest = serde_json::from_value(wire(json!({
+    let mut request: MutationRequest = serde_json::from_value(wire_form(json!({
         "context":ctx(), "batchId":1,"digest":"", "mutations":[{
             "id":1,"name":"Write","version":1,"descriptor":"retained1","operations":[
                 {"step":0,"inputPath":"text","operation":"argument","model":null,"identity":null,"value":"hello"},
@@ -21,11 +21,11 @@ fn request() -> MutationRequest {
     request
 }
 fn ack(request: &MutationRequest) -> BatchAcknowledgement {
-    serde_json::from_value(wire(json!({"context":request.context,"batchId":1,"digest":request.digest,"results":[
+    serde_json::from_value(wire_form(json!({"context":request.context,"batchId":1,"digest":request.digest,"results":[
         {"mutationId":1,"outcome":{"kind":"accepted","syncCursor":0,"materialization":"schema1","result":{"appOpaque":[1,null]},"targets":[]}}
     ]}))).unwrap()
 }
-fn wire(mut value: Value) -> Value {
+fn wire_form(mut value: Value) -> Value {
     if let Some(context) = value.as_object_mut().unwrap().remove("context") {
         value
             .as_object_mut()
@@ -147,13 +147,13 @@ fn exact_ack_and_owned_target_envelopes() {
         };
         rejects::<SettlementTarget>(bad);
     }
-    rejects::<BatchAcknowledgement>(wire(
+    rejects::<BatchAcknowledgement>(wire_form(
         json!({"context":ctx(),"batchId":1,"digest":request.digest,"results":[{"mutationId":1,"outcome":{"kind":"accepted","syncCursor":0,"materialization":"schema1","result":null,"targets":[],"extra":true}}]}),
     ));
-    rejects::<BatchAcknowledgement>(wire(
+    rejects::<BatchAcknowledgement>(wire_form(
         json!({"context":ctx(),"batchId":1,"digest":request.digest,"results":[{"mutationId":1,"outcome":{"kind":"accepted","syncCursor":0,"result":null,"targets":[]}}]}),
     ));
-    rejects::<BatchAcknowledgement>(wire(
+    rejects::<BatchAcknowledgement>(wire_form(
         json!({"context":ctx(),"batchId":1,"digest":request.digest,"results":[{"mutationId":1,"outcome":{"kind":"accepted","syncCursor":0,"materialization":"","result":null,"targets":[]}}]}),
     ));
 }
@@ -180,7 +180,7 @@ fn a14_operations_preserve_null_empty_omitted_order_and_retained_descriptor() {
 }
 #[test]
 fn strict_read_and_delta_context() {
-    let read = wire(
+    let read = wire_form(
         json!({"context":ctx(),"requestId":"read1","outcome":{"kind":"succeeded","result":{"arbitrary":true}},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":null}]}),
     );
     let response = decode::<ReadResponse>(&serde_json::to_vec(&read).unwrap()).unwrap();
@@ -191,7 +191,7 @@ fn strict_read_and_delta_context() {
     let mut bad = read;
     bad["records"][0]["key"]["unknown"] = json!(true);
     rejects::<ReadResponse>(bad);
-    let value = wire(json!({"context":ctx(),"after":0,"through":40,"bootstrap":true}));
+    let value = wire_form(json!({"context":ctx(),"after":0,"through":40,"bootstrap":true}));
     let delta = decode::<DeltaRequest>(&serde_json::to_vec(&value).unwrap()).unwrap();
     assert_eq!(delta.after, 0);
     let mut bad = value;
@@ -331,7 +331,7 @@ fn malformed_coverage_and_rangeless_headers_are_rejected() {
 }
 #[test]
 fn read_completions_require_definitive_outcome_and_empty_error_records() {
-    let error = wire(
+    let error = wire_form(
         json!({"context":ctx(),"requestId":"q","outcome":{"kind":"failed","code":"query.not_allowed","message":null},"records":[]}),
     );
     assert!(decode::<ReadResponse>(&serde_json::to_vec(&error).unwrap()).is_ok());
@@ -370,7 +370,7 @@ fn handshake_and_reads_correlate_store_stream_request_and_modes() {
     let mut other = response.clone();
     other.stream = "User:b".into();
     assert!(other.admit(&request).is_err());
-    let mut value = wire(
+    let mut value = wire_form(
         json!({"context":ctx(),"requestId":"fetch1","invocation":{"kind":"fetch","key":{"model":"Entry","identity":{"id":"e"}},"version":1}}),
     );
     let default = decode::<ReadRequest>(&serde_json::to_vec(&value).unwrap()).unwrap();
@@ -383,7 +383,7 @@ fn handshake_and_reads_correlate_store_stream_request_and_modes() {
     value["store"] = json!(false);
     let snapshot = decode::<ReadRequest>(&serde_json::to_vec(&value).unwrap()).unwrap();
     assert!(!snapshot.store);
-    let response=decode::<ReadResponse>(&serde_json::to_vec(&wire(json!({"context":ctx(),"requestId":"fetch1","outcome":{"kind":"succeeded","result":{"id":"e","text":"a"}},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"a"}}]}))).unwrap()).unwrap();
+    let response=decode::<ReadResponse>(&serde_json::to_vec(&wire_form(json!({"context":ctx(),"requestId":"fetch1","outcome":{"kind":"succeeded","result":{"id":"e","text":"a"}},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"a"}}]}))).unwrap()).unwrap();
     response.admit(&snapshot, &ctx()).unwrap();
     let mut wrong = response.clone();
     wrong.request_id = "other".into();
@@ -396,7 +396,7 @@ fn handshake_and_reads_correlate_store_stream_request_and_modes() {
     value["invocation"]["extra"] = json!(true);
     rejects::<ReadRequest>(value);
     let delta = decode::<DeltaRequest>(
-        &serde_json::to_vec(&wire(json!({"context":ctx(),"after":0,"through":4}))).unwrap(),
+        &serde_json::to_vec(&wire_form(json!({"context":ctx(),"after":0,"through":4}))).unwrap(),
     )
     .unwrap();
     assert!(!delta.bootstrap);

@@ -134,9 +134,9 @@ void main() {
       http.response.write(
         jsonEncode(
           failure == null
-              ? read05(request, result, records)
+              ? readResponse(request, result, records)
               : {
-                  ...context05(request),
+                  ...contextOf(request),
                   'requestId': request['requestId'],
                   'outcome': {
                     'kind': 'failed',

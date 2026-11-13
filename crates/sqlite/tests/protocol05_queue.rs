@@ -848,7 +848,7 @@ fn note(id: &str) -> axton_client::RecordKey {
         identity: json!({"id":id}),
     }
 }
-fn wire(model: &str, id: &str) -> v05::RecordKey {
+fn wire_key(model: &str, id: &str) -> v05::RecordKey {
     v05::RecordKey {
         model: model.into(),
         identity: json!({"id":id}),
@@ -868,7 +868,7 @@ fn an_upgrade_keeps_every_row_and_the_queue_and_freezes_at_once() {
     let old = c.request_context05().unwrap();
     c.install_cache05(
         &[v05::ReadRecord {
-            key: wire("Note", "cached"),
+            key: wire_key("Note", "cached"),
             cursor: (),
             state: json!({"text":"cached","blob":null}),
         }],
@@ -879,17 +879,17 @@ fn an_upgrade_keeps_every_row_and_the_queue_and_freezes_at_once() {
         &old,
         &[
             v05::AuthorityChange::Record {
-                key: wire("Marked", "m"),
+                key: wire_key("Marked", "m"),
                 cursor: 3,
                 state: json!({"text":"marked"}),
             },
             v05::AuthorityChange::Record {
-                key: wire("Note", "stream"),
+                key: wire_key("Note", "stream"),
                 cursor: 4,
                 state: json!({"text":"stream","blob":null}),
             },
             v05::AuthorityChange::Record {
-                key: wire("Note", "dirty"),
+                key: wire_key("Note", "dirty"),
                 cursor: 5,
                 state: json!({"text":"old base","blob":null}),
             },
@@ -975,10 +975,10 @@ fn an_upgrade_keeps_every_row_and_the_queue_and_freezes_at_once() {
                 materialization: resent.context.materialization.clone(),
                 result: Value::Null,
                 targets: vec![v05::SettlementTarget::Stream {
-                    key: wire("Note", "receipt"),
+                    key: wire_key("Note", "receipt"),
                     cursor: 6,
                     fallback: v05::ReadRecord {
-                        key: wire("Note", "receipt"),
+                        key: wire_key("Note", "receipt"),
                         cursor: (),
                         state: json!({"text":"receipt","blob":null,"label":null}),
                     },
@@ -1216,7 +1216,7 @@ fn stream(c: &mut Client<SqliteStore>, model: &str, id: &str, cursor: u64, title
     c.install_authority05(
         &context,
         &[v05::AuthorityChange::Record {
-            key: wire(model, id),
+            key: wire_key(model, id),
             cursor,
             state: json!({ "title": title }),
         }],
@@ -1257,7 +1257,7 @@ fn replay_skips_an_operation_on_a_model_that_is_not_shared_and_marks_the_mutatio
 fn private(model: &str, id: &str, title: &str) -> v05::SettlementTarget {
     v05::SettlementTarget::Private {
         record: v05::ReadRecord {
-            key: wire(model, id),
+            key: wire_key(model, id),
             cursor: (),
             state: json!({ "title": title }),
         },
@@ -1343,10 +1343,10 @@ fn settlement_neither_awaits_nor_installs_a_target_that_is_not_shared() {
                 result: Value::Null,
                 targets: vec![
                     v05::SettlementTarget::Stream {
-                        key: wire("A", "a"),
+                        key: wire_key("A", "a"),
                         cursor: 5,
                         fallback: v05::ReadRecord {
-                            key: wire("A", "a"),
+                            key: wire_key("A", "a"),
                             cursor: (),
                             state: json!({"title":"A5"}),
                         },

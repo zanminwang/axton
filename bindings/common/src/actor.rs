@@ -34,7 +34,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::hash::{BuildHasher, RandomState};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -297,11 +297,7 @@ pub fn open(request: Value, wake: WakeSink) -> std::result::Result<u64, String> 
         .name(format!("axton-runtime-{id}"))
         .spawn(move || {
             let _alive = alive;
-            if request["protocol"] == 5 {
-                run05(request_id, request, receiver, sender, outbox)
-            } else {
-                run(request_id, request, receiver, outbox)
-            }
+            run05(request_id, request, receiver, sender, outbox)
         });
     if let Err(e) = spawned {
         // The closure, and `alive` with it, was dropped: the id is not running.
@@ -396,27 +392,24 @@ fn open_runtime(request: &Value) -> axton_client::Result<ClientRuntime<SqliteSto
     let path = request["path"]
         .as_str()
         .ok_or_else(|| axton_client::invalid("path must be string"))?;
-    if request["protocol"] == 5 {
-        if request.get("storeHooks").is_some() {
-            return Err(axton_client::invalid(
-                "storeHooks are not supported in protocol5",
-            ));
-        }
-        let stream = request["stream"]
-            .as_str()
-            .ok_or_else(|| axton_client::invalid("stream must be string"))?;
-        let client = axton_client::Client::open05(
-            SqliteStore::open_exclusive05(path, stream)?,
-            Schema::from_value(request["schema"].clone())?,
-            stream,
-        )?;
-        return ClientRuntime::new(client).register_prerequisite_handlers(names(
-            request,
-            "prerequisiteHandlers",
-            "prerequisite names",
-        )?);
+    if request.get("storeHooks").is_some() {
+        return Err(axton_client::invalid(
+            "storeHooks are not supported in protocol5",
+        ));
     }
-    Err(axton_client::invalid("protocol5 Store is required"))
+    let stream = request["stream"]
+        .as_str()
+        .ok_or_else(|| axton_client::invalid("stream must be string"))?;
+    let client = axton_client::Client::open05(
+        SqliteStore::open_exclusive05(path, stream)?,
+        Schema::from_value(request["schema"].clone())?,
+        stream,
+    )?;
+    ClientRuntime::new(client).register_prerequisite_handlers(names(
+        request,
+        "prerequisiteHandlers",
+        "prerequisite names",
+    )?)
 }
 
 /// The optional array of strings `field` of the open request.
@@ -433,141 +426,6 @@ fn names(request: &Value, field: &str, what: &str) -> axton_client::Result<Vec<S
             .collect(),
         Some(_) => Err(axton_client::invalid(format!("{field} must be an array"))),
     }
-}
-
-/// The actor's thread: open, then admit and step until the runtime closes or
-/// its carrier is gone.
-fn run(request_id: String, request: Value, mailbox: Receiver<Mail>, outbox: Arc<Outbox>) {
-    let opened = catch_unwind(|| open_runtime(&request))
-        .unwrap_or_else(|_| Err(axton_client::invalid("runtime panic")));
-    let mut runtime = match opened {
-        Ok(runtime) => runtime,
-        Err(e) => {
-            outbox.closed.store(true, Ordering::SeqCst);
-            outbox.publish(vec![
-                Event::TaskCompleted {
-                    request_id,
-                    ok: false,
-                    value: Value::Null,
-                    error: Some(e.to_string()),
-                    details: None,
-                },
-                Event::RuntimeClosed,
-            ]);
-            return;
-        }
-    };
-    outbox.publish(vec![Event::TaskCompleted {
-        request_id,
-        ok: true,
-        value: runtime.opened(),
-        error: None,
-        details: None,
-    }]);
-    let served = catch_unwind(AssertUnwindSafe(|| serve(&mut runtime, &mailbox, &outbox)));
-    if served.is_ok() {
-        // Release the store before announcing the end: once the carrier sees
-        // `runtimeClosed`, the database files are no longer held.
-        drop(runtime);
-        outbox.publish(vec![Event::RuntimeClosed]);
-    } else {
-        // The runtime's state is not trusted after a panic; dropping it
-        // closes its connections, which rolls back an open transaction.
-        drop(runtime);
-        outbox.closed.store(true, Ordering::SeqCst);
-        outbox.publish(vec![
-            Event::Report {
-                diagnostic: Diagnostic::Error {
-                    message: "runtime panic".into(),
-                    status: None,
-                },
-            },
-            Event::RuntimeClosed,
-        ]);
-    }
-}
-
-fn serve(runtime: &mut ClientRuntime<SqliteStore>, mailbox: &Receiver<Mail>, outbox: &Outbox) {
-    let mut arrived = VecDeque::new();
-    loop {
-        // Admit everything already delivered, without blocking.
-        let mut lost = false;
-        loop {
-            match mailbox.try_recv() {
-                Ok(mail) => arrived.push_back(mail),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    lost = true;
-                    break;
-                }
-            }
-        }
-        for mail in arrived.drain(..) {
-            admit(runtime, mail, outbox);
-        }
-        if lost {
-            // The carrier is gone without closing: never leave the SQLite
-            // transaction open behind it.
-            let (now, entropy) = facts();
-            let _ = runtime.receive(Input::Close, now, entropy);
-        }
-        // Step until idle, yielding to new mail after every unit so control
-        // and callback answers are admitted between units.
-        loop {
-            let (now, entropy) = facts();
-            if !runtime.step(now, entropy) {
-                break;
-            }
-            flush(runtime, outbox);
-            match mailbox.try_recv() {
-                Ok(mail) => {
-                    arrived.push_back(mail);
-                    break;
-                }
-                Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => break,
-            }
-        }
-        flush(runtime, outbox);
-        if runtime.closed() {
-            return;
-        }
-        // Block for the next mail. A disconnected mailbox answers at once;
-        // the next turn sees it and closes.
-        if arrived.is_empty()
-            && let Ok(mail) = mailbox.recv()
-        {
-            arrived.push_back(mail);
-        }
-    }
-}
-
-fn admit(runtime: &mut ClientRuntime<SqliteStore>, mail: Mail, outbox: &Outbox) {
-    match mail {
-        Mail::Worker(_) => {}
-        Mail::Input(input) => {
-            let (now, entropy) = facts();
-            // After close nothing is admitted; `runtimeClosed` tells the SDK
-            // to settle whatever it still routes.
-            let _ = runtime.receive(*input, now, entropy);
-        }
-        Mail::Malformed(message) => {
-            flush(runtime, outbox);
-            outbox.publish(vec![Event::Report {
-                diagnostic: Diagnostic::Protocol { message },
-            }]);
-        }
-    }
-}
-
-fn flush(runtime: &mut ClientRuntime<SqliteStore>, outbox: &Outbox) {
-    let mut events = runtime.take_events();
-    if runtime.closed() {
-        outbox.closed.store(true, Ordering::SeqCst);
-        // `run` announces the end once the runtime and its store are dropped.
-        events.retain(|event| !matches!(event, Event::RuntimeClosed));
-    }
-    outbox.publish(events);
 }
 
 enum WorkerMessage {

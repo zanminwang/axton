@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use std::{sync::mpsc, time::Duration};
 fn open(path: &std::path::Path, stream: Value) -> (u64, Value) {
     let (tx, rx) = mpsc::channel();
-    let id=actor::open(json!({"type":"open","requestId":"open","path":path,"schema":serde_json::from_str::<Value>(include_str!("../../../fixtures/schemas/entry.json")).unwrap(),"protocol":5,"stream":stream}),Box::new(move|id|{let _=tx.send(id);})).unwrap();
+    let id=actor::open(json!({"type":"open","requestId":"open","path":path,"schema":serde_json::from_str::<Value>(include_str!("../../../fixtures/schemas/entry.json")).unwrap(),"stream":stream}),Box::new(move|id|{let _=tx.send(id);})).unwrap();
     loop {
         rx.recv_timeout(Duration::from_secs(10)).unwrap();
         if let Some(result) = actor::drain(id)

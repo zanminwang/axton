@@ -23,7 +23,11 @@ fn open_schema(path: &std::path::Path, schema: Value) -> u64 {
         )
         .unwrap()
     });
-    actor::open(json!({"type":"open","requestId":"o","protocol":5,"path":path,"stream":"User:u","schema":schema}),Box::new(|_|{})).unwrap()
+    actor::open(
+        json!({"type":"open","requestId":"o","path":path,"stream":"User:u","schema":schema}),
+        Box::new(|_| {}),
+    )
+    .unwrap()
 }
 #[test]
 fn protocol05_open_derives_durable_context_and_keeps_routing_id() {
@@ -672,14 +676,20 @@ fn runtime_closed_event_releases_exclusive_store_before_immediate_reopen() {
     for _ in 0..32 {
         let (sent, received) = std::sync::mpsc::channel();
         let reopen = path.clone();
-        let id=actor::open(json!({"type":"open","requestId":"o","protocol":5,"path":path,"stream":"User:u","schema":schema()}),Box::new(move |id| {
-            for event in actor::drain(id) {
-                if event["type"]=="runtimeClosed" {
-                    let result=axton_sqlite::SqliteStore::open_exclusive05(&reopen,"User:u").map(|_|()).map_err(|e|e.to_string());
-                    sent.send(result).unwrap();
+        let id = actor::open(
+            json!({"type":"open","requestId":"o","path":path,"stream":"User:u","schema":schema()}),
+            Box::new(move |id| {
+                for event in actor::drain(id) {
+                    if event["type"] == "runtimeClosed" {
+                        let result = axton_sqlite::SqliteStore::open_exclusive05(&reopen, "User:u")
+                            .map(|_| ())
+                            .map_err(|e| e.to_string());
+                        sent.send(result).unwrap();
+                    }
                 }
-            }
-        })).unwrap();
+            }),
+        )
+        .unwrap();
         actor::submit(id, json!({"type":"close"})).unwrap();
         assert_eq!(
             received.recv_timeout(Duration::from_secs(5)).unwrap(),

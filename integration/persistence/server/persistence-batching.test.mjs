@@ -32,7 +32,7 @@ async function fixture(body) {
       },
     };
     const call = (op, fields) =>
-      answer(driver, tx, { op: "protocol05", request: { op, ...fields } });
+      answer(driver, tx, { op: "sync", request: { op, ...fields } });
     const measure = async (op, fields) => {
       queries = 0;
       const start = performance.now();
@@ -403,7 +403,7 @@ test("[prisma] 2055 identities settle in the default interactive transaction", (
         await transaction.$queryRawUnsafe(`SET LOCAL search_path TO ${schema}`);
         const call = (op, fields) =>
           answer(counted, transaction, {
-            op: "protocol05",
+            op: "sync",
             request: { op, ...fields },
           });
         assert.deepEqual(

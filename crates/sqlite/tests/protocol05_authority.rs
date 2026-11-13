@@ -1,5 +1,5 @@
 pub mod common05;
-use axton_client::{Client, v05};
+use axton_client::{Client, wire};
 use axton_sqlite::SqliteStore;
 use common05::{key, open};
 use serde_json::{Value, json};
@@ -11,8 +11,8 @@ fn stream(c: &mut Client<SqliteStore>, cursor: u64, text: Option<&str>) {
     let context = c.request_context05().unwrap();
     c.install_authority05(
         &context,
-        &[v05::AuthorityChange::Record {
-            key: v05::RecordKey {
+        &[wire::AuthorityChange::Record {
+            key: wire::RecordKey {
                 model: "Entry".into(),
                 identity: json!({"id":"e"}),
             },
@@ -25,8 +25,8 @@ fn stream(c: &mut Client<SqliteStore>, cursor: u64, text: Option<&str>) {
 }
 fn cache(c: &mut Client<SqliteStore>, text: Option<&str>, store: bool) {
     c.install_cache05(
-        &[v05::ReadRecord {
-            key: v05::RecordKey {
+        &[wire::ReadRecord {
+            key: wire::RecordKey {
                 model: "Entry".into(),
                 identity: json!({"id":"e"}),
             },

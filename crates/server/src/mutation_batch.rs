@@ -12,7 +12,7 @@ use axton_protocols::server_bridge::members::{MemberPosition, PositionKind};
 use axton_protocols::server_bridge::{
     Acknowledged, HandledAction, HostRequest, Loaded, LoaderMode, MemberKey,
 };
-use axton_protocols::sync as v05;
+use axton_protocols::wire;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -31,7 +31,7 @@ pub(crate) struct Store {
 impl Store {
     pub(crate) async fn claim(
         owner: &str,
-        request: &v05::MutationRequest,
+        request: &wire::MutationRequest,
         host: &impl Host,
     ) -> Result<Self> {
         if owner.trim().is_empty() {
@@ -39,14 +39,14 @@ impl Store {
         }
         protocol_v05::call(host,json!({"op":"claimStore","storeId":request.context.store_id,"principal":owner,"stream":request.context.stream})).await
     }
-    pub(crate) fn saved(&self, request: &v05::MutationRequest, ordinal: u64) -> bool {
+    pub(crate) fn saved(&self, request: &wire::MutationRequest, ordinal: u64) -> bool {
         request.batch_id == self.last_processed_batch_id || ordinal < self.progress
     }
     async fn save(
         &mut self,
-        request: &v05::MutationRequest,
+        request: &wire::MutationRequest,
         ordinal: u64,
-        result: &v05::MutationResult,
+        result: &wire::MutationResult,
         persist: bool,
         host: &impl Host,
     ) -> Result<()> {
@@ -67,10 +67,10 @@ impl Store {
 pub(crate) async fn execute(
     config: &Config,
     owner: &str,
-    request: &v05::MutationRequest,
+    request: &wire::MutationRequest,
     ordinal: u64,
     raw_host: &impl Host,
-) -> Result<v05::MutationResult> {
+) -> Result<wire::MutationResult> {
     if ordinal >= request.mutations.len() as u64 {
         return Err(request_invalid("member ordinal out of range"));
     }
@@ -81,12 +81,12 @@ pub(crate) async fn execute(
 pub(crate) async fn execute_claimed(
     config: &Config,
     owner: &str,
-    request: &v05::MutationRequest,
+    request: &wire::MutationRequest,
     ordinal: u64,
     raw_host: &impl Host,
     store: &mut Store,
     persist: bool,
-) -> Result<v05::MutationResult> {
+) -> Result<wire::MutationResult> {
     let member = request
         .mutations
         .get(usize::try_from(ordinal).map_err(request_invalid)?)
@@ -124,7 +124,7 @@ pub(crate) async fn execute_claimed(
         return Err(Error::code("batch.conflict"));
     }
     if completed || ordinal < store.progress {
-        let saved:Option<v05::MutationResult>=protocol_v05::call(raw_host,json!({"op":"readResult","storeId":request.context.store_id,"batchId":request.batch_id,"ordinal":ordinal})).await?;
+        let saved:Option<wire::MutationResult>=protocol_v05::call(raw_host,json!({"op":"readResult","storeId":request.context.store_id,"batchId":request.batch_id,"ordinal":ordinal})).await?;
         let saved = saved.ok_or_else(|| storage_invalid("committed member result missing"))?;
         if saved.mutation_id != member.id {
             return Err(storage_invalid("saved member mismatch"));
@@ -159,9 +159,9 @@ pub(crate) async fn execute_claimed(
         protocol_v05::MutationInput::Unsupported => None,
     };
     let Some((args, input_keys)) = supported else {
-        let result = v05::MutationResult {
+        let result = wire::MutationResult {
             mutation_id: member.id,
-            outcome: v05::MutationOutcome::Rejected {
+            outcome: wire::MutationOutcome::Rejected {
                 code: crate::code::MUTATION_VERSION_UNSUPPORTED.into(),
                 message: None,
             },
@@ -198,7 +198,7 @@ pub(crate) async fn execute_claimed(
                     ordinal: ordinal + 1,
                 })
                 .await?;
-            v05::MutationOutcome::Rejected {
+            wire::MutationOutcome::Rejected {
                 code: rejection,
                 message: None,
             }
@@ -211,7 +211,7 @@ pub(crate) async fn execute_claimed(
             changes,
             declarations,
         } => {
-            let accepted:Result<v05::MutationOutcome>=async {
+            let accepted:Result<wire::MutationOutcome>=async {
             let mut changed = crate::settlement::Changes::new();
             for r in &changes {
                 crate::settlement::insert(&mut changed, crate::settlement::resolve(config, r)?)?;
@@ -246,11 +246,11 @@ pub(crate) async fn execute_claimed(
                     &host,
                 )
                 .await?;
-                let key05 = v05::RecordKey {
+                let key05 = wire::RecordKey {
                     model: key.model.clone(),
                     identity: key.identity.clone(),
                 };
-                let record = v05::ReadRecord {
+                let record = wire::ReadRecord {
                     key: key05.clone(),
                     cursor: (),
                     state,
@@ -260,13 +260,13 @@ pub(crate) async fn execute_claimed(
                         if p.key != *key || p.stream != request.context.stream {
                             return Err(storage_invalid("target position mismatch"));
                         }
-                        v05::SettlementTarget::Stream {
+                        wire::SettlementTarget::Stream {
                             key: key05,
                             cursor: p.cursor,
                             fallback: record,
                         }
                     }
-                    _ => v05::SettlementTarget::Private { record },
+                    _ => wire::SettlementTarget::Private { record },
                 });
             }
             let (result, _) = crate::action_results::assemble_snapshots(
@@ -286,7 +286,7 @@ pub(crate) async fn execute_claimed(
             let result = axton_core::validate_action_result(&config.schema, action, &result)
                 .map_err(internal)?;
             let sync_cursor = crate::head(&host, &request.context.stream).await?;
-            Ok(v05::MutationOutcome::Accepted {
+            Ok(wire::MutationOutcome::Accepted {
                 sync_cursor,
                 materialization: request.context.materialization.clone(),
                 result,
@@ -304,7 +304,7 @@ pub(crate) async fn execute_claimed(
                             ordinal: ordinal + 1,
                         })
                         .await?;
-                    v05::MutationOutcome::Rejected {
+                    wire::MutationOutcome::Rejected {
                         code,
                         message: None,
                     }
@@ -317,7 +317,7 @@ pub(crate) async fn execute_claimed(
             ordinal: ordinal + 1,
         })
         .await?;
-    let result = v05::MutationResult {
+    let result = wire::MutationResult {
         mutation_id: member.id,
         outcome,
     };
@@ -329,7 +329,7 @@ pub(crate) async fn execute_claimed(
 /// The records a member's Model inputs name, keyed under the current schema.
 fn input_keys(
     config: &Config,
-    member: &v05::Mutation,
+    member: &wire::Mutation,
     args: &serde_json::Value,
 ) -> Result<Vec<RecordKey>> {
     let action = config
@@ -355,16 +355,16 @@ fn input_keys(
 }
 pub(crate) fn models(
     config: &Config,
-    context: &v05::RequestContext,
+    context: &wire::RequestContext,
 ) -> Result<BTreeMap<String, u64>> {
-    let active =
-        v05::materialization_id(&config.schema, &config.projection_generation).map_err(internal)?;
+    let active = wire::materialization_id(&config.schema, &config.projection_generation)
+        .map_err(internal)?;
     crate::materialization::model_versions(
         config,
         &context.materialization,
         &active,
         &config.materializations,
-        v05::materialization_id,
+        wire::materialization_id,
     )
 }
 

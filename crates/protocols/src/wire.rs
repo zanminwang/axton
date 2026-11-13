@@ -716,9 +716,9 @@ impl ReadResponse {
     }
 }
 
-#[path = "sync/delivery.rs"]
+#[path = "wire/delivery.rs"]
 mod delivery;
-#[path = "sync/mutation.rs"]
+#[path = "wire/mutation.rs"]
 mod mutation;
 pub use delivery::*;
 pub use mutation::*;

@@ -1,4 +1,4 @@
-use axton_client::{Client, RecordKey, Schema, v05};
+use axton_client::{Client, RecordKey, Schema, wire};
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 fn schema() -> Schema {
@@ -29,12 +29,12 @@ fn later(c: &mut Client<SqliteStore>, text: &str) -> u64 {
 fn discard(c: &mut Client<SqliteStore>, ordinal: u64) {
     c.transaction(|tx| tx.discard_mutation05(ordinal)).unwrap();
 }
-fn ack(b: &v05::MutationRequest, outcome: v05::MutationOutcome) -> v05::BatchAcknowledgement {
-    v05::BatchAcknowledgement {
+fn ack(b: &wire::MutationRequest, outcome: wire::MutationOutcome) -> wire::BatchAcknowledgement {
+    wire::BatchAcknowledgement {
         context: b.context.clone(),
         batch_id: b.batch_id,
         digest: b.digest.clone(),
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: b.mutations[0].id,
             outcome,
         }],
@@ -59,7 +59,7 @@ fn rejected_owner_completes_after_reopen_beneath_a_later_pending_mutation() {
     later(&mut c, "B");
     let a = ack(
         &b,
-        v05::MutationOutcome::Rejected {
+        wire::MutationOutcome::Rejected {
             code: "write.denied".into(),
             message: None,
         },
@@ -93,13 +93,13 @@ fn accepted_private_result_waits_for_coverage_beneath_a_later_pending_mutation()
     later(&mut c, "B");
     let a = ack(
         &b,
-        v05::MutationOutcome::Accepted {
+        wire::MutationOutcome::Accepted {
             sync_cursor: 1,
             materialization: b.context.materialization.clone(),
             result: Value::Null,
-            targets: vec![v05::SettlementTarget::Private {
-                record: v05::ReadRecord {
-                    key: v05::RecordKey {
+            targets: vec![wire::SettlementTarget::Private {
+                record: wire::ReadRecord {
+                    key: wire::RecordKey {
                         model: "Entry".into(),
                         identity: json!({"id":"e"}),
                     },
@@ -123,8 +123,8 @@ fn accepted_private_result_waits_for_coverage_beneath_a_later_pending_mutation()
 fn cache_row(c: &mut Client<SqliteStore>, model: &str, id: &str, state: Value) {
     let report = c
         .install_cache05(
-            &[v05::ReadRecord {
-                key: v05::RecordKey {
+            &[wire::ReadRecord {
+                key: wire::RecordKey {
                     model: model.into(),
                     identity: json!({ "id": id }),
                 },
@@ -136,8 +136,8 @@ fn cache_row(c: &mut Client<SqliteStore>, model: &str, id: &str, state: Value) {
         .unwrap();
     assert_eq!(report.applied, 1, "{model} {id} installed as cache");
 }
-fn stream_key(id: &str) -> v05::RecordKey {
-    v05::RecordKey {
+fn stream_key(id: &str) -> wire::RecordKey {
+    wire::RecordKey {
         model: "Entry".into(),
         identity: json!({"id":id}),
     }
@@ -149,7 +149,7 @@ fn install(c: &mut Client<SqliteStore>, id: &str, cursor: u64, text: Option<&str
     let context = c.request_context05().unwrap();
     c.install_authority05(
         &context,
-        &[v05::AuthorityChange::Record {
+        &[wire::AuthorityChange::Record {
             key: stream_key(id),
             cursor,
             state: text.map(state).unwrap_or(Value::Null),
@@ -177,12 +177,12 @@ fn newer_stream_supersedes_private_fallback_beneath_a_later_pending_mutation() {
     let edit = later(&mut c, "B");
     let a = ack(
         &b,
-        v05::MutationOutcome::Accepted {
+        wire::MutationOutcome::Accepted {
             sync_cursor: 5,
             materialization: b.context.materialization.clone(),
             result: Value::Null,
-            targets: vec![v05::SettlementTarget::Private {
-                record: v05::ReadRecord {
+            targets: vec![wire::SettlementTarget::Private {
+                record: wire::ReadRecord {
                     key: stream_key("e"),
                     cursor: (),
                     state: state("old-private"),
@@ -218,25 +218,25 @@ fn an_accepted_state_outlives_its_settlement_above_an_earlier_pending_mutation()
         b.mutations.iter().map(|m| m.id).collect::<Vec<_>>(),
         vec![first, second]
     );
-    let accepted = |sync_cursor, target| v05::MutationOutcome::Accepted {
+    let accepted = |sync_cursor, target| wire::MutationOutcome::Accepted {
         sync_cursor,
         materialization: b.context.materialization.clone(),
         result: Value::Null,
         targets: vec![target],
     };
-    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+    c.acknowledge_batch05(&wire::BatchAcknowledgement {
         context: b.context.clone(),
         batch_id: b.batch_id,
         digest: b.digest.clone(),
         results: vec![
-            v05::MutationResult {
+            wire::MutationResult {
                 mutation_id: first,
                 outcome: accepted(
                     5,
-                    v05::SettlementTarget::Stream {
+                    wire::SettlementTarget::Stream {
                         key: stream_key("e"),
                         cursor: 5,
-                        fallback: v05::ReadRecord {
+                        fallback: wire::ReadRecord {
                             key: stream_key("e"),
                             cursor: (),
                             state: state("first fallback"),
@@ -244,12 +244,12 @@ fn an_accepted_state_outlives_its_settlement_above_an_earlier_pending_mutation()
                     },
                 ),
             },
-            v05::MutationResult {
+            wire::MutationResult {
                 mutation_id: second,
                 outcome: accepted(
                     1,
-                    v05::SettlementTarget::Private {
-                        record: v05::ReadRecord {
+                    wire::SettlementTarget::Private {
+                        record: wire::ReadRecord {
                             key: stream_key("e"),
                             cursor: (),
                             state: state("second accepted"),
@@ -298,7 +298,7 @@ fn rejected_update_keeps_a_later_pending_mutation_on_the_protected_base() {
     later(&mut c, "B");
     let a = ack(
         &b,
-        v05::MutationOutcome::Rejected {
+        wire::MutationOutcome::Rejected {
             code: "write.denied".into(),
             message: Some("No".into()),
         },
@@ -335,12 +335,12 @@ fn private_acceptance_finalizes_at_original_position_beneath_a_later_pending_mut
     let edit = later(&mut c, "B");
     let a = ack(
         &b,
-        v05::MutationOutcome::Accepted {
+        wire::MutationOutcome::Accepted {
             sync_cursor: 0,
             materialization: b.context.materialization.clone(),
             result: Value::Null,
-            targets: vec![v05::SettlementTarget::Private {
-                record: v05::ReadRecord {
+            targets: vec![wire::SettlementTarget::Private {
+                record: wire::ReadRecord {
                     key: stream_key("e"),
                     cursor: (),
                     state: state("accepted"),
@@ -462,7 +462,7 @@ fn commit_failure_rolls_back_assignment_and_acknowledgement() {
     let b = c.freeze_batch05().unwrap().unwrap();
     let a = ack(
         &b,
-        v05::MutationOutcome::Rejected {
+        wire::MutationOutcome::Rejected {
             code: "write.denied".into(),
             message: None,
         },
@@ -493,7 +493,7 @@ fn partial_duplicate_or_foreign_acknowledgement_changes_nothing() {
     let b = c.freeze_batch05().unwrap().unwrap();
     let a = ack(
         &b,
-        v05::MutationOutcome::Rejected {
+        wire::MutationOutcome::Rejected {
             code: "write.denied".into(),
             message: None,
         },
@@ -529,7 +529,7 @@ fn abrupt_ack_child() {
     let b = c.freeze_batch05().unwrap().unwrap();
     c.acknowledge_batch05(&ack(
         &b,
-        v05::MutationOutcome::Rejected {
+        wire::MutationOutcome::Rejected {
             code: "write.denied".into(),
             message: None,
         },
@@ -546,7 +546,7 @@ fn abrupt_process_exit_before_ack_commit_restores_exact_batch_beneath_later_work
     let context = c.request_context05().unwrap();
     c.install_authority05(
         &context,
-        &[v05::AuthorityChange::Record {
+        &[wire::AuthorityChange::Record {
             key: stream_key("e"),
             cursor: 1,
             state: state("base"),
@@ -568,14 +568,14 @@ fn abrupt_process_exit_before_ack_commit_restores_exact_batch_beneath_later_work
     assert_eq!(status.code(), Some(77));
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
     assert_eq!(
-        v05::encode(&c.freeze_batch05().unwrap().unwrap()).unwrap(),
-        v05::encode(&b).unwrap()
+        wire::encode(&c.freeze_batch05().unwrap().unwrap()).unwrap(),
+        wire::encode(&b).unwrap()
     );
     assert_eq!(c.store_status05().unwrap().last_acknowledged_batch_id, 0);
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
     let a = ack(
         &b,
-        v05::MutationOutcome::Rejected {
+        wire::MutationOutcome::Rejected {
             code: "write.denied".into(),
             message: None,
         },
@@ -597,7 +597,7 @@ fn pending_optimism_keeps_authoritative_base_protection() {
     let ctx = c.request_context05().unwrap();
     c.install_authority05(
         &ctx,
-        &[v05::AuthorityChange::Record {
+        &[wire::AuthorityChange::Record {
             key: stream_key("e"),
             cursor: 2,
             state: state("base"),
@@ -614,7 +614,7 @@ fn pending_optimism_keeps_authoritative_base_protection() {
         2
     );
     c.install_cache05(
-        &[v05::ReadRecord {
+        &[wire::ReadRecord {
             key: stream_key("e"),
             cursor: (),
             state: state("cache"),
@@ -641,14 +641,14 @@ fn target_moved_past_sync_cursor_keeps_local_layer_until_newer_position_lands() 
     let b = c.freeze_batch05().unwrap().unwrap();
     let a = ack(
         &b,
-        v05::MutationOutcome::Accepted {
+        wire::MutationOutcome::Accepted {
             sync_cursor: 5,
             materialization: b.context.materialization.clone(),
             result: Value::Null,
-            targets: vec![v05::SettlementTarget::Stream {
+            targets: vec![wire::SettlementTarget::Stream {
                 key: stream_key("e"),
                 cursor: 5,
-                fallback: v05::ReadRecord {
+                fallback: wire::ReadRecord {
                     key: stream_key("e"),
                     cursor: (),
                     state: state("frozen"),
@@ -693,7 +693,7 @@ fn lifecycle_dependents_are_rejected_atomically_and_retained_but_not_replayed() 
     let report = c
         .acknowledge_batch05(&ack(
             &b,
-            v05::MutationOutcome::Rejected {
+            wire::MutationOutcome::Rejected {
                 code: "write.denied".into(),
                 message: None,
             },
@@ -745,12 +745,12 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     let b = c.freeze_batch05().unwrap().unwrap();
     let a = ack(
         &b,
-        v05::MutationOutcome::Accepted {
+        wire::MutationOutcome::Accepted {
             sync_cursor: 1,
             materialization: b.context.materialization.clone(),
             result: Value::Null,
-            targets: vec![v05::SettlementTarget::Private {
-                record: v05::ReadRecord {
+            targets: vec![wire::SettlementTarget::Private {
+                record: wire::ReadRecord {
                     key: stream_key("e"),
                     cursor: (),
                     state: state("taken"),
@@ -786,7 +786,7 @@ fn abrupt_assignment_child() {
     let b = c.freeze_batch05().unwrap().unwrap();
     std::fs::write(
         std::env::var("AXTON_TASK2_ASSIGNMENT_EVIDENCE").unwrap(),
-        v05::encode(&b).unwrap(),
+        wire::encode(&b).unwrap(),
     )
     .unwrap();
     std::process::exit(81)
@@ -826,7 +826,7 @@ fn abrupt_assignment_commit_boundaries_preserve_canonical_retry() {
         if mode == "before" {
             assert_eq!(b.digest, std::fs::read_to_string(&evidence).unwrap());
         } else {
-            assert_eq!(v05::encode(&b).unwrap(), std::fs::read(&evidence).unwrap());
+            assert_eq!(wire::encode(&b).unwrap(), std::fs::read(&evidence).unwrap());
         }
         drop(c);
         let mut c = open(&p);
@@ -924,7 +924,7 @@ fn discarded_mutation_and_lifecycle_dependent_keep_public_codes_after_reopen() {
             matches!(completion.outcome, axton_client::ActionOutcome::Failed { code, .. } if code == expected)
         );
         assert!(
-            matches!(client.mutation_result05(call.ordinal).unwrap().unwrap().outcome, v05::MutationOutcome::Rejected { code, .. } if code == expected)
+            matches!(client.mutation_result05(call.ordinal).unwrap().unwrap().outcome, wire::MutationOutcome::Rejected { code, .. } if code == expected)
         );
     }
     assert!(client.freeze_batch05().unwrap().is_none());
@@ -951,7 +951,7 @@ fn dismissed_rejection_keeps_durable_completion_but_retires_input_after_reopen()
     client
         .acknowledge_batch05(&ack(
             &batch,
-            v05::MutationOutcome::Rejected {
+            wire::MutationOutcome::Rejected {
                 code: "write.denied".into(),
                 message: Some("retained outcome".into()),
             },
@@ -1134,7 +1134,7 @@ fn dismiss_missing_is_noop_but_pending_and_accepted_outcomes_are_protected() {
     client
         .acknowledge_batch05(&ack(
             &batch,
-            v05::MutationOutcome::Accepted {
+            wire::MutationOutcome::Accepted {
                 sync_cursor: 0,
                 materialization: batch.context.materialization.clone(),
                 result: Value::Null,
@@ -1185,7 +1185,7 @@ fn failed_reset_keeps_old_store_rows_authority_and_prefix_after_real_reopen() {
     let old = c.request_context05().unwrap();
     c.install_authority05(
         &old,
-        &[v05::AuthorityChange::Record {
+        &[wire::AuthorityChange::Record {
             key: stream_key("e"),
             cursor: 57,
             state: state("authority"),
@@ -1256,12 +1256,12 @@ fn retained_private_snapshot_never_evaluates_new_creation_defaults() {
     assert_ne!(resent.context, batch.context);
     let receipt = ack(
         &resent,
-        v05::MutationOutcome::Accepted {
+        wire::MutationOutcome::Accepted {
             sync_cursor: 0,
             materialization: resent.context.materialization.clone(),
             result: Value::Null,
-            targets: vec![v05::SettlementTarget::Private {
-                record: v05::ReadRecord {
+            targets: vec![wire::SettlementTarget::Private {
+                record: wire::ReadRecord {
                     key: stream_key("e"),
                     cursor: (),
                     state: state("accepted"),
@@ -1293,18 +1293,18 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
         c.initialize_stream05(0, "1").unwrap();
         let context = c.request_context05().unwrap();
         let mut q = DeliveryQueue::new(100_000, 8);
-        let initial = v05::freeze_delivery(
+        let initial = wire::freeze_delivery(
             context.clone(),
             "initial".into(),
-            v05::DeliveryPurpose::Bootstrap,
+            wire::DeliveryPurpose::Bootstrap,
             0,
             0,
             1,
             10000,
-            vec![v05::DeliveryUnit {
+            vec![wire::DeliveryUnit {
                 index: 0,
                 through: Some(0),
-                changes: vec![v05::AuthorityChange::Record {
+                changes: vec![wire::AuthorityChange::Record {
                     key: stream_key("e"),
                     cursor: 1,
                     state: state("original"),
@@ -1328,14 +1328,14 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
         let b = c.freeze_batch05().unwrap().unwrap();
         let a = ack(
             &b,
-            v05::MutationOutcome::Accepted {
+            wire::MutationOutcome::Accepted {
                 sync_cursor: 2,
                 materialization: b.context.materialization.clone(),
                 result: Value::Null,
-                targets: vec![v05::SettlementTarget::Stream {
+                targets: vec![wire::SettlementTarget::Stream {
                     key: stream_key("e"),
                     cursor: 2,
-                    fallback: v05::ReadRecord {
+                    fallback: wire::ReadRecord {
                         key: stream_key("e"),
                         cursor: (),
                         state: state("accepted"),
@@ -1344,18 +1344,18 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
             },
         );
         // The newer Remove arrives before the held HTTP acknowledgement.
-        let removed = v05::freeze_delivery(
+        let removed = wire::freeze_delivery(
             context.clone(),
             "remove".into(),
-            v05::DeliveryPurpose::Sync,
+            wire::DeliveryPurpose::Sync,
             0,
             3,
             3,
             10000,
-            vec![v05::DeliveryUnit {
+            vec![wire::DeliveryUnit {
                 index: 0,
                 through: Some(3),
-                changes: vec![v05::AuthorityChange::Remove {
+                changes: vec![wire::AuthorityChange::Remove {
                     key: stream_key("e"),
                     cursor: 3,
                 }],
@@ -1422,14 +1422,14 @@ fn historical_target_finalizes_from_receipt_unless_bootstrap_will_deliver_it() {
         let b = c.freeze_batch05().unwrap().unwrap();
         c.acknowledge_batch05(&ack(
             &b,
-            v05::MutationOutcome::Accepted {
+            wire::MutationOutcome::Accepted {
                 sync_cursor: 80,
                 materialization: b.context.materialization.clone(),
                 result: Value::Null,
-                targets: vec![v05::SettlementTarget::Stream {
+                targets: vec![wire::SettlementTarget::Stream {
                     key: stream_key("e"),
                     cursor: 57,
-                    fallback: v05::ReadRecord {
+                    fallback: wire::ReadRecord {
                         key: stream_key("e"),
                         cursor: (),
                         state: state("fallback"),
@@ -1455,18 +1455,18 @@ fn historical_target_finalizes_from_receipt_unless_bootstrap_will_deliver_it() {
         // A marked target arrives when Bootstrap passes it.
         assert_eq!(settled, 0);
         assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "optimistic");
-        let public = v05::freeze_delivery(
+        let public = wire::freeze_delivery(
             context.clone(),
             "public-bootstrap".into(),
-            v05::DeliveryPurpose::Bootstrap,
+            wire::DeliveryPurpose::Bootstrap,
             0,
             80,
             80,
             10000,
-            vec![v05::DeliveryUnit {
+            vec![wire::DeliveryUnit {
                 index: 0,
                 through: Some(80),
-                changes: vec![v05::AuthorityChange::Record {
+                changes: vec![wire::AuthorityChange::Record {
                     key: stream_key("e"),
                     cursor: 57,
                     state: state("canonical"),
@@ -1517,12 +1517,12 @@ fn failed_local_settlement_retains_previous_batch_window_after_reopen() {
     let batch = c.freeze_batch05().unwrap().unwrap();
     c.acknowledge_batch05(&ack(
         &batch,
-        v05::MutationOutcome::Accepted {
+        wire::MutationOutcome::Accepted {
             sync_cursor: 0,
             materialization: batch.context.materialization.clone(),
             result: Value::Null,
-            targets: vec![v05::SettlementTarget::Private {
-                record: v05::ReadRecord {
+            targets: vec![wire::SettlementTarget::Private {
+                record: wire::ReadRecord {
                     key: stream_key("e"),
                     cursor: (),
                     state: state("canonical"),
@@ -1581,14 +1581,14 @@ fn receipt_snapshot_installs_only_when_labelled_with_the_store_materialization()
                 })
                 .unwrap();
             let b = c.freeze_batch05().unwrap().unwrap();
-            let snapshot = v05::ReadRecord {
+            let snapshot = wire::ReadRecord {
                 key: stream_key("e"),
                 cursor: (),
                 state: state("snapshot"),
             };
             c.acknowledge_batch05(&ack(
                 &b,
-                v05::MutationOutcome::Accepted {
+                wire::MutationOutcome::Accepted {
                     sync_cursor: 80,
                     materialization: if same {
                         b.context.materialization.clone()
@@ -1597,10 +1597,10 @@ fn receipt_snapshot_installs_only_when_labelled_with_the_store_materialization()
                     },
                     result: Value::Null,
                     targets: vec![if private {
-                        v05::SettlementTarget::Private { record: snapshot }
+                        wire::SettlementTarget::Private { record: snapshot }
                     } else {
                         // A historical target of an unmarked Model.
-                        v05::SettlementTarget::Stream {
+                        wire::SettlementTarget::Stream {
                             key: stream_key("e"),
                             cursor: 57,
                             fallback: snapshot,
@@ -1658,7 +1658,7 @@ fn a_batch_partly_executed_before_an_upgrade_settles_each_outcome_by_its_own_lab
         before.context.materialization.clone(),
         resent.context.materialization.clone(),
     ];
-    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+    c.acknowledge_batch05(&wire::BatchAcknowledgement {
         context: resent.context.clone(),
         batch_id: resent.batch_id,
         digest: resent.digest.clone(),
@@ -1666,14 +1666,14 @@ fn a_batch_partly_executed_before_an_upgrade_settles_each_outcome_by_its_own_lab
             .mutations
             .iter()
             .zip(ids.iter().zip(labels))
-            .map(|(m, (id, materialization))| v05::MutationResult {
+            .map(|(m, (id, materialization))| wire::MutationResult {
                 mutation_id: m.id,
-                outcome: v05::MutationOutcome::Accepted {
+                outcome: wire::MutationOutcome::Accepted {
                     sync_cursor: 0,
                     materialization,
                     result: Value::Null,
-                    targets: vec![v05::SettlementTarget::Private {
-                        record: v05::ReadRecord {
+                    targets: vec![wire::SettlementTarget::Private {
+                        record: wire::ReadRecord {
                             key: stream_key(id),
                             cursor: (),
                             state: state("receipt"),
@@ -1725,14 +1725,14 @@ fn a_target_protected_only_under_the_previous_materialization_finalizes_from_the
         let resent = c.freeze_batch05().unwrap().unwrap();
         c.acknowledge_batch05(&ack(
             &resent,
-            v05::MutationOutcome::Accepted {
+            wire::MutationOutcome::Accepted {
                 sync_cursor: 80,
                 materialization: resent.context.materialization.clone(),
                 result: Value::Null,
-                targets: vec![v05::SettlementTarget::Stream {
+                targets: vec![wire::SettlementTarget::Stream {
                     key: stream_key("e"),
                     cursor: 60,
-                    fallback: v05::ReadRecord {
+                    fallback: wire::ReadRecord {
                         key: stream_key("e"),
                         cursor: (),
                         state: state("fallback"),
@@ -1769,7 +1769,7 @@ fn a_target_the_stream_delivered_before_an_upgrade_settles_after_it_without_boot
             Client::open05(SqliteStore::open(&p).unwrap(), marked_edit(false), "User:u").unwrap();
         c.initialize_stream05(10, "1").unwrap();
         let context = c.request_context05().unwrap();
-        let record = |cursor: u64, text: Option<&str>| v05::AuthorityChange::Record {
+        let record = |cursor: u64, text: Option<&str>| wire::AuthorityChange::Record {
             key: stream_key("e"),
             cursor,
             state: text.map(state).unwrap_or(Value::Null),
@@ -1786,14 +1786,14 @@ fn a_target_the_stream_delivered_before_an_upgrade_settles_after_it_without_boot
         // but the Store has not yet covered the receipt's head.
         c.acknowledge_batch05(&ack(
             &b,
-            v05::MutationOutcome::Accepted {
+            wire::MutationOutcome::Accepted {
                 sync_cursor: 30,
                 materialization: b.context.materialization.clone(),
                 result: Value::Null,
-                targets: vec![v05::SettlementTarget::Stream {
+                targets: vec![wire::SettlementTarget::Stream {
                     key: stream_key("e"),
                     cursor: 20,
-                    fallback: v05::ReadRecord {
+                    fallback: wire::ReadRecord {
                         key: stream_key("e"),
                         cursor: (),
                         state: state("fallback"),
@@ -1845,9 +1845,9 @@ fn a_noncanonical_target_identity_is_refused_whatever_the_outcome_label() {
         c.transaction(|tx| tx.submit_mutation05("Add", 1, json!({"tally":{"n":1,"text":"one"}})))
             .unwrap();
         let b = c.freeze_batch05().unwrap().unwrap();
-        let target = |n: Value| v05::SettlementTarget::Private {
-            record: v05::ReadRecord {
-                key: v05::RecordKey {
+        let target = |n: Value| wire::SettlementTarget::Private {
+            record: wire::ReadRecord {
+                key: wire::RecordKey {
                     model: "Tally".into(),
                     identity: json!({ "n": n }),
                 },
@@ -1857,7 +1857,7 @@ fn a_noncanonical_target_identity_is_refused_whatever_the_outcome_label() {
         };
         let refused = c.acknowledge_batch05(&ack(
             &b,
-            v05::MutationOutcome::Accepted {
+            wire::MutationOutcome::Accepted {
                 sync_cursor: 0,
                 materialization: if label == "current" {
                     b.context.materialization.clone()

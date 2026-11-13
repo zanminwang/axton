@@ -63,14 +63,14 @@ pub fn upgrade_schema(label: bool, unique: bool) -> Schema {
             {"name":"Find","version":1,"kind":"query","inputs":[],"outputs":[]}]}))
     .unwrap()
 }
-pub fn upgrade_key(model: &str, id: &str) -> v05::RecordKey {
-    v05::RecordKey {
+pub fn upgrade_key(model: &str, id: &str) -> wire::RecordKey {
+    wire::RecordKey {
         model: model.into(),
         identity: json!({ "id": id }),
     }
 }
-pub fn upgrade_record(model: &str, id: &str, cursor: u64, state: Value) -> v05::AuthorityChange {
-    v05::AuthorityChange::Record {
+pub fn upgrade_record(model: &str, id: &str, cursor: u64, state: Value) -> wire::AuthorityChange {
+    wire::AuthorityChange::Record {
         key: upgrade_key(model, id),
         cursor,
         state,
@@ -83,22 +83,22 @@ pub fn deliver(
     bootstrap: bool,
     after: u64,
     through: u64,
-    changes: Vec<v05::AuthorityChange>,
+    changes: Vec<wire::AuthorityChange>,
 ) {
     let context = c.request_context05().unwrap();
-    let plan = v05::freeze_delivery(
+    let plan = wire::freeze_delivery(
         context.clone(),
         format!("{bootstrap}-{after}-{through}"),
         if bootstrap {
-            v05::DeliveryPurpose::Bootstrap
+            wire::DeliveryPurpose::Bootstrap
         } else {
-            v05::DeliveryPurpose::Sync
+            wire::DeliveryPurpose::Sync
         },
         after,
         through,
         through,
         10000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(through),
             changes,
@@ -158,9 +158,9 @@ pub fn start_stream(c: &mut Client<SqliteStore>) {
 }
 /// An authority change for `model` row `id` at `cursor`; a null `state`
 /// is a delivered deletion.
-pub fn record(model: &str, id: &str, cursor: u64, state: Value) -> v05::AuthorityChange {
-    v05::AuthorityChange::Record {
-        key: v05::RecordKey {
+pub fn record(model: &str, id: &str, cursor: u64, state: Value) -> wire::AuthorityChange {
+    wire::AuthorityChange::Record {
+        key: wire::RecordKey {
             model: model.into(),
             identity: json!({ "id": id }),
         },
@@ -170,7 +170,7 @@ pub fn record(model: &str, id: &str, cursor: u64, state: Value) -> v05::Authorit
 }
 /// A protected row: the Stream delivers `changes` in the Store's context,
 /// with no coverage. Starts the Stream first when it has no start.
-pub fn protected(c: &mut Client<SqliteStore>, changes: &[v05::AuthorityChange]) -> ApplyReport {
+pub fn protected(c: &mut Client<SqliteStore>, changes: &[wire::AuthorityChange]) -> ApplyReport {
     start_stream(c);
     let context = c.request_context05().unwrap();
     c.install_authority05(&context, changes, None).unwrap()
@@ -180,8 +180,8 @@ pub fn protected(c: &mut Client<SqliteStore>, changes: &[v05::AuthorityChange]) 
 pub fn cached(c: &mut Client<SqliteStore>, model: &str, id: &str, state: Value) {
     let report = c
         .install_cache05(
-            &[v05::ReadRecord {
-                key: v05::RecordKey {
+            &[wire::ReadRecord {
+                key: wire::RecordKey {
                     model: model.into(),
                     identity: json!({ "id": id }),
                 },

@@ -1,5 +1,5 @@
-use axton_protocols::sync::{
-    self as v05, Mutation, MutationOperation, MutationRequest, Operation, RequestContext,
+use axton_protocols::wire::{
+    self, Mutation, MutationOperation, MutationRequest, Operation, RequestContext,
 };
 use axton_server::{Config, validate_mutation_batch};
 use serde_json::json;
@@ -10,7 +10,7 @@ fn request() -> MutationRequest {
     let c = config();
     let mut r = MutationRequest {
         context: RequestContext {
-            protocol: axton_protocols::sync::PROTOCOL,
+            protocol: axton_protocols::wire::PROTOCOL,
             store_id: "s".into(),
             stream: "User:a".into(),
             materialization: "m".into(),
@@ -21,7 +21,7 @@ fn request() -> MutationRequest {
             id: 1,
             name: "Say".into(),
             version: 1,
-            descriptor: v05::mutation_descriptor_digest(&c.schema.actions[0]).unwrap(),
+            descriptor: wire::mutation_descriptor_digest(&c.schema.actions[0]).unwrap(),
             operations: vec![MutationOperation {
                 step: 1,
                 input_path: "text".into(),
@@ -32,22 +32,22 @@ fn request() -> MutationRequest {
             }],
         }],
     };
-    r.digest = v05::batch_digest(&r).unwrap();
+    r.digest = wire::batch_digest(&r).unwrap();
     r
 }
 #[test]
 fn fingerprint_is_immutable_intent_not_current_schema_authority() {
     let mut r = request();
     r.mutations[0].descriptor = "foreign".into();
-    r.digest = v05::batch_digest(&r).unwrap();
-    assert!(validate_mutation_batch(&config(), &v05::encode(&r).unwrap()).is_ok());
+    r.digest = wire::batch_digest(&r).unwrap();
+    assert!(validate_mutation_batch(&config(), &wire::encode(&r).unwrap()).is_ok());
 }
 #[test]
 fn rejects_noncanonical_input_before_execution() {
     let mut r = request();
     r.mutations[0].operations[0].value = json!(42);
-    r.digest = v05::batch_digest(&r).unwrap();
-    assert!(validate_mutation_batch(&config(), &v05::encode(&r).unwrap()).is_err());
+    r.digest = wire::batch_digest(&r).unwrap();
+    assert!(validate_mutation_batch(&config(), &wire::encode(&r).unwrap()).is_err());
 }
 
 #[test]
@@ -64,19 +64,19 @@ fn compatible_field_reorder_admits_frozen_old_artifact() {
         .fields
         .reverse();
     assert_eq!(
-        v05::materialization_id(&old.schema, "1").unwrap(),
-        v05::materialization_id(&new.schema, "1").unwrap()
+        wire::materialization_id(&old.schema, "1").unwrap(),
+        wire::materialization_id(&new.schema, "1").unwrap()
     );
     assert_ne!(
-        v05::mutation_descriptor_digest(&old.schema.actions[0]).unwrap(),
-        v05::mutation_descriptor_digest(&new.schema.actions[0]).unwrap()
+        wire::mutation_descriptor_digest(&old.schema.actions[0]).unwrap(),
+        wire::mutation_descriptor_digest(&new.schema.actions[0]).unwrap()
     );
     let mut r = MutationRequest {
         context: RequestContext {
-            protocol: axton_protocols::sync::PROTOCOL,
+            protocol: axton_protocols::wire::PROTOCOL,
             store_id: "s".into(),
             stream: "User:a".into(),
-            materialization: v05::materialization_id(&old.schema, "1").unwrap(),
+            materialization: wire::materialization_id(&old.schema, "1").unwrap(),
         },
         batch_id: 1,
         digest: String::new(),
@@ -84,7 +84,7 @@ fn compatible_field_reorder_admits_frozen_old_artifact() {
             id: 1,
             name: "Write".into(),
             version: 1,
-            descriptor: v05::mutation_descriptor_digest(&old.schema.actions[0]).unwrap(),
+            descriptor: wire::mutation_descriptor_digest(&old.schema.actions[0]).unwrap(),
             operations: vec![MutationOperation {
                 step: 1,
                 input_path: "todo".into(),
@@ -95,9 +95,9 @@ fn compatible_field_reorder_admits_frozen_old_artifact() {
             }],
         }],
     };
-    r.digest = v05::batch_digest(&r).unwrap();
-    assert!(validate_mutation_batch(&old, &v05::encode(&r).unwrap()).is_ok());
-    assert!(validate_mutation_batch(&new, &v05::encode(&r).unwrap()).is_ok());
+    r.digest = wire::batch_digest(&r).unwrap();
+    assert!(validate_mutation_batch(&old, &wire::encode(&r).unwrap()).is_ok());
+    assert!(validate_mutation_batch(&new, &wire::encode(&r).unwrap()).is_ok());
     let note = axton_core::FieldDescriptor {
         name: "note".into(),
         nullable: true,
@@ -112,7 +112,7 @@ fn compatible_field_reorder_admits_frozen_old_artifact() {
         .fields
         .push(note);
     assert!(
-        validate_mutation_batch(&new, &v05::encode(&r).unwrap()).is_ok(),
+        validate_mutation_batch(&new, &wire::encode(&r).unwrap()).is_ok(),
         "trusted nullable input widening accepts frozen old payload"
     );
 }

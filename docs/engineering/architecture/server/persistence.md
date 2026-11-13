@@ -6,7 +6,7 @@ Persistence implements the strict Rust host operation contract inside the applic
 
 ## 5. Building Block View
 
-[Implementation](../../../../packages/backend/postgres/migration.sql) owns this component. [Protocol 5](../protocols/sync.md) owns shared context, delivery and settlement rules.
+[Implementation](../../../../packages/backend/postgres/migration.sql) owns this component. [Protocol 5](../protocols/wire.md) owns shared context, delivery and settlement rules.
 
 PostgreSQL adapters validate known incompatible layouts once during database
 readiness, before `backend.listen` opens its port. Headless operations retain

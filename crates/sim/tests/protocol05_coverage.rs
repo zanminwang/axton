@@ -1,4 +1,4 @@
-use axton_protocols::sync::*;
+use axton_protocols::wire::*;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 fn ctx() -> RequestContext {

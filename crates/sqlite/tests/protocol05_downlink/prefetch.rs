@@ -2,7 +2,7 @@ use super::{change, client};
 use axton_client::{
     runtime::{ClientRuntime, EffectError, EffectOutcome, Event, HttpRoute, Operation},
     sync05::{Control, StoreCommand, StoreReport},
-    v05,
+    wire,
 };
 use axton_sqlite::SqliteStore;
 use serde_json::json;
@@ -48,8 +48,8 @@ impl Harness {
                 EffectOutcome {
                     ok: true,
                     value: Some(json!(
-                        serde_json::to_string(&v05::HandshakeResponse {
-                            protocol: axton_client::v05::PROTOCOL,
+                        serde_json::to_string(&wire::HandshakeResponse {
+                            protocol: axton_client::wire::PROTOCOL,
                             store_id: context.store_id,
                             stream: context.stream,
                             head: 3,
@@ -71,7 +71,7 @@ impl Harness {
             first,
         }
     }
-    fn pull_events(control: &mut Control) -> Option<(String, v05::DeltaRequest)> {
+    fn pull_events(control: &mut Control) -> Option<(String, wire::DeltaRequest)> {
         let events = control.events();
         assert!(
             !events.iter().any(|e| matches!(e, Event::Report { .. })),
@@ -94,18 +94,18 @@ impl Harness {
     }
     fn page(&mut self, id: &str, after: u64, through: u64, bad: bool) {
         let mut record = change(&format!("e{through}"), through);
-        if bad && let v05::AuthorityChange::Record { state, .. } = &mut record {
+        if bad && let wire::AuthorityChange::Record { state, .. } = &mut record {
             *state = json!({"text":7,"note":null});
         }
-        let frozen = v05::freeze_delivery(
+        let frozen = wire::freeze_delivery(
             self.runtime.client().request_context05().unwrap(),
             format!("page-{after}-{through}"),
-            v05::DeliveryPurpose::Bootstrap,
+            wire::DeliveryPurpose::Bootstrap,
             after,
             through,
             3,
             10000,
-            vec![v05::DeliveryUnit {
+            vec![wire::DeliveryUnit {
                 index: 0,
                 through: Some(through),
                 changes: vec![record],
@@ -119,7 +119,7 @@ impl Harness {
                 EffectOutcome {
                     ok: true,
                     value: Some(json!(
-                        serde_json::to_string(&v05::DeliveryResponse {
+                        serde_json::to_string(&wire::DeliveryResponse {
                             header: frozen.header,
                             parts: frozen.parts,
                         })
@@ -313,8 +313,8 @@ fn reconnect_retires_future_offer_and_reuses_only_the_admitted_prefix() {
             EffectOutcome {
                 ok: true,
                 value: Some(json!(
-                    serde_json::to_string(&v05::HandshakeResponse {
-                        protocol: axton_client::v05::PROTOCOL,
+                    serde_json::to_string(&wire::HandshakeResponse {
+                        protocol: axton_client::wire::PROTOCOL,
                         store_id: status.context.store_id.clone(),
                         stream: status.context.stream.clone(),
                         head: 3,
@@ -347,21 +347,21 @@ fn reconnect_retires_future_offer_and_reuses_only_the_admitted_prefix() {
 fn multi_unit_page_prefetches_after_the_whole_page_without_skipping_units() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = Harness::new(&dir.path().join("db"));
-    let frozen = v05::freeze_delivery(
+    let frozen = wire::freeze_delivery(
         h.runtime.client().request_context05().unwrap(),
         "multi-unit".into(),
-        v05::DeliveryPurpose::Bootstrap,
+        wire::DeliveryPurpose::Bootstrap,
         0,
         2,
         3,
         10000,
         vec![
-            v05::DeliveryUnit {
+            wire::DeliveryUnit {
                 index: 0,
                 through: Some(1),
                 changes: vec![change("e1", 1)],
             },
-            v05::DeliveryUnit {
+            wire::DeliveryUnit {
                 index: 1,
                 through: Some(2),
                 changes: vec![change("e2", 2)],
@@ -376,7 +376,7 @@ fn multi_unit_page_prefetches_after_the_whole_page_without_skipping_units() {
             EffectOutcome {
                 ok: true,
                 value: Some(json!(
-                    serde_json::to_string(&v05::DeliveryResponse {
+                    serde_json::to_string(&wire::DeliveryResponse {
                         header: frozen.header,
                         parts: frozen.parts,
                     })

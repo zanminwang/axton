@@ -1,5 +1,5 @@
 pub mod common05;
-use axton_client::{Client, RecordKey, v05};
+use axton_client::{Client, RecordKey, wire};
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 fn key(model: &str) -> RecordKey {
@@ -8,9 +8,9 @@ fn key(model: &str) -> RecordKey {
         identity: json!({"id":if model=="Book"{"b"}else{"c"}}),
     }
 }
-fn change(model: &str, cursor: u64, state: Value) -> v05::AuthorityChange {
-    v05::AuthorityChange::Record {
-        key: v05::RecordKey {
+fn change(model: &str, cursor: u64, state: Value) -> wire::AuthorityChange {
+    wire::AuthorityChange::Record {
+        key: wire::RecordKey {
             model: model.into(),
             identity: key(model).identity,
         },
@@ -65,8 +65,8 @@ fn group_cascade_uses_positions_not_transport_array_order() {
         .unwrap();
         let context = c.request_context05().unwrap();
         c.install_cache05(
-            &[v05::ReadRecord {
-                key: v05::RecordKey {
+            &[wire::ReadRecord {
+                key: wire::RecordKey {
                     model: "Comment".into(),
                     identity: json!({"id":"c"}),
                 },

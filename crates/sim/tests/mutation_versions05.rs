@@ -1,5 +1,5 @@
 use axton_client::{ActionOutcome, Client, Schema};
-use axton_protocols::sync as v05;
+use axton_protocols::wire;
 use axton_server::{Config, Host, HostResult};
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
@@ -80,8 +80,8 @@ fn schema() -> Schema {
 fn config() -> Config {
     Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[action(1)]},"mutations":[],"projectionGeneration":"1"})).unwrap()
 }
-async fn execute(c: &Config, h: &BatchHost, batch: &v05::MutationRequest) -> String {
-    let bytes = v05::encode(batch).unwrap();
+async fn execute(c: &Config, h: &BatchHost, batch: &wire::MutationRequest) -> String {
+    let bytes = wire::encode(batch).unwrap();
     let frozen = axton_server::validate_mutation_batch(c, &bytes)
         .expect("a valid unsupported member must not refuse the entire frozen Batch");
     let mut results = vec![];
@@ -121,21 +121,21 @@ fn mixed_batch(unsupported_name: &str, unsupported_version: u64) {
         assert_eq!(batch.mutations.len(), 3);
         let host = BatchHost::default();
         let first = execute(&config(), &host, &batch).await;
-        let ack: v05::BatchAcknowledgement = v05::decode(first.as_bytes()).unwrap();
+        let ack: wire::BatchAcknowledgement = wire::decode(first.as_bytes()).unwrap();
         assert!(matches!(
             ack.results[0].outcome,
-            v05::MutationOutcome::Accepted { .. }
+            wire::MutationOutcome::Accepted { .. }
         ));
         assert_eq!(
             ack.results[1].outcome,
-            v05::MutationOutcome::Rejected {
+            wire::MutationOutcome::Rejected {
                 code: "mutation_version_unsupported".into(),
                 message: None
             }
         );
         assert!(matches!(
             ack.results[2].outcome,
-            v05::MutationOutcome::Accepted { .. }
+            wire::MutationOutcome::Accepted { .. }
         ));
         assert_eq!(host.0.lock().unwrap().executions, ["before", "after"]);
         assert_eq!(host.0.lock().unwrap().last_batch, batch.batch_id);
@@ -173,7 +173,7 @@ fn mixed_batch(unsupported_name: &str, unsupported_version: u64) {
         assert_eq!(next.batch_id, batch.batch_id + 1);
         let next_ack = execute(&config(), &host, &next).await;
         client
-            .acknowledge_batch05(&v05::decode(next_ack.as_bytes()).unwrap())
+            .acknowledge_batch05(&wire::decode(next_ack.as_bytes()).unwrap())
             .unwrap();
         assert_eq!(
             host.0.lock().unwrap().executions,
@@ -220,7 +220,7 @@ fn malformed_wire_bound_slot_and_forbidden_patch_remain_structural_request_error
         })
         .unwrap();
     let batch = client.freeze_batch05().unwrap().unwrap();
-    assert!(axton_server::validate_mutation_batch(&config, &v05::encode(&batch).unwrap()).is_ok());
+    assert!(axton_server::validate_mutation_batch(&config, &wire::encode(&batch).unwrap()).is_ok());
     assert_eq!(
         axton_server::validate_mutation_batch(&config, b"not JSON")
             .unwrap_err()
@@ -229,7 +229,7 @@ fn malformed_wire_bound_slot_and_forbidden_patch_remain_structural_request_error
     );
     let mut unsupported = batch.clone();
     unsupported.mutations[0].name = "Unretained".into();
-    unsupported.digest = v05::batch_digest(&unsupported).unwrap();
+    unsupported.digest = wire::batch_digest(&unsupported).unwrap();
     // Unsupported semantic version does not excuse malformed generic intent.
     unsupported.mutations[0].operations[0].input_path = "broken[".into();
     assert_eq!(
@@ -257,18 +257,18 @@ fn malformed_wire_bound_slot_and_forbidden_patch_remain_structural_request_error
     );
     corrupt = batch.clone();
     corrupt.mutations[0].operations[1].identity = json!({"id":"other"});
-    corrupt.digest = v05::batch_digest(&corrupt).unwrap();
+    corrupt.digest = wire::batch_digest(&corrupt).unwrap();
     assert_eq!(
-        axton_server::validate_mutation_batch(&config, &v05::encode(&corrupt).unwrap())
+        axton_server::validate_mutation_batch(&config, &wire::encode(&corrupt).unwrap())
             .unwrap_err()
             .code,
         "request.invalid"
     );
     corrupt = batch;
     corrupt.mutations[0].operations[1].value["undeclared"] = json!(true);
-    corrupt.digest = v05::batch_digest(&corrupt).unwrap();
+    corrupt.digest = wire::batch_digest(&corrupt).unwrap();
     assert_eq!(
-        axton_server::validate_mutation_batch(&config, &v05::encode(&corrupt).unwrap())
+        axton_server::validate_mutation_batch(&config, &wire::encode(&corrupt).unwrap())
             .unwrap_err()
             .code,
         "request.invalid"
@@ -295,7 +295,7 @@ fn retained_query_cannot_enter_a_mutation_batch() {
         Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[query]},"mutations":[]}))
             .unwrap();
     assert_eq!(
-        axton_server::validate_mutation_batch(&config, &v05::encode(&batch).unwrap())
+        axton_server::validate_mutation_batch(&config, &wire::encode(&batch).unwrap())
             .unwrap_err()
             .code,
         "request.invalid"

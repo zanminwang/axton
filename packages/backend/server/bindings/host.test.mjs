@@ -105,7 +105,7 @@ for (const enabled of [false, true])
     await invoke({ op: "savepoint", ordinal: 7 });
     assert.equal(
       await invoke({
-        op: "protocol05",
+        op: "sync",
         request: {
           op: "admit",
           owner: principal,

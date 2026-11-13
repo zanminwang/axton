@@ -137,7 +137,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     ) -> Option<std::result::Result<Value, String>> {
         self.begin_read05(
             request_id,
-            crate::v05::ReadInvocation::Query {
+            crate::wire::ReadInvocation::Query {
                 name: invocation.name.into(),
                 version: invocation.version,
                 args: invocation.args.clone(),
@@ -339,8 +339,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         identity: &Value,
         store: &Option<Value>,
     ) {
-        let invocation = crate::v05::ReadInvocation::Fetch {
-            key: crate::v05::RecordKey {
+        let invocation = crate::wire::ReadInvocation::Fetch {
+            key: crate::wire::RecordKey {
                 model: model.into(),
                 identity: identity.clone(),
             },
@@ -357,7 +357,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     fn begin_read05(
         &mut self,
         request_id: &str,
-        invocation: crate::v05::ReadInvocation,
+        invocation: crate::wire::ReadInvocation,
         store: &Option<Value>,
     ) -> std::result::Result<(), String> {
         let store = match store {
@@ -366,7 +366,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             _ => return Err(INVALID_OPTIONS.into()),
         };
         match &invocation {
-            crate::v05::ReadInvocation::Query { name, version, .. } => {
+            crate::wire::ReadInvocation::Query { name, version, .. } => {
                 if self
                     .client
                     .schema
@@ -378,7 +378,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                     return Err("invoke requires Query".into());
                 }
             }
-            crate::v05::ReadInvocation::Fetch { key, version } => {
+            crate::wire::ReadInvocation::Fetch { key, version } => {
                 if self
                     .client
                     .schema
@@ -405,15 +405,18 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         if self.connection.is_none() {
             return Err(UNAVAILABLE.into());
         }
-        let request = crate::v05::ReadRequest {
+        let request = crate::wire::ReadRequest {
             context: self.client.request_context05().map_err(|e| e.to_string())?,
             request_id: self.capability_token("read", self.issued + 1),
             store,
             invocation,
         };
-        let body = String::from_utf8(crate::v05::encode(&request).map_err(|e| e.to_string())?)
+        let body = String::from_utf8(crate::wire::encode(&request).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
-        let fetch = matches!(request.invocation, crate::v05::ReadInvocation::Fetch { .. });
+        let fetch = matches!(
+            request.invocation,
+            crate::wire::ReadInvocation::Fetch { .. }
+        );
         self.send_direct(request_id, request.request_id, body, fetch)
     }
     fn apply_read05(&mut self, request_id: String, response: String) {
@@ -423,8 +426,9 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         let fetch = call.fetch;
         let mut snapshot_mismatch = false;
         let decoded = (|| {
-            let request = crate::v05::decode::<crate::v05::ReadRequest>(call.body.as_bytes())?;
-            let mut response = crate::v05::decode::<crate::v05::ReadResponse>(response.as_bytes())?;
+            let request = crate::wire::decode::<crate::wire::ReadRequest>(call.body.as_bytes())?;
+            let mut response =
+                crate::wire::decode::<crate::wire::ReadResponse>(response.as_bytes())?;
             let active = self.client.request_context05()?;
             // Correlation and snapshot agreement use the caller's retained read
             // contract. The cache record remains its separate local projection.
@@ -433,8 +437,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             // it was in flight) is returned and not installed.
             let install = request.store && request.context == active;
             let mut admitted = response.clone();
-            if let crate::v05::ReadInvocation::Fetch { key, version } = &request.invocation
-                && let crate::v05::ReadOutcome::Succeeded { result } = &mut response.outcome
+            if let crate::wire::ReadInvocation::Fetch { key, version } = &request.invocation
+                && let crate::wire::ReadOutcome::Succeeded { result } = &mut response.outcome
             {
                 *result = axton_core::normalize_read_snapshot(
                     &self.client.schema,
@@ -491,11 +495,11 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                         )
                     };
                 }
-                admitted.outcome = crate::v05::ReadOutcome::Succeeded {
+                admitted.outcome = crate::wire::ReadOutcome::Succeeded {
                     result: result.clone(),
                 };
             }
-            if let crate::v05::ReadInvocation::Fetch { key, version } = &request.invocation
+            if let crate::wire::ReadInvocation::Fetch { key, version } = &request.invocation
                 && self.client.schema.model(&key.model)?.version == *version
             {
                 admitted.admit(&request, &active)?;
@@ -540,10 +544,10 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         }
         self.committed_since(generation, "direct");
         let outcome = match response.outcome {
-            crate::v05::ReadOutcome::Succeeded { result } => {
+            crate::wire::ReadOutcome::Succeeded { result } => {
                 json!({"status":"succeeded","result":result})
             }
-            crate::v05::ReadOutcome::Failed { code, message } => {
+            crate::wire::ReadOutcome::Failed { code, message } => {
                 json!({"status":"failed","code":code,"message":message,"execution":"rejected"})
             }
         };

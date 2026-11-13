@@ -39,8 +39,8 @@ fn seeded(dir: &tempfile::TempDir) -> Client<SqliteStore> {
     let mut client = open(&dir.path().join("db"));
     let report = client
         .install_cache05(
-            &[v05::ReadRecord {
-                key: v05::RecordKey {
+            &[wire::ReadRecord {
+                key: wire::RecordKey {
                     model: "Note".into(),
                     identity: json!({"id":"n"}),
                 },
@@ -316,13 +316,13 @@ fn a_new_requirement_on_a_failed_task_inherits_its_failure_and_one_retry_covers_
         "current sequence waits for settlement"
     );
     client
-        .acknowledge_batch05(&v05::BatchAcknowledgement {
+        .acknowledge_batch05(&wire::BatchAcknowledgement {
             context: request.context.clone(),
             batch_id: request.batch_id,
             digest: request.digest.clone(),
-            results: vec![v05::MutationResult {
+            results: vec![wire::MutationResult {
                 mutation_id: first.ordinal,
-                outcome: v05::MutationOutcome::Rejected {
+                outcome: wire::MutationOutcome::Rejected {
                     code: "write.refused".into(),
                     message: None,
                 },
@@ -371,13 +371,13 @@ fn unassigned_prerequisite_work_does_not_hold_the_batch_ownership_window() {
         vec![ready.ordinal]
     );
     client
-        .acknowledge_batch05(&v05::BatchAcknowledgement {
+        .acknowledge_batch05(&wire::BatchAcknowledgement {
             context: batch.context,
             batch_id: batch.batch_id,
             digest: batch.digest,
-            results: vec![v05::MutationResult {
+            results: vec![wire::MutationResult {
                 mutation_id: ready.ordinal,
-                outcome: v05::MutationOutcome::Rejected {
+                outcome: wire::MutationOutcome::Rejected {
                     code: "create.denied".into(),
                     message: None,
                 },

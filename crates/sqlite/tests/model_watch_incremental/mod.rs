@@ -341,8 +341,8 @@ fn authority_replay_rejection_cache_and_reset_refresh_the_committed_projection()
     let (mut h, probe) = measured(schema());
     h.runtime.client().initialize_stream05(0, "1").unwrap();
     let context = h.runtime.client().request_context05().unwrap();
-    let authority = |cursor, text: &str, note: Value| v05::AuthorityChange::Record {
-        key: v05::RecordKey {
+    let authority = |cursor, text: &str, note: Value| wire::AuthorityChange::Record {
+        key: wire::RecordKey {
             model: "Entry".into(),
             identity: json!({"id":"e"}),
         },
@@ -378,13 +378,13 @@ fn authority_replay_rejection_cache_and_reset_refresh_the_committed_projection()
     );
     h.runtime
         .client()
-        .acknowledge_batch05(&v05::BatchAcknowledgement {
+        .acknowledge_batch05(&wire::BatchAcknowledgement {
             context: batch.context,
             batch_id: batch.batch_id,
             digest: batch.digest,
-            results: vec![v05::MutationResult {
+            results: vec![wire::MutationResult {
                 mutation_id: batch.mutations[0].id,
-                outcome: v05::MutationOutcome::Rejected {
+                outcome: wire::MutationOutcome::Rejected {
                     code: "refused".into(),
                     message: None,
                 },
@@ -409,8 +409,8 @@ fn authority_replay_rejection_cache_and_reset_refresh_the_committed_projection()
     h.runtime
         .client()
         .install_cache05(
-            &[v05::ReadRecord {
-                key: v05::RecordKey {
+            &[wire::ReadRecord {
+                key: wire::RecordKey {
                     model: "Entry".into(),
                     identity: json!({"id":"f"}),
                 },
@@ -770,8 +770,8 @@ fn delta_splice_sequences_match_committed_filter_results() {
                 .client()
                 .install_authority05(
                     &context,
-                    &[v05::AuthorityChange::Record {
-                        key: v05::RecordKey {
+                    &[wire::AuthorityChange::Record {
+                        key: wire::RecordKey {
                             model: "Entry".into(),
                             identity: json!({ "id": key }),
                         },

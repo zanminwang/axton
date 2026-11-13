@@ -1,15 +1,15 @@
-//! Protocol-5 carrier admission and publication adapter. Envelopes belong to axton_protocols::sync.
+//! Protocol-5 carrier admission and publication adapter. Envelopes belong to axton_protocols::wire.
 use crate::{
     Config, Host, HostResult, Result, backend_interface::HostExt, internal, request_invalid,
 };
 use axton_core::{ActionInputDescriptor, CallKind};
 use axton_protocols::server_bridge::{HostRequest, Loaded};
-use axton_protocols::sync as v05;
+use axton_protocols::wire;
 use serde_json::{Value, json};
 use std::{future::Future, pin::Pin};
 
 pub use axton_protocols::server_bridge::HandlerContext;
-pub(crate) fn handler_context(owner: &str, context: &v05::RequestContext) -> HandlerContext {
+pub(crate) fn handler_context(owner: &str, context: &wire::RequestContext) -> HandlerContext {
     HandlerContext {
         owner: owner.into(),
         stream: context.stream.clone(),
@@ -19,17 +19,17 @@ pub(crate) fn handler_context(owner: &str, context: &v05::RequestContext) -> Han
 }
 
 pub fn validate_mutation_batch(config: &Config, bytes: &[u8]) -> Result<String> {
-    let request: v05::MutationRequest = v05::decode(bytes).map_err(request_invalid)?;
+    let request: wire::MutationRequest = wire::decode(bytes).map_err(request_invalid)?;
     for mutation in &request.mutations {
         validate_member(config, mutation)?;
     }
-    String::from_utf8(v05::encode(&request).map_err(request_invalid)?).map_err(request_invalid)
+    String::from_utf8(wire::encode(&request).map_err(request_invalid)?).map_err(request_invalid)
 }
 pub(crate) enum MutationInput {
     Supported(Value),
     Unsupported,
 }
-pub(crate) fn validate_member(config: &Config, m: &v05::Mutation) -> Result<MutationInput> {
+pub(crate) fn validate_member(config: &Config, m: &wire::Mutation) -> Result<MutationInput> {
     let Some(action) = config
         .schema
         .actions
@@ -52,14 +52,14 @@ pub(crate) fn validate_member(config: &Config, m: &v05::Mutation) -> Result<Muta
             .ok_or_else(|| request_invalid("unknown input path"))?;
         match input {
             ActionInputDescriptor::Value { .. } => {
-                if op.operation != v05::Operation::Argument {
+                if op.operation != wire::Operation::Argument {
                     return Err(request_invalid("value input must be argument"));
                 }
             }
             ActionInputDescriptor::Model {
                 model, operation, ..
             } => {
-                if op.operation == v05::Operation::Argument {
+                if op.operation == wire::Operation::Argument {
                     if !op.value.is_null() && op.value != json!([]) {
                         return Err(request_invalid("Model argument must be null or empty list"));
                     }
@@ -71,7 +71,7 @@ pub(crate) fn validate_member(config: &Config, m: &v05::Mutation) -> Result<Muta
             }
         }
     }
-    let args = v05::reconstruct_input(&m.operations).map_err(request_invalid)?;
+    let args = wire::reconstruct_input(&m.operations).map_err(request_invalid)?;
     let normalized = axton_core::normalize_action_args(&config.schema, action, &args)
         .map_err(request_invalid)?;
     Ok(MutationInput::Supported(normalized))
@@ -98,7 +98,7 @@ impl<H: Host> Host for Publication05<'_, H> {
                 request["op"].as_str(),
                 Some("readTracking" | "readPositions" | "guardRecords" | "applyStreamMembers")
             ) {
-                request = json!({"op":"protocol05","request":request});
+                request = json!({"op":"sync","request":request});
             }
             let answer = self.0.call(request).await?;
             if loader
@@ -117,7 +117,7 @@ pub(crate) async fn call<T: serde::de::DeserializeOwned + Send>(
     host: &impl Host,
     request: Value,
 ) -> Result<T> {
-    host.call_typed(HostRequest::Protocol05 {
+    host.call_typed(HostRequest::Sync {
         request: serde_json::from_value(request).map_err(internal)?,
     })
     .await
@@ -129,8 +129,9 @@ pub async fn process_batch_member(
     ordinal: u64,
     host: &impl Host,
 ) -> Result<String> {
-    let request: v05::MutationRequest =
-        v05::decode(validate_mutation_batch(config, bytes)?.as_bytes()).map_err(request_invalid)?;
+    let request: wire::MutationRequest =
+        wire::decode(validate_mutation_batch(config, bytes)?.as_bytes())
+            .map_err(request_invalid)?;
     let result = crate::mutation_batch::execute(config, owner, &request, ordinal, host).await?;
     axton_core::canonical_json(&serde_json::to_value(result).map_err(internal)?).map_err(internal)
 }
@@ -144,7 +145,7 @@ pub async fn process_batch_group(
     count: u64,
     host: &impl Host,
 ) -> Result<Vec<String>> {
-    let request: v05::MutationRequest = v05::decode(bytes).map_err(request_invalid)?;
+    let request: wire::MutationRequest = wire::decode(bytes).map_err(request_invalid)?;
     let end = start
         .checked_add(count)
         .ok_or_else(|| request_invalid("group overflow"))?;
@@ -196,7 +197,7 @@ impl<H: Host> Host for MemberHost<'_, H> {
         mut request: Value,
     ) -> Pin<Box<dyn Future<Output = HostResult<Value>> + Send + '_>> {
         Box::pin(async move {
-            if request["op"] == "protocol05" && request["request"]["op"] == "applyStreamMembers" {
+            if request["op"] == "sync" && request["request"]["op"] == "applyStreamMembers" {
                 request["request"]["publicationScope"] = json!(self.scope);
             }
             self.host.call(request).await
@@ -204,8 +205,8 @@ impl<H: Host> Host for MemberHost<'_, H> {
     }
 }
 pub fn encode_batch_acknowledgement(bytes: &[u8], results: &[String]) -> Result<String> {
-    let request: v05::MutationRequest = v05::decode(bytes).map_err(request_invalid)?;
-    let ack = v05::BatchAcknowledgement {
+    let request: wire::MutationRequest = wire::decode(bytes).map_err(request_invalid)?;
+    let ack = wire::BatchAcknowledgement {
         context: request.context.clone(),
         batch_id: request.batch_id,
         digest: request.digest.clone(),
@@ -215,6 +216,6 @@ pub fn encode_batch_acknowledgement(bytes: &[u8], results: &[String]) -> Result<
             .collect::<Result<_>>()?,
     };
     // The server keyed every accepted member's input under its schema.
-    v05::validate_acknowledgement(&request, &ack, |_, _| true).map_err(crate::storage_invalid)?;
-    String::from_utf8(v05::encode(&ack).map_err(internal)?).map_err(internal)
+    wire::validate_acknowledgement(&request, &ack, |_, _| true).map_err(crate::storage_invalid)?;
+    String::from_utf8(wire::encode(&ack).map_err(internal)?).map_err(internal)
 }

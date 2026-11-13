@@ -28,7 +28,7 @@ Submitting a named Mutation validates retained input and binding rules, applies 
 
 A delete cascades through declared local relations once per identity, including cycles. These child effects stay local and follow their owning Call; they are not additional wire operations. Replaying a queued delete extends it to newly delivered children while respecting later accepted recreations. Business handlers must delete and explicitly invalidate their server-side children themselves.
 
-Records have no publication stamp. Stream cursor guards and call-owned evidence decide authority installation; duplicate delivery cannot undo newer authority. Ordinary null-cursor Query/Fetch records can populate unprotected cache, but cannot replace protected Stream state, clear a tombstone or advance progress. [Protocol 5](../../../protocols/sync.md) owns these rules.
+Records have no publication stamp. Stream cursor guards and call-owned evidence decide authority installation; duplicate delivery cannot undo newer authority. Ordinary null-cursor Query/Fetch records can populate unprotected cache, but cannot replace protected Stream state, clear a tombstone or advance progress. [Protocol 5](../../../protocols/wire.md) owns these rules.
 
 ## 10. Quality Requirements
 

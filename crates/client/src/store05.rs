@@ -5,7 +5,7 @@ use crate::{
     invalid,
 };
 use axton_core::canonical_json;
-use axton_protocols::sync as v05;
+use axton_protocols::wire;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -46,7 +46,7 @@ const DROP_LOCAL_REPLICA_LAYER: &str = "DROP TABLE IF EXISTS axton_local_replica
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoreStatus05 {
-    pub context: v05::RequestContext,
+    pub context: wire::RequestContext,
     pub next_mutation_id: u64,
     pub next_local_sequence: u64,
     pub last_acknowledged_batch_id: u64,
@@ -79,8 +79,8 @@ pub fn admit05<S: ClientStore>(store: &mut S, stream: &str) -> Result<bool> {
     }
     let row=store.query("SELECT id,stream,materialization,schema_descriptor,next_mutation_id,next_local_sequence,last_acknowledged_batch_id,start_cursor,bootstrap_cursor,cursor,generation FROM axton_store",&[])?.rows;
     let r = &row[0];
-    let context = v05::RequestContext {
-        protocol: v05::PROTOCOL,
+    let context = wire::RequestContext {
+        protocol: wire::PROTOCOL,
         store_id: r[0]
             .as_str()
             .ok_or_else(|| invalid("Store ID missing"))?
@@ -91,7 +91,7 @@ pub fn admit05<S: ClientStore>(store: &mut S, stream: &str) -> Result<bool> {
             .ok_or_else(|| invalid("materialization missing"))?
             .into(),
     };
-    axton_protocols::sync::Validate::validate(&context)?;
+    axton_protocols::wire::Validate::validate(&context)?;
     for value in &r[4..] {
         if !value.is_null() {
             axton_core::counter(as_u64(value)?)?;
@@ -132,7 +132,7 @@ impl Descriptor05 {
         hash.update([0]);
         hash.update(projection_generation.as_bytes());
         Ok(Self {
-            materialization: v05::materialization_id(schema, projection_generation)?,
+            materialization: wire::materialization_id(schema, projection_generation)?,
             context: format!("{:x}", hash.finalize()),
             text,
         })
@@ -276,7 +276,7 @@ impl<S: ClientStore> Client<S> {
             shared: Default::default(),
         })
     }
-    pub fn request_context05(&mut self) -> Result<v05::RequestContext> {
+    pub fn request_context05(&mut self) -> Result<wire::RequestContext> {
         self.view(|e| e.context05())
     }
     pub fn store_status05(&mut self) -> Result<StoreStatus05> {
@@ -285,13 +285,13 @@ impl<S: ClientStore> Client<S> {
     }
 }
 impl<S: ClientStore> Engine<'_, S> {
-    pub fn context05(&mut self) -> Result<v05::RequestContext> {
+    pub fn context05(&mut self) -> Result<wire::RequestContext> {
         let r = self
             .rows("SELECT id,stream,materialization FROM axton_store", &[])?
             .rows
             .remove(0);
-        Ok(v05::RequestContext {
-            protocol: v05::PROTOCOL,
+        Ok(wire::RequestContext {
+            protocol: wire::PROTOCOL,
             store_id: r[0].as_str().unwrap().into(),
             stream: r[1].as_str().unwrap().into(),
             materialization: r[2].as_str().unwrap().into(),

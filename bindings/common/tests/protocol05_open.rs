@@ -30,7 +30,7 @@ fn native_open_requires_stream_and_owns_physical_file() {
     assert_eq!(first["ok"], true, "{first:?}");
     assert_eq!(
         first["value"]["context"]["protocol"],
-        axton_client::v05::PROTOCOL
+        axton_client::wire::PROTOCOL
     );
     let (second, result) = open(&p, stream);
     assert_eq!(result["ok"], false);

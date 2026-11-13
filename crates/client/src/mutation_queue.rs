@@ -6,7 +6,7 @@ use crate::{
     *,
 };
 use axton_core::{ActionInputDescriptor, canonical_json, normalize_action_args};
-use axton_protocols::sync::{self as v05, Validate};
+use axton_protocols::wire::{self, Validate};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 pub(crate) fn text<T: serde::Serialize>(v: &T) -> Result<Value> {
@@ -23,11 +23,11 @@ fn kind(k: OpKind) -> &'static str {
         OpKind::Effect => "effect",
     }
 }
-fn operation(k: OperationKind) -> v05::Operation {
+fn operation(k: OperationKind) -> wire::Operation {
     match k {
-        OperationKind::Create => v05::Operation::Create,
-        OperationKind::Update => v05::Operation::Update,
-        OperationKind::Delete => v05::Operation::Delete,
+        OperationKind::Create => wire::Operation::Create,
+        OperationKind::Update => wire::Operation::Update,
+        OperationKind::Delete => wire::Operation::Delete,
     }
 }
 impl<S: ClientStore> Engine<'_, S> {
@@ -66,11 +66,11 @@ impl<S: ClientStore> Engine<'_, S> {
         .and_then(|v| v.as_str().map(str::to_owned))
         .ok_or_else(|| invalid("queued Mutation missing"))
     }
-    pub(crate) fn wire_ops05(&mut self, id: u64) -> Result<Vec<v05::MutationOperation>> {
-        self.rows("SELECT step,input_path,operation,model,identity,value FROM axton_mutation_queue_operation WHERE mutation_id=? AND input_path IS NOT NULL ORDER BY step",&[json!(id)])?.rows.into_iter().map(|r|Ok(v05::MutationOperation{step:as_u64(&r[0])?,input_path:r[1].as_str().ok_or_else(||invalid("input path missing"))?.into(),operation:serde_json::from_value(json!(r[2]))?,model:r[3].as_str().map(str::to_owned),identity:if r[4].is_null(){Value::Null}else{decode(&r[4])?},value:if r[5].is_null(){Value::Null}else{decode(&r[5])?}})).collect()
+    pub(crate) fn wire_ops05(&mut self, id: u64) -> Result<Vec<wire::MutationOperation>> {
+        self.rows("SELECT step,input_path,operation,model,identity,value FROM axton_mutation_queue_operation WHERE mutation_id=? AND input_path IS NOT NULL ORDER BY step",&[json!(id)])?.rows.into_iter().map(|r|Ok(wire::MutationOperation{step:as_u64(&r[0])?,input_path:r[1].as_str().ok_or_else(||invalid("input path missing"))?.into(),operation:serde_json::from_value(json!(r[2]))?,model:r[3].as_str().map(str::to_owned),identity:if r[4].is_null(){Value::Null}else{decode(&r[4])?},value:if r[5].is_null(){Value::Null}else{decode(&r[5])?}})).collect()
     }
     pub(crate) fn input05(&mut self, id: u64) -> Result<Value> {
-        v05::reconstruct_input(&self.wire_ops05(id)?)
+        wire::reconstruct_input(&self.wire_ops05(id)?)
     }
     pub(crate) fn insert_owned05(
         &mut self,
@@ -197,7 +197,7 @@ impl<S: ClientStore> Engine<'_, S> {
             ordinal: id,
         })
     }
-    pub(crate) fn reconstruct_batch05(&mut self, batch: u64) -> Result<v05::MutationRequest> {
+    pub(crate) fn reconstruct_batch05(&mut self, batch: u64) -> Result<wire::MutationRequest> {
         let rows=self.rows("SELECT id,name,descriptor_version,descriptor,batch_digest FROM axton_mutation_queue WHERE batch_id=? ORDER BY id",&[json!(batch)])?.rows;
         if rows.is_empty() {
             return Err(invalid("unknown Batch"));
@@ -214,7 +214,7 @@ impl<S: ClientStore> Engine<'_, S> {
             let operations = self.wire_ops05(id)?;
             let schema = self.retained_schema05(&descriptor)?;
             let action = schema.action(&name, version)?;
-            let input = v05::reconstruct_input(&operations)?;
+            let input = wire::reconstruct_input(&operations)?;
             let normalized = normalize_action_args(&schema, action, &input)?;
             for (key, value) in input.as_object().unwrap() {
                 if normalized.get(key) != Some(value) {
@@ -231,8 +231,8 @@ impl<S: ClientStore> Engine<'_, S> {
                     model: o.model.clone().unwrap(),
                     identity: o.identity.clone(),
                     op: match o.operation {
-                        v05::Operation::Create => OperationKind::Create,
-                        v05::Operation::Update => OperationKind::Update,
+                        wire::Operation::Create => OperationKind::Create,
+                        wire::Operation::Update => OperationKind::Update,
                         _ => OperationKind::Delete,
                     },
                     values: if o.value.is_null() {
@@ -265,31 +265,31 @@ impl<S: ClientStore> Engine<'_, S> {
                     {
                         return Err(invalid("wrong Model slot"));
                     }
-                    if o.operation == v05::Operation::Argument
+                    if o.operation == wire::Operation::Argument
                         && !((cardinality == "optional" && o.value.is_null())
                             || (cardinality == "list" && o.value == json!([])))
                     {
                         return Err(invalid("invalid Model argument sentinel"));
                     }
-                } else if o.operation != v05::Operation::Argument {
+                } else if o.operation != wire::Operation::Argument {
                     return Err(invalid("Value slot is not argument"));
                 }
             }
-            mutations.push(v05::Mutation {
+            mutations.push(wire::Mutation {
                 id,
                 name,
                 version,
-                descriptor: v05::mutation_descriptor_digest(action)?,
+                descriptor: wire::mutation_descriptor_digest(action)?,
                 operations,
             });
         }
-        let mut request = v05::MutationRequest {
+        let mut request = wire::MutationRequest {
             context,
             batch_id: batch,
             digest: "0".repeat(64),
             mutations,
         };
-        request.digest = v05::batch_digest(&request)?;
+        request.digest = wire::batch_digest(&request)?;
         request.validate()?;
         if rows
             .iter()
@@ -302,7 +302,7 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         Ok(request)
     }
-    pub(crate) fn freeze05(&mut self) -> Result<Option<v05::MutationRequest>> {
+    pub(crate) fn freeze05(&mut self) -> Result<Option<wire::MutationRequest>> {
         // Push waits for the handshake: a Mutation then executes after the
         // head read, so its syncCursor is at or after the Store's start S.
         let store = self
@@ -360,7 +360,7 @@ impl<S: ClientStore> Engine<'_, S> {
     }
 }
 impl<S: ClientStore> Client<S> {
-    pub fn freeze_batch05(&mut self) -> Result<Option<v05::MutationRequest>> {
+    pub fn freeze_batch05(&mut self) -> Result<Option<wire::MutationRequest>> {
         self.write(|e| e.freeze05())
     }
 }

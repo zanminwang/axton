@@ -33,5 +33,5 @@ pub mod frontend_interface;
 pub use axton_protocols::client_bridge::model::{
     Operation, OperationKind, Readiness, Report, ReportKind,
 };
-pub use axton_protocols::sync as v05;
+pub use axton_protocols::wire;
 pub use frontend_interface::*;

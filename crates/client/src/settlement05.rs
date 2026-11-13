@@ -31,14 +31,14 @@ impl<S: ClientStore> Engine<'_, S> {
 use crate::engine::as_u64;
 use crate::mutation_queue::{decode, text};
 use crate::queue::OpKind;
-use axton_protocols::sync::{self as v05, Validate};
+use axton_protocols::wire::{self, Validate};
 use std::collections::{BTreeMap, BTreeSet};
 impl<S: ClientStore> Engine<'_, S> {
-    fn outcome05(&mut self, id: u64) -> Result<Option<v05::MutationOutcome>> {
+    fn outcome05(&mut self, id: u64) -> Result<Option<wire::MutationOutcome>> {
         let r=self.rows("SELECT sync_cursor,outcome_materialization,result,targets,rejection_code,rejection_message FROM axton_mutation_queue WHERE id=?",&[json!(id)])?.rows;
         let Some(r) = r.first() else { return Ok(None) };
         if let Some(code) = r[4].as_str() {
-            return Ok(Some(v05::MutationOutcome::Rejected {
+            return Ok(Some(wire::MutationOutcome::Rejected {
                 code: code.into(),
                 message: r[5].as_str().map(str::to_owned),
             }));
@@ -46,7 +46,7 @@ impl<S: ClientStore> Engine<'_, S> {
         if r[0].is_null() {
             return Ok(None);
         }
-        Ok(Some(v05::MutationOutcome::Accepted {
+        Ok(Some(wire::MutationOutcome::Accepted {
             sync_cursor: as_u64(&r[0])?,
             materialization: r[1]
                 .as_str()
@@ -61,8 +61,8 @@ impl<S: ClientStore> Engine<'_, S> {
             .outcome05(id)?
             .ok_or_else(|| invalid("outcome missing"))?
         {
-            v05::MutationOutcome::Accepted { result, .. } => ActionOutcome::Succeeded { result },
-            v05::MutationOutcome::Rejected { code, .. } => ActionOutcome::Failed {
+            wire::MutationOutcome::Accepted { result, .. } => ActionOutcome::Succeeded { result },
+            wire::MutationOutcome::Rejected { code, .. } => ActionOutcome::Failed {
                 code,
                 execution: ExecutionState::Rejected,
             },
@@ -72,7 +72,7 @@ impl<S: ClientStore> Engine<'_, S> {
             outcome,
         })
     }
-    fn acknowledge05(&mut self, ack: &v05::BatchAcknowledgement) -> Result<ApplyReport> {
+    fn acknowledge05(&mut self, ack: &wire::BatchAcknowledgement) -> Result<ApplyReport> {
         ack.validate()?;
         ack.context.admit_store(&self.context05()?)?;
         let last = as_u64(
@@ -122,7 +122,7 @@ impl<S: ClientStore> Engine<'_, S> {
                 }
             }
         }
-        v05::validate_acknowledgement(&request, ack, |id, model| {
+        wire::validate_acknowledgement(&request, ack, |id, model| {
             !unshared.contains(&(id, model.to_owned()))
         })?;
         // Validate every result and snapshot before changing any durable
@@ -133,7 +133,7 @@ impl<S: ClientStore> Engine<'_, S> {
         // validated against the current schema only then.
         let active = self.context05()?.materialization;
         for result in &ack.results {
-            if let v05::MutationOutcome::Accepted {
+            if let wire::MutationOutcome::Accepted {
                 result: value,
                 materialization,
                 targets,
@@ -159,8 +159,8 @@ impl<S: ClientStore> Engine<'_, S> {
                         continue;
                     }
                     let r = match target {
-                        v05::SettlementTarget::Stream { fallback, .. } => fallback,
-                        v05::SettlementTarget::Private { record } => record,
+                        wire::SettlementTarget::Stream { fallback, .. } => fallback,
+                        wire::SettlementTarget::Private { record } => record,
                     };
                     if !r.state.is_null() {
                         schema.validate_state(&k.model, &r.state)?;
@@ -172,7 +172,7 @@ impl<S: ClientStore> Engine<'_, S> {
         for result in &ack.results {
             let id = result.mutation_id;
             match &result.outcome {
-                v05::MutationOutcome::Accepted {
+                wire::MutationOutcome::Accepted {
                     sync_cursor,
                     materialization,
                     result,
@@ -180,7 +180,7 @@ impl<S: ClientStore> Engine<'_, S> {
                 } => {
                     self.exec("axton_mutation_queue","UPDATE axton_mutation_queue SET sync_cursor=?,outcome_materialization=?,result=?,targets=? WHERE id=?",&[json!(sync_cursor),json!(materialization),text(result)?,text(targets)?,json!(id)])?;
                 }
-                v05::MutationOutcome::Rejected { code, message } => {
+                wire::MutationOutcome::Rejected { code, message } => {
                     rejected.insert(id, (code.clone(), message.clone()));
                 }
             }
@@ -229,13 +229,13 @@ impl<S: ClientStore> Engine<'_, S> {
             ..Default::default()
         })
     }
-    fn target_evidence05(&mut self, key: &v05::RecordKey) -> Result<v05::TargetEvidence> {
+    fn target_evidence05(&mut self, key: &wire::RecordKey) -> Result<wire::TargetEvidence> {
         let key = self.schema.record_key(&key.model, &key.identity)?;
         let evidence = self.evidence05(&key)?;
         let materialization = self.context05()?.materialization;
         // History holds the one delivery it last installed, in whichever
         // contract; protection counts only in the Store's.
-        Ok(v05::TargetEvidence {
+        Ok(wire::TargetEvidence {
             content_cursor: evidence.history.values().max().copied(),
             protected: !evidence.allows_cache(&materialization),
             removed_cursor: evidence.membership.filter(|m| !m.live).map(|m| m.cursor),
@@ -286,7 +286,7 @@ impl<S: ClientStore> Engine<'_, S> {
             .collect::<std::collections::BTreeSet<_>>();
         for row in pending {
             let id = as_u64(&row[0])?;
-            let Some(v05::MutationOutcome::Accepted {
+            let Some(wire::MutationOutcome::Accepted {
                 sync_cursor,
                 materialization,
                 targets,
@@ -312,7 +312,7 @@ impl<S: ClientStore> Engine<'_, S> {
                     self.target_evidence05(target.key())?,
                 );
             }
-            if !v05::settlement_ready(
+            if !wire::settlement_ready(
                 sync_cursor,
                 cursor,
                 start_cursor,
@@ -328,18 +328,18 @@ impl<S: ClientStore> Engine<'_, S> {
                 held.insert(k.encoded()?, k);
             }
             for target in &targets {
-                if v05::target_disposition(
+                if wire::target_disposition(
                     target,
                     start_cursor,
                     bootstrap_models.contains(&target.key().model),
                     &evidence[&target.key().encoded()?],
-                )? != v05::TargetDisposition::FinalizeOwned
+                )? != wire::TargetDisposition::FinalizeOwned
                 {
                     continue;
                 }
                 let record = match target {
-                    v05::SettlementTarget::Stream { fallback, .. } => fallback,
-                    v05::SettlementTarget::Private { record } => record,
+                    wire::SettlementTarget::Stream { fallback, .. } => fallback,
+                    wire::SettlementTarget::Private { record } => record,
                 };
                 let key = self
                     .schema
@@ -402,7 +402,7 @@ impl<S: ClientStore> Engine<'_, S> {
     }
 }
 impl<S: ClientStore> Client<S> {
-    pub fn acknowledge_batch05(&mut self, ack: &v05::BatchAcknowledgement) -> Result<ApplyReport> {
+    pub fn acknowledge_batch05(&mut self, ack: &wire::BatchAcknowledgement) -> Result<ApplyReport> {
         self.write(|e| e.acknowledge05(ack))
     }
     pub fn settle_ready05(&mut self) -> Result<ApplyReport> {
@@ -444,8 +444,8 @@ impl<S: ClientStore> Engine<'_, S> {
     /// from record cursors; the owning delivery worker commits coverage separately.
     pub fn stage_authority05(
         &mut self,
-        context: &v05::RequestContext,
-        changes: &[v05::AuthorityChange],
+        context: &wire::RequestContext,
+        changes: &[wire::AuthorityChange],
         held: &mut Held,
     ) -> Result<usize> {
         context.admit(&self.context05()?)?;
@@ -463,7 +463,7 @@ impl<S: ClientStore> Engine<'_, S> {
             if key.identity != k.identity {
                 return Err(invalid("noncanonical authority key"));
             }
-            if let v05::AuthorityChange::Record { cursor, .. } = change
+            if let wire::AuthorityChange::Record { cursor, .. } = change
                 && self
                     .evidence05(&key)?
                     .admission(&context.materialization, *cursor)?
@@ -481,7 +481,7 @@ impl<S: ClientStore> Engine<'_, S> {
         ordered.sort_by_key(|c| {
             (
                 c.cursor(),
-                matches!(c,v05::AuthorityChange::Record{state,..} if state.is_null()),
+                matches!(c,wire::AuthorityChange::Record{state,..} if state.is_null()),
             )
         });
         for change in ordered {
@@ -493,13 +493,13 @@ impl<S: ClientStore> Engine<'_, S> {
             }
             let mut evidence = self.evidence05(&key)?;
             match change {
-                v05::AuthorityChange::Remove { cursor, .. } => {
+                wire::AuthorityChange::Remove { cursor, .. } => {
                     if evidence.remove(*cursor)? {
                         self.set_evidence05(&key, &evidence)?;
                         applied += 1;
                     }
                 }
-                v05::AuthorityChange::Record { cursor, state, .. } => {
+                wire::AuthorityChange::Record { cursor, state, .. } => {
                     let admission = evidence.admission(&context.materialization, *cursor)?;
                     if admission == evidence::AuthorityAdmission::Duplicate {
                         continue;
@@ -543,7 +543,7 @@ impl<S: ClientStore> Engine<'_, S> {
     }
     pub fn stage_cache05(
         &mut self,
-        records: &[v05::ReadRecord],
+        records: &[wire::ReadRecord],
         store: bool,
         held: &mut Held,
     ) -> Result<usize> {
@@ -646,8 +646,8 @@ impl<S: ClientStore> Client<S> {
     /// Task 5 supplies immutable plan/progress validation and lane ownership.
     pub fn install_authority05(
         &mut self,
-        context: &v05::RequestContext,
-        changes: &[v05::AuthorityChange],
+        context: &wire::RequestContext,
+        changes: &[wire::AuthorityChange],
         coverage: Option<(u64, u64)>,
     ) -> Result<ApplyReport> {
         context.admit(&self.request_context05()?)?;
@@ -669,7 +669,7 @@ impl<S: ClientStore> Client<S> {
     }
     pub fn install_cache05(
         &mut self,
-        records: &[v05::ReadRecord],
+        records: &[wire::ReadRecord],
         store: bool,
     ) -> Result<ApplyReport> {
         self.write(|e| {
@@ -726,14 +726,14 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
     }
 }
 impl<S: ClientStore> Client<S> {
-    pub fn mutation_result05(&mut self, id: u64) -> Result<Option<v05::MutationResult>> {
+    pub fn mutation_result05(&mut self, id: u64) -> Result<Option<wire::MutationResult>> {
         self.view(|e| {
             if e.scalar(
                 "SELECT reconciled FROM axton_mutation_queue WHERE id=?",
                 &[json!(id)],
             )? == Some(json!(1))
             {
-                Ok(e.outcome05(id)?.map(|outcome| v05::MutationResult {
+                Ok(e.outcome05(id)?.map(|outcome| wire::MutationResult {
                     mutation_id: id,
                     outcome,
                 }))

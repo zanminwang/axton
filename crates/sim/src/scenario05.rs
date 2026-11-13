@@ -2,7 +2,7 @@
 //! Cloud acknowledgements are fixtures; the actual PostgreSQL/SDK join lives
 //! in integration/v05-sdk and must pass independently.
 use axton_client::{Client, RecordKey, Schema};
-use axton_protocols::sync as v05;
+use axton_protocols::wire;
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -223,12 +223,12 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
     assert_projection05(&mut client, &schema);
     let batch = client.freeze_batch05().unwrap().unwrap();
     assert_projection05(&mut client, &schema);
-    let bytes = v05::encode(&batch).unwrap();
+    let bytes = wire::encode(&batch).unwrap();
     drop(client);
     boundaries.push(Boundary05::Frozen);
     client = open(path);
     assert_projection05(&mut client, &schema);
-    let exact_retry = v05::encode(&client.freeze_batch05().unwrap().unwrap()).unwrap() == bytes;
+    let exact_retry = wire::encode(&client.freeze_batch05().unwrap().unwrap()).unwrap() == bytes;
     // A later Mutation on the same record, queued after the frozen Batch and
     // never sent: it stays pending on top of whatever settles beneath it.
     let later = client
@@ -237,8 +237,8 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
         })
         .unwrap();
     assert_projection05(&mut client, &schema);
-    let authority = v05::AuthorityChange::Record {
-        key: v05::RecordKey {
+    let authority = wire::AuthorityChange::Record {
+        key: wire::RecordKey {
             model: key.model.clone(),
             identity: key.identity.clone(),
         },
@@ -252,20 +252,20 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
             .unwrap();
         assert_projection05(&mut client, &schema);
     }
-    let receipt = v05::BatchAcknowledgement {
+    let receipt = wire::BatchAcknowledgement {
         context: batch.context.clone(),
         batch_id: batch.batch_id,
         digest: batch.digest.clone(),
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: call.ordinal,
-            outcome: v05::MutationOutcome::Accepted {
+            outcome: wire::MutationOutcome::Accepted {
                 sync_cursor: 7,
                 materialization: batch.context.materialization.clone(),
                 result: Value::Null,
                 targets: vec![if private {
-                    v05::SettlementTarget::Private {
-                        record: v05::ReadRecord {
-                            key: v05::RecordKey {
+                    wire::SettlementTarget::Private {
+                        record: wire::ReadRecord {
+                            key: wire::RecordKey {
                                 model: key.model.clone(),
                                 identity: key.identity.clone(),
                             },
@@ -274,14 +274,14 @@ pub fn run_recovery05(path: &Path, authority_first: bool, private: bool) -> Reco
                         },
                     }
                 } else {
-                    v05::SettlementTarget::Stream {
-                        key: v05::RecordKey {
+                    wire::SettlementTarget::Stream {
+                        key: wire::RecordKey {
                             model: key.model.clone(),
                             identity: key.identity.clone(),
                         },
                         cursor: 7,
-                        fallback: v05::ReadRecord {
-                            key: v05::RecordKey {
+                        fallback: wire::ReadRecord {
+                            key: wire::RecordKey {
                                 model: key.model.clone(),
                                 identity: key.identity.clone(),
                             },

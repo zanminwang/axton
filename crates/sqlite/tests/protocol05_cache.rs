@@ -1,4 +1,4 @@
-use axton_client::{Client, RecordKey, Schema, v05};
+use axton_client::{Client, RecordKey, Schema, wire};
 use axton_sqlite::SqliteStore;
 use serde_json::json;
 fn schema(on_delete: &str) -> Schema {
@@ -19,8 +19,8 @@ fn parent(c: &mut Client<SqliteStore>, cursor: u64, deleted: bool) {
     let context = c.request_context05().unwrap();
     c.install_authority05(
         &context,
-        &[v05::AuthorityChange::Record {
-            key: v05::RecordKey {
+        &[wire::AuthorityChange::Record {
+            key: wire::RecordKey {
                 model: "Parent".into(),
                 identity: json!({"id":"p"}),
             },
@@ -35,9 +35,9 @@ fn parent(c: &mut Client<SqliteStore>, cursor: u64, deleted: bool) {
     )
     .unwrap();
 }
-fn child(parent_id: serde_json::Value) -> v05::ReadRecord {
-    v05::ReadRecord {
-        key: v05::RecordKey {
+fn child(parent_id: serde_json::Value) -> wire::ReadRecord {
+    wire::ReadRecord {
+        key: wire::RecordKey {
             model: "Child".into(),
             identity: json!({"id":"c"}),
         },
@@ -132,8 +132,8 @@ fn install(
     let context = c.request_context05().unwrap();
     c.install_authority05(
         &context,
-        &[v05::AuthorityChange::Record {
-            key: v05::RecordKey {
+        &[wire::AuthorityChange::Record {
+            key: wire::RecordKey {
                 model: model.into(),
                 identity: json!({ "id": id }),
             },
@@ -146,8 +146,8 @@ fn install(
 }
 fn cached(c: &mut Client<SqliteStore>, model: &str, id: &str, state: serde_json::Value) -> usize {
     c.install_cache05(
-        &[v05::ReadRecord {
-            key: v05::RecordKey {
+        &[wire::ReadRecord {
+            key: wire::RecordKey {
                 model: model.into(),
                 identity: json!({ "id": id }),
             },

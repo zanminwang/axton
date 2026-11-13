@@ -1,10 +1,10 @@
-use crate::{AbandonedCall, Client, ClientStore, Result, engine::as_u64, invalid, v05};
+use crate::{AbandonedCall, Client, ClientStore, Result, engine::as_u64, invalid, wire};
 use serde::Serialize;
 use serde_json::json;
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResetStoreReport05 {
-    pub context: v05::RequestContext,
+    pub context: wire::RequestContext,
     pub abandoned_calls: Vec<AbandonedCall>,
 }
 impl<S: ClientStore> Client<S> {

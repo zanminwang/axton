@@ -939,13 +939,13 @@ fn recovery_harness() -> (
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     assert_eq!(b.mutations.len(), 1);
-    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+    c.acknowledge_batch05(&wire::BatchAcknowledgement {
         context: b.context,
         batch_id: b.batch_id,
         digest: b.digest,
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: refused.ordinal,
-            outcome: v05::MutationOutcome::Rejected {
+            outcome: wire::MutationOutcome::Rejected {
                 code: "ping.denied".into(),
                 message: None,
             },
@@ -1010,8 +1010,8 @@ fn receipt_commit_publishes_retained_unsent_and_model_observers_together() {
     let mut h = mutation_harness();
     let context = h.runtime.client().request_context05().unwrap();
     h.runtime
-        .store_worker05(StoreCommand::Initialize(v05::HandshakeResponse {
-            protocol: v05::PROTOCOL,
+        .store_worker05(StoreCommand::Initialize(wire::HandshakeResponse {
+            protocol: wire::PROTOCOL,
             store_id: context.store_id,
             stream: context.stream,
             head: 0,
@@ -1051,13 +1051,13 @@ fn receipt_commit_publishes_retained_unsent_and_model_observers_together() {
         panic!("expected frozen Mutation");
     };
     assert!(h.events().is_empty(), "freeze changes no observer result");
-    let receipt = v05::BatchAcknowledgement {
+    let receipt = wire::BatchAcknowledgement {
         context: batch.context,
         batch_id: batch.batch_id,
         digest: batch.digest,
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: batch.mutations[0].id,
-            outcome: v05::MutationOutcome::Rejected {
+            outcome: wire::MutationOutcome::Rejected {
                 code: "action.invalid".into(),
                 message: None,
             },
@@ -1123,8 +1123,8 @@ fn accepted_receipt_commit_publishes_retained_pending_observer() {
     let mut h = mutation_harness();
     let context = h.runtime.client().request_context05().unwrap();
     h.runtime
-        .store_worker05(StoreCommand::Initialize(v05::HandshakeResponse {
-            protocol: v05::PROTOCOL,
+        .store_worker05(StoreCommand::Initialize(wire::HandshakeResponse {
+            protocol: wire::PROTOCOL,
             store_id: context.store_id,
             stream: context.stream,
             head: 0,
@@ -1133,15 +1133,15 @@ fn accepted_receipt_commit_publishes_retained_pending_observer() {
         .unwrap();
     h.events();
     let context = h.runtime.client().request_context05().unwrap();
-    let delivery = v05::freeze_delivery(
+    let delivery = wire::freeze_delivery(
         context.clone(),
         "bootstrap".into(),
-        v05::DeliveryPurpose::Bootstrap,
+        wire::DeliveryPurpose::Bootstrap,
         0,
         0,
         0,
         10000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(0),
             changes: vec![],
@@ -1173,13 +1173,13 @@ fn accepted_receipt_commit_publishes_retained_pending_observer() {
     };
     h.events();
     h.runtime
-        .store_worker05(StoreCommand::Acknowledge(v05::BatchAcknowledgement {
+        .store_worker05(StoreCommand::Acknowledge(wire::BatchAcknowledgement {
             context: batch.context.clone(),
             batch_id: batch.batch_id,
             digest: batch.digest,
-            results: vec![v05::MutationResult {
+            results: vec![wire::MutationResult {
                 mutation_id: batch.mutations[0].id,
-                outcome: v05::MutationOutcome::Accepted {
+                outcome: wire::MutationOutcome::Accepted {
                     sync_cursor: 0,
                     materialization: batch.context.materialization,
                     result: Value::Null,
@@ -1218,8 +1218,8 @@ fn unsent_observers_publish_initial_then_changed_inputs_and_end_on_unwatch_or_cl
     h.runtime
         .client()
         .install_cache05(
-            &[v05::ReadRecord {
-                key: v05::RecordKey {
+            &[wire::ReadRecord {
+                key: wire::RecordKey {
                     model: "Entry".into(),
                     identity: json!({"id":"unrelated"}),
                 },
@@ -1808,7 +1808,7 @@ fn a_direct_apply_that_fails_to_commit_fails_the_call_and_lets_nothing_escape() 
             .unwrap();
         let request: Value =
             serde_json::from_str(http["operation"]["body"].as_str().unwrap()).unwrap();
-        let response = json!({"protocol":axton_client::v05::PROTOCOL,"storeId":request["storeId"],"stream":request["stream"],"materialization":request["materialization"],"requestId":request["requestId"],"outcome":{"kind":"succeeded","result":{"id":"e","text":"returned","note":null}},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"returned","note":null}}]});
+        let response = json!({"protocol":axton_client::wire::PROTOCOL,"storeId":request["storeId"],"stream":request["stream"],"materialization":request["materialization"],"requestId":request["requestId"],"outcome":{"kind":"succeeded","result":{"id":"e","text":"returned","note":null}},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"returned","note":null}}]});
         armed.store(fail, Ordering::SeqCst);
         h.submit(json!({"type":"effectResult","effectId":http["effectId"],"outcome":{"ok":true,"value":response.to_string()}})).unwrap();
         let events = h.run();
@@ -1837,8 +1837,8 @@ fn every_commit_path_re_emits_a_watched_statement() {
     let mut h = harness();
     h.runtime.client().initialize_stream05(0, "1").unwrap();
     let context = h.runtime.client().request_context05().unwrap();
-    let record = |cursor, text: &str, note: Value| v05::AuthorityChange::Record {
-        key: v05::RecordKey {
+    let record = |cursor, text: &str, note: Value| wire::AuthorityChange::Record {
+        key: wire::RecordKey {
             model: "Entry".into(),
             identity: json!({"id":"e"}),
         },
@@ -1884,13 +1884,13 @@ fn every_commit_path_re_emits_a_watched_statement() {
     );
     h.runtime
         .client()
-        .acknowledge_batch05(&v05::BatchAcknowledgement {
+        .acknowledge_batch05(&wire::BatchAcknowledgement {
             context: batch.context,
             batch_id: batch.batch_id,
             digest: batch.digest,
-            results: vec![v05::MutationResult {
+            results: vec![wire::MutationResult {
                 mutation_id: batch.mutations[0].id,
-                outcome: v05::MutationOutcome::Rejected {
+                outcome: wire::MutationOutcome::Rejected {
                     code: "edit.refused".into(),
                     message: None,
                 },
@@ -1906,8 +1906,8 @@ fn every_commit_path_re_emits_a_watched_statement() {
     h.runtime
         .client()
         .install_cache05(
-            &[v05::ReadRecord {
-                key: v05::RecordKey {
+            &[wire::ReadRecord {
+                key: wire::RecordKey {
                     model: "Entry".into(),
                     identity: json!({"id":"f"}),
                 },

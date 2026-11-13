@@ -14,7 +14,7 @@ Protocol 5 requires a fresh PostgreSQL framework namespace and fresh format-5 cl
 
 | Owner | Responsibility |
 | --- | --- |
-| [Core carriers](../../../../crates/protocols/src/sync.rs) | Context, immutable Batch, null-cursor reads, delivery headers, manifests, parts and validation. |
+| [Core carriers](../../../../crates/protocols/src/wire.rs) | Context, immutable Batch, null-cursor reads, delivery headers, manifests, parts and validation. |
 | [Client Store](../../../../crates/client/src/store05.rs) | Durable file context, operation input, frozen request, acknowledgment, S/B/C and authority evidence. |
 | [Client sync](../../../../crates/client/src/sync05/mod.rs) | Uplink, finite downlink, bounded queue and complete-unit apply. |
 | [Client settlement](../../../../crates/client/src/settlement05.rs) | Queue-owned outcomes and accepted work's authority obligations. |
@@ -90,7 +90,7 @@ Finite bounds do not imply short writer or transaction occupancy. Large uniquene
 
 ## Protocol definitions
 
-[Sync contracts](../../../../crates/protocols/src/sync.rs) and their [delivery](../../../../crates/protocols/src/sync/delivery.rs) / [mutation](../../../../crates/protocols/src/sync/mutation.rs) helpers encode, validate and calculate pure protocol results. They use shared schema normalization and counters from core. Client/Server engines own persistence, scheduling, authority application and business execution.
+[Sync contracts](../../../../crates/protocols/src/wire.rs) and their [delivery](../../../../crates/protocols/src/wire/delivery.rs) / [mutation](../../../../crates/protocols/src/wire/mutation.rs) helpers encode, validate and calculate pure protocol results. They use shared schema normalization and counters from core. Client/Server engines own persistence, scheduling, authority application and business execution.
 
 Canonical wire bytes and digest inputs use core's
 [canonical encoder](../../../../crates/core/src/lib.rs). It writes into a shared

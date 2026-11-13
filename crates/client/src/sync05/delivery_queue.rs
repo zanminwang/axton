@@ -1,16 +1,16 @@
-use crate::{Result, invalid, v05};
+use crate::{Result, invalid, wire};
 use std::{collections::BTreeMap, sync::Arc};
-use v05::Validate;
+use wire::Validate;
 
 #[derive(Clone)]
 pub(crate) struct StagedPart {
-    memory: Option<Arc<v05::DeliveryPart>>,
+    memory: Option<Arc<wire::DeliveryPart>>,
     disk: Option<Arc<Spool>>,
     bytes: usize,
 }
 struct Spool(std::fs::File);
 impl StagedPart {
-    fn load(&self) -> Result<v05::DeliveryPart> {
+    fn load(&self) -> Result<wire::DeliveryPart> {
         if let Some(part) = &self.memory {
             return Ok((**part).clone());
         }
@@ -38,7 +38,7 @@ impl StagedPart {
         }
         Ok(serde_json::from_slice(&bytes)?)
     }
-    fn new(part: &v05::DeliveryPart, memory: bool) -> Result<Self> {
+    fn new(part: &wire::DeliveryPart, memory: bool) -> Result<Self> {
         let bytes = serde_json::to_vec(part)?;
         if memory {
             return Ok(Self {
@@ -78,7 +78,7 @@ impl StagedPart {
 }
 #[derive(Clone)]
 pub(crate) struct Plan {
-    pub header: Arc<v05::DeliveryHeader>,
+    pub header: Arc<wire::DeliveryHeader>,
     pub parts: BTreeMap<(u64, u64), StagedPart>,
     pub next: u64,
     pub blocked: bool,
@@ -107,7 +107,7 @@ impl Plan {
                 (0..manifest.parts.len() as u64).all(|part| self.parts.contains_key(&(index, part)))
             })
     }
-    pub fn unit(&self, index: u64) -> Result<Option<v05::DeliveryUnit>> {
+    pub fn unit(&self, index: u64) -> Result<Option<wire::DeliveryUnit>> {
         if !self.complete(index) {
             return Ok(None);
         }
@@ -120,7 +120,7 @@ impl Plan {
                 return Ok(None);
             };
             let part = p.load()?;
-            if v05::part_digest(&part)?
+            if wire::part_digest(&part)?
                 != *manifest
                     .parts
                     .get(part.part as usize)
@@ -130,14 +130,14 @@ impl Plan {
             }
             changes.extend(part.changes);
         }
-        let unit = v05::DeliveryUnit {
+        let unit = wire::DeliveryUnit {
             index,
             through: manifest.through,
             changes,
         };
         unit.validate()?;
-        if v05::unit_digest(&unit)? != manifest.digest
-            || unit.changes.iter().map(v05::AuthorityChange::cursor).min()
+        if wire::unit_digest(&unit)? != manifest.digest
+            || unit.changes.iter().map(wire::AuthorityChange::cursor).min()
                 != manifest.minimum_cursor
         {
             return Err(invalid("unit digest mismatch"));
@@ -168,9 +168,9 @@ impl DeliveryQueue {
     }
     pub fn receive(
         &mut self,
-        header: &v05::DeliveryHeader,
-        parts: &[v05::DeliveryPart],
-        active: &v05::RequestContext,
+        header: &wire::DeliveryHeader,
+        parts: &[wire::DeliveryPart],
+        active: &wire::RequestContext,
         now: u64,
     ) -> Result<()> {
         self.receive_bounded(header, parts, active, now, false)
@@ -180,18 +180,18 @@ impl DeliveryQueue {
     /// pressure into a connection failure. Invalid offers still fail normally.
     pub(crate) fn receive_prefetched(
         &mut self,
-        header: &v05::DeliveryHeader,
-        parts: &[v05::DeliveryPart],
-        active: &v05::RequestContext,
+        header: &wire::DeliveryHeader,
+        parts: &[wire::DeliveryPart],
+        active: &wire::RequestContext,
         now: u64,
     ) -> Result<bool> {
         self.receive_bounded(header, parts, active, now, true)
     }
     fn receive_bounded(
         &mut self,
-        header: &v05::DeliveryHeader,
-        parts: &[v05::DeliveryPart],
-        active: &v05::RequestContext,
+        header: &wire::DeliveryHeader,
+        parts: &[wire::DeliveryPart],
+        active: &wire::RequestContext,
         now: u64,
         speculative: bool,
     ) -> Result<bool> {
@@ -340,9 +340,9 @@ impl DeliveryQueue {
     /// Validate a live offer even when only its head will be retained. A hint
     /// grants no coverage and must not hide malformed or foreign payloads.
     pub(crate) fn validate_offer(
-        header: &v05::DeliveryHeader,
-        parts: &[v05::DeliveryPart],
-        active: &v05::RequestContext,
+        header: &wire::DeliveryHeader,
+        parts: &[wire::DeliveryPart],
+        active: &wire::RequestContext,
         now: u64,
     ) -> Result<()> {
         if header.context.store_id != active.store_id || header.context.stream != active.stream {
@@ -360,7 +360,7 @@ impl DeliveryQueue {
                     .units
                     .get(part.unit as usize)
                     .and_then(|u| u.parts.get(part.part as usize))
-                    != Some(&v05::part_digest(part)?)
+                    != Some(&wire::part_digest(part)?)
             {
                 return Err(invalid("fragment correlation mismatch"));
             }
@@ -395,26 +395,26 @@ mod prefetch_tests {
     use super::*;
     use serde_json::json;
 
-    fn offer(id: &str, after: u64) -> v05::FrozenDelivery {
-        let context = v05::RequestContext {
-            protocol: v05::PROTOCOL,
+    fn offer(id: &str, after: u64) -> wire::FrozenDelivery {
+        let context = wire::RequestContext {
+            protocol: wire::PROTOCOL,
             store_id: "store".into(),
             stream: "User:u".into(),
             materialization: "0".repeat(64),
         };
-        v05::freeze_delivery(
+        wire::freeze_delivery(
             context,
             id.into(),
-            v05::DeliveryPurpose::Bootstrap,
+            wire::DeliveryPurpose::Bootstrap,
             after,
             after + 1,
             3,
             10000,
-            vec![v05::DeliveryUnit {
+            vec![wire::DeliveryUnit {
                 index: 0,
                 through: Some(after + 1),
-                changes: vec![v05::AuthorityChange::Record {
-                    key: v05::RecordKey {
+                changes: vec![wire::AuthorityChange::Record {
+                    key: wire::RecordKey {
                         model: "Entry".into(),
                         identity: json!({"id":id}),
                     },
@@ -466,7 +466,7 @@ mod prefetch_tests {
         queue
             .receive(&first.header, &first.parts, &first.header.context, 1)
             .unwrap();
-        if let v05::AuthorityChange::Record { state, .. } = &mut next.parts[0].changes[0] {
+        if let wire::AuthorityChange::Record { state, .. } = &mut next.parts[0].changes[0] {
             *state = json!({"text":"tampered"});
         }
         assert!(

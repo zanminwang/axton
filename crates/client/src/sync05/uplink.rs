@@ -1,13 +1,13 @@
 //! The Store worker protocol. Commands contain admitted facts, never sockets.
 use super::DeliveryQueue;
-use crate::{ApplyReport, store05::StoreStatus05, v05};
+use crate::{ApplyReport, store05::StoreStatus05, wire};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
 #[derive(Clone)]
 pub struct WorkFence05 {
-    pub context: v05::RequestContext,
+    pub context: wire::RequestContext,
     pub epoch: u64,
     pub(crate) current: Arc<AtomicU64>,
 }
@@ -22,13 +22,13 @@ pub enum StoreCommand {
         command: Box<StoreCommand>,
     },
     /// An admitted handshake: its head and the backend's projection generation.
-    Initialize(v05::HandshakeResponse),
+    Initialize(wire::HandshakeResponse),
     NetworkState {
         live: bool,
         catching_up: bool,
     },
     Freeze,
-    Acknowledge(v05::BatchAcknowledgement),
+    Acknowledge(wire::BatchAcknowledgement),
     Apply {
         plan_id: String,
         queue: DeliveryQueue,
@@ -50,7 +50,7 @@ pub enum StoreReport {
         // Present only when settlement committed terminal Call progress.
         status: Option<StoreStatus05>,
     },
-    Frozen(Option<v05::MutationRequest>),
+    Frozen(Option<wire::MutationRequest>),
     /// The uplink cannot continue from durable state; nothing retries it.
     Halted(String),
     Committed {

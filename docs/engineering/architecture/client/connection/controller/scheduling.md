@@ -6,4 +6,4 @@ Rust owns coalescing of active delivery lanes, bounded staging and repair schedu
 
 ## 5. Building Block View
 
-[sync05/delivery_queue.rs](../../../../../../crates/client/src/sync05/delivery_queue.rs) owns this component. [Protocol 5](../../../protocols/sync.md) owns shared context, delivery and settlement rules.
+[sync05/delivery_queue.rs](../../../../../../crates/client/src/sync05/delivery_queue.rs) owns this component. [Protocol 5](../../../protocols/wire.md) owns shared context, delivery and settlement rules.

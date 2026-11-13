@@ -1,7 +1,7 @@
 //! Reproducible diagnostic, not a throughput guarantee. Each enqueue is a real SQLite commit.
 use axton_client::Client;
 use axton_core::Schema;
-use axton_protocols::sync as v05;
+use axton_protocols::wire;
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 use std::time::Instant;
@@ -21,8 +21,8 @@ fn main() {
         .unwrap();
         client.initialize_stream05(0, "1").unwrap();
         let context = client.request_context05().unwrap();
-        let authority = |cursor| v05::AuthorityChange::Record {
-            key: v05::RecordKey {
+        let authority = |cursor| wire::AuthorityChange::Record {
+            key: wire::RecordKey {
                 model: "Entry".into(),
                 identity: json!({"id":"one"}),
             },

@@ -267,19 +267,19 @@ fn a_file_written_by_0_6_0_opens_without_its_three_dead_columns_and_keeps_digest
         .transaction(|tx| tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"P"}})))
         .unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
-    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+    c.acknowledge_batch05(&wire::BatchAcknowledgement {
         context: b.context.clone(),
         batch_id: b.batch_id,
         digest: b.digest.clone(),
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: call.ordinal,
-            outcome: v05::MutationOutcome::Accepted {
+            outcome: wire::MutationOutcome::Accepted {
                 sync_cursor: 1,
                 materialization: b.context.materialization.clone(),
                 result: serde_json::Value::Null,
-                targets: vec![v05::SettlementTarget::Private {
-                    record: v05::ReadRecord {
-                        key: v05::RecordKey {
+                targets: vec![wire::SettlementTarget::Private {
+                    record: wire::ReadRecord {
+                        key: wire::RecordKey {
                             model: "Entry".into(),
                             identity: json!({"id":"e"}),
                         },
@@ -397,7 +397,7 @@ fn an_old_file_s_companion_operations_and_independent_writes_are_purged_at_open(
         let batch = c.freeze_batch05().unwrap().unwrap();
         assert_eq!(batch.mutations.len(), 1);
         assert_eq!(batch.mutations[0].id, call.ordinal);
-        let body = String::from_utf8(v05::encode(&batch).unwrap()).unwrap();
+        let body = String::from_utf8(wire::encode(&batch).unwrap()).unwrap();
         assert!(!body.contains("companion"), "{body}");
         assert!(!body.contains("independent"), "{body}");
         axton_sim::scenario05::assert_projection05(&mut c, &schema());
@@ -422,13 +422,13 @@ fn the_purge_leaves_a_record_a_refused_mutation_s_companion_touched() {
     );
     let call = offline(&mut c, "Edit", json!({"entry":{"id":"e","text":"B"}}));
     let batch = c.freeze_batch05().unwrap().unwrap();
-    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+    c.acknowledge_batch05(&wire::BatchAcknowledgement {
         context: batch.context.clone(),
         batch_id: batch.batch_id,
         digest: batch.digest.clone(),
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: call.ordinal,
-            outcome: v05::MutationOutcome::Rejected {
+            outcome: wire::MutationOutcome::Rejected {
                 code: "write.denied".into(),
                 message: None,
             },
@@ -467,7 +467,7 @@ fn the_purge_leaves_a_record_a_refused_mutation_s_companion_touched() {
         assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
         assert!(matches!(
             c.mutation_result05(call.ordinal).unwrap().unwrap().outcome,
-            v05::MutationOutcome::Rejected { .. }
+            wire::MutationOutcome::Rejected { .. }
         ));
         axton_sim::scenario05::assert_projection05(&mut c, &schema());
     }

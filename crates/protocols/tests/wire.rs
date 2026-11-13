@@ -1,4 +1,4 @@
-use axton_protocols::sync::*;
+use axton_protocols::wire::*;
 use serde_json::{Value, json};
 
 fn ctx() -> RequestContext {
@@ -495,7 +495,7 @@ fn shared_wire_fixture_roundtrips_every_message_and_hash_domain() {
     if std::env::var_os("AXTON_UPDATE_FIXTURES").is_some() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/protocol/0.5.json"
+            "/../../fixtures/protocol/wire.json"
         );
         std::fs::write(
             path,
@@ -505,7 +505,7 @@ fn shared_wire_fixture_roundtrips_every_message_and_hash_domain() {
         return;
     }
     let saved: Value =
-        serde_json::from_str(include_str!("../../../fixtures/protocol/0.5.json")).unwrap();
+        serde_json::from_str(include_str!("../../../fixtures/protocol/wire.json")).unwrap();
     assert_eq!(saved, fixtures, "frozen cross-language fixture drift");
     macro_rules! check {
         ($name:literal,$ty:ty) => {{
@@ -585,12 +585,12 @@ fn retained_mutation_descriptor_independent_digest_vector() {
     )
     .unwrap();
     assert_eq!(
-        axton_protocols::sync::mutation_descriptor_digest(&d).unwrap(),
+        axton_protocols::wire::mutation_descriptor_digest(&d).unwrap(),
         "aeb5c299c83ce9990ca03ab9f3928c7cc0d821949b510ade6d7144d936c8ff3b"
     );
     d.version = 2;
     assert_ne!(
-        axton_protocols::sync::mutation_descriptor_digest(&d).unwrap(),
+        axton_protocols::wire::mutation_descriptor_digest(&d).unwrap(),
         "aeb5c299c83ce9990ca03ab9f3928c7cc0d821949b510ade6d7144d936c8ff3b"
     );
 }
@@ -598,21 +598,21 @@ fn retained_mutation_descriptor_independent_digest_vector() {
 fn protocol05_materialization_preserves_read_semantics_with_distinct_domain() {
     let mut s: axton_core::Schema =
         serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
-    let a = axton_protocols::sync::materialization_id(&s, "1").unwrap();
+    let a = axton_protocols::wire::materialization_id(&s, "1").unwrap();
     assert_eq!(a.len(), 64); // protocol5 hash domain has independent fixture vectors above
     s.models[0].fields.reverse();
     assert_eq!(
         a,
-        axton_protocols::sync::materialization_id(&s, "1").unwrap()
+        axton_protocols::wire::materialization_id(&s, "1").unwrap()
     );
     assert_ne!(
         a,
-        axton_protocols::sync::materialization_id(&s, "2").unwrap()
+        axton_protocols::wire::materialization_id(&s, "2").unwrap()
     );
     s.models[0].bootstrap = !s.models[0].bootstrap;
     assert_ne!(
         a,
-        axton_protocols::sync::materialization_id(&s, "1").unwrap()
+        axton_protocols::wire::materialization_id(&s, "1").unwrap()
     );
 }
 #[test]

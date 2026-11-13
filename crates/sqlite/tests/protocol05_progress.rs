@@ -1,4 +1,4 @@
-use axton_client::{Client, RecordKey, Schema, sync05::DeliveryQueue, v05};
+use axton_client::{Client, RecordKey, Schema, sync05::DeliveryQueue, wire};
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 fn schema() -> Schema {
@@ -13,9 +13,9 @@ fn key(id: &str) -> RecordKey {
         identity: json!({"id":id}),
     }
 }
-fn change(id: &str, cursor: u64, text: &str) -> v05::AuthorityChange {
-    v05::AuthorityChange::Record {
-        key: v05::RecordKey {
+fn change(id: &str, cursor: u64, text: &str) -> wire::AuthorityChange {
+    wire::AuthorityChange::Record {
+        key: wire::RecordKey {
             model: "Entry".into(),
             identity: json!({"id":id}),
         },
@@ -30,22 +30,22 @@ fn receive(
     after: u64,
     through: u64,
     head: u64,
-    changes: Vec<v05::AuthorityChange>,
+    changes: Vec<wire::AuthorityChange>,
 ) {
     let context = c.request_context05().unwrap();
-    let p = v05::freeze_delivery(
+    let p = wire::freeze_delivery(
         context.clone(),
         id.into(),
         if id == "boot" {
-            v05::DeliveryPurpose::Bootstrap
+            wire::DeliveryPurpose::Bootstrap
         } else {
-            v05::DeliveryPurpose::Sync
+            wire::DeliveryPurpose::Sync
         },
         after,
         through,
         head,
         8_000_000_000_000_000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(through),
             changes,
@@ -126,16 +126,16 @@ fn bootstrap_unique_release_closes_cached_conflict_in_one_current_atomic_unit() 
     c.initialize_stream05(40, "1").unwrap();
     c.install_cache05(
         &[
-            v05::ReadRecord {
-                key: v05::RecordKey {
+            wire::ReadRecord {
+                key: wire::RecordKey {
                     model: "Entry".into(),
                     identity: json!({"id":"a"}),
                 },
                 cursor: (),
                 state: json!({"text":"x","note":null}),
             },
-            v05::ReadRecord {
-                key: v05::RecordKey {
+            wire::ReadRecord {
+                key: wire::RecordKey {
                     model: "Entry".into(),
                     identity: json!({"id":"b"}),
                 },

@@ -1,5 +1,5 @@
 //! Opt-in measurement fed by exact plans exported from the PostgreSQL gate.
-use axton_client::{Client, Schema, sync05::DeliveryQueue, v05};
+use axton_client::{Client, Schema, sync05::DeliveryQueue, wire};
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, fs, time::Instant};
@@ -33,7 +33,7 @@ fn real_postgres_delivery_capacity() {
         .unwrap();
         return;
     }
-    let expected: v05::RequestContext =
+    let expected: wire::RequestContext =
         serde_json::from_slice(&fs::read(directory.join("context.json")).unwrap()).unwrap();
     assert_eq!(context, expected);
     let mut files: Vec<_> = fs::read_dir(&directory)
@@ -65,9 +65,9 @@ fn real_postgres_delivery_capacity() {
     for file in files {
         let bytes = fs::read(file).unwrap();
         let started = Instant::now();
-        let response: v05::DeliveryResponse = serde_json::from_slice(&bytes).unwrap();
+        let response: wire::DeliveryResponse = serde_json::from_slice(&bytes).unwrap();
         decoded_ms += started.elapsed().as_secs_f64() * 1000.0;
-        let request = v05::DeltaRequest {
+        let request = wire::DeltaRequest {
             context: context.clone(),
             after: client
                 .store_status05()

@@ -6,4 +6,4 @@ The socket controller drains immutable fragments and advances its offered cursor
 
 ## 5. Building Block View
 
-[Implementation](../../../../../crates/server/src/live.rs) owns this component. [Protocol 5](../../protocols/sync.md) owns shared context, delivery and settlement rules.
+[Implementation](../../../../../crates/server/src/live.rs) owns this component. [Protocol 5](../../protocols/wire.md) owns shared context, delivery and settlement rules.

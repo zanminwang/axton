@@ -103,7 +103,7 @@ test("generated backend decodes Date values and declares canonical identities th
         JSON.parse(
           await callback(
             JSON.stringify({
-              op: "protocol05",
+              op: "sync",
               request: {
                 op: "admit",
                 owner: "alice",
@@ -257,7 +257,7 @@ function nativeHost(requests: object[], answers: unknown[]) {
         JSON.parse(
           await callback(
             JSON.stringify({
-              op: "protocol05",
+              op: "sync",
               request: {
                 op: "admit",
                 owner: "alice",

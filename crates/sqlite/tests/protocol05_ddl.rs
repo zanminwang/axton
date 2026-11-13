@@ -1,6 +1,6 @@
 pub mod common05;
 use axton_client::ddl::reconcile;
-use axton_client::{Client, ClientStore, RecordKey, v05};
+use axton_client::{Client, ClientStore, RecordKey, wire};
 use axton_core::Schema;
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
@@ -197,8 +197,8 @@ fn pair(reset: Option<Reset>) -> Schema {
     )
     .unwrap()
 }
-fn key(model: &str, id: &str) -> v05::RecordKey {
-    v05::RecordKey {
+fn key(model: &str, id: &str) -> wire::RecordKey {
+    wire::RecordKey {
         model: model.into(),
         identity: json!({ "id": id }),
     }
@@ -270,12 +270,12 @@ fn populated(path: &std::path::Path) {
     c.install_authority05(
         &context,
         &[
-            v05::AuthorityChange::Record {
+            wire::AuthorityChange::Record {
                 key: key("Task", "t"),
                 cursor: 3,
                 state: json!({"title":"stream","mood":"calm","otherId":"o"}),
             },
-            v05::AuthorityChange::Record {
+            wire::AuthorityChange::Record {
                 key: key("Other", "o"),
                 cursor: 4,
                 state: json!({"title":"other"}),
@@ -285,7 +285,7 @@ fn populated(path: &std::path::Path) {
     )
     .unwrap();
     c.install_cache05(
-        &[v05::ReadRecord {
+        &[wire::ReadRecord {
             key: key("Task", "cached"),
             cursor: (),
             state: json!({"title":"cached","mood":null,"otherId":null}),
@@ -405,7 +405,7 @@ fn reopen_with_an_added_nullable_field_keeps_rows_and_asks_for_bootstrap_from_c(
     );
     assert_eq!(
         after.context.materialization,
-        v05::materialization_id(&upgrade_schema(true, false), "1").unwrap()
+        wire::materialization_id(&upgrade_schema(true, false), "1").unwrap()
     );
     assert_eq!(after.context.store_id, before.context.store_id);
     // No connection: stored reads answer from the kept rows.

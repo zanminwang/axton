@@ -6,7 +6,7 @@ The controller drives independent Uplink, direct read and finite delivery work w
 
 ## 5. Building Block View
 
-[runtime/lanes.rs](../../../../../../crates/client/src/runtime/lanes.rs) owns this component. [Protocol 5](../../../protocols/sync.md) owns shared context, delivery and settlement rules.
+[runtime/lanes.rs](../../../../../../crates/client/src/runtime/lanes.rs) owns this component. [Protocol 5](../../../protocols/wire.md) owns shared context, delivery and settlement rules.
 
 - [downlink-worker](downlink-worker.md)
 - [push-lane](push-lane.md)

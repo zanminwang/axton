@@ -43,9 +43,9 @@ export type {
   TrackingPair,
   MemberKey,
   MemberPosition,
-  Protocol05Context,
-  Protocol05Operation,
-  Protocol05Request,
+  SyncContext,
+  SyncOperation,
+  SyncRequest,
 } from "../bindings/host-contract.mts";
 export type { Native } from "../bindings/native.mts";
 import type { Native } from "../bindings/native.mts";
@@ -656,7 +656,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
           !native.processBatchMember ||
           !native.encodeBatchAcknowledgement
         )
-          throw new Error("protocol05 native Batch support unavailable");
+          throw new Error("sync native Batch support unavailable");
         const frozen = native.validateMutationBatch(config, wire);
         const count = (JSON.parse(frozen).mutations as unknown[]).length;
         const results: string[] = [];

@@ -29,4 +29,4 @@ require a separate scheduling change and coverage for observer and close orderin
 
 ## 5. Building Block View
 
-[Implementation](../../../../crates/client/src/runtime/mod.rs) owns this component. [Protocol 5](../protocols/sync.md) owns shared context, delivery and settlement rules.
+[Implementation](../../../../crates/client/src/runtime/mod.rs) owns this component. [Protocol 5](../protocols/wire.md) owns shared context, delivery and settlement rules.

@@ -125,7 +125,7 @@ async function lockStreams(q: Query, r: unknown): Promise<Acknowledged> {
     await q(SQL.LOCK_STREAMS, JSON.stringify(group));
   return null;
 }
-async function answer05(
+async function answerSync(
   q: Query,
   r: Record<string, unknown>,
 ): Promise<unknown> {
@@ -182,7 +182,7 @@ async function answer05(
         kind: row.kind,
       }));
     }
-    case "handleBootstrap05":
+    case "handleBootstrap":
       throw new Error("bootstrap belongs to application host");
     case "inspectStore": {
       const [row] = await q(SQL.V05_STORE_INSPECT, r.storeId);
@@ -480,9 +480,7 @@ async function answer05(
       return positions;
     }
     default:
-      throw new Error(
-        `unsupported protocol05 persistence operation ${String(r.op)}`,
-      );
+      throw new Error(`unsupported sync persistence operation ${String(r.op)}`);
   }
 }
 
@@ -511,8 +509,8 @@ async function answerInitialized<Tx>(
   const q = (sql: string, ...params: unknown[]) =>
     driver.query(tx, sql, params);
   switch (r.op) {
-    case "protocol05":
-      return answer05(q, r.request);
+    case "sync":
+      return answerSync(q, r.request);
     case "head": {
       const [row] = await q(SQL.HEAD, r.stream);
       return row ? safe(row.head) : 0;
@@ -522,7 +520,7 @@ async function answerInitialized<Tx>(
     case "readTracking":
     case "guardRecords":
     case "applyStreamMembers":
-      return answer05(q, r);
+      return answerSync(q, r);
     case "savepoint":
     case "rollback":
     case "release": {

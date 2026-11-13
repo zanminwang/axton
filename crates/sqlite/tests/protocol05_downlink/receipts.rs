@@ -3,7 +3,7 @@ use axton_client::{
     Client, Schema,
     runtime::{ClientRuntime, EffectOutcome, Event, HttpRoute, Operation},
     sync05::{Control, StoreReport},
-    v05,
+    wire,
 };
 use axton_sqlite::SqliteStore;
 use serde_json::json;
@@ -13,7 +13,7 @@ struct Scenario {
     control: Control,
     socket: String,
     push: String,
-    receipt: v05::BatchAcknowledgement,
+    receipt: wire::BatchAcknowledgement,
     call_id: String,
 }
 
@@ -44,24 +44,24 @@ impl Scenario {
             })
             .unwrap();
         let batch = client.freeze_batch05().unwrap().unwrap();
-        let key = v05::RecordKey {
+        let key = wire::RecordKey {
             model: "Entry".into(),
             identity: json!({"id": "e"}),
         };
-        let receipt = v05::BatchAcknowledgement {
+        let receipt = wire::BatchAcknowledgement {
             context: batch.context.clone(),
             batch_id: batch.batch_id,
             digest: batch.digest.clone(),
-            results: vec![v05::MutationResult {
+            results: vec![wire::MutationResult {
                 mutation_id: call.ordinal,
-                outcome: v05::MutationOutcome::Accepted {
+                outcome: wire::MutationOutcome::Accepted {
                     sync_cursor: 2,
                     materialization: batch.context.materialization.clone(),
                     result: serde_json::Value::Null,
-                    targets: vec![v05::SettlementTarget::Stream {
+                    targets: vec![wire::SettlementTarget::Stream {
                         key: key.clone(),
                         cursor: 1,
-                        fallback: v05::ReadRecord {
+                        fallback: wire::ReadRecord {
                             key,
                             cursor: (),
                             state: json!({"text": "accepted", "note": null}),
@@ -125,16 +125,16 @@ impl Scenario {
         self.run_store();
     }
 
-    fn deliver(&mut self, after: u64, through: u64, changes: Vec<v05::AuthorityChange>) {
-        let delivery = v05::freeze_delivery(
+    fn deliver(&mut self, after: u64, through: u64, changes: Vec<wire::AuthorityChange>) {
+        let delivery = wire::freeze_delivery(
             self.receipt.context.clone(),
             format!("live-{after}-{through}"),
-            v05::DeliveryPurpose::Sync,
+            wire::DeliveryPurpose::Sync,
             after,
             through,
             through,
             10000,
-            vec![v05::DeliveryUnit {
+            vec![wire::DeliveryUnit {
                 index: 0,
                 through: Some(through),
                 changes,
@@ -165,18 +165,18 @@ impl Scenario {
     fn answer_pull(
         &mut self,
         id: &str,
-        request: &v05::DeltaRequest,
-        changes: Vec<v05::AuthorityChange>,
+        request: &wire::DeltaRequest,
+        changes: Vec<wire::AuthorityChange>,
     ) {
-        let delivery = v05::freeze_delivery(
+        let delivery = wire::freeze_delivery(
             request.context.clone(),
             format!("pull-{}-{}", request.after, request.through),
-            v05::DeliveryPurpose::Sync,
+            wire::DeliveryPurpose::Sync,
             request.after,
             request.through,
             request.through,
             10000,
-            vec![v05::DeliveryUnit {
+            vec![wire::DeliveryUnit {
                 index: 0,
                 through: Some(request.through),
                 changes,
@@ -184,7 +184,7 @@ impl Scenario {
             500,
         )
         .unwrap();
-        let body = serde_json::to_string(&v05::DeliveryResponse {
+        let body = serde_json::to_string(&wire::DeliveryResponse {
             header: delivery.header,
             parts: delivery.parts,
         })
@@ -284,8 +284,8 @@ fn reconnect_handshake_still_repairs_the_missing_committed_prefix() {
             EffectOutcome {
                 ok: true,
                 value: Some(json!(
-                    serde_json::to_string(&v05::HandshakeResponse {
-                        protocol: axton_client::v05::PROTOCOL,
+                    serde_json::to_string(&wire::HandshakeResponse {
+                        protocol: axton_client::wire::PROTOCOL,
                         store_id: scenario.receipt.context.store_id.clone(),
                         stream: scenario.receipt.context.stream.clone(),
                         head: 2,

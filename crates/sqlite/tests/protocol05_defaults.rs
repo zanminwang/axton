@@ -155,8 +155,8 @@ fn update_omission_changes_nothing_and_never_evaluates_defaults() {
     client.initialize_stream05(0, "1").unwrap();
     let report = client
         .install_cache05(
-            &[v05::ReadRecord {
-                key: v05::RecordKey {
+            &[wire::ReadRecord {
+                key: wire::RecordKey {
                     model: "Todo".into(),
                     identity: json!({"id":"t"}),
                 },
@@ -185,12 +185,12 @@ fn update_omission_changes_nothing_and_never_evaluates_defaults() {
         .unwrap();
     let batch = client.freeze_batch05().unwrap().unwrap();
     assert_eq!(
-        v05::reconstruct_input(&batch.mutations[0].operations).unwrap(),
+        wire::reconstruct_input(&batch.mutations[0].operations).unwrap(),
         json!({"todo":{"id":"t","title":"b"}}),
         "the omission is sent as written"
     );
     assert_eq!(
-        v05::reconstruct_input(&batch.mutations[1].operations).unwrap(),
+        wire::reconstruct_input(&batch.mutations[1].operations).unwrap(),
         json!({"todo":{"id":"t","title":"d"}})
     );
 }
@@ -201,7 +201,7 @@ fn prepared(name: &str, args: Value) -> Result<Value> {
     c.initialize_stream05(0, "1").unwrap();
     c.transaction(|tx| tx.submit_mutation05(name, 1, args))?;
     let b = c.freeze_batch05()?.unwrap();
-    v05::reconstruct_input(&b.mutations[0].operations)
+    wire::reconstruct_input(&b.mutations[0].operations)
 }
 #[test]
 fn optional_and_list_create_defaults_preserve_input_presence() {
@@ -232,7 +232,7 @@ fn durable_create_defaults_expand_once_before_freeze_and_survive_reopen() {
     c.initialize_stream05(0, "1").unwrap();
     add(&mut c, json!({"title":"sent"})).unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
-    let args = v05::reconstruct_input(&b.mutations[0].operations).unwrap();
+    let args = wire::reconstruct_input(&b.mutations[0].operations).unwrap();
     assert_uuid_v4(&args["todo"]["id"]);
     assert_client_millis(&args["todo"]["createdAt"]);
     assert_eq!(args["todo"]["done"], false);
@@ -308,8 +308,8 @@ fn a_creation_default_never_backfills_a_new_required_column() {
     let mut c = open(&path);
     let report = c
         .install_cache05(
-            &[v05::ReadRecord {
-                key: v05::RecordKey {
+            &[wire::ReadRecord {
+                key: wire::RecordKey {
                     model: "Todo".into(),
                     identity: json!({"id":"t"}),
                 },

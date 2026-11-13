@@ -1,4 +1,4 @@
-use axton_client::{Client, Schema, sync05::DeliveryQueue, v05};
+use axton_client::{Client, Schema, sync05::DeliveryQueue, wire};
 use axton_sqlite::SqliteStore;
 pub mod common05;
 #[path = "protocol05_downlink/prefetch.rs"]
@@ -18,25 +18,25 @@ fn client(path: &std::path::Path) -> Client<SqliteStore> {
     .unwrap()
 }
 fn plan(
-    context: v05::RequestContext,
+    context: wire::RequestContext,
     id: &str,
     after: u64,
     through: u64,
     bootstrap: bool,
-) -> v05::FrozenDelivery {
-    v05::freeze_delivery(
+) -> wire::FrozenDelivery {
+    wire::freeze_delivery(
         context,
         id.into(),
         if bootstrap {
-            v05::DeliveryPurpose::Bootstrap
+            wire::DeliveryPurpose::Bootstrap
         } else {
-            v05::DeliveryPurpose::Sync
+            wire::DeliveryPurpose::Sync
         },
         after,
         through,
         through,
         10000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(through),
             changes: vec![],
@@ -80,20 +80,20 @@ fn missing_prefix_is_retained_and_repair_capacity_is_reserved() {
     c.apply_next_delivery05(&mut q, 1).unwrap().unwrap();
     assert_eq!(c.store_status05().unwrap().cursor, Some(3));
 }
-fn fragmented(context: v05::RequestContext, bootstrap: bool) -> v05::FrozenDelivery {
-    v05::freeze_delivery(
+fn fragmented(context: wire::RequestContext, bootstrap: bool) -> wire::FrozenDelivery {
+    wire::freeze_delivery(
         context,
         "fragmented".into(),
         if bootstrap {
-            v05::DeliveryPurpose::Bootstrap
+            wire::DeliveryPurpose::Bootstrap
         } else {
-            v05::DeliveryPurpose::Sync
+            wire::DeliveryPurpose::Sync
         },
         0,
         2,
         3,
         10000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(2),
             changes: vec![change("a", 1), change("b", 1)],
@@ -141,8 +141,8 @@ fn socket_loss_discards_incomplete_response_and_repairs_from_committed_cursor() 
             EffectOutcome {
                 ok: true,
                 value: Some(serde_json::Value::String(
-                    serde_json::to_string(&v05::HandshakeResponse {
-                        protocol: axton_client::v05::PROTOCOL,
+                    serde_json::to_string(&wire::HandshakeResponse {
+                        protocol: axton_client::wire::PROTOCOL,
                         store_id: context.store_id.clone(),
                         stream: context.stream.clone(),
                         head: 0,
@@ -167,7 +167,7 @@ fn socket_loss_discards_incomplete_response_and_repairs_from_committed_cursor() 
         })
         .unwrap();
     let response = fragmented(context, false);
-    control.receive(&socket,EffectOutcome {ok:true,value:Some(serde_json::json!({"event":"message","body":serde_json::to_string(&v05::DeliveryResponse {header:response.header,parts:vec![response.parts[0].clone()]}).unwrap()})),error:None},1).unwrap();
+    control.receive(&socket,EffectOutcome {ok:true,value:Some(serde_json::json!({"event":"message","body":serde_json::to_string(&wire::DeliveryResponse {header:response.header,parts:vec![response.parts[0].clone()]}).unwrap()})),error:None},1).unwrap();
     assert!(control.events().iter().all(|event| !matches!(
         event,
         Event::Effect {
@@ -209,9 +209,9 @@ fn socket_loss_discards_incomplete_response_and_repairs_from_committed_cursor() 
     assert!(request.get("continuation").is_none());
     assert_eq!(c.store_status05().unwrap().cursor, Some(0));
 }
-fn change(id: &str, cursor: u64) -> v05::AuthorityChange {
-    v05::AuthorityChange::Record {
-        key: v05::RecordKey {
+fn change(id: &str, cursor: u64) -> wire::AuthorityChange {
+    wire::AuthorityChange::Record {
+        key: wire::RecordKey {
             model: "Entry".into(),
             identity: serde_json::json!({"id":id}),
         },
@@ -251,8 +251,8 @@ fn connected_control(c: &mut Client<SqliteStore>) -> (axton_client::sync05::Cont
             EffectOutcome {
                 ok: true,
                 value: Some(serde_json::Value::String(
-                    serde_json::to_string(&v05::HandshakeResponse {
-                        protocol: axton_client::v05::PROTOCOL,
+                    serde_json::to_string(&wire::HandshakeResponse {
+                        protocol: axton_client::wire::PROTOCOL,
                         store_id: context.store_id,
                         stream: context.stream,
                         head: 0,
@@ -282,9 +282,9 @@ fn connected_control(c: &mut Client<SqliteStore>) -> (axton_client::sync05::Cont
 fn socket_offer(
     control: &mut axton_client::sync05::Control,
     socket: &str,
-    offer: &v05::FrozenDelivery,
+    offer: &wire::FrozenDelivery,
 ) -> axton_client::Result<()> {
-    control.receive(socket, axton_client::runtime::EffectOutcome {ok:true,value:Some(serde_json::json!({"event":"message","body":serde_json::to_string(&v05::DeliveryResponse {header:offer.header.clone(),parts:offer.parts.clone()}).unwrap()})),error:None},1)
+    control.receive(socket, axton_client::runtime::EffectOutcome {ok:true,value:Some(serde_json::json!({"event":"message","body":serde_json::to_string(&wire::DeliveryResponse {header:offer.header.clone(),parts:offer.parts.clone()}).unwrap()})),error:None},1)
 }
 fn commit_control_delivery(
     c: &mut Client<SqliteStore>,
@@ -327,7 +327,7 @@ fn commit_control_delivery(
         )
         .unwrap();
 }
-fn cursor_pull(control: &mut axton_client::sync05::Control) -> (String, v05::DeltaRequest) {
+fn cursor_pull(control: &mut axton_client::sync05::Control) -> (String, wire::DeltaRequest) {
     use axton_client::runtime::{Event, HttpRoute, Operation};
     let events = control.events();
     assert!(
@@ -364,15 +364,15 @@ fn stalled_receiver_coalesces_bursts_and_repairs_latest_data_from_committed_curs
     let (mut control, socket) = connected_control(&mut c);
     let context = c.request_context05().unwrap();
     let offer = |index| {
-        v05::freeze_delivery(
+        wire::freeze_delivery(
             context.clone(),
             format!("offer{index}"),
-            v05::DeliveryPurpose::Sync,
+            wire::DeliveryPurpose::Sync,
             index - 1,
             index,
             index,
             10000,
-            vec![v05::DeliveryUnit {
+            vec![wire::DeliveryUnit {
                 index: 0,
                 through: Some(index),
                 changes: vec![change(&format!("e{index}"), index)],
@@ -419,19 +419,19 @@ fn stalled_receiver_coalesces_bursts_and_repairs_latest_data_from_committed_curs
         .map(|index| change(&format!("e{index}"), index))
         .collect::<Vec<_>>();
     let mut latest = change("e1", 100);
-    if let v05::AuthorityChange::Record { state, .. } = &mut latest {
+    if let wire::AuthorityChange::Record { state, .. } = &mut latest {
         state["text"] = serde_json::json!("latest");
     }
     changes.push(latest);
-    let repaired = v05::freeze_delivery(
+    let repaired = wire::freeze_delivery(
         context.clone(),
         "repair".into(),
-        v05::DeliveryPurpose::Sync,
+        wire::DeliveryPurpose::Sync,
         1,
         100,
         101,
         10000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(100),
             changes,
@@ -445,7 +445,7 @@ fn stalled_receiver_coalesces_bursts_and_repairs_latest_data_from_committed_curs
             EffectOutcome {
                 ok: true,
                 value: Some(serde_json::Value::String(
-                    serde_json::to_string(&v05::DeliveryResponse {
+                    serde_json::to_string(&wire::DeliveryResponse {
                         header: repaired.header,
                         parts: repaired.parts,
                     })
@@ -466,7 +466,7 @@ fn stalled_receiver_coalesces_bursts_and_repairs_latest_data_from_committed_curs
             EffectOutcome {
                 ok: true,
                 value: Some(serde_json::Value::String(
-                    serde_json::to_string(&v05::DeliveryResponse {
+                    serde_json::to_string(&wire::DeliveryResponse {
                         header: last.header,
                         parts: last.parts,
                     })
@@ -517,8 +517,8 @@ fn held_http_repair_does_not_block_live_prefix_and_late_reply_cannot_undo_it() {
     let mut c = client(&dir.path().join("db"));
     let (mut control, socket) = connected_control(&mut c);
     let context = c.request_context05().unwrap();
-    let ack = v05::HandshakeResponse {
-        protocol: axton_client::v05::PROTOCOL,
+    let ack = wire::HandshakeResponse {
+        protocol: axton_client::wire::PROTOCOL,
         store_id: context.store_id.clone(),
         stream: context.stream.clone(),
         head: 1,
@@ -527,15 +527,15 @@ fn held_http_repair_does_not_block_live_prefix_and_late_reply_cannot_undo_it() {
     control.receive(&socket,EffectOutcome {ok:true,value:Some(serde_json::json!({"event":"message","body":serde_json::to_string(&ack).unwrap()})),error:None},1).unwrap();
     let (pull, request) = cursor_pull(&mut control);
     assert_eq!((request.after, request.through), (0, 1));
-    let live = v05::freeze_delivery(
+    let live = wire::freeze_delivery(
         context.clone(),
         "live-before-http".into(),
-        v05::DeliveryPurpose::Sync,
+        wire::DeliveryPurpose::Sync,
         0,
         1,
         1,
         10000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(1),
             changes: vec![change("a", 1)],
@@ -551,18 +551,18 @@ fn held_http_repair_does_not_block_live_prefix_and_late_reply_cannot_undo_it() {
         "live authority commits while HTTP has not answered"
     );
     let mut stale = change("a", 1);
-    if let v05::AuthorityChange::Record { state, .. } = &mut stale {
+    if let wire::AuthorityChange::Record { state, .. } = &mut stale {
         state["text"] = serde_json::json!("stale HTTP");
     }
-    let late = v05::freeze_delivery(
+    let late = wire::freeze_delivery(
         context,
         "late-http".into(),
-        v05::DeliveryPurpose::Sync,
+        wire::DeliveryPurpose::Sync,
         0,
         1,
         1,
         10000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(1),
             changes: vec![stale],
@@ -576,7 +576,7 @@ fn held_http_repair_does_not_block_live_prefix_and_late_reply_cannot_undo_it() {
             EffectOutcome {
                 ok: true,
                 value: Some(serde_json::Value::String(
-                    serde_json::to_string(&v05::DeliveryResponse {
+                    serde_json::to_string(&wire::DeliveryResponse {
                         header: late.header,
                         parts: late.parts,
                     })
@@ -602,19 +602,19 @@ fn cursor_pages_resume_after_reopen_and_later_sync_installs_current_state_and_de
     c.initialize_stream05(2, "1").unwrap();
     let context = c.request_context05().unwrap();
     let page = |id: &str, bootstrap, after, through, changes| {
-        v05::freeze_delivery(
+        wire::freeze_delivery(
             context.clone(),
             id.into(),
             if bootstrap {
-                v05::DeliveryPurpose::Bootstrap
+                wire::DeliveryPurpose::Bootstrap
             } else {
-                v05::DeliveryPurpose::Sync
+                wire::DeliveryPurpose::Sync
             },
             after,
             through,
             4,
             10000,
-            vec![v05::DeliveryUnit {
+            vec![wire::DeliveryUnit {
                 index: 0,
                 through: Some(through),
                 changes,
@@ -630,13 +630,13 @@ fn cursor_pages_resume_after_reopen_and_later_sync_installs_current_state_and_de
         1,
         vec![change("a", 1), change("deleted", 1)],
     );
-    let request = v05::DeltaRequest {
+    let request = wire::DeltaRequest {
         context: context.clone(),
         after: 0,
         through: 2,
         bootstrap: true,
     };
-    let response = v05::DeliveryResponse {
+    let response = wire::DeliveryResponse {
         header: first.header.clone(),
         parts: first.parts.clone(),
     };
@@ -660,11 +660,11 @@ fn cursor_pages_resume_after_reopen_and_later_sync_installs_current_state_and_de
     c.apply_next_delivery05(&mut queue, 1).unwrap().unwrap();
     assert_eq!(c.store_status05().unwrap().bootstrap_cursor, Some(2));
     let mut latest = change("b", 3);
-    if let v05::AuthorityChange::Record { state, .. } = &mut latest {
+    if let wire::AuthorityChange::Record { state, .. } = &mut latest {
         *state = serde_json::json!({"text":"latest","note":null});
     }
-    let deleted = v05::AuthorityChange::Record {
-        key: v05::RecordKey {
+    let deleted = wire::AuthorityChange::Record {
+        key: wire::RecordKey {
             model: "Entry".into(),
             identity: serde_json::json!({"id":"deleted"}),
         },
@@ -722,18 +722,18 @@ fn failed_sql_apply_keeps_unit_and_progress_unchanged_until_explicit_retry() {
     let mut c = client(&p);
     c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
-    let mut units = vec![v05::DeliveryUnit {
+    let mut units = vec![wire::DeliveryUnit {
         index: 0,
         through: Some(1),
         changes: vec![change("a", 1)],
     }];
-    if let v05::AuthorityChange::Record { state, .. } = &mut units[0].changes[0] {
+    if let wire::AuthorityChange::Record { state, .. } = &mut units[0].changes[0] {
         *state = serde_json::json!({"text":7,"note":null})
     }
-    let f = v05::freeze_delivery(
+    let f = wire::freeze_delivery(
         context.clone(),
         "bad".into(),
-        v05::DeliveryPurpose::Sync,
+        wire::DeliveryPurpose::Sync,
         0,
         1,
         1,
@@ -784,21 +784,21 @@ fn zero_bootstrap_intermediate_no_progress_does_not_mark_complete() {
     let mut c = client(&d.path().join("db"));
     c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
-    let f = v05::freeze_delivery(
+    let f = wire::freeze_delivery(
         context.clone(),
         "zero".into(),
-        v05::DeliveryPurpose::Bootstrap,
+        wire::DeliveryPurpose::Bootstrap,
         0,
         0,
         2,
         10000,
         vec![
-            v05::DeliveryUnit {
+            wire::DeliveryUnit {
                 index: 0,
                 through: None,
                 changes: vec![change("a", 1)],
             },
-            v05::DeliveryUnit {
+            wire::DeliveryUnit {
                 index: 1,
                 through: Some(0),
                 changes: vec![change("b", 2)],
@@ -833,21 +833,21 @@ fn duplicate_identity_across_units_cannot_commit_later_prefix() {
     let mut c = client(&d.path().join("db"));
     c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
-    let mut f = v05::freeze_delivery(
+    let mut f = wire::freeze_delivery(
         context.clone(),
         "duplicated".into(),
-        v05::DeliveryPurpose::Sync,
+        wire::DeliveryPurpose::Sync,
         0,
         2,
         2,
         10000,
         vec![
-            v05::DeliveryUnit {
+            wire::DeliveryUnit {
                 index: 0,
                 through: Some(1),
                 changes: vec![change("a", 1)],
             },
-            v05::DeliveryUnit {
+            wire::DeliveryUnit {
                 index: 1,
                 through: Some(2),
                 changes: vec![change("b", 2)],
@@ -857,14 +857,14 @@ fn duplicate_identity_across_units_cannot_commit_later_prefix() {
     )
     .unwrap();
     f.parts[1].changes[0] = change("a", 2);
-    f.header.units[1].digest = v05::unit_digest(&v05::DeliveryUnit {
+    f.header.units[1].digest = wire::unit_digest(&wire::DeliveryUnit {
         index: 1,
         through: Some(2),
         changes: f.parts[1].changes.clone(),
     })
     .unwrap();
-    f.header.units[1].parts[0] = v05::part_digest(&f.parts[1]).unwrap();
-    f.header.digest = v05::delivery_digest(&f.header).unwrap();
+    f.header.units[1].parts[0] = wire::part_digest(&f.parts[1]).unwrap();
+    f.header.digest = wire::delivery_digest(&f.header).unwrap();
     for part in &mut f.parts {
         part.plan_digest = f.header.digest.clone();
     }
@@ -935,15 +935,15 @@ fn crash_after_sql_commit_before_dequeue_child() {
     let mut c = Client::open05(store, common05::schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
-    let f = v05::freeze_delivery(
+    let f = wire::freeze_delivery(
         context.clone(),
         "crash-plan".into(),
-        v05::DeliveryPurpose::Sync,
+        wire::DeliveryPurpose::Sync,
         0,
         1,
         1,
         10000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(1),
             changes: vec![change("a", 1)],
@@ -987,15 +987,15 @@ fn crash_after_commit_before_dequeue_reopens_without_reapplying_under_later_opti
     })
     .unwrap();
     let context = c.request_context05().unwrap();
-    let f = v05::freeze_delivery(
+    let f = wire::freeze_delivery(
         context.clone(),
         "crash-plan".into(),
-        v05::DeliveryPurpose::Sync,
+        wire::DeliveryPurpose::Sync,
         0,
         1,
         1,
         10000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(1),
             changes: vec![change("a", 1)],
@@ -1040,7 +1040,7 @@ fn foreign_live_context_is_only_a_head_hint_for_retained_context_repair() {
             _ => None,
         })
         .unwrap();
-    control.receive(&h,EffectOutcome{ok:true,value:Some(serde_json::json!({"protocol":axton_client::v05::PROTOCOL,"storeId":context.store_id,"stream":context.stream,"head":0,"projectionGeneration":"1"}).to_string().into()),error:None},1).unwrap();
+    control.receive(&h,EffectOutcome{ok:true,value:Some(serde_json::json!({"protocol":axton_client::wire::PROTOCOL,"storeId":context.store_id,"stream":context.stream,"head":0,"projectionGeneration":"1"}).to_string().into()),error:None},1).unwrap();
     let socket = control
         .events()
         .into_iter()
@@ -1077,7 +1077,7 @@ fn foreign_live_context_is_only_a_head_hint_for_retained_context_repair() {
                         body,
                     },
                 ..
-            } => Some(serde_json::from_str::<v05::DeltaRequest>(&body).unwrap()),
+            } => Some(serde_json::from_str::<wire::DeltaRequest>(&body).unwrap()),
             _ => None,
         })
         .unwrap();
@@ -1094,15 +1094,15 @@ fn slow_observer_receiver_does_not_hold_apply_and_notices_only_commits() {
     c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let observer = c.watch(BTreeSet::from(["Entry".into()]));
-    let first = v05::freeze_delivery(
+    let first = wire::freeze_delivery(
         context.clone(),
         "observer-one".into(),
-        v05::DeliveryPurpose::Sync,
+        wire::DeliveryPurpose::Sync,
         0,
         1,
         1,
         10000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(1),
             changes: vec![change("a", 1)],
@@ -1110,15 +1110,15 @@ fn slow_observer_receiver_does_not_hold_apply_and_notices_only_commits() {
         1,
     )
     .unwrap();
-    let second = v05::freeze_delivery(
+    let second = wire::freeze_delivery(
         context.clone(),
         "observer-two".into(),
-        v05::DeliveryPurpose::Sync,
+        wire::DeliveryPurpose::Sync,
         1,
         2,
         2,
         10000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(2),
             changes: vec![change("b", 2)],
@@ -1255,13 +1255,13 @@ fn explicit_reset_retires_frozen_batch_and_reused_ids_have_new_store_owner() {
         .unwrap()
         .is_none()
     );
-    let late = v05::BatchAcknowledgement {
+    let late = wire::BatchAcknowledgement {
         context: batch.context.clone(),
         batch_id: batch.batch_id,
         digest: batch.digest,
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: old.ordinal,
-            outcome: v05::MutationOutcome::Rejected {
+            outcome: wire::MutationOutcome::Rejected {
                 code: "write.denied".into(),
                 message: None,
             },
@@ -1375,21 +1375,21 @@ fn partial_transfer_retention_is_bounded_and_expiry_clears_keys() {
     c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     for index in 0..35 {
-        let f = v05::freeze_delivery(
+        let f = wire::freeze_delivery(
             context.clone(),
             format!("partial{index}"),
-            v05::DeliveryPurpose::Sync,
+            wire::DeliveryPurpose::Sync,
             0,
             2,
             2,
             10000,
             vec![
-                v05::DeliveryUnit {
+                wire::DeliveryUnit {
                     index: 0,
                     through: Some(1),
                     changes: vec![change(&format!("row{index}"), 1)],
                 },
-                v05::DeliveryUnit {
+                wire::DeliveryUnit {
                     index: 1,
                     through: Some(2),
                     changes: vec![],
@@ -1450,25 +1450,25 @@ fn earlier_missing_prefix_can_replace_near_capacity_payload() {
 #[ignore]
 fn crash_spill_has_no_named_remnants_child() {
     let dir = std::env::var("AXTON_TASK5_SPOOL_DIR").unwrap();
-    let context = v05::RequestContext {
-        protocol: axton_client::v05::PROTOCOL,
+    let context = wire::RequestContext {
+        protocol: axton_client::wire::PROTOCOL,
         store_id: "spool".into(),
         stream: "User:u".into(),
         materialization: "m".into(),
     };
     let mut value = change("a", 1);
-    if let v05::AuthorityChange::Record { state, .. } = &mut value {
+    if let wire::AuthorityChange::Record { state, .. } = &mut value {
         state["text"] = serde_json::json!("x".repeat(100000));
     }
-    let f = v05::freeze_delivery(
+    let f = wire::freeze_delivery(
         context.clone(),
         "spilled".into(),
-        v05::DeliveryPurpose::Sync,
+        wire::DeliveryPurpose::Sync,
         0,
         1,
         1,
         10000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(1),
             changes: vec![value],
@@ -1636,24 +1636,24 @@ fn pending_settlement_control(
         })
         .unwrap();
     let batch = c.freeze_batch05().unwrap().unwrap();
-    let key = v05::RecordKey {
+    let key = wire::RecordKey {
         model: "Entry".into(),
         identity: serde_json::json!({"id":"e"}),
     };
-    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+    c.acknowledge_batch05(&wire::BatchAcknowledgement {
         context: context.clone(),
         batch_id: batch.batch_id,
         digest: batch.digest,
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: call.ordinal,
-            outcome: v05::MutationOutcome::Accepted {
+            outcome: wire::MutationOutcome::Accepted {
                 sync_cursor: 1,
                 materialization: context.materialization.clone(),
                 result: serde_json::Value::Null,
-                targets: vec![v05::SettlementTarget::Stream {
+                targets: vec![wire::SettlementTarget::Stream {
                     key: key.clone(),
                     cursor: 1,
-                    fallback: v05::ReadRecord {
+                    fallback: wire::ReadRecord {
                         key,
                         cursor: (),
                         state: serde_json::json!({"text":"accepted","note":null}),
@@ -1850,12 +1850,12 @@ fn handshake_effect(control: &mut axton_client::sync05::Control) -> Option<Strin
 fn answer_handshake(
     control: &mut axton_client::sync05::Control,
     id: &str,
-    context: &v05::RequestContext,
+    context: &wire::RequestContext,
     head: u64,
     generation: &str,
 ) {
-    let body = serde_json::to_string(&v05::HandshakeResponse {
-        protocol: v05::PROTOCOL,
+    let body = serde_json::to_string(&wire::HandshakeResponse {
+        protocol: wire::PROTOCOL,
         store_id: context.store_id.clone(),
         stream: context.stream.clone(),
         head,
@@ -1997,7 +1997,7 @@ fn pull_parked_for_auth_refresh_is_not_resent_after_a_generation_upgrade() {
                         body,
                     },
                 ..
-            } => Some(serde_json::from_str::<v05::DeltaRequest>(&body).unwrap()),
+            } => Some(serde_json::from_str::<wire::DeltaRequest>(&body).unwrap()),
             _ => None,
         })
         .filter(|request| request.context != upgraded.context)
@@ -2068,7 +2068,7 @@ fn bootstrap_after_an_upgrade_overwrites_held_rows_and_sync_from_c_deletes_and_r
         45,
         vec![
             upgrade_record("Note", "gone", 44, serde_json::Value::Null),
-            v05::AuthorityChange::Remove {
+            wire::AuthorityChange::Remove {
                 key: upgrade_key("Note", "n"),
                 cursor: 45,
             },
@@ -2145,7 +2145,7 @@ fn a_handshake_reporting_a_new_generation_upgrades_in_its_commit_and_a_push_sent
     let status = c.store_status05().unwrap();
     assert_eq!(
         status.context.materialization,
-        v05::materialization_id(&upgrade_schema(false, false), "2").unwrap()
+        wire::materialization_id(&upgrade_schema(false, false), "2").unwrap()
     );
     assert_eq!(
         (status.start_cursor, status.bootstrap_cursor, status.cursor),
@@ -2157,18 +2157,18 @@ fn a_handshake_reporting_a_new_generation_upgrades_in_its_commit_and_a_push_sent
     );
     assert_eq!(upgrade_read(&mut c, "Note", "n").unwrap()["text"], "edited");
     // The receipt of the push sent before the upgrade answers in its context.
-    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+    c.acknowledge_batch05(&wire::BatchAcknowledgement {
         context: sent.context.clone(),
         batch_id: sent.batch_id,
         digest: sent.digest.clone(),
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: call.ordinal,
-            outcome: v05::MutationOutcome::Accepted {
+            outcome: wire::MutationOutcome::Accepted {
                 sync_cursor: 45,
                 materialization: sent.context.materialization.clone(),
                 result: serde_json::Value::Null,
-                targets: vec![v05::SettlementTarget::Private {
-                    record: v05::ReadRecord {
+                targets: vec![wire::SettlementTarget::Private {
+                    record: wire::ReadRecord {
                         key: upgrade_key("Note", "n"),
                         cursor: (),
                         state: json!({"text":"old contract"}),
@@ -2202,15 +2202,15 @@ fn an_upgrade_drops_staging_of_the_old_context_and_pulls_bootstrap_without_a_han
     control.jobs();
     control.events();
     let context = c.request_context05().unwrap();
-    let offer = v05::freeze_delivery(
+    let offer = wire::freeze_delivery(
         context.clone(),
         "old".into(),
-        v05::DeliveryPurpose::Sync,
+        wire::DeliveryPurpose::Sync,
         0,
         3,
         3,
         10000,
-        vec![v05::DeliveryUnit {
+        vec![wire::DeliveryUnit {
             index: 0,
             through: Some(3),
             changes: vec![change("a", 3)],
@@ -2251,7 +2251,7 @@ fn an_upgrade_drops_staging_of_the_old_context_and_pulls_bootstrap_without_a_han
             .any(|(route, _)| matches!(route, HttpRoute::Handshake)),
         "an upgrade sends no second handshake"
     );
-    let pulls: Vec<v05::DeltaRequest> = requests
+    let pulls: Vec<wire::DeltaRequest> = requests
         .iter()
         .filter(|(route, _)| matches!(route, HttpRoute::Pull))
         .map(|(_, body)| serde_json::from_str(body).unwrap())
@@ -2273,13 +2273,13 @@ fn an_upgrade_drops_staging_of_the_old_context_and_pulls_bootstrap_without_a_han
 fn run_worker(
     runtime: &mut axton_client::runtime::ClientRuntime<SqliteStore>,
     control: &mut axton_client::sync05::Control,
-    answer: impl Fn(&v05::MutationRequest) -> v05::BatchAcknowledgement,
-) -> Vec<v05::MutationRequest> {
+    answer: impl Fn(&wire::MutationRequest) -> wire::BatchAcknowledgement,
+) -> Vec<wire::MutationRequest> {
     use axton_client::runtime::{EffectOutcome, Event, HttpRoute, Operation};
     let mut pushes = vec![];
     for _ in 0..32 {
         let jobs = control.jobs();
-        let sent: Vec<(String, v05::MutationRequest)> = control
+        let sent: Vec<(String, wire::MutationRequest)> = control
             .events()
             .into_iter()
             .filter_map(|event| match event {
@@ -2352,19 +2352,19 @@ fn a_push_answered_after_a_generation_upgrade_is_acknowledged_through_the_sync_w
             .unwrap();
         let mut runtime = ClientRuntime::new(c);
         control.wake();
-        let receipt = |request: &v05::MutationRequest, label: &str| v05::BatchAcknowledgement {
+        let receipt = |request: &wire::MutationRequest, label: &str| wire::BatchAcknowledgement {
             context: request.context.clone(),
             batch_id: request.batch_id,
             digest: request.digest.clone(),
-            results: vec![v05::MutationResult {
+            results: vec![wire::MutationResult {
                 mutation_id: call.ordinal,
-                outcome: v05::MutationOutcome::Accepted {
+                outcome: wire::MutationOutcome::Accepted {
                     sync_cursor: 0,
                     materialization: label.into(),
                     result: serde_json::Value::Null,
-                    targets: vec![v05::SettlementTarget::Private {
-                        record: v05::ReadRecord {
-                            key: v05::RecordKey {
+                    targets: vec![wire::SettlementTarget::Private {
+                        record: wire::ReadRecord {
+                            key: wire::RecordKey {
                                 model: "Entry".into(),
                                 identity: json!({"id":"e"}),
                             },
@@ -2394,15 +2394,15 @@ fn a_push_answered_after_a_generation_upgrade_is_acknowledged_through_the_sync_w
             {
                 held = Some((
                     effect_id,
-                    serde_json::from_str::<v05::MutationRequest>(&body).unwrap(),
+                    serde_json::from_str::<wire::MutationRequest>(&body).unwrap(),
                 ));
             }
         }
         let (push, sent) = held.expect("the frozen Batch is pushed");
         let old = sent.context.clone();
         // A socket handshake reports generation 2; its Initialize upgrades.
-        let handshake = serde_json::to_string(&v05::HandshakeResponse {
-            protocol: v05::PROTOCOL,
+        let handshake = serde_json::to_string(&wire::HandshakeResponse {
+            protocol: wire::PROTOCOL,
             store_id: old.store_id.clone(),
             stream: old.stream.clone(),
             head: 0,

@@ -51,7 +51,7 @@ Component, integration and end-to-end describe the scope of a test. Simulation d
 | Schema | [core contracts](../../crates/core/tests/contracts.rs) |
 | Protocols | [protocol fixtures/tests](../../crates/protocols/tests) |
 | Compiler | [compiler tests](../../crates/compiler/tests) |
-| Client and SQLite | [SQLite tests](../../crates/sqlite/tests), including protocol05 suites, query, prerequisites, store and stream admission |
+| Client and SQLite | [SQLite tests](../../crates/sqlite/tests), including sync suites, query, prerequisites, store and stream admission |
 | Server | [server tests](../../crates/server/tests) for admission and finite plans |
 | Simulation | [scenario05](../../crates/sim/tests/scenario05.rs), [protocol05_coverage](../../crates/sim/tests/protocol05_coverage.rs), [mutation_versions05](../../crates/sim/tests/mutation_versions05.rs) |
 | Persistence | [PostgreSQL suite](../../integration/persistence/server), with driver boundaries described in [persistence evidence](testing/integration/persistence.md) |

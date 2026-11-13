@@ -1,4 +1,4 @@
-use axton_client::{Client, Schema, v05};
+use axton_client::{Client, Schema, wire};
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 fn schema() -> Schema {
@@ -19,7 +19,7 @@ fn fixed_batch_restores_input_presence_and_excludes_new_members() {
     let b = c.freeze_batch05().unwrap().unwrap();
     assert_eq!(b.mutations[0].id, call.ordinal);
     assert_eq!(
-        v05::reconstruct_input(&b.mutations[0].operations).unwrap(),
+        wire::reconstruct_input(&b.mutations[0].operations).unwrap(),
         json!({"entries":[]})
     );
     c.transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[],"maybe":null})))
@@ -28,8 +28,8 @@ fn fixed_batch_restores_input_presence_and_excludes_new_members() {
     drop(c);
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
     assert_eq!(
-        v05::encode(&c.freeze_batch05().unwrap().unwrap()).unwrap(),
-        v05::encode(&b).unwrap()
+        wire::encode(&c.freeze_batch05().unwrap().unwrap()).unwrap(),
+        wire::encode(&b).unwrap()
     );
 }
 #[test]
@@ -117,7 +117,7 @@ fn nested_rollback_reuses_only_uncommitted_ids_and_nonempty_lists_restore() {
     let b = c.freeze_batch05().unwrap().unwrap();
     assert_eq!(b.mutations[0].operations.len(), 3);
     assert_eq!(
-        v05::reconstruct_input(&b.mutations[0].operations).unwrap(),
+        wire::reconstruct_input(&b.mutations[0].operations).unwrap(),
         json!({"entries":[{"id":"e1","text":"one","note":null},{"id":"e2","text":"two","note":null}],"maybe":null})
     );
 }
@@ -137,7 +137,7 @@ fn a_changed_materialization_resends_the_frozen_batch_with_its_digest_in_the_new
     let upgraded = c.request_context05().unwrap();
     assert_eq!(
         upgraded.materialization,
-        v05::materialization_id(&newer, "1").unwrap()
+        wire::materialization_id(&newer, "1").unwrap()
     );
     assert_ne!(upgraded.materialization, b.context.materialization);
     let status = c.status_snapshot05().unwrap();
@@ -168,10 +168,10 @@ fn value_arguments_have_one_entry_and_do_not_create_model_optimism() {
         b.mutations[0]
             .operations
             .iter()
-            .all(|o| o.operation == v05::Operation::Argument)
+            .all(|o| o.operation == wire::Operation::Argument)
     );
     assert_eq!(
-        v05::reconstruct_input(&b.mutations[0].operations).unwrap(),
+        wire::reconstruct_input(&b.mutations[0].operations).unwrap(),
         json!({"label":null,"tags":["a","b"]})
     );
 }
@@ -207,24 +207,24 @@ fn next_batch_preserves_previous_ownership_until_settlement() {
     let independent = c
         .transaction(|tx| tx.submit_mutation05("Write", 1, json!({"entries":[]})))
         .unwrap();
-    let a = v05::BatchAcknowledgement {
+    let a = wire::BatchAcknowledgement {
         context: b.context.clone(),
         batch_id: b.batch_id,
         digest: b.digest.clone(),
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: first.ordinal,
-            outcome: v05::MutationOutcome::Accepted {
+            outcome: wire::MutationOutcome::Accepted {
                 sync_cursor: 9,
                 materialization: b.context.materialization.clone(),
                 result: Value::Null,
-                targets: vec![v05::SettlementTarget::Stream {
-                    key: v05::RecordKey {
+                targets: vec![wire::SettlementTarget::Stream {
+                    key: wire::RecordKey {
                         model: "Entry".into(),
                         identity: json!({"id":"e"}),
                     },
                     cursor: 9,
-                    fallback: v05::ReadRecord {
-                        key: v05::RecordKey {
+                    fallback: wire::ReadRecord {
+                        key: wire::RecordKey {
                             model: "Entry".into(),
                             identity: json!({"id":"e"}),
                         },
@@ -254,8 +254,8 @@ fn next_batch_preserves_previous_ownership_until_settlement() {
     );
     c.install_authority05(
         &b.context,
-        &[v05::AuthorityChange::Record {
-            key: v05::RecordKey {
+        &[wire::AuthorityChange::Record {
+            key: wire::RecordKey {
                 model: "Entry".into(),
                 identity: json!({"id":"e"}),
             },
@@ -492,8 +492,8 @@ fn late_cascade_discovery_extends_owned_effects_without_changing_frozen_input() 
         .unwrap();
     let batch = c.freeze_batch05().unwrap().unwrap();
     c.install_cache05(
-        &[v05::ReadRecord {
-            key: v05::RecordKey {
+        &[wire::ReadRecord {
+            key: wire::RecordKey {
                 model: "Comment".into(),
                 identity: json!({"id":"c"}),
             },
@@ -519,16 +519,16 @@ fn late_cascade_discovery_extends_owned_effects_without_changing_frozen_input() 
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
     axton_sim::scenario05::assert_projection05(&mut c, &s);
     assert_eq!(
-        v05::encode(&c.freeze_batch05().unwrap().unwrap()).unwrap(),
-        v05::encode(&batch).unwrap()
+        wire::encode(&c.freeze_batch05().unwrap().unwrap()).unwrap(),
+        wire::encode(&batch).unwrap()
     );
 }
 
 fn cache_row(c: &mut Client<SqliteStore>, model: &str, id: &str, state: Value) {
     let report = c
         .install_cache05(
-            &[v05::ReadRecord {
-                key: v05::RecordKey {
+            &[wire::ReadRecord {
+                key: wire::RecordKey {
                     model: model.into(),
                     identity: json!({ "id": id }),
                 },
@@ -576,13 +576,13 @@ fn offline_create_then_sequenced_update_preserves_lifecycle_dependency() {
         batch.mutations.iter().map(|m| m.id).collect::<Vec<_>>(),
         vec![created.ordinal]
     );
-    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+    c.acknowledge_batch05(&wire::BatchAcknowledgement {
         context: batch.context.clone(),
         batch_id: batch.batch_id,
         digest: batch.digest.clone(),
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: created.ordinal,
-            outcome: v05::MutationOutcome::Rejected {
+            outcome: wire::MutationOutcome::Rejected {
                 code: "write.denied".into(),
                 message: None,
             },
@@ -591,7 +591,7 @@ fn offline_create_then_sequenced_update_preserves_lifecycle_dependency() {
     .unwrap();
     assert!(
         matches!(c.mutation_result05(edited.ordinal).unwrap().unwrap().outcome,
-        v05::MutationOutcome::Rejected { ref code, .. } if code == "dependency.rejected")
+        wire::MutationOutcome::Rejected { ref code, .. } if code == "dependency.rejected")
     );
     assert!(c.call_completion05(&edited.call_id).unwrap().is_some());
     assert!(
@@ -635,24 +635,24 @@ fn offline_sequenced_update_waits_for_creation_settlement_and_survives_reopen() 
         batch.mutations.iter().map(|m| m.id).collect::<Vec<_>>(),
         vec![created.ordinal]
     );
-    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+    c.acknowledge_batch05(&wire::BatchAcknowledgement {
         context: batch.context.clone(),
         batch_id: batch.batch_id,
         digest: batch.digest.clone(),
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: created.ordinal,
-            outcome: v05::MutationOutcome::Accepted {
+            outcome: wire::MutationOutcome::Accepted {
                 sync_cursor: 9,
                 materialization: batch.context.materialization.clone(),
                 result: Value::Null,
-                targets: vec![v05::SettlementTarget::Stream {
-                    key: v05::RecordKey {
+                targets: vec![wire::SettlementTarget::Stream {
+                    key: wire::RecordKey {
                         model: "Entry".into(),
                         identity: key.identity.clone(),
                     },
                     cursor: 9,
-                    fallback: v05::ReadRecord {
-                        key: v05::RecordKey {
+                    fallback: wire::ReadRecord {
+                        key: wire::RecordKey {
                             model: "Entry".into(),
                             identity: key.identity.clone(),
                         },
@@ -677,8 +677,8 @@ fn offline_sequenced_update_waits_for_creation_settlement_and_survives_reopen() 
     );
     c.install_authority05(
         &batch.context,
-        &[v05::AuthorityChange::Record {
-            key: v05::RecordKey {
+        &[wire::AuthorityChange::Record {
+            key: wire::RecordKey {
                 model: "Entry".into(),
                 identity: key.identity.clone(),
             },
@@ -747,16 +747,16 @@ fn rejected_predecessor_releases_sequence_survivor_and_rolls_back_lifecycle_depe
             b1.mutations.iter().map(|m| m.id).collect::<Vec<_>>(),
             vec![first.ordinal]
         );
-        let rejection = v05::MutationOutcome::Rejected {
+        let rejection = wire::MutationOutcome::Rejected {
             code: "write.denied".into(),
             message: Some("retained refusal".into()),
         };
         let report = c
-            .acknowledge_batch05(&v05::BatchAcknowledgement {
+            .acknowledge_batch05(&wire::BatchAcknowledgement {
                 context: b1.context.clone(),
                 batch_id: b1.batch_id,
                 digest: b1.digest.clone(),
-                results: vec![v05::MutationResult {
+                results: vec![wire::MutationResult {
                     mutation_id: first.ordinal,
                     outcome: rejection.clone(),
                 }],
@@ -848,8 +848,8 @@ fn note(id: &str) -> axton_client::RecordKey {
         identity: json!({"id":id}),
     }
 }
-fn wire_key(model: &str, id: &str) -> v05::RecordKey {
-    v05::RecordKey {
+fn wire_key(model: &str, id: &str) -> wire::RecordKey {
+    wire::RecordKey {
         model: model.into(),
         identity: json!({"id":id}),
     }
@@ -867,7 +867,7 @@ fn an_upgrade_keeps_every_row_and_the_queue_and_freezes_at_once() {
     c.initialize_stream05(10, "1").unwrap();
     let old = c.request_context05().unwrap();
     c.install_cache05(
-        &[v05::ReadRecord {
+        &[wire::ReadRecord {
             key: wire_key("Note", "cached"),
             cursor: (),
             state: json!({"text":"cached","blob":null}),
@@ -878,17 +878,17 @@ fn an_upgrade_keeps_every_row_and_the_queue_and_freezes_at_once() {
     c.install_authority05(
         &old,
         &[
-            v05::AuthorityChange::Record {
+            wire::AuthorityChange::Record {
                 key: wire_key("Marked", "m"),
                 cursor: 3,
                 state: json!({"text":"marked"}),
             },
-            v05::AuthorityChange::Record {
+            wire::AuthorityChange::Record {
                 key: wire_key("Note", "stream"),
                 cursor: 4,
                 state: json!({"text":"stream","blob":null}),
             },
-            v05::AuthorityChange::Record {
+            wire::AuthorityChange::Record {
                 key: wire_key("Note", "dirty"),
                 cursor: 5,
                 state: json!({"text":"old base","blob":null}),
@@ -964,20 +964,20 @@ fn an_upgrade_keeps_every_row_and_the_queue_and_freezes_at_once() {
         (&batch.digest, &batch.mutations)
     );
     assert_eq!(resent.context, after.context);
-    c.acknowledge_batch05(&v05::BatchAcknowledgement {
+    c.acknowledge_batch05(&wire::BatchAcknowledgement {
         context: resent.context.clone(),
         batch_id: resent.batch_id,
         digest: resent.digest.clone(),
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: frozen.ordinal,
-            outcome: v05::MutationOutcome::Accepted {
+            outcome: wire::MutationOutcome::Accepted {
                 sync_cursor: 10,
                 materialization: resent.context.materialization.clone(),
                 result: Value::Null,
-                targets: vec![v05::SettlementTarget::Stream {
+                targets: vec![wire::SettlementTarget::Stream {
                     key: wire_key("Note", "receipt"),
                     cursor: 6,
-                    fallback: v05::ReadRecord {
+                    fallback: wire::ReadRecord {
                         key: wire_key("Note", "receipt"),
                         cursor: (),
                         state: json!({"text":"receipt","blob":null,"label":null}),
@@ -1021,7 +1021,7 @@ fn handshake_generation_upgrades_a_fresh_store_and_reopen_keeps_it() {
     let rolled = c.request_context05().unwrap();
     assert_eq!(
         rolled.materialization,
-        v05::materialization_id(&schema(), "2").unwrap()
+        wire::materialization_id(&schema(), "2").unwrap()
     );
     assert_ne!(rolled.materialization, opened.materialization);
     assert_eq!(rolled.store_id, opened.store_id);
@@ -1049,7 +1049,7 @@ fn a_generation_reported_with_a_frozen_batch_upgrades_at_once_and_reopen_keeps_i
     let upgraded = c.request_context05().unwrap();
     assert_eq!(
         upgraded.materialization,
-        v05::materialization_id(&schema(), "2").unwrap()
+        wire::materialization_id(&schema(), "2").unwrap()
     );
     drop(c);
     let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema(), "User:u").unwrap();
@@ -1178,7 +1178,7 @@ fn queued_across(
 ) -> (
     tempfile::TempDir,
     Client<SqliteStore>,
-    Option<v05::MutationRequest>,
+    Option<wire::MutationRequest>,
 ) {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
@@ -1215,7 +1215,7 @@ fn stream(c: &mut Client<SqliteStore>, model: &str, id: &str, cursor: u64, title
     let context = c.request_context05().unwrap();
     c.install_authority05(
         &context,
-        &[v05::AuthorityChange::Record {
+        &[wire::AuthorityChange::Record {
             key: wire_key(model, id),
             cursor,
             state: json!({ "title": title }),
@@ -1254,21 +1254,21 @@ fn replay_skips_an_operation_on_a_model_that_is_not_shared_and_marks_the_mutatio
         }
     }
 }
-fn private(model: &str, id: &str, title: &str) -> v05::SettlementTarget {
-    v05::SettlementTarget::Private {
-        record: v05::ReadRecord {
+fn private(model: &str, id: &str, title: &str) -> wire::SettlementTarget {
+    wire::SettlementTarget::Private {
+        record: wire::ReadRecord {
             key: wire_key(model, id),
             cursor: (),
             state: json!({ "title": title }),
         },
     }
 }
-fn answer(b: &v05::MutationRequest, outcome: v05::MutationOutcome) -> v05::BatchAcknowledgement {
-    v05::BatchAcknowledgement {
+fn answer(b: &wire::MutationRequest, outcome: wire::MutationOutcome) -> wire::BatchAcknowledgement {
+    wire::BatchAcknowledgement {
         context: b.context.clone(),
         batch_id: b.batch_id,
         digest: b.digest.clone(),
-        results: vec![v05::MutationResult {
+        results: vec![wire::MutationResult {
             mutation_id: b.mutations[0].id,
             outcome,
         }],
@@ -1283,7 +1283,7 @@ fn acknowledgement_needs_no_target_for_a_model_that_is_not_shared() {
         let current = c.request_context05().unwrap().materialization;
         c.acknowledge_batch05(&answer(
             &b,
-            v05::MutationOutcome::Accepted {
+            wire::MutationOutcome::Accepted {
                 sync_cursor: 0,
                 materialization: current.clone(),
                 result: Value::Null,
@@ -1317,7 +1317,7 @@ fn rejection_of_a_mutation_on_a_model_that_is_not_shared_completes() {
         let call = format!("{}:{}", c.client_id(), b.mutations[0].id);
         c.acknowledge_batch05(&answer(
             &b,
-            v05::MutationOutcome::Rejected {
+            wire::MutationOutcome::Rejected {
                 code: "pair.denied".into(),
                 message: None,
             },
@@ -1337,15 +1337,15 @@ fn settlement_neither_awaits_nor_installs_a_target_that_is_not_shared() {
         let current = c.request_context05().unwrap().materialization;
         c.acknowledge_batch05(&answer(
             &b,
-            v05::MutationOutcome::Accepted {
+            wire::MutationOutcome::Accepted {
                 sync_cursor: 5,
                 materialization: current.clone(),
                 result: Value::Null,
                 targets: vec![
-                    v05::SettlementTarget::Stream {
+                    wire::SettlementTarget::Stream {
                         key: wire_key("A", "a"),
                         cursor: 5,
-                        fallback: v05::ReadRecord {
+                        fallback: wire::ReadRecord {
                             key: wire_key("A", "a"),
                             cursor: (),
                             state: json!({"title":"A5"}),
@@ -1478,7 +1478,7 @@ fn a_create_queued_before_a_new_required_field_uploads_and_shows_no_optimistic_r
     assert_eq!(resent.digest, before.digest);
     assert_eq!(resent.mutations[0].id, call.ordinal);
     assert_eq!(
-        v05::reconstruct_input(&resent.mutations[0].operations).unwrap(),
+        wire::reconstruct_input(&resent.mutations[0].operations).unwrap(),
         json!({"entry":{"id":"e","text":"A"}})
     );
 }

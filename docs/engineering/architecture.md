@@ -1,6 +1,6 @@
 # Architecture
 
-See the [component documentation index](architecture/README.md) for individual design documents. Protocol 5 behavior is owned by [protocol 5](architecture/protocols/sync.md), [client storage](architecture/client/storage/protocol5.md), [the server](architecture/server/protocol5.md) and [current guarantees](guarantees.md). Protocol 4 and older carrier pages are historical references; they do not promise a supported migration. See [adoption](protocol5-adoption.md) for fresh-file and release gates.
+See the [component documentation index](architecture/README.md) for individual design documents. Protocol 5 behavior is owned by [protocol 5](architecture/protocols/wire.md), [client storage](architecture/client/storage/protocol5.md), [the server](architecture/server/protocol5.md) and [current guarantees](guarantees.md). Protocol 4 and older carrier pages are historical references; they do not promise a supported migration. See [adoption](protocol5-adoption.md) for fresh-file and release gates.
 
 ## Core
 
@@ -8,7 +8,7 @@ Five parts carry the product: three define what synchronization guarantees, two 
 
 | Core part | Why |
 | --- | --- |
-| [Protocol](architecture/protocols/sync.md) | The shared wire contract: bound contexts, Stream positions, immutable Batches, null-cursor snapshots and finite complete delivery units. |
+| [Protocol](architecture/protocols/wire.md) | The shared wire contract: bound contexts, Stream positions, immutable Batches, null-cursor snapshots and finite complete delivery units. |
 | [Client / Engine](architecture/client/storage/protocol5.md) | Local transactions, durable named Mutations, Stream authority, read protection and committed settlement. |
 | [Client / Frontend interface](architecture/frontend-sdk/api.md) | One client/file/Stream, local Model reads and writes, typed Mutations, Query/Fetch and Bootstrap. The [runtime](architecture/client/runtime.md) owns scheduling. |
 | [Server / Engine](architecture/server/protocol5.md) | Fenced publication and materialization, explicit tracking, durable outcomes and finite delivery coverage. |
@@ -28,7 +28,7 @@ The tree stops at three levels: AXTON, a component, a part. A part that has inte
   - **[Mutations and Queries](architecture/schema/actions.md)** — Versioned backend operations: business kind, inputs, outputs and delivery defaults.
   - **[Prerequisites](architecture/schema/prerequisites.md)** — Prerequisite declarations and references.
 - **[Protocols](architecture/protocols/README.md)** — Message types, codecs and pure validation.
-  - **[Sync](architecture/protocols/sync.md)** — Client ↔ Server.
+  - **[Sync](architecture/protocols/wire.md)** — Client ↔ Server.
   - **[Client bridge](architecture/protocols/client-bridge.md)** — Frontend SDK ↔ Rust client.
   - **[Server bridge](architecture/protocols/server-bridge.md)** — Backend SDK ↔ Rust server.
 - **[Compiler (Rust)](architecture/compiler/README.md)** — Compile schemas and generate typed interfaces.
@@ -105,7 +105,7 @@ Where each part lives. A part with its own tree carries the finer map in its REA
 | Component / part | Code location |
 |---|---|
 | Schema | Source syntax in [compiler/parse.rs](../../crates/compiler/src/parse.rs) |
-| Protocols / Sync | [protocols/sync.rs](../../crates/protocols/src/sync.rs) and pure delivery/mutation helpers; [core/protocol.rs](../../crates/core/src/protocol.rs) retains shared scalar bounds. |
+| Protocols / Sync | [protocols/sync.rs](../../crates/protocols/src/wire.rs) and pure delivery/mutation helpers; [core/protocol.rs](../../crates/core/src/protocol.rs) retains shared scalar bounds. |
 | Protocols / Client bridge | [protocols/client_bridge](../../crates/protocols/src/client_bridge) owns messages and local/query DTOs. |
 | Protocols / Server bridge | [protocols/server_bridge](../../crates/protocols/src/server_bridge) owns host requests/responses, member DTOs and structured errors. |
 | Compiler / Parse | [compiler/parse.rs](../../crates/compiler/src/parse.rs); file concatenation and error relocation in [compiler/main.rs](../../crates/compiler/src/main.rs) |

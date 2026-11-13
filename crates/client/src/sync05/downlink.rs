@@ -5,21 +5,21 @@ use crate::{
     Result, invalid,
     runtime::{Diagnostic, EffectOutcome, Event, HttpRoute, Operation, SocketEvent},
     store05::StoreStatus05,
-    v05,
+    wire,
 };
 use std::collections::{BTreeMap, VecDeque};
 #[derive(Clone)]
 enum Flight {
-    Handshake(v05::HandshakeRequest),
-    Delta(v05::DeltaRequest),
-    Push(v05::MutationRequest),
+    Handshake(wire::HandshakeRequest),
+    Delta(wire::DeltaRequest),
+    Push(wire::MutationRequest),
     Socket,
     Expire,
     Retry,
     Refresh,
 }
 pub struct Control {
-    context: v05::RequestContext,
+    context: wire::RequestContext,
     status: StoreStatus05,
     queue: DeliveryQueue,
     flights: BTreeMap<String, Flight>,
@@ -37,7 +37,7 @@ pub struct Control {
     applying_plan: Option<String>,
     freezing: bool,
     wake_after_needs: bool,
-    waiting_push: Option<v05::MutationRequest>,
+    waiting_push: Option<wire::MutationRequest>,
     failures: u32,
     epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
     refresh_auth: bool,
@@ -126,8 +126,8 @@ impl Control {
             self.flights.remove(&id);
             self.events.push(Event::CancelEffect { effect_id: id });
         }
-        let request = v05::HandshakeRequest {
-            protocol: v05::PROTOCOL,
+        let request = wire::HandshakeRequest {
+            protocol: wire::PROTOCOL,
             store_id: self.context.store_id.clone(),
             stream: self.context.stream.clone(),
         };
@@ -283,9 +283,9 @@ impl Control {
                 SocketEvent::Message { body } => {
                     let raw: serde_json::Value = serde_json::from_str(&body)?;
                     if raw.get("head").is_some() && raw.get("header").is_none() {
-                        let ack = v05::decode::<v05::HandshakeResponse>(body.as_bytes())?;
-                        ack.admit(&v05::HandshakeRequest {
-                            protocol: v05::PROTOCOL,
+                        let ack = wire::decode::<wire::HandshakeResponse>(body.as_bytes())?;
+                        ack.admit(&wire::HandshakeRequest {
+                            protocol: wire::PROTOCOL,
                             store_id: self.context.store_id.clone(),
                             stream: self.context.stream.clone(),
                         })?;
@@ -296,7 +296,7 @@ impl Control {
                         self.schedule(now)?;
                         return Ok(());
                     }
-                    let response: v05::DeliveryResponse = serde_json::from_str(&body)?;
+                    let response: wire::DeliveryResponse = serde_json::from_str(&body)?;
                     // Socket offers are finite ranges. Authentication fixed the
                     // Stream; local Store/context and plan still need admission.
                     if response.header.bootstrap {
@@ -304,7 +304,7 @@ impl Control {
                     }
                     response.header.context.admit_store(&self.context)?;
                     if response.header.context.materialization != self.context.materialization {
-                        v05::Validate::validate(&response.header)?;
+                        wire::Validate::validate(&response.header)?;
                         self.delivery_head = self.delivery_head.max(response.header.observed_head);
                         self.schedule(now)?;
                         return Ok(());
@@ -353,7 +353,7 @@ impl Control {
         };
         match flight {
             Flight::Handshake(request) => {
-                let response = v05::decode::<v05::HandshakeResponse>(body.as_bytes())?;
+                let response = wire::decode::<wire::HandshakeResponse>(body.as_bytes())?;
                 response.admit(&request)?;
                 self.delivery_head = self.delivery_head.max(response.head);
                 self.failures = 0;
@@ -367,7 +367,7 @@ impl Control {
                 );
             }
             Flight::Delta(request) => {
-                let response: v05::DeliveryResponse = serde_json::from_str(&body)?;
+                let response: wire::DeliveryResponse = serde_json::from_str(&body)?;
                 response.admit(&request, &self.context)?;
                 response.require_complete()?;
                 self.delivery_head = self.delivery_head.max(response.header.observed_head);
@@ -391,7 +391,7 @@ impl Control {
                 self.schedule(now)?;
             }
             Flight::Push(request) => {
-                let receipt = v05::decode::<v05::BatchAcknowledgement>(body.as_bytes())?;
+                let receipt = wire::decode::<wire::BatchAcknowledgement>(body.as_bytes())?;
                 if receipt.context != request.context
                     || receipt.batch_id != request.batch_id
                     || receipt.digest != request.digest
@@ -401,7 +401,7 @@ impl Control {
                 // Settlement evidence arrives only through the Stream. Raising
                 // the head lets an idle socket's Store pull (C, syncCursor].
                 for result in &receipt.results {
-                    if let v05::MutationOutcome::Accepted { sync_cursor, .. } = result.outcome {
+                    if let wire::MutationOutcome::Accepted { sync_cursor, .. } = result.outcome {
                         self.delivery_head = self.delivery_head.max(sync_cursor);
                     }
                 }
@@ -714,7 +714,7 @@ impl Control {
             p.header.bootstrap == bootstrap && p.header.after <= after && p.header.through >= after
         }) {
             if bootstrap && let Some(after) = self.bootstrap_prefetch_after(after, through) {
-                let request = v05::DeltaRequest {
+                let request = wire::DeltaRequest {
                     context: self.context.clone(),
                     after,
                     through,
@@ -725,7 +725,7 @@ impl Control {
             return Ok(());
         }
         if bootstrap || after < through {
-            let request = v05::DeltaRequest {
+            let request = wire::DeltaRequest {
                 context: self.context.clone(),
                 after,
                 through,

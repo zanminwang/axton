@@ -84,7 +84,7 @@ pub enum LoaderMode {
 }
 
 pub const OPERATIONS: [&str; 11] = [
-    "protocol05",
+    "sync",
     "head",
     "savepoint",
     "rollback",
@@ -106,11 +106,11 @@ pub const OPERATIONS: [&str; 11] = [
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
-pub enum Protocol05Operation {
+pub enum SyncOperation {
     BootstrapState {
         store_id: String,
     },
-    HandleBootstrap05 {
+    HandleBootstrap {
         owner: String,
         store_id: String,
         stream: String,
@@ -132,7 +132,7 @@ pub enum Protocol05Operation {
     },
     Admit {
         owner: String,
-        context: crate::sync::RequestContext,
+        context: crate::wire::RequestContext,
     },
     /// Read immutable Store ownership without locking Batch progress.
     InspectStore {
@@ -166,7 +166,7 @@ pub enum Protocol05Operation {
         ordinal: u64,
         #[serde(with = "cursor")]
         count: u64,
-        result: crate::sync::MutationResult,
+        result: crate::wire::MutationResult,
     },
     SaveResults {
         store_id: String,
@@ -177,7 +177,7 @@ pub enum Protocol05Operation {
         #[serde(with = "cursor")]
         count: u64,
         digest: String,
-        results: Vec<crate::sync::MutationResult>,
+        results: Vec<crate::wire::MutationResult>,
     },
     ReadTracking {
         records: Vec<MemberKey>,
@@ -211,8 +211,8 @@ pub enum Protocol05Operation {
 )]
 pub enum HostRequest {
     /// Protocol 5 persistence/application seam; its inner operation is validated by the v05 executor.
-    Protocol05 {
-        request: Protocol05Operation,
+    Sync {
+        request: SyncOperation,
     },
     /// The stream's current head cursor.
     Head {

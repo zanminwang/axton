@@ -1,5 +1,5 @@
 //! Original released files remain recoverable; format5 adopts a fresh file.
-use axton_client::{Client, ClientStore, RecordKey, Schema, sync05::DeliveryQueue, v05};
+use axton_client::{Client, ClientStore, RecordKey, Schema, sync05::DeliveryQueue, wire};
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 fn schema() -> Schema {
@@ -68,8 +68,8 @@ fn original_v02_layout_is_refused_unchanged_and_fresh_file_is_independent() {
         assert_eq!(c.read_sql("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name IN ('axton_stream_member','axton_record','axton_v04_call','axton_call','axton_query_cache','axton_load','axton_mutation')", &[]).unwrap()[0]["n"], 0);
         let report = c
             .install_cache05(
-                &[v05::ReadRecord {
-                    key: v05::RecordKey {
+                &[wire::ReadRecord {
+                    key: wire::RecordKey {
                         model: "Todo".into(),
                         identity: json!({"id":"new"}),
                     },
@@ -97,7 +97,7 @@ fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
     let mut c = Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
-    let k = v05::RecordKey {
+    let k = wire::RecordKey {
         model: "Todo".into(),
         identity: json!({"id":"e"}),
     };
@@ -105,10 +105,10 @@ fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
     for (id, purpose, after, through, changes) in [
         (
             "initial",
-            v05::DeliveryPurpose::Bootstrap,
+            wire::DeliveryPurpose::Bootstrap,
             0,
             0,
-            vec![v05::AuthorityChange::Record {
+            vec![wire::AuthorityChange::Record {
                 key: k.clone(),
                 cursor: 1,
                 state: json!({"title":"kept","channel":"opaque"}),
@@ -116,16 +116,16 @@ fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
         ),
         (
             "remove",
-            v05::DeliveryPurpose::Sync,
+            wire::DeliveryPurpose::Sync,
             0,
             2,
-            vec![v05::AuthorityChange::Remove {
+            vec![wire::AuthorityChange::Remove {
                 key: k.clone(),
                 cursor: 2,
             }],
         ),
     ] {
-        let p = v05::freeze_delivery(
+        let p = wire::freeze_delivery(
             context.clone(),
             id.into(),
             purpose,
@@ -133,7 +133,7 @@ fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
             through,
             through.max(1),
             8_000_000_000_000_000,
-            vec![v05::DeliveryUnit {
+            vec![wire::DeliveryUnit {
                 index: 0,
                 through: Some(through),
                 changes,

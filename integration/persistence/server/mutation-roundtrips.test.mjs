@@ -42,7 +42,7 @@ async function fixture(body) {
     const call = (tx, op, fields) =>
       database
         .persistence(tx)
-        .call({ op: "protocol05", request: { op, ...fields } });
+        .call({ op: "sync", request: { op, ...fields } });
     const run = (op, fields) =>
       database.transaction((tx) => call(tx, op, fields));
     await body({

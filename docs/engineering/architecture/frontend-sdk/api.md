@@ -24,7 +24,7 @@ Public anonymous mutations, direct Mutation `call`, queued Query `enqueue`, Load
 
 ## 5. Building Block View
 
-[Compiler emission](../../../../crates/compiler/src/emit.rs) and [transaction emission](../../../../crates/compiler/src/emit_transactions.rs) generate typed facades/codecs. [Node runtime](../../../../packages/frontend/client-js/api/runtime.mts), [Dart client](../../../../packages/frontend/dart/lib/src/api/client.dart) and the [RN adapter](../../../../packages/frontend/client-react-native/api/transaction.mts) submit through native Bridges. [Bindings](bindings.md) own platform loading and per-client actors. [Protocol 5](../protocols/sync.md) owns persisted semantics.
+[Compiler emission](../../../../crates/compiler/src/emit.rs) and [transaction emission](../../../../crates/compiler/src/emit_transactions.rs) generate typed facades/codecs. [Node runtime](../../../../packages/frontend/client-js/api/runtime.mts), [Dart client](../../../../packages/frontend/dart/lib/src/api/client.dart) and the [RN adapter](../../../../packages/frontend/client-react-native/api/transaction.mts) submit through native Bridges. [Bindings](bindings.md) own platform loading and per-client actors. [Protocol 5](../protocols/wire.md) owns persisted semantics.
 
 [Command accounting](../../../../packages/frontend/client-js/api/command-accounting.mts) owns pending work, draining and first command failure for Node and RN transaction scopes. Each adapter retains its own admission and lifetime guards; Node savepoint rollback restores the enclosing scope's recorded failure.
 

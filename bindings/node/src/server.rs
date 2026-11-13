@@ -212,7 +212,7 @@ pub async fn settle_external05(
 ) -> Result<String> {
     let value = serde_json::from_str(&settlement_json).map_err(internal)?;
     let result =
-        axton_server::settle_external05(&config(&config_json)?, &value, &CallbackHost(callback))
+        axton_server::settle_external(&config(&config_json)?, &value, &CallbackHost(callback))
             .await
             .map_err(reason)?;
     Ok(result.to_string())

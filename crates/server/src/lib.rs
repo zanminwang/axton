@@ -9,7 +9,7 @@ mod materialization;
 pub use materialization::RetainedMaterialization;
 mod protocol_v05;
 pub use protocol_v05::{
-    encode_batch_acknowledgement, process_batch_group, process_batch_member, settle_external05,
+    encode_batch_acknowledgement, process_batch_group, process_batch_member,
     validate_mutation_batch,
 };
 mod mutation_batch;
@@ -207,8 +207,9 @@ async fn head(host: &impl Host, stream: &str) -> Result<u64> {
 pub async fn settle_external(
     config: &Config,
     settlement: &Value,
-    host: &impl Host,
+    raw: &impl Host,
 ) -> Result<Value> {
+    let host = &protocol_v05::Publication05::new(raw);
     let settled: Handled = serde_json::from_value(settlement.clone())
         .map_err(|e| Error::new(code::PUBLISH_INVALID, e.to_string()))?;
     let Handled::Settled {

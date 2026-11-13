@@ -122,13 +122,6 @@ pub(crate) async fn call<T: serde::de::DeserializeOwned + Send>(
     })
     .await
 }
-pub async fn settle_external05(
-    config: &Config,
-    settlement: &Value,
-    host: &impl Host,
-) -> Result<Value> {
-    crate::settle_external(config, settlement, &Publication05::new(host)).await
-}
 pub async fn process_batch_member(
     config: &Config,
     owner: &str,

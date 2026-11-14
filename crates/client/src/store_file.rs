@@ -1,4 +1,4 @@
-//! Protocol-5 file state. Store and queue tables are the durable lifecycle truth.
+//! Store file state. Store and queue tables are the durable lifecycle truth.
 use crate::{
     Client, ClientStore, Result, Schema, ddl,
     engine::{Engine, as_u64},

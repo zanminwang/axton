@@ -255,7 +255,7 @@ pub(crate) fn snapshot_keys(
     Ok(keys)
 }
 
-/// Ordinary protocol-5 reads do not run Loader preparation publications.
+/// Ordinary Query and Fetch reads do not run Loader preparation publications.
 pub(crate) async fn load_one_canonical_state(
     config: &Config,
     owner: &str,

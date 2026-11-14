@@ -59,7 +59,7 @@ export type ApplyStreamMembersRequest = {
   deltas: TrackingDelta[];
 };
 
-/** Protocol-5 persistence/application seam. Every call uses the retained transaction. */
+/** Sync persistence/application seam. Every call uses the retained transaction. */
 export type SyncContext = {
   protocol: 6;
   storeId: string;

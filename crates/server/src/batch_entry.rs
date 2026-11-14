@@ -1,4 +1,4 @@
-//! Protocol-5 carrier admission and publication adapter. Envelopes belong to axton_protocols::wire.
+//! Sync carrier admission and publication adapter. Envelopes belong to axton_protocols::wire.
 use crate::{
     Config, Host, HostResult, Result, backend_interface::HostExt, internal, request_invalid,
 };
@@ -76,7 +76,7 @@ pub(crate) fn validate_member(config: &Config, m: &wire::Mutation) -> Result<Mut
         .map_err(request_invalid)?;
     Ok(MutationInput::Supported(normalized))
 }
-/// Adapts existing normalization/Loader machinery to the v05 persistence seam.
+/// Adapts existing normalization/Loader machinery to the sync persistence seam.
 /// Every nested Loader publication uses the same transaction's reservations.
 pub(crate) struct PublicationHost<'a, H: Host>(pub &'a H, std::sync::Mutex<Option<String>>);
 impl<'a, H: Host> PublicationHost<'a, H> {

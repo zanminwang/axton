@@ -1072,7 +1072,7 @@ fn stale_frozen_digest_halts_the_uplink_once_without_deleting_anything() {
         .unwrap();
     c.freeze_batch().unwrap().unwrap();
     drop(c);
-    // A Batch frozen under the protocol-5 digest definition looks like this.
+    // A Batch frozen under an earlier digest definition looks like this.
     let raw = rusqlite::Connection::open(&p).unwrap();
     raw.execute_batch(&format!(
         "DROP TRIGGER axton_queue_envelope; UPDATE axton_mutation_queue SET batch_digest='{}'",

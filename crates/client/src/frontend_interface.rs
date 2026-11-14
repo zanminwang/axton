@@ -110,7 +110,7 @@ pub struct Client<S: ClientStore> {
     pub(crate) shared: crate::engine::SharedModels,
 }
 
-// Call completions canceled by an explicit Store05 reset.
+// Call completions canceled by an explicit Store reset.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AbandonedCall {

@@ -166,7 +166,7 @@ pub fn mutation_descriptor_digest(descriptor: &axton_core::ActionDescriptor) -> 
         &serde_json::to_value(descriptor)?,
     )
 }
-/// Canonical read descriptor context under the protocol-5 domain.
+/// Canonical read descriptor context under the `axton:materialization:5` domain.
 pub fn materialization_id(
     schema: &axton_core::Schema,
     projection_generation: &str,

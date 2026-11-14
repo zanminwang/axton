@@ -603,6 +603,6 @@ async function requireFreshLayout(q: Query): Promise<void> {
   const [row] = await q(SQL.CHECK_LAYOUT);
   if (!row || row.legacy !== false)
     throw new Error(
-      "installed legacy framework layout: protocol 5 requires a fresh namespace; existing data is unchanged",
+      "installed legacy framework layout: AXTON requires a fresh namespace; existing data is unchanged",
     );
 }

@@ -98,7 +98,7 @@ pub const OPERATIONS: [&str; 11] = [
 ];
 
 /// Every request the engine issues to a host, tagged by `op` on the wire.
-/// Additive protocol-5 storage operations, all inside the caller's transaction.
+/// Sync storage operations, all inside the caller's transaction.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "op",
@@ -210,7 +210,7 @@ pub enum SyncOperation {
     deny_unknown_fields
 )]
 pub enum HostRequest {
-    /// Protocol 5 persistence/application seam; its inner operation is validated by the v05 executor.
+    /// Sync persistence/application seam; its inner operation is validated by the Batch entry executor.
     Sync {
         request: SyncOperation,
     },
@@ -609,7 +609,7 @@ impl TryFrom<HandledWire> for Handled {
     }
 }
 
-/// Trusted carrier constructed only after protocol-5 principal/Store/Stream admission.
+/// Trusted carrier constructed only after principal/Store/Stream admission.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HandlerContext {

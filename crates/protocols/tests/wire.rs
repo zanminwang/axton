@@ -599,7 +599,7 @@ fn materialization_preserves_read_semantics_with_distinct_domain() {
     let mut s: axton_core::Schema =
         serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
     let a = axton_protocols::wire::materialization_id(&s, "1").unwrap();
-    assert_eq!(a.len(), 64); // protocol5 hash domain has independent fixture vectors above
+    assert_eq!(a.len(), 64); // the materialization hash domain has independent fixture vectors above
     s.models[0].fields.reverse();
     assert_eq!(
         a,

@@ -1,4 +1,4 @@
-//! Protocol 5 contract and pure planning helpers. No network or database I/O.
+//! Sync protocol wire contract and pure planning helpers. No network or database I/O.
 use axton_core::{Result, canonical_json, check_stream, counter, invalid};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;

@@ -1,4 +1,4 @@
-//! Direct-read connection intent. Sync05 independently owns uplink/downlink effects.
+//! Direct-read connection intent. The sync worker independently owns uplink/downlink effects.
 use super::effects::Waiter;
 use super::*;
 pub(super) struct Connection {

@@ -1,4 +1,4 @@
-//! Deterministic recovery orders against real protocol-5 SQLite state.
+//! Deterministic recovery orders against real Store file state.
 //! Cloud acknowledgements are fixtures; the actual PostgreSQL/SDK join lives
 //! in integration/sdk and must pass independently.
 use axton_client::{Client, RecordKey, Schema};

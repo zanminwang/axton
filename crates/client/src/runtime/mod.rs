@@ -1,7 +1,7 @@
 //! Rust-owned local runtime. Tasks route to committed results; application
 //! callbacks hold one transaction with nested savepoint capabilities. Direct
-//! protocol5 reads and prerequisite handlers run as bounded host effects.
-//! Sync05 owns the durable uplink/downlink work independently.
+//! reads and prerequisite handlers run as bounded host effects. The sync
+//! worker owns the durable uplink/downlink work independently.
 mod commands;
 mod direct;
 mod effects;

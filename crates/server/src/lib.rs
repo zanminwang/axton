@@ -243,7 +243,7 @@ pub async fn settle_external(
     ))
 }
 
-/// Canonical protocol-5 read context, independent of authenticated Store binding.
+/// Canonical read context, independent of authenticated Store binding.
 pub fn materialization_id(config: &Config, projection_generation: &str) -> Result<String> {
     axton_protocols::wire::materialization_id(&config.schema, projection_generation)
         .map_err(config_invalid)

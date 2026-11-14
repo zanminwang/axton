@@ -1,4 +1,4 @@
-//! Protocol 5 control staging and transaction-owned application.
+//! Sync control staging and transaction-owned application.
 mod delivery_queue;
 mod delta_applier;
 pub use delivery_queue::DeliveryQueue;

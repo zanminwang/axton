@@ -1,4 +1,4 @@
-/** Statements for the fresh protocol-5 PostgreSQL namespace. */
+/** Statements for the fresh PostgreSQL framework namespace. */
 export const HEAD = "SELECT head FROM axton_stream WHERE stream=$1";
 export const STREAM_BATCH = 1000;
 /**
@@ -32,7 +32,7 @@ export const READ_TRACKING_RECORD =
 export const savepointName = (ordinal: number): string =>
   `axton_mutation_${ordinal}`;
 
-/** Protocol-5 Store, immutable outcome and coalesced publication persistence. */
+/** Store, immutable outcome and coalesced publication persistence. */
 export const STORE_INSERT =
   "INSERT INTO axton_store(id,principal,stream) VALUES($1,$2,$3) ON CONFLICT(id) DO NOTHING";
 export const STORE_INSPECT =

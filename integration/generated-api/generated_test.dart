@@ -1,4 +1,4 @@
-// Generated facade acceptance. Transport fixtures author finite protocol-5 carriers;
+// Generated facade acceptance. Transport fixtures author finite sync carriers;
 // real-host canonical Loader/settlement semantics are checked by action-e2e.
 import 'dart:async';
 import 'dart:io';

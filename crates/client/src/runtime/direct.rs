@@ -1,4 +1,4 @@
-//! Independent protocol5 Query and Fetch requests with deadlines, shared auth
+//! Independent Query and Fetch requests with deadlines, shared auth
 //! refresh, exact correlation, and transactional guarded cache installation.
 use super::effects::{EffectKind, Ready, Waiter};
 use super::*;

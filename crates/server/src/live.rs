@@ -1,4 +1,4 @@
-//! Single-Stream protocol-5 live drain controller.
+//! Single-Stream live drain controller.
 use crate::{Error, Host, Result, code};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -28,7 +28,7 @@ pub enum LiveAction {
     Listen { stream: String },
     /// Send this frame on the socket (the acknowledgement or a page).
     Send { frame: String },
-    /// Run this protocol-5 delivery request in a transaction and report its
+    /// Run this delivery request in a transaction and report its
     /// response as [`LiveEvent::Pulled`]. At most one pull is outstanding.
     Pull { request: String },
 }

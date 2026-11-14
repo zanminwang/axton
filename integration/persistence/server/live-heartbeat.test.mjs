@@ -38,7 +38,7 @@ async function fixture(t, { autoPong = true, idleProxy = false, held } = {}) {
     config: { schema: { enums: [], models: [], actions: [] }, mutations: [] },
     native: {
       validateConfig() {},
-      serverMaterializationId05: () => "fixture",
+      serverMaterializationId: () => "fixture",
       async negotiateLive(_config, _owner, request) {
         state.subscribed++;
         if (held) {

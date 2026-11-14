@@ -33,7 +33,7 @@ fn schema() -> Schema {
     Schema::from_value(schema).unwrap()
 }
 fn runtime(path: &Path, handlers: &[&str]) -> ClientRuntime<SqliteStore> {
-    let mut client = Client::open05(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap();
+    let mut client = Client::open(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap();
     client.initialize_stream05(0, "1").unwrap();
     ClientRuntime::new(client)
         .register_prerequisite_handlers(handlers.iter().map(|h| h.to_string()).collect())
@@ -375,7 +375,7 @@ fn only_declared_prerequisites_can_be_registered_once_at_open() {
     let dir = tempfile::tempdir().unwrap();
     let open = || {
         ClientRuntime::new(
-            Client::open05(
+            Client::open(
                 SqliteStore::open(dir.path().join("db")).unwrap(),
                 schema(),
                 "User:u",

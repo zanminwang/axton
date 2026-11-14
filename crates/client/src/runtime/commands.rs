@@ -55,7 +55,7 @@ pub(super) fn execute<S: ClientStore + 'static>(
         Command::StreamBootstrapState {
             stream,
             subscription_id,
-        } => json!(client.bootstrap_state05(stream, *subscription_id)?),
+        } => json!(client.bootstrap_state(stream, *subscription_id)?),
 
         Command::Readiness { key, state } => {
             client.set_readiness(key, *state)?;

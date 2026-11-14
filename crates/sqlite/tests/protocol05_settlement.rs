@@ -11,7 +11,7 @@ fn schema() -> Schema {
     Schema::from_value(s).unwrap()
 }
 fn open(p: &std::path::Path) -> Client<SqliteStore> {
-    Client::open05(SqliteStore::open(p).unwrap(), schema(), "User:u").unwrap()
+    Client::open(SqliteStore::open(p).unwrap(), schema(), "User:u").unwrap()
 }
 fn key() -> RecordKey {
     RecordKey {
@@ -288,7 +288,7 @@ fn rejected_update_keeps_a_later_pending_mutation_on_the_protected_base() {
     let mut value = serde_json::to_value(&s).unwrap();
     value["actions"][0]["inputs"][0]["operation"] = json!("update");
     s = Schema::from_value(value).unwrap();
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     install(&mut c, "e", 3, Some("base"));
     let call = c
@@ -311,7 +311,7 @@ fn rejected_update_keeps_a_later_pending_mutation_on_the_protected_base() {
     );
     assert_eq!(c.pending_count().unwrap(), 1);
     drop(c);
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s, "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&p).unwrap(), s, "User:u").unwrap();
     c.acknowledge_batch05(&a).unwrap();
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
     assert!(c.call_completion05(&call.call_id).unwrap().is_some());
@@ -445,7 +445,7 @@ fn commit_failure_rolls_back_assignment_and_acknowledgement() {
         fail_commit: failure.clone(),
         crash_ack: false,
     };
-    let mut c = Client::open05(store, schema(), "User:u").unwrap();
+    let mut c = Client::open(store, schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     let call = c
         .transaction(|tx| {
@@ -525,7 +525,7 @@ fn abrupt_ack_child() {
         fail_commit: Arc::new(AtomicBool::new(false)),
         crash_ack: true,
     };
-    let mut c = Client::open05(store, update_schema(), "User:u").unwrap();
+    let mut c = Client::open(store, update_schema(), "User:u").unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     c.acknowledge_batch05(&ack(
         &b,
@@ -541,7 +541,7 @@ fn abrupt_ack_child() {
 fn abrupt_process_exit_before_ack_commit_restores_exact_batch_beneath_later_work() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     c.install_authority05(
@@ -566,7 +566,7 @@ fn abrupt_process_exit_before_ack_commit_restores_exact_batch_beneath_later_work
         .status()
         .unwrap();
     assert_eq!(status.code(), Some(77));
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
     assert_eq!(
         wire::encode(&c.freeze_batch05().unwrap().unwrap()).unwrap(),
         wire::encode(&b).unwrap()
@@ -588,7 +588,7 @@ fn abrupt_process_exit_before_ack_commit_restores_exact_batch_beneath_later_work
 #[test]
 fn pending_optimism_keeps_authoritative_base_protection() {
     let d = tempfile::tempdir().unwrap();
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(d.path().join("db")).unwrap(),
         update_schema(),
         "User:u",
@@ -730,7 +730,7 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     let p = d.path().join("db");
     let mut s = schema();
     s.models[0].unique.push(vec!["text".into()]);
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&p).unwrap(), s.clone(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     cache_row(&mut c, "Entry", "other", state("taken"));
     let call = c
@@ -765,7 +765,7 @@ fn settlement_constraint_failure_retains_acceptance_and_retries_locally() {
     assert_eq!(c.store_status05().unwrap().last_acknowledged_batch_id, 1);
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "optimistic");
     drop(c);
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), s, "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&p).unwrap(), s, "User:u").unwrap();
     assert!(c.settle_ready05().unwrap().completions.is_empty());
     cache_row(&mut c, "Entry", "other", state("free"));
     let ctx = c.request_context05().unwrap();
@@ -782,7 +782,7 @@ fn abrupt_assignment_child() {
         fail_commit: Arc::new(AtomicBool::new(false)),
         crash_ack: false,
     };
-    let mut c = Client::open05(store, schema(), "User:u").unwrap();
+    let mut c = Client::open(store, schema(), "User:u").unwrap();
     let b = c.freeze_batch05().unwrap().unwrap();
     std::fs::write(
         std::env::var("AXTON_TASK2_ASSIGNMENT_EVIDENCE").unwrap(),
@@ -879,7 +879,7 @@ fn discarded_mutation_and_lifecycle_dependent_keep_public_codes_after_reopen() {
     ]);
     let schema = Schema::from_value(descriptor).unwrap();
     let mut client =
-        Client::open05(SqliteStore::open(&path).unwrap(), schema.clone(), "User:u").unwrap();
+        Client::open(SqliteStore::open(&path).unwrap(), schema.clone(), "User:u").unwrap();
     let created = client
         .transaction(|tx| {
             tx.submit_mutation05(
@@ -917,7 +917,7 @@ fn discarded_mutation_and_lifecycle_dependent_keep_public_codes_after_reopen() {
         );
     }
 
-    let mut client = Client::open05(SqliteStore::open(&path).unwrap(), schema, "User:u").unwrap();
+    let mut client = Client::open(SqliteStore::open(&path).unwrap(), schema, "User:u").unwrap();
     for (call, expected) in [(&created, "dropped"), (&dependent, "dependency.rejected")] {
         let completion = client.call_completion05(&call.call_id).unwrap().unwrap();
         assert!(
@@ -1022,7 +1022,7 @@ fn incomplete_format5_is_refused_without_upgrade_or_file_changes() {
     drop(store);
     let before = std::fs::read(&path).unwrap();
     for stream in ["User:other", "User:u"] {
-        assert!(Client::open05(SqliteStore::open(&path).unwrap(), schema(), stream).is_err());
+        assert!(Client::open(SqliteStore::open(&path).unwrap(), schema(), stream).is_err());
         assert_eq!(
             std::fs::read(&path).unwrap(),
             before,
@@ -1119,7 +1119,7 @@ fn dismiss_missing_is_noop_but_pending_and_accepted_outcomes_are_protected() {
     descriptor["actions"] = json!([{"name":"Ping","version":1,"inputs":[],"outputs":[]}]);
     let schema = Schema::from_value(descriptor).unwrap();
     let mut client =
-        Client::open05(SqliteStore::open(&path).unwrap(), schema.clone(), "User:u").unwrap();
+        Client::open(SqliteStore::open(&path).unwrap(), schema.clone(), "User:u").unwrap();
     client.initialize_stream05(0, "1").unwrap();
     client.transaction(|tx| tx.dismiss_rejection05(99)).unwrap();
     let call = client
@@ -1156,7 +1156,7 @@ fn dismiss_missing_is_noop_but_pending_and_accepted_outcomes_are_protected() {
             .is_err()
     );
     drop(client);
-    let mut client = Client::open05(SqliteStore::open(&path).unwrap(), schema, "User:u").unwrap();
+    let mut client = Client::open(SqliteStore::open(&path).unwrap(), schema, "User:u").unwrap();
     client.transaction(|tx| tx.dismiss_rejection05(99)).unwrap();
     assert_eq!(client.call_completion05(&call.call_id).unwrap(), completed);
     assert!(
@@ -1171,7 +1171,7 @@ fn failed_reset_keeps_old_store_rows_authority_and_prefix_after_real_reopen() {
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("db");
     let failure = Arc::new(AtomicBool::new(false));
-    let mut c = Client::open05(
+    let mut c = Client::open(
         FaultStore {
             inner: SqliteStore::open(&path).unwrap(),
             fail_commit: failure.clone(),
@@ -1199,7 +1199,7 @@ fn failed_reset_keeps_old_store_rows_authority_and_prefix_after_real_reopen() {
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "authority");
     assert_eq!(c.store_status05().unwrap().cursor, Some(57));
     drop(c);
-    let mut c = Client::open05(
+    let mut c = Client::open(
         FaultStore {
             inner: SqliteStore::open(&path).unwrap(),
             fail_commit: failure,
@@ -1245,7 +1245,7 @@ fn retained_private_snapshot_never_evaluates_new_creation_defaults() {
         json!({"name":"label","nullable":true,"type":{"kind":"scalar","name":"string"},"createDefault":{"kind":"literal","value":"fresh"}}),
     ]);
     let desired = Schema::from_value(desired).unwrap();
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), desired.clone(), "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&p).unwrap(), desired.clone(), "User:u").unwrap();
     // The upgrade sends the same Batch in the new contract, and the receipt
     // answers in it.
     let resent = c.freeze_batch05().unwrap().unwrap();
@@ -1276,7 +1276,7 @@ fn retained_private_snapshot_never_evaluates_new_creation_defaults() {
         json!({"id":"e","text":"accepted","note":null,"token":null,"time":null,"label":null});
     assert_eq!(c.read(&key()).unwrap(), Some(expected.clone()));
     drop(c);
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), desired, "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&p).unwrap(), desired, "User:u").unwrap();
     c.acknowledge_batch05(&receipt).unwrap();
     c.settle_ready05().unwrap();
     assert_eq!(c.read(&key()).unwrap(), Some(expected));
@@ -1289,7 +1289,7 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("db");
         let mut c =
-            Client::open05(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
+            Client::open(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
         c.initialize_stream05(0, "1").unwrap();
         let context = c.request_context05().unwrap();
         let mut q = DeliveryQueue::new(100_000, 8);
@@ -1386,7 +1386,7 @@ fn delayed_tracked_receipt_after_remove_finalizes_original_fallback_beneath_late
         assert!(c.settle_ready05().unwrap().completions.is_empty());
         drop(c);
         let mut c =
-            Client::open05(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
+            Client::open(SqliteStore::open(&p).unwrap(), update_schema(), "User:u").unwrap();
         assert_eq!(
             c.read(&key()).unwrap().unwrap()["text"],
             if later_work { "later" } else { "accepted" }
@@ -1406,8 +1406,7 @@ fn historical_target_finalizes_from_receipt_unless_bootstrap_will_deliver_it() {
         let mut s = serde_json::to_value(schema()).unwrap();
         s["models"][0]["bootstrap"] = json!(bootstrap);
         let schema = Schema::from_value(s).unwrap();
-        let mut c =
-            Client::open05(SqliteStore::open(&p).unwrap(), schema.clone(), "User:u").unwrap();
+        let mut c = Client::open(SqliteStore::open(&p).unwrap(), schema.clone(), "User:u").unwrap();
         c.initialize_stream05(80, "1").unwrap();
         let context = c.request_context05().unwrap();
         let call = c
@@ -1447,7 +1446,7 @@ fn historical_target_finalizes_from_receipt_unless_bootstrap_will_deliver_it() {
             let e = c.record_evidence05(&key()).unwrap();
             assert!(e.history.is_empty() && e.membership.is_none() && e.current.is_none());
             drop(c);
-            let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema, "User:u").unwrap();
+            let mut c = Client::open(SqliteStore::open(&p).unwrap(), schema, "User:u").unwrap();
             assert!(c.call_completion05(&call.call_id).unwrap().is_some());
             assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "fallback");
             continue;
@@ -1494,7 +1493,7 @@ fn failed_local_settlement_retains_previous_batch_window_after_reopen() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let failure = Arc::new(AtomicBool::new(false));
-    let mut c = Client::open05(
+    let mut c = Client::open(
         FaultStore {
             inner: SqliteStore::open(&p).unwrap(),
             fail_commit: failure.clone(),
@@ -1569,7 +1568,7 @@ fn receipt_snapshot_installs_only_when_labelled_with_the_store_materialization()
             let mut s = serde_json::to_value(schema()).unwrap();
             s["models"][0]["bootstrap"] = json!(false);
             let schema = Schema::from_value(s).unwrap();
-            let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema, "User:u").unwrap();
+            let mut c = Client::open(SqliteStore::open(&p).unwrap(), schema, "User:u").unwrap();
             c.initialize_stream05(80, "1").unwrap();
             let call = c
                 .transaction(|tx| {
@@ -1650,7 +1649,7 @@ fn a_batch_partly_executed_before_an_upgrade_settles_each_outcome_by_its_own_lab
     let before = c.freeze_batch05().unwrap().unwrap();
     assert_eq!(before.mutations.len(), 2);
     drop(c);
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), labelled(), "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&p).unwrap(), labelled(), "User:u").unwrap();
     let resent = c.freeze_batch05().unwrap().unwrap();
     assert_eq!(resent.digest, before.digest);
     // The first member ran before the upgrade and replays its saved label.
@@ -1705,8 +1704,7 @@ fn a_target_protected_only_under_the_previous_materialization_finalizes_from_the
             s["actions"] = json!([{"name":"Edit","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"update","cardinality":"single","fields":["text"]}],"outputs":[]}]);
             Schema::from_value(s).unwrap()
         };
-        let mut c =
-            Client::open05(SqliteStore::open(&p).unwrap(), edit(schema()), "User:u").unwrap();
+        let mut c = Client::open(SqliteStore::open(&p).unwrap(), edit(schema()), "User:u").unwrap();
         c.initialize_stream05(80, "1").unwrap();
         install(&mut c, "e", 57, Some("stream"));
         let call = c
@@ -1717,7 +1715,7 @@ fn a_target_protected_only_under_the_previous_materialization_finalizes_from_the
         c.freeze_batch05().unwrap().unwrap();
         drop(c);
         let after = edit(if upgrade { labelled() } else { schema() });
-        let mut c = Client::open05(SqliteStore::open(&p).unwrap(), after, "User:u").unwrap();
+        let mut c = Client::open(SqliteStore::open(&p).unwrap(), after, "User:u").unwrap();
         // The target (60) is past the held delivery (57), so it is not
         // installed; at or below S in an unmarked Model it settles from the
         // receipt. (A target at 57 would settle on the held delivery in any
@@ -1766,7 +1764,7 @@ fn a_target_the_stream_delivered_before_an_upgrade_settles_after_it_without_boot
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("db");
         let mut c =
-            Client::open05(SqliteStore::open(&p).unwrap(), marked_edit(false), "User:u").unwrap();
+            Client::open(SqliteStore::open(&p).unwrap(), marked_edit(false), "User:u").unwrap();
         c.initialize_stream05(10, "1").unwrap();
         let context = c.request_context05().unwrap();
         let record = |cursor: u64, text: Option<&str>| wire::AuthorityChange::Record {
@@ -1808,7 +1806,7 @@ fn a_target_the_stream_delivered_before_an_upgrade_settles_after_it_without_boot
         assert!(c.call_completion05(&call.call_id).unwrap().is_none());
         drop(c);
         let mut c =
-            Client::open05(SqliteStore::open(&p).unwrap(), marked_edit(true), "User:u").unwrap();
+            Client::open(SqliteStore::open(&p).unwrap(), marked_edit(true), "User:u").unwrap();
         let upgraded = c.request_context05().unwrap();
         assert_ne!(upgraded.materialization, context.materialization);
         assert_eq!(c.store_status05().unwrap().bootstrap_cursor, None);
@@ -1835,7 +1833,7 @@ fn a_noncanonical_target_identity_is_refused_whatever_the_outcome_label() {
     .unwrap();
     for label in ["current", "earlier"] {
         let d = tempfile::tempdir().unwrap();
-        let mut c = Client::open05(
+        let mut c = Client::open(
             SqliteStore::open(d.path().join("db")).unwrap(),
             tally.clone(),
             "User:u",

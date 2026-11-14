@@ -185,16 +185,16 @@ async function answerSync(
     case "handleBootstrap":
       throw new Error("bootstrap belongs to application host");
     case "inspectStore": {
-      const [row] = await q(SQL.V05_STORE_INSPECT, r.storeId);
+      const [row] = await q(SQL.STORE_INSPECT, r.storeId);
       return row ? { principal: row.principal, stream: row.stream } : null;
     }
     case "claimStore": {
-      let [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
+      let [row] = await q(SQL.STORE_LOCK, r.storeId);
       if (!row) {
         // First claims still race through the unique Store identity. A stale
         // Serializable snapshot retries the whole transaction as before.
-        await q(SQL.V05_STORE_INSERT, r.storeId, r.principal, r.stream);
-        [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
+        await q(SQL.STORE_INSERT, r.storeId, r.principal, r.stream);
+        [row] = await q(SQL.STORE_LOCK, r.storeId);
       }
       if (!row) throw new Error("Store missing");
       return {
@@ -211,7 +211,7 @@ async function answerSync(
     }
     case "beginBatch": {
       const rows = await q(
-        SQL.V05_BATCH_BEGIN,
+        SQL.BATCH_BEGIN,
         r.storeId,
         r.batchId,
         r.digest,
@@ -221,18 +221,13 @@ async function answerSync(
       return null;
     }
     case "readResult": {
-      const [row] = await q(
-        SQL.V05_RESULT_READ,
-        r.storeId,
-        r.batchId,
-        r.ordinal,
-      );
+      const [row] = await q(SQL.RESULT_READ, r.storeId, r.batchId, r.ordinal);
       return row ? json(row.result) : null;
     }
     case "saveResult": {
       const result = r.result as { mutationId: number };
       const rows = await q(
-        SQL.V05_RESULT_SAVE,
+        SQL.RESULT_SAVE,
         r.storeId,
         r.batchId,
         r.ordinal,
@@ -252,7 +247,7 @@ async function answerSync(
       if (ordinal + results.length > count)
         throw new Error("Invalid result group range");
       const rows = await q(
-        SQL.V05_RESULTS_SAVE,
+        SQL.RESULTS_SAVE,
         r.storeId,
         r.batchId,
         ordinal,
@@ -356,13 +351,13 @@ async function answerSync(
         const rows =
           group.length === 1
             ? await q(
-                SQL.V05_POSITION_READ,
+                SQL.POSITION_READ,
                 r.stream,
                 group[0]!.model,
                 group[0]!.identityKey,
               )
             : await q(
-                SQL.V05_POSITIONS_READ_BATCH,
+                SQL.POSITIONS_READ_BATCH,
                 r.stream,
                 JSON.stringify(group),
               );
@@ -403,7 +398,7 @@ async function answerSync(
       // SQL owns reservation lifetime: both rows and their first table creation
       // roll back with caller savepoints, and COMMIT clears connection-local rows.
       // Repeated preparation/publication in this transaction reuses one cursor.
-      if (streams.length) await q(SQL.V05_PUBLICATION_CURSORS);
+      if (streams.length) await q(SQL.PUBLICATION_CURSORS);
       // A single bounded publish-only run can carry its new cursor through
       // RETURNING into the membership write in the same statement. Mixed and
       // multi-Stream runs retain their existing canonical reservation order.
@@ -413,7 +408,7 @@ async function answerSync(
         deltas.every((d) => d.publish === true)
       ) {
         const rows = await q(
-          SQL.V05_RESERVE_APPLY_MEMBERS,
+          SQL.RESERVE_APPLY_MEMBERS,
           streams[0],
           r.publicationScope ?? "",
           JSON.stringify(deltas),
@@ -440,7 +435,7 @@ async function answerSync(
       const cursors = new Map<string, number>();
       for (const stream of streams) {
         const [row] = await q(
-          SQL.V05_RESERVE_CURSOR,
+          SQL.RESERVE_CURSOR,
           stream,
           r.publicationScope ?? "",
         );
@@ -450,7 +445,7 @@ async function answerSync(
       const positions = [];
       for (const group of batches(deltas)) {
         const rows = await q(
-          SQL.V05_APPLY_MEMBERS_BATCH,
+          SQL.APPLY_MEMBERS_BATCH,
           JSON.stringify(
             group.map((d) => ({
               ...d,

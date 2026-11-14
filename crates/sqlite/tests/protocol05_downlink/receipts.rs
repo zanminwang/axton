@@ -27,7 +27,7 @@ impl Scenario {
                 "operation": "create", "cardinality": "single"}],
             "outputs": []
         }]);
-        let mut client = Client::open05(
+        let mut client = Client::open(
             SqliteStore::open(path).unwrap(),
             Schema::from_value(schema).unwrap(),
             "User:u",

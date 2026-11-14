@@ -7,7 +7,7 @@ function fixture({ nativeGroups = true, adapterGroups = true, size } = {}) {
     groups = [];
   const native = {
     validateConfig() {},
-    serverMaterializationId05() {
+    serverMaterializationId() {
       return "test-context";
     },
     validateMutationBatch(_config, wire) {

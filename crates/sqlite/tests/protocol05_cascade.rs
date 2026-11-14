@@ -21,7 +21,7 @@ fn change(model: &str, cursor: u64, state: Value) -> wire::AuthorityChange {
 #[test]
 fn older_parent_absence_cannot_erase_already_installed_later_child_authority() {
     let d = tempfile::tempdir().unwrap();
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(d.path().join("db")).unwrap(),
         common05::family_schema(),
         "User:u",
@@ -57,7 +57,7 @@ fn older_parent_absence_cannot_erase_already_installed_later_child_authority() {
 fn group_cascade_uses_positions_not_transport_array_order() {
     for reverse in [false, true] {
         let d = tempfile::tempdir().unwrap();
-        let mut c = Client::open05(
+        let mut c = Client::open(
             SqliteStore::open(d.path().join("db")).unwrap(),
             common05::family_schema(),
             "User:u",

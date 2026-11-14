@@ -78,8 +78,8 @@ pub(crate) fn validate_member(config: &Config, m: &wire::Mutation) -> Result<Mut
 }
 /// Adapts existing normalization/Loader machinery to the v05 persistence seam.
 /// Every nested Loader publication uses the same transaction's reservations.
-pub(crate) struct Publication05<'a, H: Host>(pub &'a H, std::sync::Mutex<Option<String>>);
-impl<'a, H: Host> Publication05<'a, H> {
+pub(crate) struct PublicationHost<'a, H: Host>(pub &'a H, std::sync::Mutex<Option<String>>);
+impl<'a, H: Host> PublicationHost<'a, H> {
     pub(crate) fn new(host: &'a H) -> Self {
         Self(host, std::sync::Mutex::new(None))
     }
@@ -87,7 +87,7 @@ impl<'a, H: Host> Publication05<'a, H> {
         self.1.lock().ok().and_then(|mut saved| saved.take())
     }
 }
-impl<H: Host> Host for Publication05<'_, H> {
+impl<H: Host> Host for PublicationHost<'_, H> {
     fn call(
         &self,
         mut request: Value,

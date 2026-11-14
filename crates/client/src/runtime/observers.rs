@@ -261,7 +261,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         if !known {
             // A load of this identity may already be running or finished from
             // before this runtime: its status needs no new transition.
-            match self.client.bootstrap_state05(&state.stream, id) {
+            match self.client.bootstrap_state(&state.stream, id) {
                 Ok(run) => self.observe_run(run),
                 Err(e) => self.error(e.to_string()),
             }
@@ -282,7 +282,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             Command::StreamBootstrap {
                 stream,
                 subscription_id,
-            } => self.client.bootstrap_state05(stream, *subscription_id),
+            } => self.client.bootstrap_state(stream, *subscription_id),
             _ => Err(crate::invalid("invalid Bootstrap command")),
         };
         self.committed_since(generation, "observers");
@@ -308,7 +308,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         self.observe_run(state);
         // Whatever committed for this identity since the registration's own
         // answer settles the waiter now rather than never.
-        match self.client.bootstrap_state05(&stream, id) {
+        match self.client.bootstrap_state(&stream, id) {
             Ok(stored) => self.observe_run(stored),
             Err(e) => self.error(e.to_string()),
         }
@@ -391,7 +391,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
                     if let Some(registration) = self.observers.registrations.get_mut(&id) {
                         registration.ready = state.starting_cursor.is_some();
                     }
-                    if let Ok(run) = self.client.bootstrap_state05(&stream, id) {
+                    if let Ok(run) = self.client.bootstrap_state(&stream, id) {
                         self.observe_run(run);
                     }
                 }

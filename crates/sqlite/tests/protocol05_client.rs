@@ -37,7 +37,7 @@ fn a_store_file_written_at_bd46f42_opens_with_its_identity_and_queue() {
         .unwrap()
         .execute_batch(include_str!("fixtures/store-bd46f42.sql"))
         .unwrap();
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(&path).unwrap(),
         upgrade_schema(false, false),
         "User:u",
@@ -164,7 +164,7 @@ fn stale_writer_cannot_overwrite_committed_database() {
 #[test]
 fn declared_unique_constraint_is_atomic() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(dir.path().join("db")).unwrap(),
         with_crud(family_schema()),
         "User:u",
@@ -187,7 +187,7 @@ fn delete_cascade_handles_cyclic_relationships_once() {
         .unwrap()
         .push(json!({"name":"commentId","nullable":true,"type":{"kind":"scalar","name":"string"}}));
     value["models"][0]["relations"] = json!([{"name":"comment","target":"Comment","fields":["commentId"],"targetFields":["id"],"onDelete":"delete"}]);
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(dir.path().join("db")).unwrap(),
         with_crud(Schema::from_value(value).unwrap()),
         "User:u",
@@ -206,7 +206,7 @@ fn delete_cascade_handles_cyclic_relationships_once() {
 #[test]
 fn committing_with_an_unclosed_savepoint_is_refused_and_rolls_back() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(dir.path().join("db")).unwrap(),
         with_crud(schema()),
         "User:u",
@@ -488,7 +488,7 @@ fn with_extra(removed: bool, incompatible: bool) -> Schema {
     Schema::from_value(value).unwrap()
 }
 fn open_with(path: &std::path::Path, schema: Schema) -> Client<SqliteStore> {
-    Client::open05(SqliteStore::open(path).unwrap(), schema, "User:u").unwrap()
+    Client::open(SqliteStore::open(path).unwrap(), schema, "User:u").unwrap()
 }
 /// What an engine with companion and direct writes left on `Extra` `x`:
 /// a companion of the queued Edit and an independent write after it, over a

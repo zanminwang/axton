@@ -6,7 +6,7 @@ The Rust server validates protocol-5 context and immutable Batch intent, invokes
 
 ## 5. Building Block View
 
-[Implementation](../../../../crates/server/src/protocol_v05.rs) owns this component. [Protocol 5](../protocols/wire.md) owns shared context, delivery and settlement rules.
+[Implementation](../../../../crates/server/src/batch_entry.rs) owns this component. [Protocol 5](../protocols/wire.md) owns shared context, delivery and settlement rules.
 
 - [backend-interface](backend-interface.md)
 - [connection](connection/README.md)

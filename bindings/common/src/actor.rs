@@ -395,7 +395,7 @@ fn open_runtime(request: &Value) -> axton_client::Result<ClientRuntime<SqliteSto
     let stream = request["stream"]
         .as_str()
         .ok_or_else(|| axton_client::invalid("stream must be string"))?;
-    let client = axton_client::Client::open05(
+    let client = axton_client::Client::open(
         SqliteStore::open_exclusive05(path, stream)?,
         Schema::from_value(request["schema"].clone())?,
         stream,

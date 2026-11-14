@@ -317,10 +317,10 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
   if (options.diagnostics) {
     // This backend's wrappers only; never mutate the caller's native object.
     for (const name of [
-      "handshake05",
-      "processDelivery05",
-      "processLive05",
-      "processRead05",
+      "handshake",
+      "processDelivery",
+      "processLive",
+      "processRead",
       "processBatchMember",
       "processBatchGroup",
     ] as const) {
@@ -349,7 +349,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     projectionGeneration,
     materializations: options.materializations ?? {},
   });
-  const materializationId = native.serverMaterializationId05(
+  const materializationId = native.serverMaterializationId(
     config,
     projectionGeneration,
   );
@@ -602,7 +602,7 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
       effects.close();
     }
     await session.track(() =>
-      native.settleExternal05(
+      native.settleExternal(
         config,
         JSON.stringify(effects.settlement()),
         host(tx, session),
@@ -701,28 +701,23 @@ export function createBackend<T, External extends object = TransactionCall<T>>(
     },
     action: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
-        native.processRead05(config, owner, text(request), host(tx, session)),
+        native.processRead(config, owner, text(request), host(tx, session)),
       ),
     fetch: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
-        native.processRead05(config, owner, text(request), host(tx, session)),
+        native.processRead(config, owner, text(request), host(tx, session)),
       ),
     pull: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
-        native.processDelivery05(
-          config,
-          owner,
-          text(request),
-          host(tx, session),
-        ),
+        native.processDelivery(config, owner, text(request), host(tx, session)),
       ),
-    pull05Live: (owner: string, request: string) =>
+    pullLive: (owner: string, request: string) =>
       run((tx, session) =>
-        native.processLive05(config, owner, request, host(tx, session)),
+        native.processLive(config, owner, request, host(tx, session)),
       ),
     handshake: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
-        native.handshake05(config, owner, text(request), host(tx, session)),
+        native.handshake(config, owner, text(request), host(tx, session)),
       ),
     negotiateLive: (
       owner: string,

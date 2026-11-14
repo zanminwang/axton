@@ -49,7 +49,7 @@ fn bootstrap_defers_independent_moved_ahead_authority_to_sync() {
             through: 40,
             bootstrap: true,
         };
-        let answer = axton_server::process_delivery05(&c, "alice", &wire::encode(&r).unwrap(), &h)
+        let answer = axton_server::process_delivery(&c, "alice", &wire::encode(&r).unwrap(), &h)
             .await
             .unwrap();
         let d: wire::DeliveryResponse = wire::decode(answer.as_bytes()).unwrap();
@@ -106,8 +106,7 @@ fn live_coverage_waits_for_every_frozen_fragment() {
         1,
     )
     .unwrap();
-    let (mut live, _) =
-        axton_server::live::Subscriptions::open05(context.clone(), 40, "ack".into());
+    let (mut live, _) = axton_server::live::Subscriptions::open(context.clone(), 40, "ack".into());
     for (i, part) in frozen.parts.iter().enumerate() {
         let d = wire::DeliveryResponse {
             header: frozen.header.clone(),
@@ -140,7 +139,7 @@ fn preparation_precedes_observed_head_capture() {
             through: 40,
             bootstrap: true,
         };
-        axton_server::process_delivery05(&c, "alice", &wire::encode(&r).unwrap(), &h)
+        axton_server::process_delivery(&c, "alice", &wire::encode(&r).unwrap(), &h)
             .await
             .unwrap();
         let calls = h.calls.lock().unwrap();
@@ -191,7 +190,7 @@ fn live_advances_each_complete_unit_while_retaining_the_plan_start() {
         500,
     )
     .unwrap();
-    let (mut live, _) = axton_server::live::Subscriptions::open05(context, 40, "ack".into());
+    let (mut live, _) = axton_server::live::Subscriptions::open(context, 40, "ack".into());
     for (i, part) in frozen.parts.iter().enumerate() {
         let d = wire::DeliveryResponse {
             header: frozen.header.clone(),

@@ -17,8 +17,8 @@ The compiler retains input Models/enums and versioned policy snapshots. Sequence
 - [parse.rs](../../../../crates/compiler/src/parse.rs) and [validate.rs](../../../../crates/compiler/src/validate.rs) own source syntax, input restrictions, binding and sequence checks.
 - [history.rs](../../../../crates/compiler/src/history.rs) retains published operation contracts and checks compatible changes.
 - [policies.rs](../../../../crates/client/src/policies.rs) derives local lifecycle and sequence dependencies.
-- [protocol_v05.rs](../../../../crates/protocols/src/wire.rs) owns frozen named intent with explicit `inputPath`, operation/value entries and the immutable Batch digest.
-- [server protocol_v05.rs](../../../../crates/server/src/protocol_v05.rs) selects the trusted name/version, reconstructs input and normalizes it against the retained schema before execution.
+- [batch_entry.rs](../../../../crates/protocols/src/wire.rs) owns frozen named intent with explicit `inputPath`, operation/value entries and the immutable Batch digest.
+- [server batch_entry.rs](../../../../crates/server/src/batch_entry.rs) selects the trusted name/version, reconstructs input and normalizes it against the retained schema before execution.
 
 The caller's descriptor fingerprint belongs to immutable intent; it does not replace the backend's retained contract. Compatible widening or field reordering need not reject a frozen Call. Business handlers and viewer Loaders remain the permission authority.
 
@@ -36,4 +36,4 @@ Member `@deprecated` annotations affect generated notices only. They preserve sc
 
 ## 10. Quality Requirements
 
-[Compiler cases](../../../../crates/compiler/tests/compiler.rs) cover input shapes, bindings and sequences; [history tests](../../../../crates/compiler/tests/history.rs) cover compatible changes and retained contracts. [Current server carrier tests](../../../../crates/server/tests/protocol_v05.rs) cover trusted input reconstruction; [SQLite queue tests](../../../../crates/sqlite/tests/protocol05_queue.rs) cover durable named work. These are source coverage references, not newly executed gates.
+[Compiler cases](../../../../crates/compiler/tests/compiler.rs) cover input shapes, bindings and sequences; [history tests](../../../../crates/compiler/tests/history.rs) cover compatible changes and retained contracts. [Current server carrier tests](../../../../crates/server/tests/batch_entry.rs) cover trusted input reconstruction; [SQLite queue tests](../../../../crates/sqlite/tests/protocol05_queue.rs) cover durable named work. These are source coverage references, not newly executed gates.

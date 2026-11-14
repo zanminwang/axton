@@ -72,7 +72,7 @@ fn measured(schema: Schema) -> (Harness<MeasuredStore>, Arc<Probe>) {
         inner: SqliteStore::open(dir.path().join("db")).unwrap(),
         probe: probe.clone(),
     };
-    let client = Client::open05(store, common05::with_crud(schema), "User:u").unwrap();
+    let client = Client::open(store, common05::with_crud(schema), "User:u").unwrap();
     (
         Harness {
             runtime: ClientRuntime::new(client),

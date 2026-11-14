@@ -92,7 +92,7 @@ pub async fn negotiate_live(
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
     let cfg = config(&config_json)?;
-    let (subscriptions, actions) = axton_server::live::negotiate05(
+    let (subscriptions, actions) = axton_server::live::negotiate(
         &cfg,
         &owner,
         request_json.as_bytes(),
@@ -205,7 +205,7 @@ pub async fn process_batch_group(
     .await
 }
 #[napi]
-pub async fn settle_external05(
+pub async fn settle_external(
     config_json: String,
     settlement_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
@@ -219,16 +219,16 @@ pub async fn settle_external05(
 }
 
 #[napi]
-pub fn server_materialization_id05(
+pub fn server_materialization_id(
     config_json: String,
     projection_generation: String,
 ) -> Result<String> {
-    axton_server::materialization_id05(&config(&config_json)?, &projection_generation)
+    axton_server::materialization_id(&config(&config_json)?, &projection_generation)
         .map_err(reason)
 }
 
 #[napi]
-pub async fn process_delivery05(
+pub async fn process_delivery(
     config_json: String,
     owner: String,
     request_json: String,
@@ -237,11 +237,11 @@ pub async fn process_delivery05(
 ) -> Result<String> {
     let host = CallbackHost(callback);
     observe(
-        "native.process_delivery05",
+        "native.process_delivery",
         diagnostics.unwrap_or(false),
         &host,
         async {
-            axton_server::process_delivery05(
+            axton_server::process_delivery(
                 &config(&config_json)?,
                 &owner,
                 request_json.as_bytes(),
@@ -255,7 +255,7 @@ pub async fn process_delivery05(
 }
 
 #[napi]
-pub async fn process_read05(
+pub async fn process_read(
     config_json: String,
     owner: String,
     request_json: String,
@@ -264,11 +264,11 @@ pub async fn process_read05(
 ) -> Result<String> {
     let host = CallbackHost(callback);
     observe(
-        "native.process_read05",
+        "native.process_read",
         diagnostics.unwrap_or(false),
         &host,
         async {
-            axton_server::process_read05(
+            axton_server::process_read(
                 &config(&config_json)?,
                 &owner,
                 request_json.as_bytes(),
@@ -282,7 +282,7 @@ pub async fn process_read05(
 }
 
 #[napi]
-pub async fn handshake05(
+pub async fn handshake(
     config_json: String,
     owner: String,
     request_json: String,
@@ -291,11 +291,11 @@ pub async fn handshake05(
 ) -> Result<String> {
     let host = CallbackHost(callback);
     observe(
-        "native.handshake05",
+        "native.handshake",
         diagnostics.unwrap_or(false),
         &host,
         async {
-            axton_server::handshake05(
+            axton_server::handshake(
                 &config(&config_json)?,
                 &owner,
                 request_json.as_bytes(),
@@ -309,7 +309,7 @@ pub async fn handshake05(
 }
 
 #[napi]
-pub async fn process_live05(
+pub async fn process_live(
     config_json: String,
     owner: String,
     request_json: String,
@@ -318,11 +318,11 @@ pub async fn process_live05(
 ) -> Result<String> {
     let host = CallbackHost(callback);
     observe(
-        "native.process_live05",
+        "native.process_live",
         diagnostics.unwrap_or(false),
         &host,
         async {
-            axton_server::process_live05(
+            axton_server::process_live(
                 &config(&config_json)?,
                 &owner,
                 request_json.as_bytes(),

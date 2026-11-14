@@ -18,4 +18,4 @@ pg_ctl -D "$cluster/data" -l "$cluster/log" -o "-p $port -h 127.0.0.1 -k $cluste
 export DATABASE_URL="postgresql://$(id -un)@127.0.0.1:$port/postgres"
 export AXTON_CAPACITY_EVIDENCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/axton-task7-capacity-evidence.XXXXXX")"
 printf 'Retained exact PostgreSQL carrier evidence: %s\n' "$AXTON_CAPACITY_EVIDENCE_DIR"
-node --test --test-reporter=tap --test-timeout=600000 --test-name-pattern='real selected and unique-model capacity measurements' integration/persistence/server/protocol-v05-delivery.test.mjs
+node --test --test-reporter=tap --test-timeout=600000 --test-name-pattern='real selected and unique-model capacity measurements' integration/persistence/server/sync-delivery.test.mjs

@@ -115,15 +115,15 @@ test("loader registration names every retained model version and a function mean
 
 test("only actual5 native entrypoints are exported; startup requires every Loader and validates accessors", () => {
   for (const name of [
-    "processRead05",
-    "processDelivery05",
-    "processLive05",
+    "processRead",
+    "processDelivery",
+    "processLive",
     "processBatchMember",
     "processBatchGroup",
     "validateMutationBatch",
     "encodeBatchAcknowledgement",
-    "settleExternal05",
-    "handshake05",
+    "settleExternal",
+    "handshake",
     "negotiateLive",
     "liveEvent",
     "liveClose",

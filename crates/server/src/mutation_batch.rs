@@ -3,9 +3,8 @@
 use crate::{
     Config, Error, Host, Result,
     backend_interface::HostExt,
-    internal,
-    protocol_v05::{self, Publication05},
-    request_invalid, storage_invalid,
+    batch_entry::{self, PublicationHost},
+    internal, request_invalid, storage_invalid,
 };
 use axton_core::{ActionInputDescriptor, RecordKey};
 use axton_protocols::server_bridge::members::{MemberPosition, PositionKind};
@@ -37,7 +36,7 @@ impl Store {
         if owner.trim().is_empty() {
             return Err(Error::code(crate::code::PRINCIPAL_INVALID));
         }
-        protocol_v05::call(host,json!({"op":"claimStore","storeId":request.context.store_id,"principal":owner,"stream":request.context.stream})).await
+        batch_entry::call(host,json!({"op":"claimStore","storeId":request.context.store_id,"principal":owner,"stream":request.context.stream})).await
     }
     pub(crate) fn saved(&self, request: &wire::MutationRequest, ordinal: u64) -> bool {
         request.batch_id == self.last_processed_batch_id || ordinal < self.progress
@@ -52,7 +51,7 @@ impl Store {
     ) -> Result<()> {
         let count = request.mutations.len() as u64;
         if persist {
-            let _:Acknowledged=protocol_v05::call(host,json!({"op":"saveResult","storeId":request.context.store_id,"batchId":request.batch_id,"ordinal":ordinal,"count":count,"result":result})).await?;
+            let _:Acknowledged=batch_entry::call(host,json!({"op":"saveResult","storeId":request.context.store_id,"batchId":request.batch_id,"ordinal":ordinal,"count":count,"result":result})).await?;
         }
         self.progress = ordinal + 1;
         if self.progress == count {
@@ -95,7 +94,7 @@ pub(crate) async fn execute_claimed(
         return Err(Error::code("store.binding"));
     }
     models(config, &request.context)?;
-    let allowed: bool = protocol_v05::call(
+    let allowed: bool = batch_entry::call(
         raw_host,
         json!({"op":"admit","owner":owner,"context":request.context}),
     )
@@ -124,7 +123,7 @@ pub(crate) async fn execute_claimed(
         return Err(Error::code("batch.conflict"));
     }
     if completed || ordinal < store.progress {
-        let saved:Option<wire::MutationResult>=protocol_v05::call(raw_host,json!({"op":"readResult","storeId":request.context.store_id,"batchId":request.batch_id,"ordinal":ordinal})).await?;
+        let saved:Option<wire::MutationResult>=batch_entry::call(raw_host,json!({"op":"readResult","storeId":request.context.store_id,"batchId":request.batch_id,"ordinal":ordinal})).await?;
         let saved = saved.ok_or_else(|| storage_invalid("committed member result missing"))?;
         if saved.mutation_id != member.id {
             return Err(storage_invalid("saved member mismatch"));
@@ -135,14 +134,14 @@ pub(crate) async fn execute_claimed(
         return Err(Error::code("batch.progress"));
     }
     if store.current_digest.is_none() {
-        let _:Acknowledged=protocol_v05::call(raw_host,json!({"op":"beginBatch","storeId":request.context.store_id,"batchId":request.batch_id,"digest":request.digest,"count":count})).await?;
+        let _:Acknowledged=batch_entry::call(raw_host,json!({"op":"beginBatch","storeId":request.context.store_id,"batchId":request.batch_id,"digest":request.digest,"count":count})).await?;
         store.current_digest = Some(request.digest.clone());
         store.current_count = Some(count);
     }
     // A retained version this backend no longer serves, or whose input its
     // current schema cannot key, is refused as that one Mutation.
-    let supported = match protocol_v05::validate_member(config, member)? {
-        protocol_v05::MutationInput::Supported(args) => match input_keys(config, member, &args) {
+    let supported = match batch_entry::validate_member(config, member)? {
+        batch_entry::MutationInput::Supported(args) => match input_keys(config, member, &args) {
             Ok(keys) => Some((args, keys)),
             Err(error) => {
                 tracing::info!(
@@ -156,7 +155,7 @@ pub(crate) async fn execute_claimed(
                 None
             }
         },
-        protocol_v05::MutationInput::Unsupported => None,
+        batch_entry::MutationInput::Unsupported => None,
     };
     let Some((args, input_keys)) = supported else {
         let result = wire::MutationResult {
@@ -171,7 +170,7 @@ pub(crate) async fn execute_claimed(
             .await?;
         return Ok(result);
     };
-    let host = Publication05::new(raw_host);
+    let host = PublicationHost::new(raw_host);
     let _: Acknowledged = host
         .call_typed(HostRequest::Savepoint {
             ordinal: ordinal + 1,
@@ -188,7 +187,7 @@ pub(crate) async fn execute_claimed(
                 request.context.store_id, request.batch_id, member.id
             ),
             ordinal: ordinal + 1,
-            context: Some(protocol_v05::handler_context(owner, &request.context)),
+            context: Some(batch_entry::handler_context(owner, &request.context)),
         })
         .await?;
     let outcome = match handled {
@@ -229,7 +228,7 @@ pub(crate) async fn execute_claimed(
             let mut keys = crate::action_results::snapshot_keys(config, action, &args, &outputs)?;
             keys.extend(inputs.values().cloned());
             prepare(config, owner, &models, keys, &host).await?;
-            let positions:Vec<Option<MemberPosition>>=protocol_v05::call(raw_host,json!({"op":"targetPositions","stream":request.context.stream,"records":inputs.values().map(MemberKey::from_key).collect::<Vec<_>>()})).await?;
+            let positions:Vec<Option<MemberPosition>>=batch_entry::call(raw_host,json!({"op":"targetPositions","stream":request.context.stream,"records":inputs.values().map(MemberKey::from_key).collect::<Vec<_>>()})).await?;
             if positions.len() != inputs.len() {
                 return Err(storage_invalid("target position count mismatch"));
             }

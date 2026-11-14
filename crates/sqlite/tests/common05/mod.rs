@@ -37,7 +37,7 @@ pub fn schema() -> Schema {
     Schema::from_value(s).unwrap()
 }
 pub fn open(path: &std::path::Path) -> Client<SqliteStore> {
-    Client::open05(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap()
+    Client::open(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap()
 }
 
 /// `Marked` is `@@bootstrap`, `Note` is not. `label` adds a nullable field to
@@ -115,7 +115,7 @@ pub fn deliver(
 /// A Store before an upgrade: `S = B = 25`, `C = 40`, Bootstrap row `m`
 /// at 10, Sync rows `n` at 30 and `gone` at 35.
 pub fn before_upgrade(path: &std::path::Path) -> store05::StoreStatus05 {
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(path).unwrap(),
         upgrade_schema(false, false),
         "User:u",

@@ -55,14 +55,14 @@ fn original_v02_layout_is_refused_unchanged_and_fresh_file_is_independent() {
         let saved = snapshot(&old);
         let bytes = std::fs::read(&old).unwrap();
         for _ in 0..2 {
-            let error = Client::open05(SqliteStore::open(&old).unwrap(), schema(), "User:u")
+            let error = Client::open(SqliteStore::open(&old).unwrap(), schema(), "User:u")
                 .err()
                 .unwrap();
             assert!(error.to_string().contains("unsupported Store format"));
             assert_eq!(snapshot(&old), saved);
             assert_eq!(std::fs::read(&old).unwrap(), bytes);
         }
-        let mut c = Client::open05(SqliteStore::open(&fresh).unwrap(), schema(), "User:u").unwrap();
+        let mut c = Client::open(SqliteStore::open(&fresh).unwrap(), schema(), "User:u").unwrap();
         assert!(c.query("Todo", &json!({})).unwrap().is_empty());
         assert_eq!(c.pending_count().unwrap(), 0);
         assert_eq!(c.read_sql("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name IN ('axton_stream_member','axton_record','axton_v04_call','axton_call','axton_query_cache','axton_load','axton_mutation')", &[]).unwrap()[0]["n"], 0);
@@ -81,7 +81,7 @@ fn original_v02_layout_is_refused_unchanged_and_fresh_file_is_independent() {
             .unwrap();
         assert_eq!(report.applied, 1);
         drop(c);
-        let mut c = Client::open05(SqliteStore::open(&fresh).unwrap(), schema(), "User:u").unwrap();
+        let mut c = Client::open(SqliteStore::open(&fresh).unwrap(), schema(), "User:u").unwrap();
         assert_eq!(
             c.query("Todo", &json!({})).unwrap()[0]["channel"],
             "opaque Channel business field"
@@ -94,7 +94,7 @@ fn original_v02_layout_is_refused_unchanged_and_fresh_file_is_independent() {
 fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("db");
-    let mut c = Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let k = wire::RecordKey {
@@ -154,7 +154,7 @@ fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
     assert!(evidence.current.is_none());
     assert_eq!(evidence.history[&context.materialization], 1);
     drop(c);
-    let mut c = Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
     assert_eq!(c.store_status05().unwrap().cursor, Some(2));
     assert_eq!(c.read(&key).unwrap().unwrap()["title"], "kept");
     assert!(c.record_evidence05(&key).unwrap().current.is_none());

@@ -13,7 +13,7 @@ fn main() {
     for count in [10, 1000] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("capacity.sqlite");
-        let mut client = Client::open05(
+        let mut client = Client::open(
             SqliteStore::open(&path).unwrap(),
             schema.clone(),
             "User:diagnostic",

@@ -107,7 +107,7 @@ impl<S: ClientStore> Engine<'_, S> {
         kind: OpKind,
         op: &Operation,
     ) -> Result<()> {
-        self.insert_owned05(ordinal, position, kind, None, op)
+        self.insert_owned(ordinal, position, kind, None, op)
     }
     pub fn add_effect(&mut self, ordinal: u64, op: &Operation) -> Result<()> {
         self.append_op(ordinal, OpKind::Effect, op)

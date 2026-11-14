@@ -38,7 +38,7 @@ fn schema() -> Schema {
     Schema::from_value(value).unwrap()
 }
 fn open(path: &Path) -> Client<SqliteStore> {
-    Client::open05(SqliteStore::open(path).unwrap(), schema(), "User:scenario").unwrap()
+    Client::open(SqliteStore::open(path).unwrap(), schema(), "User:scenario").unwrap()
 }
 // One entry of a record's history above its base, as stored.
 #[derive(Debug)]

@@ -108,7 +108,7 @@ impl<S: ClientStore> Client<S> {
             }else{0};
             if next>unit.index {return Ok((None,next))}
             if next!=unit.index {return Err(invalid("delivery unit prefix gap"))}
-            let active=e.context05()?;
+            let active=e.context()?;
             header.context.admit(&active)?;
             let mut held=Held::new();
             let changes=&unit.changes;
@@ -186,7 +186,7 @@ impl<S: ClientStore> Client<S> {
             cursor: status.cursor,
         }))
     }
-    pub fn bootstrap_state05(
+    pub fn bootstrap_state(
         &mut self,
         stream: &str,
         id: u64,

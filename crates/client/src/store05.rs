@@ -145,7 +145,7 @@ impl<S: ClientStore> Client<S> {
     /// Open the Store. The projection generation is the one the backend last
     /// reported (stored with the schema descriptor), so a reopen never undoes
     /// a server-driven change; a fresh file starts at "1".
-    pub fn open05(mut store: S, schema: Schema, stream: &str) -> Result<Self> {
+    pub fn open(mut store: S, schema: Schema, stream: &str) -> Result<Self> {
         schema.validate()?;
         let existing = admit05(&mut store, stream)?;
         let projection = if existing {
@@ -277,7 +277,7 @@ impl<S: ClientStore> Client<S> {
         })
     }
     pub fn request_context05(&mut self) -> Result<wire::RequestContext> {
-        self.view(|e| e.context05())
+        self.view(|e| e.context())
     }
     pub fn store_status05(&mut self) -> Result<StoreStatus05> {
         let context = self.request_context05()?;
@@ -285,7 +285,7 @@ impl<S: ClientStore> Client<S> {
     }
 }
 impl<S: ClientStore> Engine<'_, S> {
-    pub fn context05(&mut self) -> Result<wire::RequestContext> {
+    pub fn context(&mut self) -> Result<wire::RequestContext> {
         let r = self
             .rows("SELECT id,stream,materialization FROM axton_store", &[])?
             .rows

@@ -87,13 +87,13 @@ test("generated backend decodes Date values and declares canonical identities th
   };
   const native = {
     validateConfig() {},
-    processLive05: unreached,
-    processDelivery05: unreached,
-    handshake05: unreached,
-    serverMaterializationId05() {
+    processLive: unreached,
+    processDelivery: unreached,
+    handshake: unreached,
+    serverMaterializationId() {
       return "fixture-materialization";
     },
-    async processRead05(
+    async processRead(
       _config: string,
       _owner: string,
       _request: string,
@@ -166,7 +166,7 @@ test("generated backend decodes Date values and declares canonical identities th
       seen.push(loaded);
       return "{}";
     },
-    async settleExternal05() {
+    async settleExternal() {
       return "{}";
     },
     async negotiateLive() {
@@ -241,13 +241,13 @@ type Tx = { rows: Map<string, Todo> };
 function nativeHost(requests: object[], answers: unknown[]) {
   return {
     validateConfig() {},
-    processLive05: unreached,
-    processDelivery05: unreached,
-    handshake05: unreached,
-    serverMaterializationId05() {
+    processLive: unreached,
+    processDelivery: unreached,
+    handshake: unreached,
+    serverMaterializationId() {
       return "fixture-materialization";
     },
-    async processRead05(
+    async processRead(
       _config: string,
       _owner: string,
       _request: string,
@@ -277,7 +277,7 @@ function nativeHost(requests: object[], answers: unknown[]) {
         answers.push(JSON.parse(await callback(JSON.stringify(request))));
       return "{}";
     },
-    async settleExternal05() {
+    async settleExternal() {
       return "{}";
     },
     async negotiateLive() {
@@ -532,7 +532,7 @@ test("declaration handles close when the handler or external body settles, even 
   });
   const native = {
     ...nativeHost([call(1), call(2)], answers),
-    async settleExternal05(_config: string, settlement: string) {
+    async settleExternal(_config: string, settlement: string) {
       settled.push(settlement);
       return "[]";
     },

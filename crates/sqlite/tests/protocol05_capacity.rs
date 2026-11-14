@@ -13,7 +13,7 @@ fn real_postgres_delivery_capacity() {
     )
     .unwrap();
     let path = directory.join("client.db");
-    let mut client = Client::open05(
+    let mut client = Client::open(
         SqliteStore::open_exclusive05(&path, "User:alice").unwrap(),
         schema,
         "User:alice",

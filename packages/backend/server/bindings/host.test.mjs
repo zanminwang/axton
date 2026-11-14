@@ -82,7 +82,7 @@ for (const enabled of [false, true])
         },
       },
       native: {
-        settleExternal05: async (config, settlement, callback) => {
+        settleExternal: async (config, settlement, callback) => {
           assert.equal(config, "retained-config");
           assert.equal(
             JSON.parse(settlement).declarations[0].stream,

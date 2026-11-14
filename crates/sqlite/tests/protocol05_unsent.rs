@@ -30,7 +30,7 @@ fn schema() -> Schema {
 }
 
 fn open(path: &std::path::Path) -> Client<SqliteStore> {
-    Client::open05(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap()
+    Client::open(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap()
 }
 
 /// A client with Note `n` at text `base`, installed as cache: unprotected

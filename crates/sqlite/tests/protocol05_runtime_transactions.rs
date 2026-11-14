@@ -206,7 +206,7 @@ impl<S: ClientStore + 'static> Harness<S> {
 }
 fn harness() -> Harness<SqliteStore> {
     let dir = tempfile::tempdir().unwrap();
-    let client = Client::open05(
+    let client = Client::open(
         SqliteStore::open(dir.path().join("db")).unwrap(),
         common05::with_crud(schema()),
         "User:u",
@@ -281,7 +281,7 @@ fn mutation_schema(models: Value) -> Schema {
 }
 fn mutation_harness() -> Harness<SqliteStore> {
     let dir = tempfile::tempdir().unwrap();
-    let client = Client::open05(
+    let client = Client::open(
         SqliteStore::open(dir.path().join("db")).unwrap(),
         mutation_schema(Value::Null),
         "User:u",
@@ -611,7 +611,7 @@ fn close_during_a_callback_rolls_back_and_releases_every_waiter() {
     assert_eq!(h.committed(), None);
     // The rollback released the writer: another client can write the file.
     let dir = h._dir.path().join("db");
-    let mut other = Client::open05(
+    let mut other = Client::open(
         SqliteStore::open(&dir).unwrap(),
         common05::with_crud(schema()),
         "User:u",
@@ -631,7 +631,7 @@ fn a_failed_commit_fails_the_task_and_lets_no_success_or_change_escape() {
     };
     let mut h = Harness {
         runtime: ClientRuntime::new(
-            Client::open05(store, common05::with_crud(schema()), "User:u").unwrap(),
+            Client::open(store, common05::with_crud(schema()), "User:u").unwrap(),
         ),
         _dir: dir,
     };
@@ -872,7 +872,7 @@ fn a_rollback_or_failed_commit_turns_every_provisional_call_rolled_back() {
     };
     let mut h = Harness {
         runtime: ClientRuntime::new(
-            Client::open05(store, mutation_schema(Value::Null), "User:u").unwrap(),
+            Client::open(store, mutation_schema(Value::Null), "User:u").unwrap(),
         ),
         _dir: dir,
     };
@@ -910,7 +910,7 @@ fn recovery_harness() -> (
 ) {
     let dir = tempfile::tempdir().unwrap();
     let armed = Arc::new(AtomicBool::new(false));
-    let mut c = Client::open05(
+    let mut c = Client::open(
         FailingCommit {
             inner: SqliteStore::open(dir.path().join("db")).unwrap(),
             armed: armed.clone(),
@@ -1503,7 +1503,7 @@ fn observer_harness() -> Harness<SqliteStore> {
     let dir = tempfile::tempdir().unwrap();
     Harness {
         runtime: ClientRuntime::new(
-            Client::open05(
+            Client::open(
                 SqliteStore::open(dir.path().join("db")).unwrap(),
                 common05::with_crud(Schema::from_value(raw).unwrap()),
                 "User:u",
@@ -1777,7 +1777,7 @@ fn unwatch_and_close_remove_the_engine_watcher_and_a_tableless_statement_registe
 fn a_direct_apply_that_fails_to_commit_fails_the_call_and_lets_nothing_escape() {
     let directory = tempfile::tempdir().unwrap();
     let armed = Arc::new(AtomicBool::new(false));
-    let mut client = Client::open05(
+    let mut client = Client::open(
         FailingCommit {
             inner: SqliteStore::open(directory.path().join("db")).unwrap(),
             armed: armed.clone(),

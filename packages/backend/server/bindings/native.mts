@@ -1,33 +1,30 @@
 import { createRequire } from "node:module";
 export type Native = {
-  processLive05(
+  processLive(
     config: string,
     owner: string,
     request: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
-  processDelivery05(
+  processDelivery(
     config: string,
     owner: string,
     request: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
-  processRead05(
+  processRead(
     config: string,
     owner: string,
     request: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
-  handshake05(
+  handshake(
     config: string,
     owner: string,
     request: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
-  serverMaterializationId05(
-    config: string,
-    projectionGeneration: string,
-  ): string;
+  serverMaterializationId(config: string, projectionGeneration: string): string;
   validateMutationBatch?(config: string, request: string): string;
   processBatchMember?(
     config: string,
@@ -45,7 +42,7 @@ export type Native = {
     count: number,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
-  settleExternal05(
+  settleExternal(
     config: string,
     settlement: string,
     callback: (request: string) => Promise<string>,
@@ -116,11 +113,11 @@ function engineError(error: unknown): unknown {
 function typedNative(native: Native): Native {
   type Async =
     | "negotiateLive"
-    | "processDelivery05"
-    | "processRead05"
-    | "handshake05"
-    | "processLive05"
-    | "settleExternal05";
+    | "processDelivery"
+    | "processRead"
+    | "handshake"
+    | "processLive"
+    | "settleExternal";
   type Sync = "validateConfig" | "liveEvent" | "liveClose";
   const wrap =
     <K extends Async>(key: K) =>
@@ -153,12 +150,12 @@ function typedNative(native: Native): Native {
             }),
         ]),
     ),
-    processDelivery05: wrap("processDelivery05"),
-    processRead05: wrap("processRead05"),
-    handshake05: wrap("handshake05"),
-    processLive05: wrap("processLive05"),
-    serverMaterializationId05: (config: string, projectionGeneration: string) =>
-      native.serverMaterializationId05(config, projectionGeneration),
+    processDelivery: wrap("processDelivery"),
+    processRead: wrap("processRead"),
+    handshake: wrap("handshake"),
+    processLive: wrap("processLive"),
+    serverMaterializationId: (config: string, projectionGeneration: string) =>
+      native.serverMaterializationId(config, projectionGeneration),
     ...(native.validateMutationBatch
       ? {
           validateMutationBatch: (config: string, request: string) => {
@@ -191,7 +188,7 @@ function typedNative(native: Native): Native {
           },
         }
       : {}),
-    settleExternal05: wrap("settleExternal05"),
+    settleExternal: wrap("settleExternal"),
     validateConfig: wrapSync("validateConfig"),
     negotiateLive: wrap("negotiateLive"),
     liveEvent: wrapSync("liveEvent"),

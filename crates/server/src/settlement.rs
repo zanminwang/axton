@@ -180,11 +180,11 @@ pub(crate) async fn settle_changes(
     if !deltas.is_empty() {
         let request = HostRequest::ApplyStreamMembers { deltas };
         let positions: Positions = host.call_typed(request.clone()).await?;
-        check_positions05(&request, &positions)?;
+        check_positions(&request, &positions)?;
     }
     Ok(())
 }
-fn check_positions05(request: &HostRequest, positions: &[MemberPosition]) -> Result<()> {
+fn check_positions(request: &HostRequest, positions: &[MemberPosition]) -> Result<()> {
     let HostRequest::ApplyStreamMembers { deltas } = request else {
         return Err(internal("publication deltas missing"));
     };

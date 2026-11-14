@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub enum LiveEvent {
     /// A transaction that touched `stream` committed (from the host's commit hub).
     Committed { stream: String },
-    /// The host finished the pull a [`LiveAction::PullV05`] asked for; `page` is
+    /// The host finished the pull a [`LiveAction::Pull`] asked for; `page` is
     /// the page text `pull` returned.
     Pulled { page: String },
     /// The socket closed or failed; nothing more will be sent.
@@ -30,7 +30,7 @@ pub enum LiveAction {
     Send { frame: String },
     /// Run this protocol-5 delivery request in a transaction and report its
     /// response as [`LiveEvent::Pulled`]. At most one pull is outstanding.
-    PullV05 { request: String },
+    Pull { request: String },
 }
 
 /// One accepted stream: the cursor streamed so far and whether a commit
@@ -44,7 +44,7 @@ pub struct StreamState {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct Live05Progress {
+struct LiveProgress {
     header: axton_protocols::wire::DeliveryHeader,
     next_unit: u64,
     parts: BTreeSet<u64>,
@@ -58,9 +58,9 @@ struct Live05Progress {
 /// observed during the pull, queues the next pull.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Subscriptions {
-    context05: axton_protocols::wire::RequestContext,
+    context: axton_protocols::wire::RequestContext,
     #[serde(default)]
-    progress05: Option<Live05Progress>,
+    progress: Option<LiveProgress>,
     streams: Vec<StreamState>,
     /// The cursors the outstanding pull was asked for, if one is outstanding.
     running: Option<BTreeMap<String, u64>>,
@@ -71,7 +71,7 @@ impl Subscriptions {
     pub fn streams(&self) -> &[StreamState] {
         &self.streams
     }
-    pub fn open05(
+    pub fn open(
         context: axton_protocols::wire::RequestContext,
         head: u64,
         response: String,
@@ -93,13 +93,13 @@ impl Subscriptions {
                 }],
                 running: Some(BTreeMap::from([(stream.clone(), head)])),
                 closed: false,
-                context05: context,
-                progress05: None,
+                context,
+                progress: None,
             },
             vec![
                 LiveAction::Listen { stream },
                 LiveAction::Send { frame: response },
-                LiveAction::PullV05 { request },
+                LiveAction::Pull { request },
             ],
         )
     }
@@ -108,11 +108,11 @@ impl Subscriptions {
         if self.closed {
             return Ok(vec![]);
         }
-        let context = self.context05.clone();
+        let context = self.context.clone();
         match event {
             LiveEvent::Closed => {
                 self.closed = true;
-                self.progress05 = None;
+                self.progress = None;
                 Ok(vec![])
             }
             LiveEvent::Committed { stream } => {
@@ -130,7 +130,7 @@ impl Subscriptions {
                     bootstrap: false,
                 })
                 .map_err(crate::internal)?;
-                Ok(vec![LiveAction::PullV05 { request }])
+                Ok(vec![LiveAction::Pull { request }])
             }
             LiveEvent::Pulled { page } => {
                 let d: wire::DeliveryResponse = serde_json::from_str(&page)
@@ -143,16 +143,16 @@ impl Subscriptions {
                 {
                     return Err(Error::code(code::LIVE_INVALID_PAGE));
                 }
-                if self.progress05.is_none() {
+                if self.progress.is_none() {
                     use wire::Validate;
                     d.header.validate().map_err(crate::storage_invalid)?;
-                    self.progress05 = Some(Live05Progress {
+                    self.progress = Some(LiveProgress {
                         header: d.header.clone(),
                         next_unit: 0,
                         parts: BTreeSet::new(),
                     });
                 }
-                let progress = self.progress05.as_mut().unwrap();
+                let progress = self.progress.as_mut().unwrap();
                 if progress.header.plan_id != d.header.plan_id
                     || progress.header.digest != d.header.digest
                 {
@@ -181,7 +181,7 @@ impl Subscriptions {
                 let mut actions = vec![LiveAction::Send { frame: page }];
                 if progress.next_unit == progress.header.units.len() as u64 {
                     let more = self.streams[0].cursor < progress.header.observed_head;
-                    self.progress05 = None;
+                    self.progress = None;
                     self.running = None;
                     if self.streams[0].pending || more {
                         actions.extend(self.handle(LiveEvent::Committed {
@@ -205,20 +205,20 @@ impl Subscriptions {
             })
     }
 }
-pub async fn negotiate05(
+pub async fn negotiate(
     config: &crate::Config,
     owner: &str,
     bytes: &[u8],
     host: &impl Host,
 ) -> Result<(Subscriptions, Vec<LiveAction>)> {
-    let response = crate::handshake05(config, owner, bytes, host).await?;
+    let response = crate::handshake(config, owner, bytes, host).await?;
     let ack: axton_protocols::wire::HandshakeResponse =
         axton_protocols::wire::decode(response.as_bytes()).map_err(crate::internal)?;
     let context = axton_protocols::wire::RequestContext {
         protocol: axton_protocols::wire::PROTOCOL,
         store_id: ack.store_id,
         stream: ack.stream,
-        materialization: crate::materialization_id05(config, &config.projection_generation)?,
+        materialization: crate::materialization_id(config, &config.projection_generation)?,
     };
-    Ok(Subscriptions::open05(context, ack.head, response))
+    Ok(Subscriptions::open(context, ack.head, response))
 }

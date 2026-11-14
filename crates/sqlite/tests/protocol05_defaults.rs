@@ -46,7 +46,7 @@ fn schema() -> Schema {
     .unwrap()
 }
 fn open(path: &std::path::Path) -> Client<SqliteStore> {
-    Client::open05(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap()
+    Client::open(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap()
 }
 fn rows(client: &mut Client<SqliteStore>) -> Vec<Value> {
     client.query("Todo", &json!({})).unwrap()
@@ -283,7 +283,7 @@ fn a_default_only_change_opens_in_place_and_rewrites_nothing() {
     fields[1]["createDefault"] = json!({"kind":"literal","value":"changed"});
     fields[6]["createDefault"] = json!({"kind":"uuid"});
     fields[5].as_object_mut().unwrap().remove("createDefault");
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(&path).unwrap(),
         Schema::from_value(changed).unwrap(),
         "User:u",
@@ -324,7 +324,7 @@ fn a_creation_default_never_backfills_a_new_required_column() {
     let mut changed = serde_json::to_value(schema()).unwrap();
     changed["models"][0]["fields"].as_array_mut().unwrap().push(json!({"name":"rank","nullable":false,"type":{"kind":"scalar","name":"int"},"createDefault":{"kind":"literal","value":3}}));
     // The column has no storage default, so the Model is reset, not filled.
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(&path).unwrap(),
         Schema::from_value(changed).unwrap(),
         "User:u",

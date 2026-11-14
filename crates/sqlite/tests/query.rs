@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 #[test]
 fn query_normalizes_filters_orders_nulls_and_resolves_relationships() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(dir.path().join("db")).unwrap(),
         with_crud(family_schema()),
         "User:u",
@@ -100,7 +100,7 @@ fn readonly_sql_sees_optimistic_rows_and_refuses_write_statements() {
 #[test]
 fn sql_tables_are_the_model_tables_a_select_reads() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(dir.path().join("db")).unwrap(),
         family_schema(),
         "User:u",
@@ -176,7 +176,7 @@ fn unsupported_filter_and_order_shapes_are_refused() {
             {"name":"tags","nullable":false,"type":{"kind":"list","element":{"kind":"scalar","name":"string"}}}
         ]}]}))
     .unwrap();
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(dir.path().join("db")).unwrap(),
         schema,
         "User:u",

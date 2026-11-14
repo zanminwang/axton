@@ -103,7 +103,7 @@ fn mixed_batch(unsupported_name: &str, unsupported_version: u64) {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("client.sqlite");
         let mut client =
-            Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:alice").unwrap();
+            Client::open(SqliteStore::open(&path).unwrap(), schema(), "User:alice").unwrap();
         client.initialize_stream05(0, "1").unwrap();
         let mut calls = vec![];
         for (name, version, text) in [
@@ -158,7 +158,7 @@ fn mixed_batch(unsupported_name: &str, unsupported_version: u64) {
         }
         drop(client);
         let mut client =
-            Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:alice").unwrap();
+            Client::open(SqliteStore::open(&path).unwrap(), schema(), "User:alice").unwrap();
         assert!(client.freeze_batch05().unwrap().is_none());
         assert!(
             client
@@ -203,7 +203,7 @@ fn malformed_wire_bound_slot_and_forbidden_patch_remain_structural_request_error
         ]}]})).unwrap();
     let config = Config::decode(json!({"schema":s,"mutations":[]})).unwrap();
     let directory = tempfile::tempdir().unwrap();
-    let mut client = Client::open05(
+    let mut client = Client::open(
         SqliteStore::open(directory.path().join("client.sqlite")).unwrap(),
         s,
         "User:alice",
@@ -278,7 +278,7 @@ fn malformed_wire_bound_slot_and_forbidden_patch_remain_structural_request_error
 #[test]
 fn retained_query_cannot_enter_a_mutation_batch() {
     let directory = tempfile::tempdir().unwrap();
-    let mut client = Client::open05(
+    let mut client = Client::open(
         SqliteStore::open(directory.path().join("client.sqlite")).unwrap(),
         schema(),
         "User:alice",

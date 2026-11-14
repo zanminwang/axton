@@ -48,7 +48,7 @@ fn child(parent_id: serde_json::Value) -> wire::ReadRecord {
 #[test]
 fn cascading_reference_cache_guard_uses_only_current_parent_tombstone() {
     let d = tempfile::tempdir().unwrap();
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(d.path().join("db")).unwrap(),
         schema("delete"),
         "User:u",
@@ -102,7 +102,7 @@ fn cascading_reference_cache_guard_uses_only_current_parent_tombstone() {
 #[test]
 fn noncascading_reference_does_not_borrow_parent_tombstone() {
     let d = tempfile::tempdir().unwrap();
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(d.path().join("db")).unwrap(),
         schema("none"),
         "User:u",
@@ -163,7 +163,7 @@ fn cached(c: &mut Client<SqliteStore>, model: &str, id: &str, state: serde_json:
 fn protection_holds_only_in_the_materialization_that_installed_it() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
-    let mut c = Client::open05(SqliteStore::open(&p).unwrap(), schema("delete"), "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&p).unwrap(), schema("delete"), "User:u").unwrap();
     install(&mut c, "Parent", "live", 57, json!({}));
     install(&mut c, "Parent", "gone", 58, serde_json::Value::Null);
     let protected = |c: &mut Client<SqliteStore>| {

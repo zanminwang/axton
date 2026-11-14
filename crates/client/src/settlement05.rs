@@ -68,13 +68,13 @@ impl<S: ClientStore> Engine<'_, S> {
             },
         };
         Ok(CallCompletion {
-            call_id: format!("{}:{id}", self.context05()?.store_id),
+            call_id: format!("{}:{id}", self.context()?.store_id),
             outcome,
         })
     }
     fn acknowledge05(&mut self, ack: &wire::BatchAcknowledgement) -> Result<ApplyReport> {
         ack.validate()?;
-        ack.context.admit_store(&self.context05()?)?;
+        ack.context.admit_store(&self.context()?)?;
         let last = as_u64(
             &self
                 .scalar("SELECT last_acknowledged_batch_id FROM axton_store", &[])?
@@ -111,7 +111,7 @@ impl<S: ClientStore> Engine<'_, S> {
         // current schema.
         let mut unshared = BTreeSet::new();
         for mutation in &request.mutations {
-            let descriptor = self.mutation_descriptor05(mutation.id)?;
+            let descriptor = self.mutation_descriptor(mutation.id)?;
             for model in mutation
                 .operations
                 .iter()
@@ -131,7 +131,7 @@ impl<S: ClientStore> Engine<'_, S> {
         // must be canonical whatever the label. A snapshot is used only on a
         // shared Model and in the Store's materialization, so its state is
         // validated against the current schema only then.
-        let active = self.context05()?.materialization;
+        let active = self.context()?.materialization;
         for result in &ack.results {
             if let wire::MutationOutcome::Accepted {
                 result: value,
@@ -232,7 +232,7 @@ impl<S: ClientStore> Engine<'_, S> {
     fn target_evidence05(&mut self, key: &wire::RecordKey) -> Result<wire::TargetEvidence> {
         let key = self.schema.record_key(&key.model, &key.identity)?;
         let evidence = self.evidence05(&key)?;
-        let materialization = self.context05()?.materialization;
+        let materialization = self.context()?.materialization;
         // History holds the one delivery it last installed, in whichever
         // contract; protection counts only in the Store's.
         Ok(wire::TargetEvidence {
@@ -261,7 +261,7 @@ impl<S: ClientStore> Engine<'_, S> {
     /// Run inside the same transaction as authority/progress. The caller rebuilds
     /// held keys and emits returned completion events only after COMMIT.
     pub fn reconcile_ready05(&mut self, held: &mut Held) -> Result<Vec<CallCompletion>> {
-        let context = self.context05()?;
+        let context = self.context()?;
         let row = self
             .rows("SELECT cursor,start_cursor FROM axton_store", &[])?
             .rows
@@ -297,7 +297,7 @@ impl<S: ClientStore> Engine<'_, S> {
             };
             // A target on a Model the Mutation does not share with the
             // current schema is neither awaited nor installed.
-            let descriptor = self.mutation_descriptor05(id)?;
+            let descriptor = self.mutation_descriptor(id)?;
             let mut shared = vec![];
             for target in targets {
                 if self.shared05(&descriptor, &target.key().model)? {
@@ -448,7 +448,7 @@ impl<S: ClientStore> Engine<'_, S> {
         changes: &[wire::AuthorityChange],
         held: &mut Held,
     ) -> Result<usize> {
-        context.admit(&self.context05()?)?;
+        context.admit(&self.context()?)?;
         // Immediate UNIQUE checks must see the final atomic projection, rather
         // than a changed row conflicting with another row's superseded value.
         // The enclosing Store transaction rolls this transient removal back on
@@ -547,7 +547,7 @@ impl<S: ClientStore> Engine<'_, S> {
         store: bool,
         held: &mut Held,
     ) -> Result<usize> {
-        let materialization = self.context05()?.materialization;
+        let materialization = self.context()?.materialization;
         let mut applied = 0;
         for record in records {
             record.validate()?;

@@ -28,7 +28,7 @@ fn schema_value() -> Value {
 }
 fn runtime(schema: Value) -> (tempfile::TempDir, ClientRuntime<SqliteStore>) {
     let d = tempfile::tempdir().unwrap();
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(d.path().join("db")).unwrap(),
         Schema::from_value(schema).unwrap(),
         "User:a",

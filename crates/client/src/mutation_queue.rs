@@ -58,7 +58,7 @@ impl<S: ClientStore> Engine<'_, S> {
         Ok(shared)
     }
     /// The descriptor context a queued Mutation was enqueued under.
-    pub(crate) fn mutation_descriptor05(&mut self, id: u64) -> Result<String> {
+    pub(crate) fn mutation_descriptor(&mut self, id: u64) -> Result<String> {
         self.scalar(
             "SELECT descriptor FROM axton_mutation_queue WHERE id=?",
             &[json!(id)],
@@ -72,7 +72,7 @@ impl<S: ClientStore> Engine<'_, S> {
     pub(crate) fn input05(&mut self, id: u64) -> Result<Value> {
         wire::reconstruct_input(&self.wire_ops05(id)?)
     }
-    pub(crate) fn insert_owned05(
+    pub(crate) fn insert_owned(
         &mut self,
         id: u64,
         step: u64,
@@ -92,7 +92,7 @@ impl<S: ClientStore> Engine<'_, S> {
         version: u64,
         mut input: Value,
     ) -> Result<SubmittedCall> {
-        let context = self.context05()?;
+        let context = self.context()?;
         let descriptor = self.schema.action(name, version)?.clone();
         if descriptor.kind != CallKind::Mutation {
             return Err(invalid("only Mutations can be queued"));
@@ -165,7 +165,7 @@ impl<S: ClientStore> Engine<'_, S> {
                     name.to_owned()
                 };
                 self.apply_in_order(op, |e, k, op| {
-                    e.insert_owned05(
+                    e.insert_owned(
                         id,
                         step,
                         k,
@@ -204,7 +204,7 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         // The materialization is transport: a Batch is sent in the Store's
         // current contract, whichever one it was frozen under.
-        let context = self.context05()?;
+        let context = self.context()?;
         let mut mutations = vec![];
         for r in &rows {
             let id = as_u64(&r[0])?;

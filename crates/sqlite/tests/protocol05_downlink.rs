@@ -7,7 +7,7 @@ mod prefetch;
 mod receipts;
 
 fn client(path: &std::path::Path) -> Client<SqliteStore> {
-    Client::open05(
+    Client::open(
         SqliteStore::open(path).unwrap(),
         Schema::from_value(
             serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap(),
@@ -932,7 +932,7 @@ fn crash_after_sql_commit_before_dequeue_child() {
         armed: armed.clone(),
     };
     // The Entry schema with its `Edit` Mutation, as the parent reopens it.
-    let mut c = Client::open05(store, common05::schema(), "User:u").unwrap();
+    let mut c = Client::open(store, common05::schema(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     let context = c.request_context05().unwrap();
     let f = wire::freeze_delivery(
@@ -1223,8 +1223,7 @@ fn explicit_reset_retires_frozen_batch_and_reused_ids_have_new_store_owner() {
         serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
     s["actions"] = json!([{"name":"Write","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"create","cardinality":"single"}],"outputs":[]}]);
     let schema = Schema::from_value(s).unwrap();
-    let mut c =
-        Client::open05(SqliteStore::open(&path).unwrap(), schema.clone(), "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&path).unwrap(), schema.clone(), "User:u").unwrap();
     c.initialize_stream05(0, "1").unwrap();
     let old = c
         .transaction(|tx| {
@@ -1283,7 +1282,7 @@ fn explicit_reset_retires_frozen_batch_and_reused_ids_have_new_store_owner() {
     assert_eq!(call.ordinal, old.ordinal);
     assert_ne!(fresh.context.store_id, batch.context.store_id);
     drop(c);
-    let mut c = Client::open05(SqliteStore::open(&path).unwrap(), schema, "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(&path).unwrap(), schema, "User:u").unwrap();
     assert_eq!(c.freeze_batch05().unwrap().unwrap(), fresh);
 }
 
@@ -1338,7 +1337,7 @@ fn stopped_control_ignores_already_dispatched_freeze_report() {
     let mut s: serde_json::Value =
         serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
     s["actions"] = serde_json::json!([{"name":"Write","version":1,"inputs":[],"outputs":[]}]);
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(&path).unwrap(),
         Schema::from_value(s).unwrap(),
         "User:u",
@@ -1612,7 +1611,7 @@ fn pending_settlement_control(
     let mut schema: serde_json::Value =
         serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
     schema["actions"] = serde_json::json!([{"name":"Write","version":1,"inputs":[{"kind":"model","name":"entry","model":"Entry","operation":"create","cardinality":"single"}],"outputs":[]}]);
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(path).unwrap(),
         Schema::from_value(schema).unwrap(),
         "User:u",
@@ -2019,7 +2018,7 @@ fn bootstrap_after_an_upgrade_overwrites_held_rows_and_sync_from_c_deletes_and_r
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     before_upgrade(&p);
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(&p).unwrap(),
         upgrade_schema(true, false),
         "User:u",
@@ -2094,7 +2093,7 @@ fn a_unique_change_resets_the_model_and_bootstrap_fills_it_again() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let before = before_upgrade(&p);
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(&p).unwrap(),
         upgrade_schema(false, true),
         "User:u",
@@ -2128,7 +2127,7 @@ fn a_handshake_reporting_a_new_generation_upgrades_in_its_commit_and_a_push_sent
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("db");
     let before = before_upgrade(&p);
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(&p).unwrap(),
         upgrade_schema(false, false),
         "User:u",
@@ -2334,7 +2333,7 @@ fn a_push_answered_after_a_generation_upgrade_is_acknowledged_through_the_sync_w
     // worker reported it, so its Acknowledge is fenced with the old context.
     for late in [false, true] {
         let d = tempfile::tempdir().unwrap();
-        let mut c = Client::open05(
+        let mut c = Client::open(
             SqliteStore::open(d.path().join("db")).unwrap(),
             schema.clone(),
             "User:u",

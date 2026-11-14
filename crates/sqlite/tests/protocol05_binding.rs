@@ -21,7 +21,7 @@ fn reopen_keeps_context_and_rejects_stream_rebinding_before_schema_changes() {
     locks();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");
-    let mut client = Client::open05(
+    let mut client = Client::open(
         SqliteStore::open_exclusive05(&path, "User:alice").unwrap(),
         schema(),
         "User:alice",
@@ -37,7 +37,7 @@ fn reopen_keeps_context_and_rejects_stream_rebinding_before_schema_changes() {
             .to_string()
             .contains("Stream mismatch")
     );
-    let mut reopened = Client::open05(
+    let mut reopened = Client::open(
         SqliteStore::open_exclusive05(&path, "User:alice").unwrap(),
         schema(),
         "User:alice",

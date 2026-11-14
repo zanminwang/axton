@@ -9,9 +9,9 @@ const backend = (database) =>
     config: { schema: { enums: [], models: [], actions: [] } },
     native: {
       validateConfig() {},
-      serverMaterializationId05: () => "materialization",
-      handshake05: async () => "handshake",
-      settleExternal05: async () => "{}",
+      serverMaterializationId: () => "materialization",
+      handshake: async () => "handshake",
+      settleExternal: async () => "{}",
       negotiateLive: async () => '{"handle":1,"actions":[]}',
       liveEvent: () => "[]",
       liveClose() {},

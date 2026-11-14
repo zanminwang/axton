@@ -494,7 +494,7 @@ for (const kind of ["handshake", "pull", "live", "cursor_resume"]) {
             ...ctx,
           };
           return kind === "live"
-            ? app.pull05Live(owner, JSON.stringify(request))
+            ? app.pullLive(owner, JSON.stringify(request))
             : app.pull(owner, JSON.stringify(request));
         };
         const beforeLoads = loads;

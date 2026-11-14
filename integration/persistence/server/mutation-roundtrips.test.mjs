@@ -111,7 +111,7 @@ test("existing Store claims use one locking query and retain the immutable bindi
       initial,
       "the executor must check the retained owner/Stream",
     );
-    assert.deepEqual(statements, [SQL.V05_STORE_LOCK]);
+    assert.deepEqual(statements, [SQL.STORE_LOCK]);
     assert.equal((await state(pool)).stores.length, 1);
   }));
 
@@ -126,7 +126,7 @@ test(
         release = resolve;
       });
       onQuery(async (sql, rows) => {
-        if (sql === SQL.V05_STORE_LOCK && rows.length === 0 && missing < 2) {
+        if (sql === SQL.STORE_LOCK && rows.length === 0 && missing < 2) {
           if (++missing === 2) release();
           await bothMissing;
         }
@@ -287,13 +287,13 @@ test("group outcomes use one guarded write and promote the complete Batch atomic
     await run("beginBatch", begin(1, 3));
     statements.length = 0;
     await run("saveResults", saveGroup(0, [result(1), result(2)], 3));
-    assert.deepEqual(statements, [SQL.V05_RESULTS_SAVE]);
+    assert.deepEqual(statements, [SQL.RESULTS_SAVE]);
     let snapshot = await state(pool);
     assert.equal(snapshot.stores[0].progress, "2");
     assert.equal(snapshot.results.length, 2);
     statements.length = 0;
     await run("saveResults", saveGroup(2, [result(3)], 3));
-    assert.deepEqual(statements, [SQL.V05_RESULTS_SAVE]);
+    assert.deepEqual(statements, [SQL.RESULTS_SAVE]);
     snapshot = await state(pool);
     assert.equal(snapshot.stores[0].progress, "0");
     assert.equal(snapshot.stores[0].last_processed_batch_id, "1");

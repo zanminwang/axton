@@ -18,7 +18,7 @@ impl<S: ClientStore> Client<S> {
         let report=self.write(|e| {
             let pending=e.rows("SELECT id,batch_id FROM axton_mutation_queue WHERE reconciled=0 AND rejection_code IS NULL ORDER BY id",&[])?.rows;
             if !pending.is_empty() && !discard_pending {return Err(invalid("pending work prevents Store reset"));}
-            let old=e.context05()?;
+            let old=e.context()?;
             let abandoned_calls=pending.into_iter().map(|row|Ok(AbandonedCall{call_id:format!("{}:{}",old.store_id,as_u64(&row[0])?),frozen:!row[1].is_null()})).collect::<Result<Vec<_>>>()?;
             // Explicit discard first retires assignment guards; it does not
             // mutate any frozen input or pretend that its execution is known.
@@ -32,7 +32,7 @@ impl<S: ClientStore> Client<S> {
             e.delete_records05()?;
             e.clear_delivery_staging05()?;
             e.exec("axton_store","UPDATE axton_store SET id=?,next_mutation_id=1,next_local_sequence=1,last_acknowledged_batch_id=0,start_cursor=NULL,bootstrap_cursor=NULL,cursor=NULL",&[json!(fresh)])?;
-            Ok(ResetStoreReport05{context:e.context05()?,abandoned_calls})
+            Ok(ResetStoreReport05{context:e.context()?,abandoned_calls})
         })?;
         self.client_id = report.context.store_id.clone();
         Ok(report)

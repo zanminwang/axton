@@ -12,7 +12,7 @@ The SDK carries one validated immutable request through sequential `processBatch
 
 ## 5. Building Block View
 
-- [protocol_v05.rs](../../../../crates/server/src/protocol_v05.rs) validates carriers, assembles acknowledgements and adapts existing settlement/Loader machinery.
+- [batch_entry.rs](../../../../crates/server/src/batch_entry.rs) validates carriers, assembles acknowledgements and adapts existing settlement/Loader machinery.
 - [mutation_batch.rs](../../../../crates/server/src/mutation_batch.rs) owns Store admission, replay, per-member execution and outcome persistence.
 - [delivery_plan.rs](../../../../crates/server/src/delivery_plan.rs) builds Bootstrap/repair cursor pages and carries Query/Fetch snapshots.
 - [Server bridge](../../../../crates/protocols/src/server_bridge/mod.rs) defines strict `SyncOperation` requests, mirrored in [host-contract.mts](../../../../packages/backend/server/bindings/host-contract.mts).
@@ -61,7 +61,7 @@ handlers can still hold their transaction/locks for a long time.
 The publication reservation scope includes the Mutation identity. Recursive
 Loader-preparation callbacks inherit that scope through the transaction Session,
 so repeated publications by one member reuse its cursor while distinct members
-retain distinct cursors. [Grouped Batch regressions](../../../../integration/persistence/server/protocol-v05-batch.test.mjs)
+retain distinct cursors. [Grouped Batch regressions](../../../../integration/persistence/server/batch-entry.test.mjs)
 cover ordering, short final groups, nested preparation, refusal, whole-group
 rollback, retained committed prefixes and concurrent duplicate replay.
 
@@ -101,8 +101,8 @@ The socket controller advances its connection-local offered cursor only at compl
 
 Delivery is only Stream ranges: Bootstrap and Sync pull pages and live offers. There is no point fetch by key. `materializations` lists the earlier materializations the backend still serves, for app versions still in use; a request in a materialization it does not serve is refused with `context_mismatch`. An accepted outcome records the materialization of the request it executed in, and a replay returns it as saved.
 
-Query/Fetch use the shared `ReadRequest`/`ReadResponse` carrier and existing retained descriptor normalization, Loader state normalization and Query snapshot assembly. Records carry explicit null cursors. Query exposes explicit tracking through its authenticated Stream context, settled through Publication05 in the same read transaction. It exposes no invalidate or business-change declaration handles; storing a snapshot never implies enrollment. Repeated live tracking retains its position; a new pair receives a positive Stream position. Business refusal rolls back its read savepoint. Infrastructure failures abort the outer transaction.
+Query/Fetch use the shared `ReadRequest`/`ReadResponse` carrier and existing retained descriptor normalization, Loader state normalization and Query snapshot assembly. Records carry explicit null cursors. Query exposes explicit tracking through its authenticated Stream context, settled through PublicationHost in the same read transaction. It exposes no invalidate or business-change declaration handles; storing a snapshot never implies enrollment. Repeated live tracking retains its position; a new pair receives a positive Stream position. Business refusal rolls back its read savepoint. Infrastructure failures abort the outer transaction.
 
 ## 10. Quality Requirements
 
-[protocol-v05-batch.test.mjs](../../../../integration/persistence/server/protocol-v05-batch.test.mjs) inspects actual PostgreSQL rows after partial execution, process exit, refusal, infrastructure failure, duplicate replay, publication races and overflow. [protocol-v05-delivery.test.mjs](../../../../integration/persistence/server/protocol-v05-delivery.test.mjs) covers frozen interleavings, expiry cleanup, atomic unique transfers, capacity rollback, ordinary reads, socket/reconnect and 10k/100k capacity measurements. Measured costs do not establish a production latency promise; end-to-end native client installation and settlement remain adoption gates.
+[batch-entry.test.mjs](../../../../integration/persistence/server/batch-entry.test.mjs) inspects actual PostgreSQL rows after partial execution, process exit, refusal, infrastructure failure, duplicate replay, publication races and overflow. [sync-delivery.test.mjs](../../../../integration/persistence/server/sync-delivery.test.mjs) covers frozen interleavings, expiry cleanup, atomic unique transfers, capacity rollback, ordinary reads, socket/reconnect and 10k/100k capacity measurements. Measured costs do not establish a production latency promise; end-to-end native client installation and settlement remain adoption gates.

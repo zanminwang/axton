@@ -81,7 +81,7 @@ const config = {
 };
 let serial = 0;
 const store = () => `batch-store-${++serial}`;
-const materialization = native.serverMaterializationId05(
+const materialization = native.serverMaterializationId(
   JSON.stringify(config),
   "1",
 );
@@ -158,7 +158,7 @@ function app(
     mutations: {
       write: async ({ ctx, args }) => {
         calls++;
-        await ctx.tx.query("INSERT INTO v05_business VALUES($1,$2)", [
+        await ctx.tx.query("INSERT INTO sync_business VALUES($1,$2)", [
           args.todo.id,
           args.todo.title,
         ]);
@@ -168,7 +168,7 @@ function app(
           ctx.stream("User:other").track.todo({ id: args.todo.id });
         if (args.mode === "multi") {
           const extra = args.todo.id + "-extra";
-          await ctx.tx.query("INSERT INTO v05_business VALUES($1,$2)", [
+          await ctx.tx.query("INSERT INTO sync_business VALUES($1,$2)", [
             extra,
             "multi",
           ]);
@@ -198,7 +198,7 @@ function app(
             async ({ id }) =>
               (
                 await tx.query(
-                  "SELECT id,title FROM v05_business WHERE id=$1",
+                  "SELECT id,title FROM sync_business WHERE id=$1",
                   [id],
                 )
               ).rows[0] ?? null,
@@ -212,7 +212,7 @@ function app(
           prepares++;
           for (const { id } of ids) {
             const row = (
-              await tx.query("SELECT title FROM v05_business WHERE id=$1", [id])
+              await tx.query("SELECT title FROM sync_business WHERE id=$1", [id])
             ).rows[0];
             if (row?.title === "private") continue;
             if (row?.title !== "other")
@@ -240,7 +240,7 @@ before(async () => {
       "utf8",
     ),
   );
-  await q("CREATE TABLE v05_business(id text PRIMARY KEY,title text NOT NULL)");
+  await q("CREATE TABLE sync_business(id text PRIMARY KEY,title text NOT NULL)");
 });
 after(() => pool.end());
 async function state(s) {
@@ -308,7 +308,7 @@ test("Batch commits each Mutation separately and crash after k resumes durable p
   assert.equal(calls, beforeReplay);
   assert.equal((await state(s)).progress, "1");
   assert.equal(
-    (await q("SELECT * FROM v05_business WHERE id LIKE $1", [s + "-%"])).length,
+    (await q("SELECT * FROM sync_business WHERE id LIKE $1", [s + "-%"])).length,
     1,
   );
   a = app();
@@ -327,7 +327,7 @@ test("explicit middle refusal rolls back only its business effects and continues
     ["accepted", "rejected", "accepted"],
   );
   assert.equal(
-    (await q("SELECT * FROM v05_business WHERE id LIKE $1", [s + "-%"])).length,
+    (await q("SELECT * FROM sync_business WHERE id LIKE $1", [s + "-%"])).length,
     2,
   );
   assert.equal((await results(s)).length, 3);
@@ -392,7 +392,7 @@ test("Loader infrastructure failure aborts acceptance with unchanged progress an
   assert.equal(await state(s), undefined);
   assert.equal((await results(s)).length, 0);
   assert.equal(
-    (await q("SELECT * FROM v05_business WHERE id LIKE $1", [s + "-%"])).length,
+    (await q("SELECT * FROM sync_business WHERE id LIKE $1", [s + "-%"])).length,
     0,
   );
   assert.equal(
@@ -511,17 +511,17 @@ test("private and other-Stream-only targets retain owned null-cursor fallback wi
 test("unrelated publications commit while another transaction's handler is suspended", async () => {
   const a = app();
   await q(
-    "INSERT INTO v05_business VALUES('independent-a','before'),('independent-b','before')",
+    "INSERT INTO sync_business VALUES('independent-a','before'),('independent-b','before')",
   );
   let entered, release, timer;
   const arrived = new Promise((resolve) => (entered = resolve));
   const gate = new Promise((resolve) => (release = resolve));
   const first = a.transaction(async ({ tx, stream }) => {
-    await tx.query("SELECT title FROM v05_business WHERE id='independent-a'");
+    await tx.query("SELECT title FROM sync_business WHERE id='independent-a'");
     entered();
     await gate;
     await tx.query(
-      "UPDATE v05_business SET title='after' WHERE id='independent-a'",
+      "UPDATE sync_business SET title='after' WHERE id='independent-a'",
     );
     stream("User:independent-a").track.todo({ id: "independent-a" });
   });
@@ -530,7 +530,7 @@ test("unrelated publications commit while another transaction's handler is suspe
     await arrived;
     second = a.transaction(async ({ tx, stream }) => {
       await tx.query(
-        "UPDATE v05_business SET title='after' WHERE id='independent-b'",
+        "UPDATE sync_business SET title='after' WHERE id='independent-b'",
       );
       stream("User:independent-b").track.todo({ id: "independent-b" });
     });
@@ -549,12 +549,12 @@ test("unrelated publications commit while another transaction's handler is suspe
       }),
     ]);
     assert.equal(
-      (await q("SELECT title FROM v05_business WHERE id='independent-b'"))[0]
+      (await q("SELECT title FROM sync_business WHERE id='independent-b'"))[0]
         .title,
       "after",
     );
     assert.equal(
-      (await q("SELECT title FROM v05_business WHERE id='independent-a'"))[0]
+      (await q("SELECT title FROM sync_business WHERE id='independent-a'"))[0]
         .title,
       "before",
     );
@@ -566,7 +566,7 @@ test("unrelated publications commit while another transaction's handler is suspe
   assert.deepEqual(
     (
       await q(
-        "SELECT title FROM v05_business WHERE id IN ('independent-a','independent-b')",
+        "SELECT title FROM sync_business WHERE id IN ('independent-a','independent-b')",
       )
     ).map((r) => r.title),
     ["after", "after"],
@@ -574,7 +574,7 @@ test("unrelated publications commit while another transaction's handler is suspe
 });
 test("Serializable tracking against concurrent global invalidation preserves holders", async () => {
   const a = app();
-  await q("INSERT INTO v05_business VALUES('fence-record','before')");
+  await q("INSERT INTO sync_business VALUES('fence-record','before')");
   await a.transaction(async ({ stream }) =>
     stream("User:alice").track.todo({ id: "fence-record" }),
   );
@@ -582,7 +582,7 @@ test("Serializable tracking against concurrent global invalidation preserves hol
   const waiting = new Promise((resolve) => (entered = resolve)),
     gate = new Promise((resolve) => (release = resolve));
   const tracking = a.transaction(async ({ tx, stream }) => {
-    await tx.query("SELECT title FROM v05_business WHERE id='fence-record'");
+    await tx.query("SELECT title FROM sync_business WHERE id='fence-record'");
     entered();
     await gate;
     stream("User:new-holder").track.todo({ id: "fence-record" });
@@ -590,7 +590,7 @@ test("Serializable tracking against concurrent global invalidation preserves hol
   await waiting;
   const invalidate = a.transaction(async ({ tx, invalidate }) => {
     await tx.query(
-      "UPDATE v05_business SET title='after' WHERE id='fence-record'",
+      "UPDATE sync_business SET title='after' WHERE id='fence-record'",
     );
     invalidate.todo({ id: "fence-record" });
   });
@@ -654,7 +654,7 @@ test("no-op with no Model targets accepts at head zero and replays without busin
     protocol: 6,
     storeId: store(),
     stream: "User:fresh-empty",
-    materialization: native.serverMaterializationId05(JSON.stringify(cfg), "1"),
+    materialization: native.serverMaterializationId(JSON.stringify(cfg), "1"),
     batchId: 1,
     digest: "",
     mutations: [
@@ -686,7 +686,7 @@ test("process exit after committed member leaves durable prefix and rolls back d
   const s = store(),
     r = batch(s, ["ok", "exit", "ok"]);
   const prior = await streamHeads();
-  const script = `import {createRequire} from 'node:module';import {Pool} from 'pg';import {createBackend} from ${JSON.stringify(new URL("../../../packages/backend/server/index.mts", import.meta.url).href)};import {pg} from ${JSON.stringify(new URL("../../../packages/backend/postgres/index.mts", import.meta.url).href)};const cfg=JSON.parse(process.env.TASK3_CONFIG),r=JSON.parse(process.env.TASK3_REQUEST);const pool=new Pool({connectionString:process.env.DATABASE_URL});const native=createRequire(${JSON.stringify(import.meta.url)})('../../../bindings/node/axton-node.node');const a=createBackend({config:cfg,native,database:pg(pool),experimentalMutationGroupSize:1,authorizeStream:()=>true,authenticate:()=> 'alice',loaders:{todo:async({tx,ids})=>Promise.all(ids.map(async({id})=>(await tx.query('SELECT id,title FROM v05_business WHERE id=$1',[id])).rows[0]??null))},mutations:{write:async({ctx,args})=>{await ctx.tx.query('INSERT INTO v05_business VALUES($1,$2)',[args.todo.id,args.todo.title]);if(args.mode==='exit')process.exit(77);ctx.stream('User:alice').track.todo({id:args.todo.id});return {};}}});await a.push('alice',JSON.stringify(r));`;
+  const script = `import {createRequire} from 'node:module';import {Pool} from 'pg';import {createBackend} from ${JSON.stringify(new URL("../../../packages/backend/server/index.mts", import.meta.url).href)};import {pg} from ${JSON.stringify(new URL("../../../packages/backend/postgres/index.mts", import.meta.url).href)};const cfg=JSON.parse(process.env.TASK3_CONFIG),r=JSON.parse(process.env.TASK3_REQUEST);const pool=new Pool({connectionString:process.env.DATABASE_URL});const native=createRequire(${JSON.stringify(import.meta.url)})('../../../bindings/node/axton-node.node');const a=createBackend({config:cfg,native,database:pg(pool),experimentalMutationGroupSize:1,authorizeStream:()=>true,authenticate:()=> 'alice',loaders:{todo:async({tx,ids})=>Promise.all(ids.map(async({id})=>(await tx.query('SELECT id,title FROM sync_business WHERE id=$1',[id])).rows[0]??null))},mutations:{write:async({ctx,args})=>{await ctx.tx.query('INSERT INTO sync_business VALUES($1,$2)',[args.todo.id,args.todo.title]);if(args.mode==='exit')process.exit(77);ctx.stream('User:alice').track.todo({id:args.todo.id});return {};}}});await a.push('alice',JSON.stringify(r));`;
   const child = spawnSync(
     process.execPath,
     ["--input-type=module", "-e", script],
@@ -710,7 +710,7 @@ test("process exit after committed member leaves durable prefix and rolls back d
   );
   assert.equal((await state(s)).progress, "1");
   assert.equal((await results(s)).length, 1);
-  const rows = await q("SELECT id FROM v05_business WHERE id LIKE $1", [
+  const rows = await q("SELECT id FROM sync_business WHERE id LIKE $1", [
     s + "-%",
   ]);
   assert.deepEqual(
@@ -721,7 +721,7 @@ test("process exit after committed member leaves durable prefix and rolls back d
   assert.equal(ack.results.length, 3);
   assert.equal((await state(s)).last_processed_batch_id, "1");
   assert.equal(
-    (await q("SELECT id FROM v05_business WHERE id LIKE $1", [s + "-%"]))
+    (await q("SELECT id FROM sync_business WHERE id LIKE $1", [s + "-%"]))
       .length,
     3,
   );
@@ -730,7 +730,7 @@ test("reused caller-owned PoolClient starts a fresh publication reservation afte
   const a = app(),
     tx = await pool.connect();
   const id = "reused-transaction";
-  await q("INSERT INTO v05_business VALUES($1,$2)", [id, "before"]);
+  await q("INSERT INTO sync_business VALUES($1,$2)", [id, "before"]);
   try {
     await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
     await a.publish(tx, async ({ stream }) =>
@@ -738,7 +738,7 @@ test("reused caller-owned PoolClient starts a fresh publication reservation afte
     );
     await tx.query("COMMIT");
     await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
-    await tx.query("UPDATE v05_business SET title=$2 WHERE id=$1", [
+    await tx.query("UPDATE sync_business SET title=$2 WHERE id=$1", [
       id,
       "after",
     ]);
@@ -772,7 +772,7 @@ test("explicit Loader business refusal rolls back publications and persists refu
   assert.equal(JSON.parse(wire).results[0].outcome.kind, "rejected");
   assert.equal(JSON.parse(wire).results[0].outcome.code, "write.read_no");
   assert.equal(
-    (await q("SELECT id FROM v05_business WHERE id LIKE $1", [s + "-%"]))
+    (await q("SELECT id FROM sync_business WHERE id LIKE $1", [s + "-%"]))
       .length,
     0,
   );
@@ -889,7 +889,7 @@ test("raw SQLSTATE and wrapped Prisma retry errors survive Handler and Loader na
         );
         assert.equal(
           (
-            await q("SELECT count(*) n FROM v05_business WHERE id=$1", [
+            await q("SELECT count(*) n FROM sync_business WHERE id=$1", [
               `${s}-1-0`,
             ])
           )[0].n,
@@ -916,7 +916,7 @@ for (const existing of [false, true])
     try {
       await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
       await tx.query("SAVEPOINT caller_act");
-      await tx.query("INSERT INTO v05_business VALUES($1,'undone')", [undone]);
+      await tx.query("INSERT INTO sync_business VALUES($1,'undone')", [undone]);
       const discardedWake = await backend.publish(
         tx,
         ({ stream: select, invalidate }) => {
@@ -926,7 +926,7 @@ for (const existing of [false, true])
       );
       assert.equal(typeof discardedWake, "function");
       await tx.query("ROLLBACK TO SAVEPOINT caller_act");
-      await tx.query("INSERT INTO v05_business VALUES($1,'kept')", [kept]);
+      await tx.query("INSERT INTO sync_business VALUES($1,'kept')", [kept]);
       const wake = await backend.publish(
         tx,
         ({ stream: select, invalidate }) => {
@@ -938,7 +938,7 @@ for (const existing of [false, true])
       await tx.query("COMMIT");
       assert.deepEqual(
         await q(
-          "SELECT id,title FROM v05_business WHERE id=ANY($1) ORDER BY id",
+          "SELECT id,title FROM sync_business WHERE id=ANY($1) ORDER BY id",
           [[undone, kept]],
         ),
         [{ id: kept, title: "kept" }],
@@ -983,7 +983,7 @@ test("reused caller-owned PoolClient restores reservations after full ROLLBACK",
       ["kept", true],
     ]) {
       await tx.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
-      await tx.query("INSERT INTO v05_business VALUES($1,$2)", [
+      await tx.query("INSERT INTO sync_business VALUES($1,$2)", [
         "reuse-" + id,
         id,
       ]);
@@ -993,7 +993,7 @@ test("reused caller-owned PoolClient restores reservations after full ROLLBACK",
       await tx.query(commit ? "COMMIT" : "ROLLBACK");
     }
     assert.deepEqual(
-      await q("SELECT id FROM v05_business WHERE id LIKE 'reuse-%'"),
+      await q("SELECT id FROM sync_business WHERE id LIKE 'reuse-%'"),
       [{ id: "reuse-kept" }],
     );
     assert.deepEqual(
@@ -1064,7 +1064,7 @@ test("commit group business refusal rolls back only that member's publications",
   );
   assert.deepEqual(
     (
-      await q("SELECT id FROM v05_business WHERE id LIKE $1 ORDER BY id", [
+      await q("SELECT id FROM sync_business WHERE id LIKE $1 ORDER BY id", [
         s + "-%",
       ])
     ).map((x) => x.id),
@@ -1102,7 +1102,7 @@ test("failed first commit group leaves no business rows, saved outcomes or claim
   assert.equal(await state(s), undefined);
   assert.deepEqual(await results(s), []);
   assert.deepEqual(
-    await q("SELECT id FROM v05_business WHERE id LIKE $1", [s + "-%"]),
+    await q("SELECT id FROM sync_business WHERE id LIKE $1", [s + "-%"]),
     [],
   );
 });
@@ -1118,7 +1118,7 @@ test("concurrent duplicate grouped pushes commit every logical member once", asy
   assert.deepEqual(JSON.parse(a), JSON.parse(b));
   assert.equal((await results(s)).length, 3);
   assert.equal(
-    (await q("SELECT id FROM v05_business WHERE id LIKE $1", [s + "-%"]))
+    (await q("SELECT id FROM sync_business WHERE id LIKE $1", [s + "-%"]))
       .length,
     3,
   );
@@ -1174,7 +1174,7 @@ test("safe head overflow aborts business/result/progress atomically", async () =
   assert.equal(await state(s), undefined);
   assert.equal((await results(s)).length, 0);
   assert.equal(
-    (await q("SELECT * FROM v05_business WHERE id LIKE $1", [s + "-%"])).length,
+    (await q("SELECT * FROM sync_business WHERE id LIKE $1", [s + "-%"])).length,
     0,
   );
 });

@@ -36,11 +36,11 @@ const config = {
   mutations: [],
   loaders: ["Entry"],
 };
-const materialization = native.serverMaterializationId05(
+const materialization = native.serverMaterializationId(
   JSON.stringify(config),
   "1",
 );
-const previous = native.serverMaterializationId05(
+const previous = native.serverMaterializationId(
   JSON.stringify(config),
   "old",
 );
@@ -279,7 +279,7 @@ test("real selected and unique-model capacity measurements", async () => {
         };
         chosen = appFor(cfg);
         clientSchema = cfg.schema;
-        r.materialization = native.serverMaterializationId05(
+        r.materialization = native.serverMaterializationId(
           JSON.stringify(cfg),
           "1",
         );
@@ -677,7 +677,7 @@ test("Query carrier normalizes result snapshots without enrollment; refusal roll
   });
   const r = {
     ...context("query"),
-    materialization: native.serverMaterializationId05(JSON.stringify(cfg), "1"),
+    materialization: native.serverMaterializationId(JSON.stringify(cfg), "1"),
     requestId: "q",
     store: false,
     invocation: { kind: "query", name: "Find", version: 1, args: {} },
@@ -908,7 +908,7 @@ test("retained cascade metadata keeps related distinct positions in one componen
     ],
   };
   const oldSchema = { ...config.schema, models: [entry, extra] };
-  const retained = native.serverMaterializationId05(
+  const retained = native.serverMaterializationId(
     JSON.stringify({ ...config, schema: oldSchema }),
     "1",
   );

@@ -28,7 +28,7 @@ export const backend = createBackend<Tx>({
   mutations,
   queries: {readEntry: async () => ({entry:null})},
   loaders,
-  native: { validateConfig() {}, serverMaterializationId05: () => 'test-materialization', processLive05: unreached, processDelivery05: unreached, processRead05: unreached, handshake05: unreached, settleExternal05: unreached, negotiateLive: async () => '', liveEvent: () => '[]', liveClose() {} },
+  native: { validateConfig() {}, serverMaterializationId: () => 'test-materialization', processLive: unreached, processDelivery: unreached, processRead: unreached, handshake: unreached, settleExternal: unreached, negotiateLive: async () => '', liveEvent: () => '[]', liveClose() {} },
 });
 // An external write declares through the same handles and answers its own value.
 export const external: Promise<number> = backend.transaction(async ({ tx, streams: scope, invalidate: touch }) => { tx.rows.set("b", {}); touch.book({ id: "b" }); scope(["c"]).track.book({ id: "b" }); return tx.rows.size; });

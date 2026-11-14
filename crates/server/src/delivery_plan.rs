@@ -2,9 +2,8 @@
 use crate::{
     Config, Error, Host, Result,
     backend_interface::HostExt,
-    internal,
-    protocol_v05::{Publication05, call},
-    request_invalid, storage_invalid,
+    batch_entry::{PublicationHost, call},
+    internal, request_invalid, storage_invalid,
 };
 use axton_core::canonical_json;
 use axton_protocols::server_bridge::{
@@ -111,7 +110,7 @@ async fn prepare(
     Ok(())
 }
 /// Handshake does not carry a client cursor. Preparation and initial head commit together.
-pub async fn handshake05(
+pub async fn handshake(
     config: &Config,
     owner: &str,
     bytes: &[u8],
@@ -127,7 +126,7 @@ pub async fn handshake05(
             .map_err(internal)?,
     };
     bind_delivery(owner, &context, raw).await?;
-    let host = Publication05::new(raw);
+    let host = PublicationHost::new(raw);
     prepare(config, owner, &context, &host).await?;
     let head: u64 = call(&host, json!({"op":"deliveryHead","stream":r.stream})).await?;
     encode(&wire::HandshakeResponse {
@@ -501,7 +500,7 @@ fn response(frozen: wire::FrozenDelivery) -> Result<wire::DeliveryResponse> {
     Ok(response)
 }
 #[tracing::instrument(target = "axton::server", name = "delivery.plan", skip_all)]
-pub async fn process_delivery05(
+pub async fn process_delivery(
     config: &Config,
     owner: &str,
     bytes: &[u8],
@@ -510,7 +509,7 @@ pub async fn process_delivery05(
     let r: wire::DeltaRequest = wire::decode(bytes).map_err(request_invalid)?;
     crate::mutation_batch::models(config, &r.context)?;
     bind_delivery(owner, &r.context, raw).await?;
-    let host = Publication05::new(raw);
+    let host = PublicationHost::new(raw);
     prepare(config, owner, &r.context, &host).await?;
     let positions = prepared_candidates(
         config,
@@ -583,7 +582,7 @@ pub async fn process_delivery05(
 }
 /// Query/Fetch reuse retained normalization and snapshot assembly; snapshots
 /// carry null cursors; only explicit authenticated Query tracking enrolls.
-pub async fn process_read05(
+pub async fn process_read(
     config: &Config,
     owner: &str,
     bytes: &[u8],
@@ -592,7 +591,7 @@ pub async fn process_read05(
     let r: wire::ReadRequest = wire::decode(bytes).map_err(request_invalid)?;
     let versions = crate::mutation_batch::models(config, &r.context)?;
     let mut bound = inspect_read_binding(owner, &r.context, raw).await?;
-    let host = Publication05::new(raw);
+    let host = PublicationHost::new(raw);
     let _: Acknowledged = host
         .call_typed(HostRequest::Savepoint { ordinal: 1 })
         .await?;
@@ -668,7 +667,7 @@ pub async fn process_read05(
                         owner: owner.into(),
                         call_id: r.request_id.clone(),
                         ordinal: 1,
-                        context: Some(crate::protocol_v05::handler_context(owner, &r.context)),
+                        context: Some(crate::batch_entry::handler_context(owner, &r.context)),
                     })
                     .await?;
                 let outputs = match handled {
@@ -784,7 +783,7 @@ pub async fn process_read05(
 /// A fresh live offer observes its finite through under the same transaction.
 /// Subsequent fragments keep that exact bound; no delayed notification cursor
 /// is attached to content loaded at a later head.
-pub async fn process_live05(
+pub async fn process_live(
     config: &Config,
     owner: &str,
     bytes: &[u8],
@@ -793,7 +792,7 @@ pub async fn process_live05(
     let mut r: wire::DeltaRequest = wire::decode(bytes).map_err(request_invalid)?;
     bind_delivery(owner, &r.context, host).await?;
     r.through = call(host, json!({"op":"deliveryHead","stream":r.context.stream})).await?;
-    process_delivery05(config, owner, &wire::encode(&r).map_err(internal)?, host).await
+    process_delivery(config, owner, &wire::encode(&r).map_err(internal)?, host).await
 }
 #[cfg(test)]
 mod tests {

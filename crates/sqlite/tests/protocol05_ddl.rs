@@ -264,7 +264,7 @@ fn queue(path: &std::path::Path) -> Vec<Vec<Value>> {
 /// A Store holding Stream rows of both Models, a cache install on `Task` and
 /// queued Mutations on each Model.
 fn populated(path: &std::path::Path) {
-    let mut c = Client::open05(SqliteStore::open(path).unwrap(), pair(None), "User:u").unwrap();
+    let mut c = Client::open(SqliteStore::open(path).unwrap(), pair(None), "User:u").unwrap();
     c.initialize_stream05(10, "1").unwrap();
     let context = c.request_context05().unwrap();
     c.install_authority05(
@@ -314,7 +314,7 @@ fn reopen_resets_only_the_model_whose_storage_changed() {
         assert!(task[..3].iter().all(|n| *n > 0), "{reset:?}: {task:?}");
         let other = state(&path, "Other");
         let queued = queue(&path);
-        let mut c = Client::open05(
+        let mut c = Client::open(
             SqliteStore::open(&path).unwrap(),
             pair(Some(reset)),
             "User:u",
@@ -349,11 +349,10 @@ fn a_reset_with_an_unchanged_materialization_asks_for_bootstrap_again() {
     let path = dir.path().join("db");
     populated(&path);
     let before = {
-        let mut c =
-            Client::open05(SqliteStore::open(&path).unwrap(), pair(None), "User:u").unwrap();
+        let mut c = Client::open(SqliteStore::open(&path).unwrap(), pair(None), "User:u").unwrap();
         c.store_status05().unwrap()
     };
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(&path).unwrap(),
         pair(Some(Reset::ChangedUnique)),
         "User:u",
@@ -372,8 +371,8 @@ fn a_model_version_that_goes_backwards_still_refuses_to_open() {
     let path = dir.path().join("db");
     let mut newer = pair(None);
     newer.models[0].version = 2;
-    drop(Client::open05(SqliteStore::open(&path).unwrap(), newer, "User:u").unwrap());
-    let error = Client::open05(SqliteStore::open(&path).unwrap(), pair(None), "User:u")
+    drop(Client::open(SqliteStore::open(&path).unwrap(), newer, "User:u").unwrap());
+    let error = Client::open(SqliteStore::open(&path).unwrap(), pair(None), "User:u")
         .err()
         .unwrap();
     assert!(
@@ -388,7 +387,7 @@ fn reopen_with_an_added_nullable_field_keeps_rows_and_asks_for_bootstrap_from_c(
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");
     let before = before_upgrade(&path);
-    let mut c = Client::open05(
+    let mut c = Client::open(
         SqliteStore::open(&path).unwrap(),
         upgrade_schema(true, false),
         "User:u",

@@ -34,7 +34,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::hash::{BuildHasher, RandomState};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -297,11 +297,7 @@ pub fn open(request: Value, wake: WakeSink) -> std::result::Result<u64, String> 
         .name(format!("axton-runtime-{id}"))
         .spawn(move || {
             let _alive = alive;
-            if request["protocol"] == 5 {
-                run05(request_id, request, receiver, sender, outbox)
-            } else {
-                run(request_id, request, receiver, outbox)
-            }
+            run(request_id, request, receiver, sender, outbox)
         });
     if let Err(e) = spawned {
         // The closure, and `alive` with it, was dropped: the id is not running.
@@ -396,27 +392,19 @@ fn open_runtime(request: &Value) -> axton_client::Result<ClientRuntime<SqliteSto
     let path = request["path"]
         .as_str()
         .ok_or_else(|| axton_client::invalid("path must be string"))?;
-    if request["protocol"] == 5 {
-        if request.get("storeHooks").is_some() {
-            return Err(axton_client::invalid(
-                "storeHooks are not supported in protocol5",
-            ));
-        }
-        let stream = request["stream"]
-            .as_str()
-            .ok_or_else(|| axton_client::invalid("stream must be string"))?;
-        let client = axton_client::Client::open05(
-            SqliteStore::open_exclusive05(path, stream)?,
-            Schema::from_value(request["schema"].clone())?,
-            stream,
-        )?;
-        return ClientRuntime::new(client).register_prerequisite_handlers(names(
-            request,
-            "prerequisiteHandlers",
-            "prerequisite names",
-        )?);
-    }
-    Err(axton_client::invalid("protocol5 Store is required"))
+    let stream = request["stream"]
+        .as_str()
+        .ok_or_else(|| axton_client::invalid("stream must be string"))?;
+    let client = axton_client::Client::open(
+        SqliteStore::open_exclusive(path, stream)?,
+        Schema::from_value(request["schema"].clone())?,
+        stream,
+    )?;
+    ClientRuntime::new(client).register_prerequisite_handlers(names(
+        request,
+        "prerequisiteHandlers",
+        "prerequisite names",
+    )?)
 }
 
 /// The optional array of strings `field` of the open request.
@@ -435,155 +423,20 @@ fn names(request: &Value, field: &str, what: &str) -> axton_client::Result<Vec<S
     }
 }
 
-/// The actor's thread: open, then admit and step until the runtime closes or
-/// its carrier is gone.
-fn run(request_id: String, request: Value, mailbox: Receiver<Mail>, outbox: Arc<Outbox>) {
-    let opened = catch_unwind(|| open_runtime(&request))
-        .unwrap_or_else(|_| Err(axton_client::invalid("runtime panic")));
-    let mut runtime = match opened {
-        Ok(runtime) => runtime,
-        Err(e) => {
-            outbox.closed.store(true, Ordering::SeqCst);
-            outbox.publish(vec![
-                Event::TaskCompleted {
-                    request_id,
-                    ok: false,
-                    value: Value::Null,
-                    error: Some(e.to_string()),
-                    details: None,
-                },
-                Event::RuntimeClosed,
-            ]);
-            return;
-        }
-    };
-    outbox.publish(vec![Event::TaskCompleted {
-        request_id,
-        ok: true,
-        value: runtime.opened(),
-        error: None,
-        details: None,
-    }]);
-    let served = catch_unwind(AssertUnwindSafe(|| serve(&mut runtime, &mailbox, &outbox)));
-    if served.is_ok() {
-        // Release the store before announcing the end: once the carrier sees
-        // `runtimeClosed`, the database files are no longer held.
-        drop(runtime);
-        outbox.publish(vec![Event::RuntimeClosed]);
-    } else {
-        // The runtime's state is not trusted after a panic; dropping it
-        // closes its connections, which rolls back an open transaction.
-        drop(runtime);
-        outbox.closed.store(true, Ordering::SeqCst);
-        outbox.publish(vec![
-            Event::Report {
-                diagnostic: Diagnostic::Error {
-                    message: "runtime panic".into(),
-                    status: None,
-                },
-            },
-            Event::RuntimeClosed,
-        ]);
-    }
-}
-
-fn serve(runtime: &mut ClientRuntime<SqliteStore>, mailbox: &Receiver<Mail>, outbox: &Outbox) {
-    let mut arrived = VecDeque::new();
-    loop {
-        // Admit everything already delivered, without blocking.
-        let mut lost = false;
-        loop {
-            match mailbox.try_recv() {
-                Ok(mail) => arrived.push_back(mail),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    lost = true;
-                    break;
-                }
-            }
-        }
-        for mail in arrived.drain(..) {
-            admit(runtime, mail, outbox);
-        }
-        if lost {
-            // The carrier is gone without closing: never leave the SQLite
-            // transaction open behind it.
-            let (now, entropy) = facts();
-            let _ = runtime.receive(Input::Close, now, entropy);
-        }
-        // Step until idle, yielding to new mail after every unit so control
-        // and callback answers are admitted between units.
-        loop {
-            let (now, entropy) = facts();
-            if !runtime.step(now, entropy) {
-                break;
-            }
-            flush(runtime, outbox);
-            match mailbox.try_recv() {
-                Ok(mail) => {
-                    arrived.push_back(mail);
-                    break;
-                }
-                Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => break,
-            }
-        }
-        flush(runtime, outbox);
-        if runtime.closed() {
-            return;
-        }
-        // Block for the next mail. A disconnected mailbox answers at once;
-        // the next turn sees it and closes.
-        if arrived.is_empty()
-            && let Ok(mail) = mailbox.recv()
-        {
-            arrived.push_back(mail);
-        }
-    }
-}
-
-fn admit(runtime: &mut ClientRuntime<SqliteStore>, mail: Mail, outbox: &Outbox) {
-    match mail {
-        Mail::Worker(_) => {}
-        Mail::Input(input) => {
-            let (now, entropy) = facts();
-            // After close nothing is admitted; `runtimeClosed` tells the SDK
-            // to settle whatever it still routes.
-            let _ = runtime.receive(*input, now, entropy);
-        }
-        Mail::Malformed(message) => {
-            flush(runtime, outbox);
-            outbox.publish(vec![Event::Report {
-                diagnostic: Diagnostic::Protocol { message },
-            }]);
-        }
-    }
-}
-
-fn flush(runtime: &mut ClientRuntime<SqliteStore>, outbox: &Outbox) {
-    let mut events = runtime.take_events();
-    if runtime.closed() {
-        outbox.closed.store(true, Ordering::SeqCst);
-        // `run` announces the end once the runtime and its store are dropped.
-        events.retain(|event| !matches!(event, Event::RuntimeClosed));
-    }
-    outbox.publish(events);
-}
-
 enum WorkerMessage {
-    Opened(std::result::Result<(Value, axton_client::store05::StoreStatus05), String>),
+    Opened(std::result::Result<(Value, axton_client::store_file::StoreStatus), String>),
     Events(Vec<Event>),
-    Report(std::result::Result<axton_client::sync05::StoreReport, String>),
+    Report(std::result::Result<axton_client::sync::StoreReport, String>),
     Closed,
 }
-enum Work05 {
+enum Work {
     Input(Mail),
-    Store(axton_client::sync05::StoreCommand),
+    Store(axton_client::sync::StoreCommand),
 }
 
 /// Control owns reception, correlation, bounded staging and network decisions;
 /// the worker is the only owner of SQLite and the application transaction.
-fn run05(
+fn run(
     request_id: String,
     request: Value,
     mailbox: Receiver<Mail>,
@@ -601,7 +454,7 @@ fn run05(
     let worker = std::thread::Builder::new()
         .name(format!("axton-store-{}", outbox.id))
         .spawn(move || {
-            worker05(
+            worker(
                 request,
                 work_receiver,
                 report_sender,
@@ -632,7 +485,7 @@ fn run05(
             Mail::Worker(message) => match *message {
                 WorkerMessage::Opened(result) => match result {
                     Ok((opened, status)) => {
-                        control = Some(axton_client::sync05::Control::with_bootstrap_prefetch(
+                        control = Some(axton_client::sync::Control::with_bootstrap_prefetch(
                             status,
                             std::env::var("AXTON_EXPERIMENTAL_BOOTSTRAP_PREFETCH").as_deref()
                                 != Ok("0"),
@@ -691,7 +544,7 @@ fn run05(
                     outbox.closed.store(true, Ordering::SeqCst);
                     if let Some(c) = &mut control {
                         c.stop();
-                        publish_control05(c, &work_sender, &outbox, &mut refresh_broker);
+                        publish_control(c, &work_sender, &outbox, &mut refresh_broker);
                     }
                     break;
                 }
@@ -708,7 +561,7 @@ fn run05(
                                 c.network_error(error.to_string());
                             }
                         } else {
-                            let _ = work_sender.send(Work05::Input(Mail::Input(Box::new(
+                            let _ = work_sender.send(Work::Input(Mail::Input(Box::new(
                                 Input::EffectResult {
                                     effect_id: id,
                                     outcome: outcome.clone(),
@@ -717,9 +570,9 @@ fn run05(
                         }
                     }
                     if let Some(c) = &mut control {
-                        publish_control05(c, &work_sender, &outbox, &mut refresh_broker);
+                        publish_control(c, &work_sender, &outbox, &mut refresh_broker);
                         for job in c.jobs() {
-                            let _ = work_sender.send(Work05::Store(job));
+                            let _ = work_sender.send(Work::Store(job));
                         }
                     }
                     continue;
@@ -731,9 +584,9 @@ fn run05(
                         if let Err(error) = c.receive(effect_id, outcome.clone(), now) {
                             c.network_error(error.to_string());
                         }
-                        publish_control05(c, &work_sender, &outbox, &mut refresh_broker);
+                        publish_control(c, &work_sender, &outbox, &mut refresh_broker);
                         for job in c.jobs() {
-                            let _ = work_sender.send(Work05::Store(job));
+                            let _ = work_sender.send(Work::Store(job));
                         }
                         continue;
                     }
@@ -762,16 +615,16 @@ fn run05(
                         _ => {}
                     }
                 }
-                let _ = work_sender.send(Work05::Input(Mail::Input(input)));
+                let _ = work_sender.send(Work::Input(Mail::Input(input)));
             }
             mail => {
-                let _ = work_sender.send(Work05::Input(mail));
+                let _ = work_sender.send(Work::Input(mail));
             }
         }
         if let Some(c) = &mut control {
-            publish_control05(c, &work_sender, &outbox, &mut refresh_broker);
+            publish_control(c, &work_sender, &outbox, &mut refresh_broker);
             for job in c.jobs() {
-                let _ = work_sender.send(Work05::Store(job));
+                let _ = work_sender.send(Work::Store(job));
             }
         }
     }
@@ -781,9 +634,9 @@ fn run05(
 }
 // Queue retirement before exposing the refusal. A reconnect submitted by the
 // observer then follows Stop on the ordinary Store input lane.
-fn publish_control05(
-    control: &mut axton_client::sync05::Control,
-    sender: &Sender<Work05>,
+fn publish_control(
+    control: &mut axton_client::sync::Control,
+    sender: &Sender<Work>,
     outbox: &Outbox,
     broker: &mut RefreshBroker,
 ) {
@@ -796,8 +649,8 @@ fn publish_control05(
             }
         )
     }) {
-        let _ = sender.send(Work05::Input(Mail::Input(Box::new(Input::Task {
-            request_id: "control05:retire-admission".into(),
+        let _ = sender.send(Work::Input(Mail::Input(Box::new(Input::Task {
+            request_id: "control:retire-admission".into(),
             command: axton_client::runtime::Command::Connection {
                 event: axton_client::runtime::ConnectionEvent::Stop,
             },
@@ -805,22 +658,22 @@ fn publish_control05(
     }
     outbox.publish(broker.filter(events));
 }
-struct WorkerExit05(Sender<Mail>);
-impl Drop for WorkerExit05 {
+struct WorkerExit(Sender<Mail>);
+impl Drop for WorkerExit {
     fn drop(&mut self) {
         let _ = self.0.send(Mail::Worker(Box::new(WorkerMessage::Closed)));
     }
 }
-fn worker05(
+fn worker(
     request: Value,
-    mailbox: Receiver<Work05>,
+    mailbox: Receiver<Work>,
     reports: Sender<Mail>,
     diagnostics: Option<Diagnostics>,
     dispatch: Option<tracing::Dispatch>,
 ) {
     let _guard = dispatch.as_ref().map(tracing::dispatcher::set_default);
     // Declared before the runtime so every exit drops the Store lease first.
-    let _exit = WorkerExit05(reports.clone());
+    let _exit = WorkerExit(reports.clone());
     let send = |message| {
         if let Some(diagnostics) = &diagnostics {
             let (records, dropped) = diagnostics.take();
@@ -843,12 +696,12 @@ fn worker05(
     };
     // The exclusive Store lease makes admission a safe place to retire any
     // partial transfer whose process died before its expiry timer fired.
-    if let Err(error) = runtime.client().cleanup_delivery05(facts().0) {
+    if let Err(error) = runtime.client().cleanup_delivery(facts().0) {
         send(WorkerMessage::Opened(Err(error.to_string())));
         return;
     }
     let opened = runtime.opened();
-    match runtime.client().store_status05() {
+    match runtime.client().store_status() {
         Ok(status) => send(WorkerMessage::Opened(Ok((opened, status)))),
         Err(error) => {
             send(WorkerMessage::Opened(Err(error.to_string())));
@@ -865,15 +718,15 @@ fn worker05(
             let mut changed = false;
             for work in incoming.drain(..) {
                 match work {
-                    Work05::Store(command) => jobs.push_back(command),
-                    Work05::Input(Mail::Input(input)) => {
+                    Work::Store(command) => jobs.push_back(command),
+                    Work::Input(Mail::Input(input)) => {
                         let (now, entropy) = facts();
                         let generation = runtime.client().generation();
                         let _ = runtime.receive(*input, now, entropy);
                         while runtime.step(now, entropy) {}
                         changed |= runtime.client().generation() != generation;
                     }
-                    Work05::Input(Mail::Malformed(message)) => {
+                    Work::Input(Mail::Malformed(message)) => {
                         send(WorkerMessage::Events(vec![Event::Report {
                             diagnostic: Diagnostic::Protocol { message },
                         }]))
@@ -888,25 +741,25 @@ fn worker05(
                     return;
                 }
             }
-            if changed && !runtime.store_worker_busy05() {
+            if changed && !runtime.store_worker_busy() {
                 send(WorkerMessage::Report(
                     runtime
-                        .store_worker05(axton_client::sync05::StoreCommand::Snapshot)
+                        .store_worker(axton_client::sync::StoreCommand::Snapshot)
                         .map_err(|e| e.to_string()),
                 ));
             }
-            if !runtime.store_worker_busy05()
+            if !runtime.store_worker_busy()
                 && let Some(mut job) = jobs.pop_front()
             {
                 let apply = match &mut job {
-                    axton_client::sync05::StoreCommand::Guarded { command, .. } => command.as_mut(),
+                    axton_client::sync::StoreCommand::Guarded { command, .. } => command.as_mut(),
                     command => command,
                 };
-                if let axton_client::sync05::StoreCommand::Apply { now, .. } = apply {
+                if let axton_client::sync::StoreCommand::Apply { now, .. } = apply {
                     *now = facts().0;
                 }
                 send(WorkerMessage::Report(
-                    runtime.store_worker05(job).map_err(|e| e.to_string()),
+                    runtime.store_worker(job).map_err(|e| e.to_string()),
                 ));
                 let (now, entropy) = facts();
                 while runtime.step(now, entropy) {}

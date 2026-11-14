@@ -14,11 +14,11 @@ test(
     const dart = process.env.AXTON_DART;
     assert.ok(dart, "Dart must participate in the maintained e2e gate");
     const admin = new Pool({ connectionString: process.env.DATABASE_URL });
-    await admin.query("CREATE SCHEMA dart_codec05");
+    await admin.query("CREATE SCHEMA dart_codec");
     await admin.end();
     const pool = new Pool({
       connectionString: process.env.DATABASE_URL,
-      options: "-c search_path=dart_codec05",
+      options: "-c search_path=dart_codec",
     });
     await pool.query(
       await readFile(
@@ -29,9 +29,7 @@ test(
     const backend = createBackend<PgClient>({
       database: pg(pool),
       authenticate: devAuth(),
-      protocol5: {
-        authorizeStream: (owner, stream) => stream === `User:${owner}`,
-      },
+      authorizeStream: (owner, stream) => stream === `User:${owner}`,
       mutations: {
         echo: async ({ args }) => ({
           result: args.at,

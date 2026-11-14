@@ -17,7 +17,7 @@ const backend = createBackend<Tx>({
   mutations,
   queries,
   loaders,
-  protocol5: { authorizeStream: (principal, stream, tx) => stream === `User:${principal}` },
+  authorizeStream: (principal, stream, tx) => stream === `User:${principal}`,
 });
 const server = await backend.listen({ port: 4242 });
 console.log(server.url);
@@ -83,7 +83,7 @@ An infrastructure failure rolls back the whole current group; earlier committed
 groups survive retry. Successful but uncommitted Handlers can run again, so
 irreversible side effects belong in an application outbox.
 
-Set `protocol5.experimentalMutationGroupSize` on `createBackend` to an integer
+Set `experimentalMutationGroupSize` on `createBackend` to an integer
 from 1 to 32; use 1 for per-Mutation commits. The option retains its experimental
 name although capable backends default to 8. Omitted configuration falls back to
 1 when the native addon or custom adapter lacks group support; an explicit size

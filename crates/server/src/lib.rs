@@ -1,15 +1,15 @@
 //! Server protocol orchestration. Host calls run in the application's outer transaction.
 mod action_results;
 mod delivery_plan;
-pub use delivery_plan::{handshake05, process_delivery05, process_live05, process_read05};
+pub use delivery_plan::{handshake, process_delivery, process_live, process_read};
 mod actions;
 pub mod backend_interface;
 pub mod live;
 mod materialization;
 pub use materialization::RetainedMaterialization;
-mod protocol_v05;
-pub use protocol_v05::{
-    encode_batch_acknowledgement, process_batch_group, process_batch_member, settle_external05,
+mod batch_entry;
+pub use batch_entry::{
+    encode_batch_acknowledgement, process_batch_group, process_batch_member,
     validate_mutation_batch,
 };
 mod mutation_batch;
@@ -28,13 +28,21 @@ pub use backend_interface::{Host, HostResult};
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Config {
     pub schema: Schema,
+    /// The projection generation the handshake reports.
+    #[serde(default = "first_generation", rename = "projectionGeneration")]
+    pub projection_generation: String,
+    /// Read contexts retained by the host, independent of Store/principal
+    /// identity, by materialization ID.
     #[serde(default)]
-    pub protocol5: Option<protocol_v05::ProtocolConfig>,
+    pub materializations: BTreeMap<String, RetainedMaterialization>,
     /// Every retained model read contract, one per `(name, version)`. Absent
     /// in a hand-written config, in which case each model is retained at the
     /// schema's own version.
     #[serde(default)]
     pub models: Vec<ModelContract>,
+}
+fn first_generation() -> String {
+    "1".into()
 }
 /// One retained model read contract, as the compiler keeps it in
 /// `history/models.json`: the record structure a loader of `version` returns
@@ -207,8 +215,9 @@ async fn head(host: &impl Host, stream: &str) -> Result<u64> {
 pub async fn settle_external(
     config: &Config,
     settlement: &Value,
-    host: &impl Host,
+    raw: &impl Host,
 ) -> Result<Value> {
+    let host = &batch_entry::PublicationHost::new(raw);
     let settled: Handled = serde_json::from_value(settlement.clone())
         .map_err(|e| Error::new(code::PUBLISH_INVALID, e.to_string()))?;
     let Handled::Settled {
@@ -234,8 +243,8 @@ pub async fn settle_external(
     ))
 }
 
-/// Canonical protocol-5 read context, independent of authenticated Store binding.
-pub fn materialization_id05(config: &Config, projection_generation: &str) -> Result<String> {
-    axton_protocols::sync::materialization_id(&config.schema, projection_generation)
+/// Canonical read context, independent of authenticated Store binding.
+pub fn materialization_id(config: &Config, projection_generation: &str) -> Result<String> {
+    axton_protocols::wire::materialization_id(&config.schema, projection_generation)
         .map_err(config_invalid)
 }

@@ -19,7 +19,7 @@ Rules the compiler enforces:
 
 Behavior the runtimes give a relation:
 
-- **Cascade (client).** Deleting a record deletes every record reachable through relations with `onTargetDelete: delete`, in both the visible and before-image tables, once per record even with cycles. Cascaded deletes are recorded as local effects of the mutation; they are never sent ([Writes](../client/engine/local-operations/writes.md), [Sync](../protocols/sync.md)).
+- **Cascade (client).** Deleting a record deletes every record reachable through relations with `onTargetDelete: delete`, in both the visible and before-image tables, once per record even with cycles. Cascaded deletes are recorded as local effects of the mutation; they are never sent ([Writes](../client/engine/local-operations/writes.md), [Sync](../protocols/wire.md)).
 - **Dependencies.** A queued create of a record another operation references becomes a lifecycle dependency ([Dependencies](../client/engine/push/dependencies.md)).
 - **Navigation.** `related` follows a reference (null when a reference field is null); `referencing` filters the referencing model by the reference fields ([Queries](../client/engine/local-operations/queries.md)).
 
@@ -27,8 +27,8 @@ Code: resolution in [compiler/validate.rs](../../../../crates/compiler/src/valid
 
 ## 10. Quality Requirements
 
-The [compiler tests](../../../../crates/compiler/tests/compiler.rs) cover resolved relation metadata and unique inverse keys. Current [cascade tests](../../../../crates/sqlite/tests/protocol05_cascade.rs) cover local child effects and replay. [Delivery-plan tests](../../../../crates/server/tests/delivery_plan.rs) cover finite authority dependency grouping. These are maintained source references, not new execution evidence.
+The [compiler tests](../../../../crates/compiler/tests/compiler.rs) cover resolved relation metadata and unique inverse keys. Current [cascade tests](../../../../crates/sqlite/tests/cascade.rs) cover local child effects and replay. [Delivery-plan tests](../../../../crates/server/tests/delivery_plan.rs) cover finite authority dependency grouping. These are maintained source references, not new execution evidence.
 
 ## 11. Risks and Technical Debt
 
-`onTargetDelete` supplies device-side effects; it does not execute server business deletes. A handler must delete and invalidate each server-side child itself, and local cascaded deletes are never sent. Core/server still use retained relation metadata to group cascade dependencies into complete finite authority units ([Protocol 5](../protocols/sync.md)). This grouping preserves apply atomicity; it is not an application cascade implementation.
+`onTargetDelete` supplies device-side effects; it does not execute server business deletes. A handler must delete and invalidate each server-side child itself, and local cascaded deletes are never sent. Core/server still use retained relation metadata to group cascade dependencies into complete finite authority units ([the sync protocol](../protocols/wire.md)). This grouping preserves apply atomicity; it is not an application cascade implementation.

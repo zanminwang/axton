@@ -38,6 +38,17 @@ const schema = {
   actions: [],
 };
 const config = { schema, loaders: ["Task"] };
+test("startup requires authorizeStream and names it", () => {
+  const options = {
+    config,
+    native,
+    database: database(),
+    authenticate,
+    loaders: { task: async () => [] },
+  };
+  assert.throws(() => createBackend(options), /authorizeStream/);
+  createBackend({ ...options, authorizeStream: () => true });
+});
 test("loader registration names every retained model version and a function means v1 only", () => {
   const base = { ...config, schema: structuredClone(schema) };
   const contract = (version) => ({
@@ -55,6 +66,7 @@ test("loader registration names every retained model version and a function mean
       native,
       database: database(),
       authenticate,
+      authorizeStream: () => true,
       loaders,
     });
   };
@@ -103,15 +115,15 @@ test("loader registration names every retained model version and a function mean
 
 test("only actual5 native entrypoints are exported; startup requires every Loader and validates accessors", () => {
   for (const name of [
-    "processRead05",
-    "processDelivery05",
-    "processLive05",
+    "processRead",
+    "processDelivery",
+    "processLive",
     "processBatchMember",
     "processBatchGroup",
     "validateMutationBatch",
     "encodeBatchAcknowledgement",
-    "settleExternal05",
-    "handshake05",
+    "settleExternal",
+    "handshake",
     "negotiateLive",
     "liveEvent",
     "liveClose",
@@ -125,8 +137,6 @@ test("only actual5 native entrypoints are exported; startup requires every Loade
     "processLoad",
     "validateLoadBatch",
     "encodeLoadBatch",
-    "settleExternal",
-    "serverMaterializationId",
     "pullLive",
   ])
     assert.equal(native[name], undefined, name);
@@ -185,6 +195,7 @@ test("Mutation registration retains every exact version; a function means v1 onl
       native,
       database: database(),
       authenticate,
+      authorizeStream: () => true,
       mutations,
       loaders: { task: async () => [] },
     });

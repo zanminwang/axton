@@ -59,14 +59,14 @@ export function invocationTests(Transaction) {
       },
     };
   }
-  test("offline open carries protocol 5 path/schema/stream without identity", async () => {
+  test("offline open carries path/schema/stream without a protocol field or identity", async () => {
     const f = fixture();
     const c = await f.Client.open({
       path: "test.sqlite",
       schema: {},
       stream: "User:u",
     });
-    assert.equal(f.open.protocol, 5);
+    assert.equal("protocol" in f.open, false);
     assert.equal(f.open.stream, "User:u");
     assert.equal(f.open.binding, undefined);
     assert.equal(f.open.projectionGeneration, undefined);

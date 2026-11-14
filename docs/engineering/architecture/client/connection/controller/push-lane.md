@@ -6,4 +6,4 @@ Uplink selects ready work, freezes one immutable Batch and retries those exact b
 
 ## 5. Building Block View
 
-[Implementation](../../../../../../crates/client/src/sync05/uplink.rs) owns this component. [Protocol 5](../../../protocols/sync.md) owns shared context, delivery and settlement rules.
+[Implementation](../../../../../../crates/client/src/sync/uplink.rs) owns this component. [The sync protocol](../../../protocols/wire.md) owns shared context, delivery and settlement rules.

@@ -127,19 +127,14 @@ export function createHost<T>(
       if (req.op === "savepoint") session.savepoint(req.ordinal);
       if (req.op === "rollback") session.rollback(req.ordinal);
       if (req.op === "release") session.release(req.ordinal);
-      if (req.op === "protocol05" && req.request.op === "admit") {
+      if (req.op === "sync" && req.request.op === "admit") {
         const context = req.request.context as { stream: string };
-        result =
-          !!options.protocol5 &&
-          (await options.protocol5.authorizeStream(
-            String(req.request.owner),
-            context.stream,
-            tx,
-          ));
-      } else if (
-        req.op === "protocol05" &&
-        req.request.op === "handleBootstrap05"
-      ) {
+        result = await options.authorizeStream(
+          String(req.request.owner),
+          context.stream,
+          tx,
+        );
+      } else if (req.op === "sync" && req.request.op === "handleBootstrap") {
         const effects = createBootstrapEffects();
         try {
           await options.bootstrap?.({
@@ -292,7 +287,7 @@ export function createHost<T>(
             } finally {
               effects.close();
             }
-            await native.settleExternal05!(
+            await native.settleExternal(
               config,
               JSON.stringify(effects.settlement()),
               createHost(dependencies, tx, session),
@@ -331,7 +326,7 @@ export function createHost<T>(
         // know: an operation added to the contract without an arm here is a
         // compile error, not a silent forward.
         switch (req.op) {
-          case "protocol05":
+          case "sync":
           case "head":
           case "savepoint":
           case "rollback":
@@ -347,7 +342,7 @@ export function createHost<T>(
           }
         }
         const stored =
-          req.op === "protocol05" &&
+          req.op === "sync" &&
           req.request.op === "applyStreamMembers" &&
           session.publicationScope
             ? {
@@ -359,14 +354,14 @@ export function createHost<T>(
               }
             : req;
         if (
-          stored.op === "protocol05" &&
+          stored.op === "sync" &&
           stored.request.op === "saveResults" &&
           !options.database.mutationResultGroups
         ) {
           const group = stored.request;
           for (const [index, outcome] of group.results.entries()) {
             await storage.call({
-              op: "protocol05",
+              op: "sync",
               request: {
                 op: "saveResult",
                 storeId: group.storeId,
@@ -384,7 +379,7 @@ export function createHost<T>(
         // Every position that survives its savepoint wakes the stream's
         // subscribers after commit; `rollback` restores the set it snapshot.
         const publication =
-          req.op === "protocol05" && req.request.op === "applyStreamMembers"
+          req.op === "sync" && req.request.op === "applyStreamMembers"
             ? req.request
             : req.op === "applyStreamMembers"
               ? req
@@ -409,7 +404,7 @@ export function createHost<T>(
       return Promise.resolve("{}");
     }
     const name =
-      req.op === "protocol05" ? `host.${req.request.op}` : `host.${req.op}`;
+      req.op === "sync" ? `host.${req.request.op}` : `host.${req.op}`;
     const attributes =
       req.op === "load"
         ? { model: req.model, rows: req.identities.length, mode: req.mode }

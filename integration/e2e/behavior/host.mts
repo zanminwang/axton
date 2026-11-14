@@ -8,7 +8,7 @@ import { drainedDatabase } from "../lifecycle.mts";
 let sequence = 0;
 
 export async function host({ projected = false } = {}) {
-  const namespace = `behavior05_${++sequence}`;
+  const namespace = `behavior_${++sequence}`;
   const admin = new Pool({ connectionString: process.env.DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${namespace}`);
   await admin.end();
@@ -35,9 +35,7 @@ export async function host({ projected = false } = {}) {
   const backend = createBackend<PgClient>({
     database: lifecycle.database,
     authenticate: devAuth(),
-    protocol5: {
-      authorizeStream: (owner, stream) => stream === `User:${owner}`,
-    },
+    authorizeStream: (owner, stream) => stream === `User:${owner}`,
     onError(error) {
       const message = error instanceof Error ? error.message : String(error);
       if (

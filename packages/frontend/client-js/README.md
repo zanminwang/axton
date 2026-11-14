@@ -19,4 +19,4 @@ and transaction callbacks. See
 [SDK bindings](https://github.com/zanminwang/axton/blob/main/docs/engineering/architecture/frontend-sdk/bindings.md) for the
 contract.
 
-Each Client owns one physical format-5 SQLite file and one Stream. Open with `path`, `schema`, `stream` and an optional connection; generated clients supply schema. Protocol 5 requires fresh storage, refuses unsupported files intact and supplies no old-format upgrade or compatibility bridge.
+Each Client owns one physical format-5 SQLite file and one Stream. Open with `path`, `schema`, `stream` and an optional connection; generated clients supply schema. A Client requires fresh storage, refuses unsupported files intact and supplies no old-format upgrade or compatibility bridge.

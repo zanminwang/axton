@@ -53,20 +53,20 @@ Use your own token format and verify it in `authenticate`; `devAuth` trusts the 
 
 - **Everything reaching the listener is trusted to have come through your proxy.** The runtime does not authenticate the proxy and does not read forwarded-for headers, so bind to loopback (or a private interface) and let the proxy be the only route in.
 - **Identity comes from `authenticate` alone.** The user id it returns is the owner used for every host operation in that request. Admission binds the Store to its authenticated principal and Stream; a mismatched binding answers `403 store.binding` ([Errors](api.md#errors)). Give each signed-in user their own local client database ([Authentication and account changes](../frontend/sync.md#accounts-and-cache-authority)).
-- **Authorization is application code.** Required `protocol5.authorizeStream` decides whether the principal may use the bound Stream (`403 stream.forbidden`). Handlers decide what a user may write and Loaders decide what a user may see ([What your backend owns](api.md#what-your-backend-owns)).
+- **Authorization is application code.** The required `authorizeStream` option decides whether the principal may use the bound Stream (`403 stream.forbidden`). Handlers decide what a user may write and Loaders decide what a user may see ([What your backend owns](api.md#what-your-backend-owns)).
 
 ## Verification scope
 
-The maintained [protocol-5 host runner](https://github.com/zanminwang/axton/blob/main/integration/v05-sdk/run-host.sh) exercises generated SDKs against real loopback HTTP/WebSocket and PostgreSQL. It is not a reverse-proxy or TLS certificate. Historical v0.4.2 proxy evidence is in [runtime.test.mjs](https://github.com/zanminwang/axton/blob/v0.4.2/integration/persistence/server/runtime.test.mjs); it does not establish current protocol-5 proxy behavior.
+The maintained [joined host runner](https://github.com/zanminwang/axton/blob/main/integration/sdk/run-host.sh) exercises generated SDKs against real loopback HTTP/WebSocket and PostgreSQL. It is not a reverse-proxy or TLS certificate. Historical v0.4.2 proxy evidence is in [runtime.test.mjs](https://github.com/zanminwang/axton/blob/v0.4.2/integration/persistence/server/runtime.test.mjs); it does not establish current proxy behavior.
 
 Verify TLS termination, route allowlists, header forwarding and WebSocket timeouts in your deployed proxy. Browser support and multi-process wake delivery remain separate decisions. Process-local wakes do not notify sockets attached to another backend process until their next recovery request.
 
-## Protocol 5 adoption
+## Upgrading from an older release
 
-Coordinate a breaking backend/adapter/generated-SDK release. Protocol 5 uses discriminator 5; malformed or incompatible requests must not reach business execution. Application minimum-build admission is a separate policy.
+Coordinate a breaking backend/adapter/generated-SDK release. Requests carry wire protocol 6, and a peer on an earlier version is refused as `unsupported_protocol`; malformed or incompatible requests must not reach business execution. Application minimum-build admission is a separate policy.
 
-Install the PostgreSQL DDL into a fresh framework namespace before traffic; the installer refuses an existing legacy namespace intact. No production migration is supplied. Keep the old release and server available while unresolved protocol-4 work is drained or exported using the old release under a separately owned recovery process. Protocol 5 requires a fresh local format-5 file and refuses an old file without changing its database, WAL or SHM. It offers no automatic wipe or in-place conversion.
+Install the PostgreSQL DDL into a fresh framework namespace before traffic; the installer refuses an existing legacy namespace intact. No production migration is supplied. Keep the old release and server available while unresolved protocol-4 work is drained or exported using the old release under a separately owned recovery process. Clients require a fresh local format-5 file and refuse an old file without changing its database, WAL or SHM. It offers no automatic wipe or in-place conversion.
 
 Review installed host and matching iOS/Android artifacts from the same tagged commit before rollout. Host-only native tests do not establish mobile installation or device startup. Large complete constraint components can hold the SQLite writer and backend transactions for seconds; validate staging space and actual capacity on target devices.
 
-Publication, backend deployment, legacy-table cleanup and old-server retirement require separate authorization. The historical 0.3 Stream/authority cutover recipe is not a protocol-5 local migration procedure.
+Publication, backend deployment, legacy-table cleanup and old-server retirement require separate authorization. The historical 0.3 Stream/authority cutover recipe is not a local migration procedure for this release.

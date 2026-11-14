@@ -15,6 +15,10 @@ import {
 } from "./backend.ts";
 import type { Todo } from "./generated.ts";
 import type { StreamIntent } from "../../packages/backend/server/bindings/host-contract.mts";
+/** A native entry point these tests never reach. */
+const unreached = async (): Promise<string> => {
+  throw new Error("not reached by this test");
+};
 
 test("generated backend decodes Date values and declares canonical identities through its handles", async () => {
   const first = "2026-01-01T00:00:00.000Z";
@@ -83,10 +87,13 @@ test("generated backend decodes Date values and declares canonical identities th
   };
   const native = {
     validateConfig() {},
-    serverMaterializationId05() {
+    processLive: unreached,
+    processDelivery: unreached,
+    handshake: unreached,
+    serverMaterializationId() {
       return "fixture-materialization";
     },
-    async processRead05(
+    async processRead(
       _config: string,
       _owner: string,
       _request: string,
@@ -96,7 +103,7 @@ test("generated backend decodes Date values and declares canonical identities th
         JSON.parse(
           await callback(
             JSON.stringify({
-              op: "protocol05",
+              op: "sync",
               request: {
                 op: "admit",
                 owner: "alice",
@@ -159,7 +166,7 @@ test("generated backend decodes Date values and declares canonical identities th
       seen.push(loaded);
       return "{}";
     },
-    async settleExternal05() {
+    async settleExternal() {
       return "{}";
     },
     async negotiateLive() {
@@ -176,7 +183,7 @@ test("generated backend decodes Date values and declares canonical identities th
       persistence: () => ({ call: async () => null }),
     },
     authenticate: () => "alice",
-    protocol5: { authorizeStream: () => true },
+    authorizeStream: () => true,
     mutations,
     queries,
     loaders,
@@ -234,10 +241,13 @@ type Tx = { rows: Map<string, Todo> };
 function nativeHost(requests: object[], answers: unknown[]) {
   return {
     validateConfig() {},
-    serverMaterializationId05() {
+    processLive: unreached,
+    processDelivery: unreached,
+    handshake: unreached,
+    serverMaterializationId() {
       return "fixture-materialization";
     },
-    async processRead05(
+    async processRead(
       _config: string,
       _owner: string,
       _request: string,
@@ -247,7 +257,7 @@ function nativeHost(requests: object[], answers: unknown[]) {
         JSON.parse(
           await callback(
             JSON.stringify({
-              op: "protocol05",
+              op: "sync",
               request: {
                 op: "admit",
                 owner: "alice",
@@ -267,7 +277,7 @@ function nativeHost(requests: object[], answers: unknown[]) {
         answers.push(JSON.parse(await callback(JSON.stringify(request))));
       return "{}";
     },
-    async settleExternal05() {
+    async settleExternal() {
       return "{}";
     },
     async negotiateLive() {
@@ -347,7 +357,7 @@ test("Query handlers receive track-only capabilities and no invalidation", async
   const backend = createBackend<Tx>({
     database,
     authenticate: () => "alice",
-    protocol5: { authorizeStream: () => true },
+    authorizeStream: () => true,
     mutations: {
       ...mutationHandlers(),
       find: async ({ ctx, args }) => {
@@ -408,7 +418,7 @@ test("registration is checked per kind at startup: missing, extra and wrong-kind
     createBackend<Tx>({
       database,
       authenticate: () => "alice",
-      protocol5: { authorizeStream: () => true },
+      authorizeStream: () => true,
       mutations: mutationHandlers(),
       queries: {
         ...emptyQueries(),
@@ -522,7 +532,7 @@ test("declaration handles close when the handler or external body settles, even 
   });
   const native = {
     ...nativeHost([call(1), call(2)], answers),
-    async settleExternal05(_config: string, settlement: string) {
+    async settleExternal(_config: string, settlement: string) {
       settled.push(settlement);
       return "[]";
     },
@@ -530,7 +540,7 @@ test("declaration handles close when the handler or external body settles, even 
   const backend = createBackend<Tx>({
     database,
     authenticate: () => "alice",
-    protocol5: { authorizeStream: () => true },
+    authorizeStream: () => true,
     mutations: {
       ...mutationHandlers(),
       find: async ({ ctx }) => {

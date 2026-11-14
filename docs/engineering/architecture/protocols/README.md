@@ -2,7 +2,7 @@
 
 Sync defines Client ↔ Server messages. Client bridge defines Frontend SDK ↔ Rust client messages. Server bridge defines Backend SDK ↔ Rust server messages. Each owns field semantics, codecs and pure validation; none opens a connection, schedules a task or calls application code.
 
-- [Sync](sync.md)
+- [Sync](wire.md)
 - [Client bridge](client-bridge.md)
 - [Server bridge](server-bridge.md)
 

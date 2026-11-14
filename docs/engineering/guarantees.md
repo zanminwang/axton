@@ -1,12 +1,12 @@
 # Guarantees
 
-The requirements for protocol 5. A passing component test does not establish every cross-runtime guarantee; [coverage review](history/pre-protocol5/testing/review.md) records evidence and gaps. The [0.3 contract](history/pre-protocol5/guarantees-0.3.md) and protocol-4 pages are historical references, not supported file migrations or alternate public APIs.
+The requirements for the sync protocol. A passing component test does not establish every cross-runtime guarantee; [coverage review](history/pre-protocol5/testing/review.md) records evidence and gaps. The [0.3 contract](history/pre-protocol5/guarantees-0.3.md) and protocol-4 pages are historical references, not supported file migrations or alternate public APIs.
 
 Each client owns one physical SQLite file, one Store and one Stream. Different files may follow the same Stream. Authentication and publication of every change affecting Loader content or visibility are application responsibilities.
 
-The backend defaults to [sequential commit groups](architecture/server/protocol5.md#sequential-commit-groups)
+The backend defaults to [sequential commit groups](architecture/server/batches.md#sequential-commit-groups)
 of up to eight members when its native addon and database adapter support them;
-otherwise omitted configuration retains size 1. `protocol5.experimentalMutationGroupSize: 1`
+otherwise omitted configuration retains size 1. `experimentalMutationGroupSize: 1`
 explicitly selects per-Mutation commits. Business refusals retain per-Mutation
 savepoints and outcomes. Infrastructure failure rolls back the current uncommitted
 group; earlier committed groups retain their saved outcomes and replay safely.
@@ -110,7 +110,7 @@ Query/Fetch Model snapshots always carry `cursor:null`. Storage checks current p
 
 ## N. Native Loads
 
-Public Load jobs/schema declarations and N1–N8 are retired. The [0.3 contract](history/pre-protocol5/guarantees-0.3.md#n-native-loads) retains internal compatibility requirements. Protocol 5 uses Bootstrap, Query and Model Fetch.
+Public Load jobs/schema declarations and N1–N8 are retired. The [0.3 contract](history/pre-protocol5/guarantees-0.3.md#n-native-loads) retains internal compatibility requirements. AXTON uses Bootstrap, Query and Model Fetch.
 
 ## R. Resilience
 
@@ -123,4 +123,4 @@ Public Load jobs/schema declarations and N1–N8 are retired. The [0.3 contract]
 
 Explicit reset retains binding/file ownership, changes incarnation and atomically retires replica state. It refuses pending work unless explicitly discarded, reports abandoned Calls and fences old effects. Schema reconciliation retains complete old descriptors and never refuses a schema change: a Model whose storage shape changed is reset, losing its rows and evidence but not the queue. A Model version that goes backwards refuses to open.
 
-Batch replay retains current/last-completed outcomes and prunes the older set on valid next-Batch admission. Delivery payloads are not persisted on the server. Each response carries complete selected units; retries read current state from committed B/C. The five-minute response lifetime bounds incomplete local staging and proves no coverage on expiry. Capacity limits fail explicitly. [Protocol 5](architecture/protocols/sync.md), [client](architecture/client/storage/protocol5.md) and [server](architecture/server/protocol5.md) own mechanisms and bounds; [adoption](protocol5-adoption.md) owns release gates and limits.
+Batch replay retains current/last-completed outcomes and prunes the older set on valid next-Batch admission. Delivery payloads are not persisted on the server. Each response carries complete selected units; retries read current state from committed B/C. The five-minute response lifetime bounds incomplete local staging and proves no coverage on expiry. Capacity limits fail explicitly. [The sync protocol](architecture/protocols/wire.md), [client](architecture/client/storage/store-file.md) and [server](architecture/server/batches.md) own mechanisms and bounds; [releasing](releasing.md#release-gates) owns release gates and limits.

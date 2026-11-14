@@ -1,5 +1,5 @@
 import 'store_fixture.dart';
-import 'protocol5_transport.dart';
+import 'fake_transport.dart';
 // Model Fetch through the real native runtime (#153): Rust validates, joins or
 // starts the request, stores the reply and completes every caller; this host
 // only posts the `fetch` HTTP effect to `/sync/fetch` and decodes each
@@ -134,9 +134,9 @@ void main() {
       http.response.write(
         jsonEncode(
           failure == null
-              ? read05(request, result, records)
+              ? readResponse(request, result, records)
               : {
-                  ...context05(request),
+                  ...contextOf(request),
                   'requestId': request['requestId'],
                   'outcome': {
                     'kind': 'failed',

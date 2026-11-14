@@ -1,0 +1,40 @@
+-- A Store file written by axton-client at main bd46f42 (sqlite3 .dump).
+-- Schema upgrade_schema(false, false) of the test helpers, Stream User:u. Handshake at
+-- head 25, a Bootstrap delivery (0,25] with Marked m at 10, a Sync delivery
+-- (25,40] with Note n at 30, then one queued Edit of Note n. Never regenerate:
+-- a client test checks that this file still opens unchanged.
+PRAGMA foreign_keys=OFF;
+BEGIN TRANSACTION;
+CREATE TABLE axton_store(singleton INTEGER PRIMARY KEY CHECK(singleton=1), format INTEGER NOT NULL CHECK(format=5), id TEXT NOT NULL, stream TEXT NOT NULL, materialization TEXT NOT NULL, schema_descriptor TEXT NOT NULL, next_mutation_id INTEGER NOT NULL DEFAULT 1, next_local_sequence INTEGER NOT NULL DEFAULT 1, last_acknowledged_batch_id INTEGER NOT NULL DEFAULT 0, start_cursor INTEGER, bootstrap_cursor INTEGER, cursor INTEGER, generation INTEGER NOT NULL DEFAULT 1);
+INSERT INTO axton_store VALUES(1,5,'a9cb71da-103e-4504-9ac6-f12d24553729','User:u','8a54842495b7185c43e9003904a38e683d44432bc78857f705cd378249b36c76','81b5fd706400a9e89f926912a086c3f40f6af55e8a84d6fbc226fbb433f69456',2,2,0,25,25,40,5);
+CREATE TABLE axton_descriptor(context TEXT PRIMARY KEY, materialization TEXT NOT NULL, descriptor TEXT NOT NULL, projection_generation TEXT NOT NULL);
+INSERT INTO axton_descriptor VALUES('81b5fd706400a9e89f926912a086c3f40f6af55e8a84d6fbc226fbb433f69456','8a54842495b7185c43e9003904a38e683d44432bc78857f705cd378249b36c76','{"actions":[{"input":null,"inputs":[{"allowedPatchFields":null,"cardinality":"single","fields":["text"],"kind":"model","model":"Note","name":"note","operation":"update"}],"kind":"mutation","name":"Edit","outputEnums":[],"outputs":[],"version":1},{"input":null,"inputs":[],"kind":"query","name":"Find","outputEnums":[],"outputs":[],"version":1}],"enums":[],"models":[{"bootstrap":true,"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Marked","version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Note","version":1}]}','1');
+CREATE TABLE axton_mutation_queue(id INTEGER PRIMARY KEY, name TEXT NOT NULL, descriptor_version INTEGER NOT NULL, descriptor TEXT NOT NULL REFERENCES axton_descriptor(context), batch_id INTEGER, batch_digest TEXT, sync_cursor INTEGER, outcome_materialization TEXT, result TEXT, targets TEXT, rejection_code TEXT, rejection_message TEXT, rejection_acknowledged INTEGER NOT NULL DEFAULT 0, reconciled INTEGER NOT NULL DEFAULT 0, diverged INTEGER NOT NULL DEFAULT 0);
+INSERT INTO axton_mutation_queue VALUES(1,'Edit',1,'81b5fd706400a9e89f926912a086c3f40f6af55e8a84d6fbc226fbb433f69456',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0,0,0);
+CREATE TABLE axton_mutation_queue_operation(mutation_id INTEGER NOT NULL REFERENCES axton_mutation_queue(id) ON DELETE CASCADE, step INTEGER NOT NULL, local_sequence INTEGER NOT NULL UNIQUE, input_path TEXT, kind TEXT NOT NULL, model TEXT, identity TEXT, operation TEXT NOT NULL, value TEXT, owner_history TEXT NOT NULL, PRIMARY KEY(mutation_id,step));
+INSERT INTO axton_mutation_queue_operation VALUES(1,0,1,'note','wire','Note','{"id":"n"}','update','{"text":"queued"}','{"8a54842495b7185c43e9003904a38e683d44432bc78857f705cd378249b36c76":30}');
+CREATE TABLE axton_mutation_dependency(ordinal INTEGER NOT NULL REFERENCES axton_mutation_queue(id) ON DELETE CASCADE, depends_on INTEGER NOT NULL REFERENCES axton_mutation_queue(id), kind TEXT NOT NULL, PRIMARY KEY(ordinal,depends_on), CHECK(depends_on<ordinal));
+CREATE TABLE axton_mutation_prerequisite(ordinal INTEGER NOT NULL REFERENCES axton_mutation_queue(id) ON DELETE CASCADE,key TEXT NOT NULL,error TEXT,PRIMARY KEY(ordinal,key));
+CREATE TABLE axton_local_write(sequence INTEGER PRIMARY KEY, ordinal INTEGER NOT NULL,position INTEGER,disposition TEXT NOT NULL,model TEXT NOT NULL,identity TEXT NOT NULL,op TEXT NOT NULL,"values" TEXT);
+CREATE TABLE axton_authority(model TEXT NOT NULL,identity TEXT NOT NULL,evidence TEXT NOT NULL,base TEXT NOT NULL DEFAULT 'null',PRIMARY KEY(model,identity));
+INSERT INTO axton_authority VALUES('Marked','{"id":"m"}','{"current":{"cursor":10,"deleted":false,"materialization":"8a54842495b7185c43e9003904a38e683d44432bc78857f705cd378249b36c76"},"history":{"8a54842495b7185c43e9003904a38e683d44432bc78857f705cd378249b36c76":10},"membership":{"cursor":10,"live":true}}','{"id":"m","text":"marked"}');
+INSERT INTO axton_authority VALUES('Note','{"id":"n"}','{"current":{"cursor":30,"deleted":false,"materialization":"8a54842495b7185c43e9003904a38e683d44432bc78857f705cd378249b36c76"},"history":{"8a54842495b7185c43e9003904a38e683d44432bc78857f705cd378249b36c76":30},"membership":{"cursor":30,"live":true}}','{"id":"n","text":"note"}');
+CREATE TABLE IF NOT EXISTS "Marked" ("id" TEXT NOT NULL, "text" TEXT NOT NULL, PRIMARY KEY ("id"));
+INSERT INTO Marked VALUES('m','marked');
+CREATE TABLE IF NOT EXISTS "axton_before_Marked" ("id" TEXT NOT NULL, "text" TEXT NOT NULL, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "Note" ("id" TEXT NOT NULL, "text" TEXT NOT NULL, PRIMARY KEY ("id"));
+INSERT INTO Note VALUES('n','queued');
+CREATE TABLE IF NOT EXISTS "axton_before_Note" ("id" TEXT NOT NULL, "text" TEXT NOT NULL, PRIMARY KEY ("id"));
+INSERT INTO axton_before_Note VALUES('n','note');
+CREATE TABLE axton_delivery_progress(plan_id TEXT PRIMARY KEY,digest TEXT NOT NULL,header TEXT NOT NULL,next_unit INTEGER NOT NULL,covered INTEGER);
+CREATE TABLE axton_delivery_key(plan_id TEXT NOT NULL,identity TEXT NOT NULL,PRIMARY KEY(plan_id,identity));
+CREATE TRIGGER axton_queue_frozen_update BEFORE UPDATE OF name,descriptor_version,descriptor,batch_id ON axton_mutation_queue WHEN OLD.batch_id IS NOT NULL AND (NEW.name<>OLD.name OR NEW.descriptor_version<>OLD.descriptor_version OR NEW.descriptor<>OLD.descriptor OR NEW.batch_id IS NOT OLD.batch_id) BEGIN SELECT RAISE(ABORT,'assigned mutation is immutable'); END;
+CREATE TRIGGER axton_operation_frozen_update BEFORE UPDATE ON axton_mutation_queue_operation WHEN OLD.input_path IS NOT NULL AND EXISTS(SELECT 1 FROM axton_mutation_queue WHERE id=OLD.mutation_id AND batch_id IS NOT NULL) BEGIN SELECT RAISE(ABORT,'assigned input is immutable'); END;
+CREATE TRIGGER axton_operation_frozen_insert BEFORE INSERT ON axton_mutation_queue_operation WHEN NEW.input_path IS NOT NULL AND EXISTS(SELECT 1 FROM axton_mutation_queue WHERE id=NEW.mutation_id AND batch_id IS NOT NULL) BEGIN SELECT RAISE(ABORT,'assigned input is immutable'); END;
+CREATE TRIGGER axton_queue_frozen_delete BEFORE DELETE ON axton_mutation_queue WHEN OLD.batch_id>(SELECT last_acknowledged_batch_id FROM axton_store) BEGIN SELECT RAISE(ABORT,'possibly sent Mutation cannot be cancelled'); END;
+CREATE TRIGGER axton_operation_frozen_delete BEFORE DELETE ON axton_mutation_queue_operation WHEN OLD.input_path IS NOT NULL AND EXISTS(SELECT 1 FROM axton_mutation_queue WHERE id=OLD.mutation_id AND batch_id IS NOT NULL AND reconciled=0) BEGIN SELECT RAISE(ABORT,'assigned input is immutable'); END;
+CREATE TRIGGER axton_queue_assignment BEFORE UPDATE OF batch_id ON axton_mutation_queue WHEN OLD.batch_id IS NULL AND NEW.batch_id IS NOT NULL AND (NEW.batch_id<>(SELECT last_acknowledged_batch_id+1 FROM axton_store) OR EXISTS(SELECT 1 FROM axton_mutation_queue WHERE batch_id>(SELECT last_acknowledged_batch_id FROM axton_store) AND (batch_id<>NEW.batch_id OR batch_digest IS NOT NULL))) BEGIN SELECT RAISE(ABORT,'Batch membership is fixed'); END;
+CREATE TRIGGER axton_queue_envelope BEFORE UPDATE OF batch_digest ON axton_mutation_queue WHEN OLD.batch_digest IS NOT NULL AND NEW.batch_digest IS NOT OLD.batch_digest BEGIN SELECT RAISE(ABORT,'Batch envelope is immutable'); END;
+CREATE INDEX axton_local_write_record ON axton_local_write(model,identity,sequence);
+CREATE INDEX axton_queue_operation_record ON axton_mutation_queue_operation(model,identity,mutation_id,step);
+COMMIT;

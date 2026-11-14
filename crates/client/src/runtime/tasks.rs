@@ -175,7 +175,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             self.prerequisite_turn(now)
         }
     }
-    pub(super) fn release_initial_reads05(&mut self, initialized: bool) {
+    pub(super) fn release_initial_reads(&mut self, initialized: bool) {
         if initialized {
             while let Some(task) = self.tasks.initial_reads.pop_back() {
                 self.tasks.queue.push_front(task)
@@ -215,7 +215,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             let initial_pending = storing
                 && self
                     .client
-                    .store_status05()
+                    .store_status()
                     .is_ok_and(|s| s.start_cursor.is_none());
             if initial_pending {
                 self.tasks.initial_reads.push_back(Queued {
@@ -316,7 +316,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     ) -> std::result::Result<Value, String> {
         let report = self
             .client
-            .reset_store05(discard_pending)
+            .reset_store(discard_pending)
             .map_err(|e| e.to_string())?;
         let value = serde_json::to_value(&report).map_err(|e| e.to_string())?;
         let abandoned_calls = report.abandoned_calls;
@@ -324,9 +324,9 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         self.rebuilt_prerequisites();
         self.observers.stale = true;
         self.rebuilt_observers();
-        self.release_initial_reads05(false);
-        self.sync05_live = false;
-        self.sync05_catching_up = false;
+        self.release_initial_reads(false);
+        self.sync_live = false;
+        self.sync_catching_up = false;
         for abandoned in &abandoned_calls {
             self.events.push(Event::CallCompleted { call_id:abandoned.call_id.clone(), outcome:json!({"status":"failed","code":"abandoned","execution":if abandoned.frozen {"unknown"}else{"rejected"}}) });
         }

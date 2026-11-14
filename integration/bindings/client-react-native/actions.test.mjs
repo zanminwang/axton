@@ -14,7 +14,7 @@ import {
   openStore,
   offlineNetwork,
   emptyPull as encodeEmptyPull,
-  read05,
+  readResponse,
   deliveringNetwork,
   deliver,
 } from "../client-js/store-fixture.mjs";
@@ -29,7 +29,7 @@ const native = createRequire(import.meta.url)(
   "../../../bindings/node/axton-node.node",
 );
 const emptyPull = (body) => JSON.parse(encodeEmptyPull(body));
-const readReply = read05;
+const readReply = readResponse;
 
 test("throwing mobile diagnostic listener does not stop later native Query completions", async () => {
   const directory = await mkdtemp(join(tmpdir(), "axton-rn-reports-"));

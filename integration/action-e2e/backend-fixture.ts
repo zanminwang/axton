@@ -362,9 +362,7 @@ export async function createFixture() {
   const backend = createBackend<PgClient>({
     database: lifecycle.database,
     authenticate: devAuth(),
-    protocol5: {
-      authorizeStream: (viewer, stream) => stream === `User:${viewer}`,
-    },
+    authorizeStream: (viewer, stream) => stream === `User:${viewer}`,
     mutations,
     queries,
     loaders,

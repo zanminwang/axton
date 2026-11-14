@@ -2,7 +2,25 @@
 
 Every AXTON artifact of a release carries one version V and is built from one tagged commit: the npm packages `@axtonjs/{native,cli,server,client,postgres}` and their platform packages, the pub.dev package `axton`, and the Dart native libraries its build hook downloads from the GitHub Release. [Release Please](../../.github/workflows/release-please.yml) chooses V and tags it; [Release publish](../../.github/workflows/release-publish.yml) builds, verifies and publishes. The [automated release design](../superpowers/specs/2026-09-29-automated-release-design.md) records why.
 
-For the protocol-5 breaking candidate, complete the [adoption and artifact gates](protocol5-adoption.md) before release authorization. Wire discriminator 5 does not choose the package version.
+The wire protocol number (`PROTOCOL`) does not choose the package version.
+
+## Release gates
+
+Pass these gates on the candidate commit before a release is authorized. Record the commands, exit status and logs against that commit.
+
+```sh
+bash scripts/test.sh
+node scripts/release/version.mjs check
+node --test integration/release/*.test.mjs
+bash integration/release/verify-installed.sh
+```
+
+- **Joined host gate.** `scripts/test.sh` runs `integration/sdk/run-host.sh`: generated SDKs against a real HTTP/WebSocket backend, PostgreSQL and SQLite. Keep it in the script.
+- **Capacity run.** Run `integration/sdk/run-capacity.sh` against real PostgreSQL and SQLite apply. Keep the fragment and header costs, staging, transaction duration and maximum atomic apply time. Report missing tools, network or disk prerequisites apart from failed product assertions. Large required components are bounded but can hold the SQLite writer and backend transactions for seconds. The measurements are deployment costs, not a latency promise or a process-memory measurement. Check the temporary staging space on the target device.
+- **Installed packed bytes.** Installed verification tests the candidate's packed bytes. Registry mode tests a published version, not an unpublished candidate. A host-only pack proves only its host addon, CLI and Dart library; staged Dart verification needs the matching archive and libraries.
+- **Mobile artifact smoke tests.** The release inventory includes darwin-arm64 and linux-x64-gnu hosts, iOS device and simulators, and Android arm64, v7a and x86_64. Native and device smoke tests of the tagged commit's mobile artifacts are separate evidence; host gates do not prove them.
+
+Publishing, backend deployment, old-server retirement and legacy-table cleanup are separate authorized actions. Passing these gates authorizes none of them.
 
 ## Normal flow
 

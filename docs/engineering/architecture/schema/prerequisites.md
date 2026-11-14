@@ -49,7 +49,7 @@ Code: compiler checks in [compiler/validate.rs](../../../../crates/compiler/src/
 
 ## 10. Quality Requirements
 
-Current [runtime prerequisite tests](../../../../crates/sqlite/tests/runtime_prerequisites.rs), [unsent tests](../../../../crates/sqlite/tests/protocol05_unsent.rs) and [shared SDK prerequisite harness](../../../../integration/bindings/client-js/prerequisite-harness.mjs) cover dispatch gating, backoff, shared failure inheritance, retry, close and late-effect cancellation. The [shared unsent harness](../../../../integration/bindings/client-js/unsent-harness.mjs) covers drop/replacement order and rollback. Historical v0.4.2 execution does not certify this candidate; consult the joined gate for execution evidence.
+Current [runtime prerequisite tests](../../../../crates/sqlite/tests/runtime_prerequisites.rs), [unsent tests](../../../../crates/sqlite/tests/unsent.rs) and [shared SDK prerequisite harness](../../../../integration/bindings/client-js/prerequisite-harness.mjs) cover dispatch gating, backoff, shared failure inheritance, retry, close and late-effect cancellation. The [shared unsent harness](../../../../integration/bindings/client-js/unsent-harness.mjs) covers drop/replacement order and rollback. Historical v0.4.2 execution does not certify this candidate; consult the joined gate for execution evidence.
 
 ## 11. Risks and Technical Debt
 

@@ -39,4 +39,4 @@ Android hosts must call `Client.configureApplicationData(stableApplicationSuppor
 
 Dart named Mutations use `.name(typedInput)` on client and transaction. To build input from local data, read it in `client.transaction` and call `tx.mutations.name(input)` there. The first await commits local acceptance; `Call.wait()` waits for backend outcome and local settlement. Query/Fetch `store` is a boolean, default true. `await client.bootstrap()` waits for complete finite authority units at the captured head.
 
-Protocol 5 requires a fresh format-5 file. Unsupported files are refused intact; no old-format migration, automatic wipe or compatibility bridge is supplied. Native replay uses canonical tables directly.
+A Client requires a fresh format-5 file. Unsupported files are refused intact; no old-format migration, automatic wipe or compatibility bridge is supplied. Native replay uses canonical tables directly.

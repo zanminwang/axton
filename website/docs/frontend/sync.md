@@ -18,7 +18,7 @@ A refusal removes that call's optimism while retaining later pending Mutations. 
 
 Pause the connection to keep local work available while delaying network delivery:
 
-```ts title="v05-sdk"
+```ts title="sdk"
 await client.connection!.pause();
 const call = await client.mutations.publish({
   entry: { id: 'entry-1', text: 'Draft' },

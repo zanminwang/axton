@@ -1,12 +1,12 @@
--- Fresh/current protocol-5 namespaces only. Refuse historical layouts before writes.
+-- Fresh/current framework namespaces only. Refuse historical layouts before writes.
 DO $$ BEGIN
  IF EXISTS (SELECT 1 FROM pg_class WHERE relnamespace=current_schema()::regnamespace AND relname=ANY(ARRAY['axton_client','axton_call','axton_stream_member','axton_stream_log','axton_publication_group','axton_bootstrap_manifest','axton_channel','axton_scope','axton_bootstrap_identity','axton_bootstrap_range','axton_channel_member','axton_channel_log','axton_channel_tag','axton_scope_member','axton_scope_log','axton_scope_tag','axton_membership','axton_invalidation']) AND relkind='r') OR EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND ((table_name='axton_record' AND column_name='stamp') OR (table_name='axton_publication_fence' AND column_name='held'))) THEN
-  RAISE EXCEPTION 'installed legacy framework layout: protocol 5 requires a fresh namespace; existing data is unchanged';
+  RAISE EXCEPTION 'installed legacy framework layout: AXTON requires a fresh namespace; existing data is unchanged';
  END IF;
 END $$;
 -- AXTON's framework tables for a new database. Apply the whole file at once
 -- (psql, or one simple-protocol query): the trigger functions are
--- dollar-quoted. Re-applying it also retires obsolete protocol-5 coordination
+-- dollar-quoted. Re-applying it also retires obsolete coordination
 -- and payload tables; subsequent applications are idempotent. A database installed from
 -- an earlier layout must use a separately adopted fresh namespace.
 CREATE TABLE IF NOT EXISTS axton_stream (

@@ -245,7 +245,7 @@ void main() {
     'typed creation defaults are resolved once for named optimism',
     () async {
       final directory = await Directory.systemTemp.createTemp(
-        'axton-dart-defaults05-',
+        'axton-dart-defaults-',
       );
       var client = await generated.GeneratedClient.open(
         path: '${directory.path}/db',
@@ -291,7 +291,7 @@ void main() {
     'native unsent drop and explicit reset settle owned handles durably',
     () async {
       final directory = await Directory.systemTemp.createTemp(
-        'axton-dart-terminal05-',
+        'axton-dart-terminal-',
       );
       final client = await Client.open(
         path: '${directory.path}/db',

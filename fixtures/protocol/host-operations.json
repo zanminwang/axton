@@ -1,10 +1,10 @@
 {
-  "comment": "One canonical request and each response variant for every current protocol-5 host operation. Shared by Rust host-contract round trips and the TypeScript host replay. The examples describe Task {id, title} and the named Send Mutation; identity guards return presence, not a per-record version.",
+  "comment": "One canonical request and each response variant for every current host operation. Shared by Rust host-contract round trips and the TypeScript host replay. The examples describe Task {id, title} and the named Send Mutation; identity guards return presence, not a per-record version.",
   "operations": [
     {
-      "op": "protocol05",
+      "op": "sync",
       "request": {
-        "op": "protocol05",
+        "op": "sync",
         "request": {
           "op": "readResult",
           "storeId": "store1",

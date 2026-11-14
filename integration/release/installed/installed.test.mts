@@ -111,9 +111,7 @@ test("installed client and backend: local writes survive reopening, then sync", 
     const backend = createBackend<PgClient>({
       database: pg(pool),
       authenticate: devAuth(),
-      protocol5: {
-        authorizeStream: (viewer, stream) => stream === `User:${viewer}`,
-      },
+      authorizeStream: (viewer, stream) => stream === `User:${viewer}`,
       queries: {},
       mutations,
       loaders,

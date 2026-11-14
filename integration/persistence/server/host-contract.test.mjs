@@ -71,7 +71,7 @@ async function replay(
     calls = [];
   const backend = createBackend({
     config,
-    protocol5: { authorizeStream: () => true },
+    authorizeStream: () => true,
     authenticate: () => "alice",
     onError,
     database: {
@@ -89,7 +89,7 @@ async function replay(
       processBatchMember: async (_c, _p, _r, _o, callback) => {
         await callback(
           JSON.stringify({
-            op: "protocol05",
+            op: "sync",
             request: {
               op: "admit",
               owner: "alice",

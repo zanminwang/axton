@@ -1,4 +1,4 @@
-import { openStore, emptyPull, emptyHandshake, read05 } from "./store-fixture.mjs";
+import { openStore, emptyPull, emptyHandshake, readResponse } from "./store-fixture.mjs";
 // Model Fetch through the real native runtime (#153): Rust validates, joins
 // or starts the request, stores the reply and completes every caller; this
 // host only executes the `fetch` HTTP effect and decodes each caller's own
@@ -116,7 +116,7 @@ async function harness(body) {
               outcome: { kind: "failed", code: answer.failure, message: null },
               records: [],
             }
-          : read05(request, answer.result, records),
+          : readResponse(request, answer.result, records),
       );
     },
   }));
@@ -320,7 +320,7 @@ test("the default connection posts Fetch to /sync/fetch with its credentials", a
     }
     response.end(
       JSON.stringify(
-        read05(body, { id: "a", ...state("http") }, [
+        readResponse(body, { id: "a", ...state("http") }, [
           { key: body.invocation.key, cursor: null, state: state("http") },
         ]),
       ),

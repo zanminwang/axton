@@ -8,7 +8,7 @@ import {
   openStore,
   offlineNetwork,
   emptyHandshake,
-  delivery05,
+  deliveryPage,
 } from "./store-fixture.mjs";
 const native = createRequire(import.meta.url)(
   "../../../bindings/node/axton-node.node",
@@ -57,7 +57,7 @@ export function bootstrapSuite(test, Transaction) {
         }
         assert.equal(route, "pull");
         if (request.bootstrap && held) await gate;
-        return JSON.stringify(delivery05(request));
+        return JSON.stringify(deliveryPage(request));
       },
     }));
     let client = await openStore(Client, {

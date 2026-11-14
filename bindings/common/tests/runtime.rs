@@ -49,7 +49,7 @@ impl Carrier {
     fn open(path: &std::path::Path) -> (Self, Value) {
         let (sink, wakes) = wake_sink();
         let id = actor::open(
-            json!({"type":"open","requestId":"open","path":path,"schema":schema(),"protocol":5,"stream":"User:a"}),
+            json!({"type":"open","requestId":"open","path":path,"schema":schema(),"stream":"User:a"}),
             sink,
         )
         .unwrap();
@@ -108,39 +108,6 @@ fn read(id: &str) -> Value {
 }
 
 #[test]
-fn native_open_rejects_retired_store_hook_registration() {
-    let dir = tempfile::tempdir().unwrap();
-    for hooks in [
-        json!(["Missing"]),
-        json!(["Entry", "Entry"]),
-        json!([3]),
-        json!("Entry"),
-    ] {
-        let (sink, wakes) = wake_sink();
-        let id = actor::open(json!({"type":"open","requestId":"open","path":dir.path().join("db"),"schema":schema(),"protocol":5,"stream":"User:a","storeHooks":hooks}), sink).unwrap();
-        let mut carrier = Carrier {
-            id,
-            wakes,
-            seen: vec![],
-        };
-        let result = carrier.completed("open");
-        assert_eq!(result["ok"], false, "{result:?}");
-        carrier.until(|e| e["type"] == "runtimeClosed");
-        actor::detach(id);
-    }
-    let (sink, wakes) = wake_sink();
-    let id = actor::open(json!({"type":"open","requestId":"open","path":dir.path().join("valid"),"schema":schema(),"protocol":5,"stream":"User:a","storeHooks":["Entry"]}), sink).unwrap();
-    let mut carrier = Carrier {
-        id,
-        wakes,
-        seen: vec![],
-    };
-    assert_eq!(carrier.completed("open")["ok"], false);
-    carrier.until(|e| e["type"] == "runtimeClosed");
-    actor::detach(id);
-}
-
-#[test]
 fn open_answers_on_the_wake_and_a_failed_open_closes_the_runtime() {
     let dir = tempfile::tempdir().unwrap();
     let (mut carrier, opened) = Carrier::open(&dir.path().join("db"));
@@ -148,7 +115,7 @@ fn open_answers_on_the_wake_and_a_failed_open_closes_the_runtime() {
     assert!(!opened["value"]["clientId"].as_str().unwrap().is_empty());
     assert_eq!(
         opened["value"]["context"]["protocol"],
-        axton_client::v05::PROTOCOL
+        axton_client::wire::PROTOCOL
     );
     carrier.task("1", create("e"));
     assert_eq!(carrier.completed("1")["ok"], true);
@@ -174,7 +141,7 @@ fn open_answers_on_the_wake_and_a_failed_open_closes_the_runtime() {
     let (sink, wakes) = wake_sink();
     let missing = dir.path().join("missing").join("sub").join("db");
     let id = actor::open(
-        json!({"type":"open","requestId":"7","path":missing,"schema":schema(),"protocol":5,"stream":"User:a"}),
+        json!({"type":"open","requestId":"7","path":missing,"schema":schema(),"stream":"User:a"}),
         sink,
     )
     .unwrap();
@@ -325,7 +292,7 @@ fn detach_stops_wakes_before_it_returns_and_closes_a_live_runtime() {
         })
     };
     let id = actor::open(
-        json!({"type":"open","requestId":"open","path":dir.path().join("live"),"schema":schema(),"protocol":5,"stream":"User:a"}),
+        json!({"type":"open","requestId":"open","path":dir.path().join("live"),"schema":schema(),"stream":"User:a"}),
         sink,
     )
     .unwrap();
@@ -453,7 +420,7 @@ fn a_client_waiting_on_the_network_holds_no_writer_and_no_other_client_waits() {
         json!([{"name":"Ping","kind":"query","version":1,"inputs":[],"outputs":[]}, put_entry()]);
     let (sink, wakes) = wake_sink();
     let id = actor::open(
-        json!({"type":"open","requestId":"open","path":dir.path().join("a"),"schema":with_action,"protocol":5,"stream":"User:a"}),
+        json!({"type":"open","requestId":"open","path":dir.path().join("a"),"schema":with_action,"stream":"User:a"}),
         sink,
     )
     .unwrap();
@@ -497,7 +464,7 @@ fn a_client_waiting_on_the_network_holds_no_writer_and_no_other_client_waits() {
     );
 
     // The caller snapshot completes independently of caching.
-    let response = json!({"protocol":axton_client::v05::PROTOCOL,"storeId":body["storeId"],"stream":body["stream"],"materialization":body["materialization"],"requestId":body["requestId"],"outcome":{"kind":"succeeded","result":null},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"server","note":null}}]});
+    let response = json!({"protocol":axton_client::wire::PROTOCOL,"storeId":body["storeId"],"stream":body["stream"],"materialization":body["materialization"],"requestId":body["requestId"],"outcome":{"kind":"succeeded","result":null},"records":[{"key":{"model":"Entry","identity":{"id":"e"}},"cursor":null,"state":{"text":"server","note":null}}]});
     a.submit(json!({"type":"effectResult","effectId":request["effectId"],"outcome":{"ok":true,"value":{"status":200,"body":response.to_string()}}}));
     let done = a.completed("call");
     assert_eq!(
@@ -672,7 +639,7 @@ fn native_load_commands_are_absent_from_current_protocol() {
     let dir = tempfile::tempdir().unwrap();
     let (sink, wakes) = wake_sink();
     let id = actor::open(
-        json!({"type":"open","requestId":"open","path":dir.path().join("db"),"schema":schema,"protocol":5,"stream":"User:a"}),
+        json!({"type":"open","requestId":"open","path":dir.path().join("db"),"schema":schema,"stream":"User:a"}),
         sink,
     )
     .unwrap();

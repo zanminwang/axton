@@ -181,9 +181,7 @@ async function run(store, body, invalid, kind, requestedVersion = 1) {
       database,
       config: { schema, models, loaders: ["Todo"] },
       authenticate: () => "alice",
-      protocol5: {
-        authorizeStream: (owner, stream) => stream === `User:${owner}`,
-      },
+      authorizeStream: (owner, stream) => stream === `User:${owner}`,
       mutations: {},
       queries:
         kind === "Query"

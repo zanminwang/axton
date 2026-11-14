@@ -119,12 +119,12 @@ import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setImmediate as tick } from "node:timers/promises";
-import { openStore, emptyPull, emptyMutation, emptyHandshake, delivery05 } from "./store-fixture.mjs";
+import { openStore, emptyPull, emptyMutation, emptyHandshake, deliveryPage } from "./store-fixture.mjs";
 async function openClient() {
-  const dir = await mkdtemp(join(tmpdir(), "axton-live05-"));
+  const dir = await mkdtemp(join(tmpdir(), "axton-live-"));
   const schema = JSON.parse(
     await readFile(
-      new URL("../../v05-sdk/schema.json", import.meta.url),
+      new URL("../../sdk/schema.json", import.meta.url),
       "utf8",
     ),
   );
@@ -154,7 +154,7 @@ async function until(predicate) {
   }
   throw Error("condition timed out");
 }
-const page = (context, from, to, text, head = to) => delivery05(
+const page = (context, from, to, text, head = to) => deliveryPage(
   {...context, bootstrap:false, after:from, through:to},
   text === undefined ? [] : [{kind:"record",cursor:to,key:{model:"Entry",identity:{id:"live"}},state:text === null ? null : {text}}],head);
 function receiptFor(body) {
@@ -185,7 +185,7 @@ async function syncFixture({ onPull, onAction, upgrade } = {}) {
         const context = {protocol:body.protocol,storeId:body.storeId,stream:body.stream,materialization:body.materialization};
         contexts.set(body.storeId,context);
         for (const handshake of handshakes) if(handshake.storeId===body.storeId) handshake.context=context;
-        res.end(JSON.stringify(delivery05(body,[],state.head)));
+        res.end(JSON.stringify(deliveryPage(body,[],state.head)));
       }
       else if (body.mutations) {
         if (onAction) await onAction(body, res);
@@ -308,7 +308,7 @@ test("duplicate units and coalesced overlapping offers preserve authority; a rea
         r.end(
           JSON.stringify(
             n.state.head === 2
-              ? delivery05(b, [
+              ? deliveryPage(b, [
                   {kind:"record",cursor:2,key:{model:"Entry",identity:{id:"next"}},state:{text:"second"}},
                 ])
               : page(b, b.after, n.state.head, "fourth"),
@@ -328,7 +328,7 @@ test("duplicate units and coalesced overlapping offers preserve authority; a rea
     await until(()=>snapshots.length===1);
     send(page(ctx, 0, 1, "first"));
     n.state.head = 2;
-    send(delivery05({...ctx,bootstrap:false,after:0,through:2},[
+    send(deliveryPage({...ctx,bootstrap:false,after:0,through:2},[
       {kind:"record",cursor:1,key:{model:"Entry",identity:{id:"live"}},state:{text:"stale replay"}},
       {kind:"record",cursor:2,key:{model:"Entry",identity:{id:"next"}},state:{text:"second"}},
     ]));
@@ -855,7 +855,7 @@ test("later true Stream absence prevents an older accepted private target from r
     await connected(f, n);
     const call = await publish(f.client);
     await timeout(entered.promise);
-    const nullPage = delivery05({...n.handshakes[0].context,bootstrap:false,after:0,through:1},[{kind:"record",cursor:1,key:{model:"Entry",identity:{id:"local"}},state:null}]);
+    const nullPage = deliveryPage({...n.handshakes[0].context,bootstrap:false,after:0,through:1},[{kind:"record",cursor:1,key:{model:"Entry",identity:{id:"local"}},state:null}]);
     n.sockets[0].send(JSON.stringify(nullPage));
     await until(
       async () => (await f.client.syncState()).cursors["User:viewer"] === 1,

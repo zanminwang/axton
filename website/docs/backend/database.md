@@ -23,7 +23,7 @@ const database = prisma(db, { retries: 3, timeout: 20_000 });
 
 ## Apply the migration
 
-Apply [migration.sql](https://github.com/zanminwang/axton/blob/main/packages/backend/postgres/migration.sql) to a fresh database using your deployment migration process before sync traffic. Apply the whole file transactionally, for example `psql -v ON_ERROR_STOP=1 -f migration.sql`. It installs the five canonical tables listed below; delivery payloads are not persisted. Business tables remain application-owned. Fresh DDL refuses installed older layouts rather than creating parallel empty truth. Installed legacy layouts are refused intact: protocol 5 requires a separately adopted fresh framework namespace. There is no production migration in this candidate.
+Apply [migration.sql](https://github.com/zanminwang/axton/blob/main/packages/backend/postgres/migration.sql) to a fresh database using your deployment migration process before sync traffic. Apply the whole file transactionally, for example `psql -v ON_ERROR_STOP=1 -f migration.sql`. It installs the five canonical tables listed below; delivery payloads are not persisted. Business tables remain application-owned. Fresh DDL refuses installed older layouts rather than creating parallel empty truth. Installed legacy layouts are refused intact: use a separately adopted fresh framework namespace. There is no production migration.
 
 ## Database readiness
 
@@ -71,10 +71,10 @@ For a PostgreSQL tool without a shipped shim, write these two methods and pass `
 | `persistence(driver)` | The `database` option built on any driver |
 | `PostgresDriver<Tx>`, `DriverOptions` | The interface and the options every shim accepts |
 
-## Protocol 5 persistence
+## Framework persistence
 
 Fresh DDL installs exactly five tables: `axton_stream`, `axton_record`, `axton_store`, `axton_mutation_result`, and `axton_stream_record`. Cursor reservation uses ephemeral SQL transaction state, not another durable table. Store rows bind authenticated principal, Stream and immutable Batch progress. Each member result commits with its business transaction. StreamRecord holds explicit membership and current positions; returning a Model does not create one.
 
 Serializable snapshots and record/canonical Stream guards keep Loader content consistent with reserved positions. Unrelated publications share no namespace-wide lock. Each publication scope reserves at most one cursor per affected Stream. Ordinary transactions have one scope; each Mutation in a [commit group](setup.md#mutation-commit-groups) has its own. Preparation settles before final reads. Delivery reads current cursor pages without saving response payloads. Every page reauthorizes, carries complete atomic components and advances only the prefix committed by the client. Reapplying the DDL drops retired `axton_delivery_plan`/`axton_delivery_unit` staging, retaining business data, Store progress, outcomes and Stream facts. Client and backend must be upgraded together; old response-continuation requests are rejected.
 
-Install into a fresh framework namespace before protocol-5 traffic. Existing server tables are not permission to open protocol-4 local files with protocol 5, and documentation completion does not authorize legacy-table deletion. Run the protocol-v05 Batch and delivery suites through the PostgreSQL runner when changing a shim. They cover real replay, isolation, finite units, expiry and capacity rollback.
+Install into a fresh framework namespace before sync traffic. Existing server tables are not permission to open protocol-4 local files with this release, and documentation completion does not authorize legacy-table deletion. Run the Batch entry and sync delivery suites through the PostgreSQL runner when changing a shim. They cover real replay, isolation, finite units, expiry and capacity rollback.

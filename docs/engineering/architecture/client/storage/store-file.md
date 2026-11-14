@@ -1,0 +1,29 @@
+# Store file
+
+The Store file is one physical SQLite file with one Client and one Stream. Rust transfer orchestration owns delivery validation, completeness and post-commit notifications; the SDKs execute its effects. See the [sync protocol](../../protocols/wire.md) and [unsupported files](#unsupported-files).
+
+## Unsupported files
+
+A Store file opens only at format 5. An unsupported file is refused without changing its database, WAL or SHM; the release that wrote it can still open it. There is no automatic wipe, in-place upgrade or compatibility bridge. Pending work in such a file is drained or exported with the release that wrote it, while that release's backend is still available. Opening a fresh file neither transfers nor abandons that work.
+
+Use a separate file per Stream binding and one active Client per physical file. Account switching, file retention and authentication are application responsibilities.
+
+## Store and queue
+
+`axton_store` owns the file identity, one Stream, the active materialization and schema descriptor, the next Mutation and local-operation sequences, the last acknowledged Batch, and S/B/C. A handshake initializes S and C=S for a Store without C; an upgrade sets S=C. B remains absent until the final Bootstrap unit commits. Format and Stream admission precede schema changes. `SqliteStore::open_exclusive` locks the physical file before admission and WAL initialization. For a nonempty file, admission reads a temporary copy of the database and any matching WAL while holding that lock. Refusal leaves the original database, WAL and SHM bytes untouched. Copy and open have a file-size-dependent cost; temporary files are removed on success and failure.
+
+`axton_mutation_queue` is the lifecycle owner. Its operation table retains each supplied input argument or Model slot row, with an explicit input path. Null input paths are derived cascades. Omitted optional slots, explicit null and empty arrays remain distinct. Reconstruction uses the retained schema artifact and applies no new defaults. Assigned input and Batch membership are immutable; later derived cascades may extend local effects without changing the request.
+
+A schema artifact fingerprint retains the complete compiled schema, including Action input snapshots and array order. It is distinct from the read materialization identity, whose canonical Model read descriptors ignore field order. Compatible reorder keeps existing queued artifacts and frozen request bytes. The materialization derives from the app schema and the projection generation stored with `schema_descriptor`, which only a handshake changes, so a reopen never undoes a server-driven change. When it changes, or [reconciliation](reconciliation.md) resets a Model, open or the handshake commit upgrades the Store in one transaction: it adopts the materialization, clears B, sets S=C and clears delivery staging. Rows, evidence and the queue stay. Every open clears delivery staging, which proves no coverage. Open drops the Store and queue columns a file written by 0.6.0 no longer needs; a frozen Batch keeps its digest, which excludes the materialization, and is sent in the Store's current context.
+
+Batch assignment and acknowledgement use the same immediate transaction boundary as Model replay. An acknowledgement stores all exact member outcomes, rolls back rejected ownership and dependent work, and advances lastAck atomically. Accepted work remains durable until coverage and every required target are satisfied. Settlement replays later pending work in its original local order and keeps typed results after operation cleanup. Call identity and completion are projections of the queue, with no second completion table.
+
+Authoritative base and historical evidence are distinct from current protection. Pending optimism keeps protection. Historical evidence prevents stale delivery or old private fallback from restoring authority that a newer statement retired. Production replay and watch filtering use canonical tables directly. No `axton_client`, `axton_mutation` or `axton_mutation_operation` compatibility views, divergence bridge trigger or provisional same-format ALTER upgrade is installed. A missing required layout is refused rather than patched into another format.
+
+The SQLite integration tests cover reopen, faulted commits, abrupt process exit, exact request restoration, unsupported-file admission, accepted/rejected replay, current-marker release, Model reset and upgrade. Server execution deduplication and complete delivery transfer proofs belong to their protocol owners.
+
+Delivery apply exposes coarse timing spans for identity bookkeeping, authority
+pre-clear/install, settlement reconciliation and held projection rebuild. Its
+SQLite commit remains inside the atomic apply boundary. The
+[client encoding experiment](../../../../../integration/performance/baselines/2026-10-28-client-encoding/README.md)
+records a client-only rebuild comparison and the measured phase boundaries.

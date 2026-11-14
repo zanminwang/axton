@@ -1,5 +1,5 @@
 //! Batch member execution against a deterministic persistence seam.
-use axton_protocols::sync::{self as v05, Mutation, MutationOperation, MutationRequest};
+use axton_protocols::wire::{self, Mutation, MutationOperation, MutationRequest};
 use axton_server::{Config, Host, HostResult};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Mutex};
@@ -68,20 +68,16 @@ fn action() -> Value {
 }
 /// The backend at a projection generation; a new generation is an upgrade.
 fn config(generation: &str) -> Config {
-    Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[action()]},"mutations":[],"protocol5":{"projectionGeneration":generation}})).unwrap()
+    Config::decode(json!({"schema":{"enums":[],"models":[],"actions":[action()]},"mutations":[],"projectionGeneration":generation})).unwrap()
 }
 fn materialization(c: &Config) -> String {
-    v05::materialization_id(
-        &c.schema,
-        &c.protocol5.as_ref().unwrap().projection_generation,
-    )
-    .unwrap()
+    wire::materialization_id(&c.schema, &c.projection_generation).unwrap()
 }
 fn request(c: &Config) -> MutationRequest {
-    let descriptor = v05::mutation_descriptor_digest(&c.schema.actions[0]).unwrap();
+    let descriptor = wire::mutation_descriptor_digest(&c.schema.actions[0]).unwrap();
     let mut r = MutationRequest {
-        context: v05::RequestContext {
-            protocol: v05::PROTOCOL,
+        context: wire::RequestContext {
+            protocol: wire::PROTOCOL,
             store_id: "s".into(),
             stream: "User:alice".into(),
             materialization: materialization(c),
@@ -97,7 +93,7 @@ fn request(c: &Config) -> MutationRequest {
                 operations: vec![MutationOperation {
                     step: 1,
                     input_path: "text".into(),
-                    operation: v05::Operation::Argument,
+                    operation: wire::Operation::Argument,
                     model: None,
                     identity: json!(null),
                     value: json!(format!("call {id}")),
@@ -105,18 +101,18 @@ fn request(c: &Config) -> MutationRequest {
             })
             .collect(),
     };
-    r.digest = v05::batch_digest(&r).unwrap();
+    r.digest = wire::batch_digest(&r).unwrap();
     r
 }
 async fn member(c: &Config, h: &BatchHost, r: &MutationRequest, ordinal: u64) -> String {
-    let result: v05::MutationResult = serde_json::from_str(
-        &axton_server::process_batch_member(c, "alice", &v05::encode(r).unwrap(), ordinal, h)
+    let result: wire::MutationResult = serde_json::from_str(
+        &axton_server::process_batch_member(c, "alice", &wire::encode(r).unwrap(), ordinal, h)
             .await
             .unwrap(),
     )
     .unwrap();
     match result.outcome {
-        v05::MutationOutcome::Accepted {
+        wire::MutationOutcome::Accepted {
             materialization, ..
         } => materialization,
         other => panic!("expected acceptance, got {other:?}"),
@@ -140,7 +136,7 @@ fn a_replay_under_another_materialization_returns_the_saved_label() {
         }
         let mut resent = first.clone();
         resent.context.materialization = materialization(&after);
-        assert_eq!(resent.digest, v05::batch_digest(&resent).unwrap());
+        assert_eq!(resent.digest, wire::batch_digest(&resent).unwrap());
         for ordinal in 0..2 {
             assert_eq!(
                 member(&after, &host, &resent, ordinal).await,
@@ -174,7 +170,7 @@ fn a_batch_partly_executed_before_an_upgrade_returns_mixed_labels() {
             axton_server::process_batch_member(
                 &after,
                 "alice",
-                &v05::encode(&resent).unwrap(),
+                &wire::encode(&resent).unwrap(),
                 0,
                 &host,
             )
@@ -183,15 +179,15 @@ fn a_batch_partly_executed_before_an_upgrade_returns_mixed_labels() {
             axton_server::process_batch_member(
                 &after,
                 "alice",
-                &v05::encode(&resent).unwrap(),
+                &wire::encode(&resent).unwrap(),
                 1,
                 &host,
             )
             .await
             .unwrap(),
         ];
-        let ack: v05::BatchAcknowledgement = v05::decode(
-            axton_server::encode_batch_acknowledgement(&v05::encode(&resent).unwrap(), &results)
+        let ack: wire::BatchAcknowledgement = wire::decode(
+            axton_server::encode_batch_acknowledgement(&wire::encode(&resent).unwrap(), &results)
                 .unwrap()
                 .as_bytes(),
         )
@@ -209,7 +205,7 @@ fn rekeyed() -> Config {
     let old =
         json!({"name":"Todo","version":1,"identity":["id"],"fields":[field("id"),field("title")]});
     let write = json!({"name":"Write","version":1,"kind":"mutation","inputs":[{"kind":"model","name":"todo","model":"Todo","operation":"create","cardinality":"single"}],"outputs":[],"input":{"models":[old],"enums":[]}});
-    Config::decode(json!({"schema":{"enums":[],"models":[{"name":"Todo","version":2,"identity":["code"],"fields":[field("code"),field("title")]}],"actions":[action(),write]},"mutations":[],"protocol5":{"projectionGeneration":"1"}})).unwrap()
+    Config::decode(json!({"schema":{"enums":[],"models":[{"name":"Todo","version":2,"identity":["code"],"fields":[field("code"),field("title")]}],"actions":[action(),write]},"mutations":[],"projectionGeneration":"1"})).unwrap()
 }
 /// The events logged on this thread, each as its name and fields.
 #[derive(Clone, Default)]
@@ -248,11 +244,11 @@ fn a_member_whose_input_cannot_be_keyed_is_refused_alone() {
             id: 2,
             name: "Write".into(),
             version: 1,
-            descriptor: v05::mutation_descriptor_digest(&c.schema.actions[1]).unwrap(),
+            descriptor: wire::mutation_descriptor_digest(&c.schema.actions[1]).unwrap(),
             operations: vec![MutationOperation {
                 step: 1,
                 input_path: "todo".into(),
-                operation: v05::Operation::Create,
+                operation: wire::Operation::Create,
                 model: Some("Todo".into()),
                 identity: json!({"id":"x"}),
                 value: json!({"title":"hello"}),
@@ -261,12 +257,12 @@ fn a_member_whose_input_cannot_be_keyed_is_refused_alone() {
         let mut last = r.mutations.pop().unwrap();
         last.id = 3;
         r.mutations.extend([write, last]);
-        r.digest = v05::batch_digest(&r).unwrap();
+        r.digest = wire::batch_digest(&r).unwrap();
         let host = BatchHost::default();
-        let bytes = v05::encode(&r).unwrap();
+        let bytes = wire::encode(&r).unwrap();
         let mut outcomes = vec![];
         for ordinal in 0..3 {
-            let result: v05::MutationResult = serde_json::from_str(
+            let result: wire::MutationResult = serde_json::from_str(
                 &axton_server::process_batch_member(&c, "alice", &bytes, ordinal, &host)
                     .await
                     .unwrap_or_else(|e| panic!("member {ordinal}: {e}")),
@@ -274,15 +270,21 @@ fn a_member_whose_input_cannot_be_keyed_is_refused_alone() {
             .unwrap();
             outcomes.push(result.outcome);
         }
-        assert!(matches!(outcomes[0], v05::MutationOutcome::Accepted { .. }));
+        assert!(matches!(
+            outcomes[0],
+            wire::MutationOutcome::Accepted { .. }
+        ));
         assert_eq!(
             outcomes[1],
-            v05::MutationOutcome::Rejected {
+            wire::MutationOutcome::Rejected {
                 code: axton_server::code::MUTATION_VERSION_UNSUPPORTED.into(),
                 message: None,
             }
         );
-        assert!(matches!(outcomes[2], v05::MutationOutcome::Accepted { .. }));
+        assert!(matches!(
+            outcomes[2],
+            wire::MutationOutcome::Accepted { .. }
+        ));
         assert_eq!(
             host.0.lock().unwrap().executions,
             2,

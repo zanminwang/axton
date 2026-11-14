@@ -38,7 +38,7 @@ One physical SQLite file belongs to one Client, Store identity and Stream. The b
 
 `prerequisites` registers named prerequisite handlers. Dart `libraryPath` selects an explicit development library; installed packages use their bundled library. Android applications initialize the process's stable support/files directory once with `Client.configureApplicationData(path)` before opening any Store. This directory is application configuration, not a per-client lock option.
 
-Use one active owner per physical SQLite file. Protocol 5 requires a fresh format-5 file; an unsupported file is refused intact. Existing pending work needs a coordinated drain/export recovery using the old release before its server is retired. `resetStore({discardPending: true})` (Dart: `resetStore(discardPending: true)`) creates a new incarnation and abandons pending calls; a normal close/reopen does neither. Failed native loading, incompatible binding, invalid schema, physical ownership conflicts and unwritable storage fail opening.
+Use one active owner per physical SQLite file. A Client requires a fresh format-5 file; an unsupported file is refused intact. Existing pending work needs a coordinated drain/export recovery using the old release before its server is retired. `resetStore({discardPending: true})` (Dart: `resetStore(discardPending: true)`) creates a new incarnation and abandons pending calls; a normal close/reopen does neither. Failed native loading, incompatible binding, invalid schema, physical ownership conflicts and unwritable storage fail opening.
 
 Watch `client.models` for ongoing state. There are no custom incoming-store callbacks or per-client multiple Stream registrations.
 
@@ -154,7 +154,7 @@ For a `Comment.book` relationship, `client.models.comment.book(commentIdentity)`
 The call returns `Promise<Entry | null>` / `Future<Entry?>`: the complete record, with its identity, as the Loader returned it for this call. It is `null` when the Loader answered `null` for that identity: no readable record exists. The result is a snapshot, not a live record. It never contains pending local edits, which stay pending and are replayed as usual.
 
 - **Storage.** By default (`store: true`) the call resolves only after the record is stored locally and permitted cache writes have committed. An explicit null applies only when ordinary cache admission allows it. Current Stream authority is kept, and the call still returns its own snapshot. With `store: false` the record is returned without changing local data . `store` is the only option and must be a boolean.
-- **Every call reads the backend.** No result is cached on the client. The backend records each call's response, a `store: false` preview included, so a retry of the same call ID replays it, as for a direct Query; those records are not pruned automatically ([Database](../backend/database.md#protocol-5-persistence)). A call for the same identity with the same `store` choice as a call still in flight shares that call: one request, one Loader call and one local store, and each caller receives its own object. A later call makes a new request.
+- **Every call reads the backend.** No result is cached on the client. The backend records each call's response, a `store: false` preview included, so a retry of the same call ID replays it, as for a direct Query; those records are not pruned automatically ([Database](../backend/database.md#framework-persistence)). A call for the same identity with the same `store` choice as a call still in flight shares that call: one request, one Loader call and one local store, and each caller receives its own object. A later call makes a new request.
 - **No offline fallback.** A local row does not satisfy the call. Without a connection it rejects with `fetch.unavailable`; it is never queued. It uses the connection's direct timeout and credential refresh ([Server connection](runtime.md#server-connection)).
 - **No subscription.** A Fetch joins no Stream and changes no subscription, cursor or `bootstrap()` progress.
 - **Permissions stay in the Loader.** Return `null` for a record this user may not see if no readable snapshot exists; an ordinary null does not delete a stored copy; throw `CallRejected` if it should be an error, which deletes nothing.
@@ -217,11 +217,11 @@ Only named Mutations are durable remote writes. The first await commits the owne
 | `client.queries.find(args, options?)` | `FindOutput` | Validated invocation snapshot and permitted cache writes committed |
 | `client.fetch.entry(identity, options?)` | `Entry` or null | Validated Loader snapshot and permitted cache writes committed |
 
-The examples use [the typed SDK fixture](https://github.com/zanminwang/axton/tree/main/integration/v05-sdk).
+The examples use [the typed SDK fixture](https://github.com/zanminwang/axton/tree/main/integration/sdk).
 
 === "TypeScript"
 
-    ```ts title="v05-sdk"
+    ```ts title="sdk"
     const call = await client.transaction(async tx => {
       const source = await tx.models.entry.get({ id: 'entry-1' });
       if (!source) throw Error('entry missing');
@@ -234,7 +234,7 @@ The examples use [the typed SDK fixture](https://github.com/zanminwang/axton/tre
 
 === "Flutter"
 
-    ```dart title="v05-sdk"
+    ```dart title="sdk"
     final call = await client.transaction((tx) async {
       final source = await tx.models.entry.get(const EntryIdentity(id: 'entry-1'));
       if (source == null) throw StateError('entry missing');
@@ -256,14 +256,14 @@ A returned snapshot can differ from current Store state: Stream authority, tombs
 
 === "TypeScript"
 
-    ```ts title="v05-sdk"
+    ```ts title="sdk"
     const snapshot = await client.queries.find({ id: 'entry-1' }, { store: false });
     const entry = await client.fetch.entry({ id: 'entry-1' }, { store: false });
     ```
 
 === "Flutter"
 
-    ```dart title="v05-sdk"
+    ```dart title="sdk"
     final snapshot = await client.queries.find(id: 'entry-1', store: false);
     final entry = await client.fetch.entry(const EntryIdentity(id: 'entry-1'), store: false);
     ```

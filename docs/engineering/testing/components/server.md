@@ -4,7 +4,7 @@ Verify [Server runtime](../../architecture/server/README.md) admission and finit
 
 | Rule | Inspected assertions | Limit |
 | --- | --- | --- |
-| Canonical slot input is checked before execution; descriptor fingerprints record intent rather than current schema authority. | [protocol_v05.rs](../../../../crates/server/tests/protocol_v05.rs) checks bad typed input refusal, changed descriptor admission, field reorder and nullable widening. | Validation only; no Handler execution or database. |
+| Canonical slot input is checked before execution; descriptor fingerprints record intent rather than current schema authority. | [batch_entry.rs](../../../../crates/server/tests/batch_entry.rs) checks bad typed input refusal, changed descriptor admission, field reorder and nullable widening. | Validation only; no Handler execution or database. |
 | Bootstrap can freeze content ahead of its requested prefix without claiming that newer position. | [delivery_plan.rs](../../../../crates/server/tests/delivery_plan.rs) asserts observed head 45, coverage through 40, content cursor 45 and one canonical Loader call. | Scripted Host. |
 | Live progress waits for all fragments of a frozen unit. | Same suite: `live_coverage_waits_for_every_frozen_fragment` checks cursor stays 40 until the third fragment advances it to 45. | Live state machine with fixture responses, no socket. |
 | Old server configuration is refused. | [host_contract.rs](../../../../crates/server/tests/host_contract.rs). | Active negative configuration admission. |

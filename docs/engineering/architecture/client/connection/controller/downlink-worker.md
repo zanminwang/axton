@@ -41,14 +41,14 @@ sets that existing switch before starting clients. The current-build
 [short comparison](../../../../../../integration/performance/baselines/2026-10-28-prefetch-current/README.md)
 retains complete initial-sync off/on observations and measured request/apply overlap.
 
-The [prefetch regressions](../../../../../../crates/sqlite/tests/protocol05_downlink/prefetch.rs)
+The [prefetch regressions](../../../../../../crates/sqlite/tests/downlink/prefetch.rs)
 cover both HTTP/apply arrival orders, multi-unit pages, auth refresh, failure,
 reconnect and close against the real SQLite Store worker.
 
-The [receipt regressions](../../../../../../crates/sqlite/tests/protocol05_downlink/receipts.rs)
+The [receipt regressions](../../../../../../crates/sqlite/tests/downlink/receipts.rs)
 exercise both arrival orders, partial progress below the settlement fence and
 reconnect repair through the real SQLite Store worker.
 
 ## 5. Building Block View
 
-[Implementation](../../../../../../crates/client/src/sync05/delta_applier.rs) owns this component. [Protocol 5](../../../protocols/sync.md) owns shared context, delivery and settlement rules.
+[Implementation](../../../../../../crates/client/src/sync/delta_applier.rs) owns this component. [The sync protocol](../../../protocols/wire.md) owns shared context, delivery and settlement rules.

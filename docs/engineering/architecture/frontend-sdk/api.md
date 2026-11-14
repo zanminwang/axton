@@ -24,7 +24,7 @@ Public anonymous mutations, direct Mutation `call`, queued Query `enqueue`, Load
 
 ## 5. Building Block View
 
-[Compiler emission](../../../../crates/compiler/src/emit.rs) and [transaction emission](../../../../crates/compiler/src/emit_transactions.rs) generate typed facades/codecs. [Node runtime](../../../../packages/frontend/client-js/api/runtime.mts), [Dart client](../../../../packages/frontend/dart/lib/src/api/client.dart) and the [RN adapter](../../../../packages/frontend/client-react-native/api/transaction.mts) submit through native Bridges. [Bindings](bindings.md) own platform loading and per-client actors. [Protocol 5](../protocols/sync.md) owns persisted semantics.
+[Compiler emission](../../../../crates/compiler/src/emit.rs) and [transaction emission](../../../../crates/compiler/src/emit_transactions.rs) generate typed facades/codecs. [Node runtime](../../../../packages/frontend/client-js/api/runtime.mts), [Dart client](../../../../packages/frontend/dart/lib/src/api/client.dart) and the [RN adapter](../../../../packages/frontend/client-react-native/api/transaction.mts) submit through native Bridges. [Bindings](bindings.md) own platform loading and per-client actors. [The sync protocol](../protocols/wire.md) owns persisted semantics.
 
 [Command accounting](../../../../packages/frontend/client-js/api/command-accounting.mts) owns pending work, draining and first command failure for Node and RN transaction scopes. Each adapter retains its own admission and lifetime guards; Node savepoint rollback restores the enclosing scope's recorded failure.
 
@@ -34,7 +34,7 @@ A Mutation invocation resolves after local commit; a Call obtained inside an out
 
 Query/Fetch use request-level boolean `store`, default true. Results always describe the invocation snapshot. Ordinary returned Model content has `cursor:null`; true writes only where no current Stream content/deletion guard prevents it. A protected no-op succeeds and may return content different from the Store. False installs no Model/authority. Returning a Model does not track it, and missing results do not mean canonical deletion.
 
-The protocol-5 facades submit a fresh task for every Query invocation. Public `once`, `refresh` and Query invalidation controls are removed; authentication refresh remains. Open takes a path, schema and Stream with an optional connection, allowing offline operation. Joined native lifecycle evidence belongs to `integration/v05-sdk/run-host.sh`; installed mobile evidence remains separate.
+The generated facades submit a fresh task for every Query invocation. Public `once`, `refresh` and Query invalidation controls are removed; authentication refresh remains. Open takes a path, schema and Stream with an optional connection, allowing offline operation. Joined native lifecycle evidence belongs to `integration/sdk/run-host.sh`; installed mobile evidence remains separate.
 
 Model watch receivers apply Rust's versioned ordered splices to a private decoded
 cache. Generated watches decode only incoming rows and copy values for each
@@ -59,9 +59,9 @@ Language scopes refuse captured/expired capabilities and unawaited operations be
 
 ## 10. Quality Requirements
 
-- Bound files, lifecycle, requests, observations, cache and queues stay independent. Evidence: [native protocol tests](../../../../crates/sqlite/tests), [RN binding tests](../../../../integration/bindings/client-react-native) and [protocol-5 host](../../../../integration/v05-sdk/README.md).
-- Typed input, and reads followed by Mutations in one transaction, preserve local atomicity and independent Call fates. Evidence: [generated contract checks](../../../../integration/action-contract), [Node native Mutation checks](../../../../packages/frontend/client-js/mutation-native05.test.mjs) and [Dart package tests](../../../../packages/frontend/dart/test).
-- Ordinary reads cannot overwrite current Stream protection; result snapshots remain independent. Evidence: [Query/Fetch bindings](../../../../integration/bindings/client-js) and the [protocol-5 host](../../../../integration/v05-sdk/README.md).
+- Bound files, lifecycle, requests, observations, cache and queues stay independent. Evidence: [native protocol tests](../../../../crates/sqlite/tests), [RN binding tests](../../../../integration/bindings/client-react-native) and [joined host gate](../../../../integration/sdk/README.md).
+- Typed input, and reads followed by Mutations in one transaction, preserve local atomicity and independent Call fates. Evidence: [generated contract checks](../../../../integration/action-contract), [Node native Mutation checks](../../../../packages/frontend/client-js/mutation-native.test.mjs) and [Dart package tests](../../../../packages/frontend/dart/test).
+- Ordinary reads cannot overwrite current Stream protection; result snapshots remain independent. Evidence: [Query/Fetch bindings](../../../../integration/bindings/client-js) and the [joined host gate](../../../../integration/sdk/README.md).
 - Installed generated APIs and bundled libraries work outside the checkout. Evidence: [installed-package runner](../../../../integration/release/verify-installed.sh).
 
 

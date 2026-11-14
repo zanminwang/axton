@@ -15,7 +15,7 @@ export type LiveEvent =
   | { type: "closed" };
 /** What the controller asks the executor to do, in order. */
 export type LiveAction =
-  | { type: "pullV05"; request: string }
+  | { type: "pull"; request: string }
   | { type: "listen"; stream: string }
   | { type: "send"; frame: string };
 /**
@@ -24,7 +24,7 @@ export type LiveAction =
  * commit hub it asks the executor to use.
  */
 export interface LiveBackend {
-  pull05Live?(owner: string, request: string): Promise<string>;
+  pullLive(owner: string, request: string): Promise<string>;
   pull?(owner: string, request: string): Promise<string>;
   negotiateLive(
     owner: string,
@@ -205,14 +205,10 @@ async function serveLive(
         );
       } else if (action.type === "send") {
         if (open()) connection.send(action.frame);
-      } else if (action.type === "pullV05") {
-        if (!backend.pull05Live) {
-          fail(new Error("v05 live carrier unavailable"));
-          return;
-        }
+      } else if (action.type === "pull") {
         trackPull(
           backend
-            .pull05Live(owner, action.request)
+            .pullLive(owner, action.request)
             .then((page) => dispatch({ type: "pulled", page }), fail),
         );
       }

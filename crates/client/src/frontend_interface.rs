@@ -66,7 +66,7 @@ pub struct ApplyReport {
     pub cursors: BTreeMap<String, u64>,
     pub reports: Vec<Report>,
     // Committed settlement outcomes; retained queue outcomes also support
-    // `Client::call_completion05` after reopen.
+    // `Client::call_completion` after reopen.
     pub completions: Vec<CallCompletion>,
 }
 impl ApplyReport {
@@ -94,7 +94,6 @@ struct SessionSavepoint {
 
 pub struct Client<S: ClientStore> {
     pub(crate) store: S,
-    pub(crate) context05: Option<v05::RequestContext>,
     pub(crate) schema: Schema,
     pub(crate) client_id: String,
     pub(crate) generation: u64,
@@ -111,7 +110,7 @@ pub struct Client<S: ClientStore> {
     pub(crate) shared: crate::engine::SharedModels,
 }
 
-// Call completions canceled by an explicit Store05 reset.
+// Call completions canceled by an explicit Store reset.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AbandonedCall {

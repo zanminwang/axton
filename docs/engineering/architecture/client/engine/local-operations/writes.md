@@ -17,7 +17,7 @@ A Model row changes only through a named Mutation's optimism or through server d
 - [mutate.rs](../../../../../../crates/client/src/mutate.rs) applies operations, extends cascades and rebuilds dirty projections.
 - [mutation_queue.rs](../../../../../../crates/client/src/mutation_queue.rs) retains named input, prerequisites and dependency metadata.
 - [authority.rs](../../../../../../crates/client/src/authority.rs) installs proved authority beneath pending edits and reports replay divergence.
-- [settlement05.rs](../../../../../../crates/client/src/settlement05.rs) reconciles each Call's outcome and owned work.
+- [settlement.rs](../../../../../../crates/client/src/settlement.rs) reconciles each Call's outcome and owned work.
 - [rows.rs](../../../../../../crates/client/src/rows.rs) owns Model row statements and value encoding.
 
 A dirty record has pending operations. Its before image holds the base beneath them. `axton_local_write` retains the receipt-finalized state of a target the Stream will not deliver, as `accepted`, at its wire operation's position. Rebuild combines that base, pending operations and accepted rows. Accepted rows with no earlier pending operation fold into the base. When replay cannot apply a queued operation, the current base remains visible, the durable Call remains queued, and a `diverged` report identifies its ordinal.
@@ -28,16 +28,16 @@ Submitting a named Mutation validates retained input and binding rules, applies 
 
 A delete cascades through declared local relations once per identity, including cycles. These child effects stay local and follow their owning Call; they are not additional wire operations. Replaying a queued delete extends it to newly delivered children while respecting later accepted recreations. Business handlers must delete and explicitly invalidate their server-side children themselves.
 
-Records have no publication stamp. Stream cursor guards and call-owned evidence decide authority installation; duplicate delivery cannot undo newer authority. Ordinary null-cursor Query/Fetch records can populate unprotected cache, but cannot replace protected Stream state, clear a tombstone or advance progress. [Protocol 5](../../../protocols/sync.md) owns these rules.
+Records have no publication stamp. Stream cursor guards and call-owned evidence decide authority installation; duplicate delivery cannot undo newer authority. Ordinary null-cursor Query/Fetch records can populate unprotected cache, but cannot replace protected Stream state, clear a tombstone or advance progress. [The sync protocol](../../../protocols/wire.md) owns these rules.
 
 ## 10. Quality Requirements
 
 Current source fixtures cover atomic local writes, accepted-write replay, cascade, and authority beneath pending edits:
 
-- [runtime transactions](../../../../../../crates/sqlite/tests/protocol05_runtime_transactions.rs)
-- [settlement](../../../../../../crates/sqlite/tests/protocol05_settlement.rs) and [authority](../../../../../../crates/sqlite/tests/protocol05_authority.rs)
+- [runtime transactions](../../../../../../crates/sqlite/tests/runtime_transactions.rs)
+- [settlement](../../../../../../crates/sqlite/tests/settlement.rs) and [authority](../../../../../../crates/sqlite/tests/authority.rs)
 
-These links identify maintained coverage, not a new execution certificate. Installed-package and mobile evidence have separate [adoption gates](../../../../protocol5-adoption.md).
+These links identify maintained coverage, not a new execution certificate. Installed-package and mobile evidence have separate [release gates](../../../../releasing.md#release-gates).
 
 ## 11. Risks and Technical Debt
 

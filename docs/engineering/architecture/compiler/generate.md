@@ -56,7 +56,7 @@ Current client methods follow the latest version's kind. An older Mutation follo
 - Descriptor generation and CLI output are deterministic; compatible histories retain old contracts. Evidence: [compiler](../../../../crates/compiler/tests/compiler.rs), [history](../../../../crates/compiler/tests/history.rs) and [CLI tests](../../../../crates/compiler/tests/cli.rs).
 - Current kind and retained versions remain distinct across TypeScript, Dart and backend emission. Evidence: operation kind-change tests in [compiler](../../../../crates/compiler/tests/compiler.rs) and current transaction tests in [transactions](../../../../crates/compiler/tests/transactions.rs).
 - Generated TypeScript/Dart accept valid use and reject wrong identity, patch, filter, enum, input and scope types. Evidence: [generated API checks](../../../../integration/generated-api) and [operation contract checks](../../../../integration/action-contract).
-- Model inheritance, Bootstrap metadata, defaults and the current bound facades reach generated output. Evidence: [inheritance](../../../../crates/compiler/tests/inheritance.rs), [defaults](../../../../crates/compiler/tests/defaults.rs) and [0.4 facade tests](../../../../crates/compiler/tests/v04_facade.rs).
+- Model inheritance, Bootstrap metadata, defaults and the current bound facades reach generated output. Evidence: [inheritance](../../../../crates/compiler/tests/inheritance.rs), [defaults](../../../../crates/compiler/tests/defaults.rs) and [0.4 facade tests](../../../../crates/compiler/tests/facade.rs).
 
 ## 11. Risks and Technical Debt
 

@@ -764,7 +764,7 @@ void main() {
         stream: 'User:viewer',
         carrier: carrier,
       );
-      expect(carrier.openedRequest['protocol'], 5);
+      expect(carrier.openedRequest.containsKey('protocol'), false);
       expect(carrier.openedRequest['stream'], 'User:viewer');
       expect(carrier.openedRequest.containsKey('binding'), false);
       expect(carrier.commands, isEmpty);

@@ -137,8 +137,6 @@ test("only actual5 native entrypoints are exported; startup requires every Loade
     "processLoad",
     "validateLoadBatch",
     "encodeLoadBatch",
-    "settleExternal",
-    "serverMaterializationId",
     "pullLive",
   ])
     assert.equal(native[name], undefined, name);

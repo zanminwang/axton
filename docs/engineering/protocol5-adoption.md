@@ -21,7 +21,7 @@ node --test integration/release/*.test.mjs
 bash integration/release/verify-installed.sh
 ```
 
-The joined native gate `integration/v05-sdk/run-host.sh` must remain in the full test script. Run the paired `integration/v05-sdk/run-capacity.sh` against actual PostgreSQL carriers and SQLite apply, retaining fragment/header costs, staging, transaction duration and maximum atomic apply time. Distinguish missing tools, network or disk prerequisites from failed product assertions.
+The joined native gate `integration/sdk/run-host.sh` must remain in the full test script. Run the paired `integration/sdk/run-capacity.sh` against actual PostgreSQL carriers and SQLite apply, retaining fragment/header costs, staging, transaction duration and maximum atomic apply time. Distinguish missing tools, network or disk prerequisites from failed product assertions.
 
 Installed verification must test the candidate's packed bytes. Registry mode tests a published version, not an unpublished candidate. A host-only pack proves only its selected host addon, CLI and Dart library; staged Dart verification requires the matching archive and libraries. The full release inventory includes darwin-arm64 and linux-x64-gnu hosts, iOS device and simulators, and Android arm64/v7a/x86_64. Matching tagged-commit mobile artifacts and native/device smoke remain separate evidence requirements.
 

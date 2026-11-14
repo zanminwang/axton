@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { setImmediate as turn } from "node:timers/promises";
 import { Pool } from "pg";
 import { pg, type PgClient } from "../../packages/backend/postgres/index.mts";
-import { createBackend, devAuth } from "../v05-sdk/backend.ts";
-import { GeneratedClient } from "../v05-sdk/client.ts";
+import { createBackend, devAuth } from "../sdk/backend.ts";
+import { GeneratedClient } from "../sdk/client.ts";
 
 function gate() {
   let resolve!: () => void;

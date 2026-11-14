@@ -19,8 +19,8 @@ fn main() {
             "User:diagnostic",
         )
         .unwrap();
-        client.initialize_stream05(0, "1").unwrap();
-        let context = client.request_context05().unwrap();
+        client.initialize_stream(0, "1").unwrap();
+        let context = client.request_context().unwrap();
         let authority = |cursor| wire::AuthorityChange::Record {
             key: wire::RecordKey {
                 model: "Entry".into(),
@@ -30,14 +30,14 @@ fn main() {
             state: json!({"text":"authority","note":null}),
         };
         client
-            .install_authority05(&context, &[authority(1)], Some((0, 1)))
+            .install_authority(&context, &[authority(1)], Some((0, 1)))
             .unwrap();
         let mut samples = Vec::new();
         for i in 0..count {
             let start = Instant::now();
             client
                 .transaction(|tx| {
-                    tx.submit_mutation05(
+                    tx.submit_mutation(
                         "Edit",
                         1,
                         json!({"entry":{"id":"one","text":format!("local-{i}")}}),
@@ -50,7 +50,7 @@ fn main() {
         samples.sort_by(f64::total_cmp);
         let start = Instant::now();
         client
-            .install_authority05(&context, &[authority(2)], Some((1, 2)))
+            .install_authority(&context, &[authority(2)], Some((1, 2)))
             .unwrap();
         let replay_ms = start.elapsed().as_secs_f64() * 1000.0;
         assert_eq!(client.pending_count().unwrap(), count);

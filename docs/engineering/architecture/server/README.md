@@ -16,4 +16,4 @@ The Rust server validates protocol-5 context and immutable Batch intent, invokes
 
 ## 10. Quality Requirements
 
-Changes must preserve the component boundary and the protocol’s commit/failure rules. The joined native gate `integration/v05-sdk/run-host.sh` exercises the generated client, real HTTP/WebSocket backend and SQLite. Installed-package and mobile evidence are separate adoption gates.
+Changes must preserve the component boundary and the protocol’s commit/failure rules. The joined native gate `integration/sdk/run-host.sh` exercises the generated client, real HTTP/WebSocket backend and SQLite. Installed-package and mobile evidence are separate adoption gates.

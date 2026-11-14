@@ -8,7 +8,7 @@ import { drainedDatabase } from "../lifecycle.mts";
 let sequence = 0;
 
 export async function host({ projected = false } = {}) {
-  const namespace = `behavior05_${++sequence}`;
+  const namespace = `behavior_${++sequence}`;
   const admin = new Pool({ connectionString: process.env.DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${namespace}`);
   await admin.end();

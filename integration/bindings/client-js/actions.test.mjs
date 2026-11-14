@@ -528,4 +528,4 @@ test("retired anonymous and split action methods have no public entry point", as
   });
 });
 // Callback-before-input, unawaited/foreign scopes, and same-batch durable lookup
-// are exercised through mutation-native05 and call-durable05, not legacy batch carriers.
+// are exercised through mutation-native and call-durable, not legacy batch carriers.

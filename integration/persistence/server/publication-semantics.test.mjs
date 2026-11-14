@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { Pool } from "pg";
 import { pg } from "../../../packages/backend/postgres/index.mts";
-import { createBackend } from "../../v05-sdk/backend.ts";
+import { createBackend } from "../../sdk/backend.ts";
 const native = createRequire(import.meta.url)(
   "../../../bindings/node/axton-node.node",
 );

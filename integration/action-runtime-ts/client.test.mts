@@ -25,7 +25,7 @@ test("generated operation codecs retain null, lists, omitted patches and DateTim
       decode: (value: unknown) => T,
     ) {
       calls.push({ name, version, args: args as Record<string, unknown> });
-      // This port fixture checks codecs only; real settlement is exercised by v05-sdk/run-host.sh.
+      // This port fixture checks codecs only; real settlement is exercised by sdk/run-host.sh.
       const value =
         name === "RemoveMoment"
           ? { at: "2026-01-01T00:00:00.000Z" }

@@ -57,7 +57,7 @@ Use your own token format and verify it in `authenticate`; `devAuth` trusts the 
 
 ## Verification scope
 
-The maintained [protocol-5 host runner](https://github.com/zanminwang/axton/blob/main/integration/v05-sdk/run-host.sh) exercises generated SDKs against real loopback HTTP/WebSocket and PostgreSQL. It is not a reverse-proxy or TLS certificate. Historical v0.4.2 proxy evidence is in [runtime.test.mjs](https://github.com/zanminwang/axton/blob/v0.4.2/integration/persistence/server/runtime.test.mjs); it does not establish current protocol-5 proxy behavior.
+The maintained [protocol-5 host runner](https://github.com/zanminwang/axton/blob/main/integration/sdk/run-host.sh) exercises generated SDKs against real loopback HTTP/WebSocket and PostgreSQL. It is not a reverse-proxy or TLS certificate. Historical v0.4.2 proxy evidence is in [runtime.test.mjs](https://github.com/zanminwang/axton/blob/v0.4.2/integration/persistence/server/runtime.test.mjs); it does not establish current protocol-5 proxy behavior.
 
 Verify TLS termination, route allowlists, header forwarding and WebSocket timeouts in your deployed proxy. Browser support and multi-process wake delivery remain separate decisions. Process-local wakes do not notify sockets attached to another backend process until their next recovery request.
 

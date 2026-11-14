@@ -66,7 +66,7 @@ pub struct ApplyReport {
     pub cursors: BTreeMap<String, u64>,
     pub reports: Vec<Report>,
     // Committed settlement outcomes; retained queue outcomes also support
-    // `Client::call_completion05` after reopen.
+    // `Client::call_completion` after reopen.
     pub completions: Vec<CallCompletion>,
 }
 impl ApplyReport {

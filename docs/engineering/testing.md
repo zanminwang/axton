@@ -53,9 +53,9 @@ Component, integration and end-to-end describe the scope of a test. Simulation d
 | Compiler | [compiler tests](../../crates/compiler/tests) |
 | Client and SQLite | [SQLite tests](../../crates/sqlite/tests), including sync suites, query, prerequisites, store and stream admission |
 | Server | [server tests](../../crates/server/tests) for admission and finite plans |
-| Simulation | [scenario05](../../crates/sim/tests/scenario05.rs), [protocol05_coverage](../../crates/sim/tests/protocol05_coverage.rs), [mutation_versions05](../../crates/sim/tests/mutation_versions05.rs) |
+| Simulation | [scenario](../../crates/sim/tests/scenario.rs), [scenario_coverage](../../crates/sim/tests/scenario_coverage.rs), [mutation_versions](../../crates/sim/tests/mutation_versions.rs) |
 | Persistence | [PostgreSQL suite](../../integration/persistence/server), with driver boundaries described in [persistence evidence](testing/integration/persistence.md) |
-| Joined native transport and capacity | [v05-sdk](../../integration/v05-sdk/README.md) |
+| Joined native transport and capacity | [sdk](../../integration/sdk/README.md) |
 | SDK and binding boundaries | [bindings](../../integration/bindings), [generated API](../../integration/generated-api), [Dart tests](../../packages/frontend/dart/test) |
 
 Current evidence pages identify inspected assertions and their limits. Their source inspection on 2026-10-09 is not an execution result. Historical execution records are retained in [history](history/pre-protocol5/README.md).

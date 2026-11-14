@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:axton/axton.dart';
 import 'package:test/test.dart';
 import 'store_fixture.dart';
-import 'protocol5_transport.dart';
+import 'fake_transport.dart';
 
 /// The named `Edit` of Entry `e`, the seed route for a text change.
 Future<Call<void>> edit(SubmitMutationPort port, String text) =>
@@ -35,7 +35,7 @@ void main() {
   Future<Call<void>> publish(Transaction tx, String id) =>
       tx.submitMutation<void>('Publish', 1, input(id), (_) {});
   setUp(() async {
-    dir = await Directory.systemTemp.createTemp('axton-dart-client05-');
+    dir = await Directory.systemTemp.createTemp('axton-dart-client-');
     schema =
         jsonDecode(
               await File('../../../fixtures/schemas/entry.json').readAsString(),

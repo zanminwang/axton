@@ -6,7 +6,7 @@ Schema artifacts preserve the original Mutation input contract and exact frozen 
 
 ## 5. Building Block View
 
-[Implementation](../../../../../crates/client/src/store05.rs) owns this component. [Protocol 5](../../protocols/wire.md) owns shared context, delivery and settlement rules.
+[Implementation](../../../../../crates/client/src/store_file.rs) owns this component. [Protocol 5](../../protocols/wire.md) owns shared context, delivery and settlement rules.
 
 
 ### The table contract

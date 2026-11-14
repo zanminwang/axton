@@ -3,7 +3,7 @@
 //! ([#185](https://github.com/zanminwang/axton/issues/185)). The test is the
 //! host over a real SQLite store: it answers every effect with a fixed clock
 //! that a fired timer advances. No sleeps, no threads.
-pub mod common05;
+pub mod common;
 use axton_client::runtime::{ClientRuntime, Input};
 use axton_client::*;
 use axton_sqlite::SqliteStore;
@@ -34,7 +34,7 @@ fn schema() -> Schema {
 }
 fn runtime(path: &Path, handlers: &[&str]) -> ClientRuntime<SqliteStore> {
     let mut client = Client::open(SqliteStore::open(path).unwrap(), schema(), "User:u").unwrap();
-    client.initialize_stream05(0, "1").unwrap();
+    client.initialize_stream(0, "1").unwrap();
     ClientRuntime::new(client)
         .register_prerequisite_handlers(handlers.iter().map(|h| h.to_string()).collect())
         .unwrap()
@@ -141,7 +141,7 @@ impl Host {
     /// Seed `e`, unprotected and unpending, as a cache install: a Mutation
     /// would queue the `Scan` task its `text` requires.
     fn seed(&mut self) {
-        common05::cached(
+        common::cached(
             self.runtime.client(),
             "Entry",
             "e",
@@ -454,14 +454,14 @@ fn readiness_outcomes_release_only_ready_canonical_batches() {
     h.attach("asset");
     h.run();
     assert!(
-        h.runtime.client().freeze_batch05().unwrap().is_none(),
+        h.runtime.client().freeze_batch().unwrap().is_none(),
         "blocked by pending task"
     );
     let (effect, _) = h.one("prerequisite");
     h.fail(&effect, "disk full", false);
     h.run();
     assert!(
-        h.runtime.client().freeze_batch05().unwrap().is_none(),
+        h.runtime.client().freeze_batch().unwrap().is_none(),
         "terminal failure remains blocked"
     );
     h.task(
@@ -473,7 +473,7 @@ fn readiness_outcomes_release_only_ready_canonical_batches() {
     h.succeed(&effect);
     h.run();
     assert!(
-        h.runtime.client().freeze_batch05().unwrap().is_some(),
+        h.runtime.client().freeze_batch().unwrap().is_some(),
         "success released the canonical batch"
     );
 }

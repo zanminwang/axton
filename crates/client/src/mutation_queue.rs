@@ -31,7 +31,7 @@ fn operation(k: OperationKind) -> wire::Operation {
     }
 }
 impl<S: ClientStore> Engine<'_, S> {
-    pub(crate) fn retained_schema05(&mut self, descriptor: &str) -> Result<Schema> {
+    pub(crate) fn retained_schema(&mut self, descriptor: &str) -> Result<Schema> {
         decode(
             &self
                 .scalar(
@@ -44,12 +44,12 @@ impl<S: ClientStore> Engine<'_, S> {
     /// A queued Mutation's piece on `model` is used only when that Model's
     /// shape in the Mutation's retained descriptor needs no reset under the
     /// current schema. A Model the current schema lacks is not shared.
-    pub(crate) fn shared05(&mut self, descriptor: &str, model: &str) -> Result<bool> {
+    pub(crate) fn shared(&mut self, descriptor: &str, model: &str) -> Result<bool> {
         let key = (descriptor.to_owned(), model.to_owned());
         if let Some(shared) = self.shared.models().get(&key) {
             return Ok(shared);
         }
-        let retained = self.retained_schema05(descriptor)?;
+        let retained = self.retained_schema(descriptor)?;
         let shared = !matches!(
             Schema::model_compatibility(&retained, self.schema, model),
             axton_core::Compatibility::Incompatible(_)
@@ -66,11 +66,11 @@ impl<S: ClientStore> Engine<'_, S> {
         .and_then(|v| v.as_str().map(str::to_owned))
         .ok_or_else(|| invalid("queued Mutation missing"))
     }
-    pub(crate) fn wire_ops05(&mut self, id: u64) -> Result<Vec<wire::MutationOperation>> {
+    pub(crate) fn wire_ops(&mut self, id: u64) -> Result<Vec<wire::MutationOperation>> {
         self.rows("SELECT step,input_path,operation,model,identity,value FROM axton_mutation_queue_operation WHERE mutation_id=? AND input_path IS NOT NULL ORDER BY step",&[json!(id)])?.rows.into_iter().map(|r|Ok(wire::MutationOperation{step:as_u64(&r[0])?,input_path:r[1].as_str().ok_or_else(||invalid("input path missing"))?.into(),operation:serde_json::from_value(json!(r[2]))?,model:r[3].as_str().map(str::to_owned),identity:if r[4].is_null(){Value::Null}else{decode(&r[4])?},value:if r[5].is_null(){Value::Null}else{decode(&r[5])?}})).collect()
     }
-    pub(crate) fn input05(&mut self, id: u64) -> Result<Value> {
-        wire::reconstruct_input(&self.wire_ops05(id)?)
+    pub(crate) fn input(&mut self, id: u64) -> Result<Value> {
+        wire::reconstruct_input(&self.wire_ops(id)?)
     }
     pub(crate) fn insert_owned(
         &mut self,
@@ -81,12 +81,12 @@ impl<S: ClientStore> Engine<'_, S> {
         op: &Operation,
     ) -> Result<()> {
         let key = self.schema.record_key(&op.model, &op.identity)?;
-        let history = self.evidence05(&key)?.history;
-        let seq = self.allocate05("next_local_sequence")?;
+        let history = self.evidence(&key)?.history;
+        let seq = self.allocate("next_local_sequence")?;
         self.exec("axton_mutation_queue_operation","INSERT INTO axton_mutation_queue_operation(mutation_id,step,local_sequence,input_path,kind,model,identity,operation,value,owner_history) VALUES(?,?,?,?,?,?,?,?,?,?)",&[json!(id),json!(step),json!(seq),path.map_or(Value::Null,|v|json!(v)),json!(kind(k)),json!(op.model),text(&op.identity)?,serde_json::to_value(operation(op.op))?,op.values.as_ref().map(text).transpose()?.unwrap_or(Value::Null),text(&history)?])?;
         Ok(())
     }
-    pub(crate) fn enqueue05(
+    pub(crate) fn enqueue(
         &mut self,
         name: &str,
         version: u64,
@@ -149,7 +149,7 @@ impl<S: ClientStore> Engine<'_, S> {
                 _ => 0,
             };
             if count == 0 {
-                let seq = self.allocate05("next_local_sequence")?;
+                let seq = self.allocate("next_local_sequence")?;
                 self.exec("axton_mutation_queue_operation","INSERT INTO axton_mutation_queue_operation(mutation_id,step,local_sequence,input_path,kind,operation,value,owner_history) VALUES(?,?,?,?,'argument','argument',?,'{}')",&[json!(id),json!(step),json!(seq),json!(name),text(value)?])?;
                 step += 1;
                 continue;
@@ -197,7 +197,7 @@ impl<S: ClientStore> Engine<'_, S> {
             ordinal: id,
         })
     }
-    pub(crate) fn reconstruct_batch05(&mut self, batch: u64) -> Result<wire::MutationRequest> {
+    pub(crate) fn reconstruct_batch(&mut self, batch: u64) -> Result<wire::MutationRequest> {
         let rows=self.rows("SELECT id,name,descriptor_version,descriptor,batch_digest FROM axton_mutation_queue WHERE batch_id=? ORDER BY id",&[json!(batch)])?.rows;
         if rows.is_empty() {
             return Err(invalid("unknown Batch"));
@@ -211,8 +211,8 @@ impl<S: ClientStore> Engine<'_, S> {
             let name = r[1].as_str().unwrap().to_owned();
             let version = as_u64(&r[2])?;
             let descriptor = r[3].as_str().unwrap().to_owned();
-            let operations = self.wire_ops05(id)?;
-            let schema = self.retained_schema05(&descriptor)?;
+            let operations = self.wire_ops(id)?;
+            let schema = self.retained_schema(&descriptor)?;
             let action = schema.action(&name, version)?;
             let input = wire::reconstruct_input(&operations)?;
             let normalized = normalize_action_args(&schema, action, &input)?;
@@ -302,7 +302,7 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         Ok(request)
     }
-    pub(crate) fn freeze05(&mut self) -> Result<Option<wire::MutationRequest>> {
+    pub(crate) fn freeze(&mut self) -> Result<Option<wire::MutationRequest>> {
         // Push waits for the handshake: a Mutation then executes after the
         // head read, so its syncCursor is at or after the Store's start S.
         let store = self
@@ -323,7 +323,7 @@ impl<S: ClientStore> Engine<'_, S> {
             )?
             .filter(|v| !v.is_null())
         {
-            return self.reconstruct_batch05(as_u64(&batch)?).map(Some);
+            return self.reconstruct_batch(as_u64(&batch)?).map(Some);
         }
         // Beginning the next Batch prunes the server's previous outcomes.
         // Keep that ownership window until every assigned member settles locally.
@@ -350,7 +350,7 @@ impl<S: ClientStore> Engine<'_, S> {
                 &[json!(batch), r[0].clone()],
             )?;
         }
-        let request = self.reconstruct_batch05(batch)?;
+        let request = self.reconstruct_batch(batch)?;
         self.exec(
             "axton_mutation_queue",
             "UPDATE axton_mutation_queue SET batch_digest=? WHERE batch_id=?",
@@ -360,17 +360,17 @@ impl<S: ClientStore> Engine<'_, S> {
     }
 }
 impl<S: ClientStore> Client<S> {
-    pub fn freeze_batch05(&mut self) -> Result<Option<wire::MutationRequest>> {
-        self.write(|e| e.freeze05())
+    pub fn freeze_batch(&mut self) -> Result<Option<wire::MutationRequest>> {
+        self.write(|e| e.freeze())
     }
 }
 impl<S: ClientStore> ClientTransaction<'_, S> {
-    pub fn submit_mutation05(
+    pub fn submit_mutation(
         &mut self,
         name: &str,
         version: u64,
         input: Value,
     ) -> Result<SubmittedCall> {
-        self.savepoint(|tx| tx.engine.enqueue05(name, version, input))
+        self.savepoint(|tx| tx.engine.enqueue(name, version, input))
     }
 }

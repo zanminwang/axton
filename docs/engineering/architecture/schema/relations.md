@@ -27,7 +27,7 @@ Code: resolution in [compiler/validate.rs](../../../../crates/compiler/src/valid
 
 ## 10. Quality Requirements
 
-The [compiler tests](../../../../crates/compiler/tests/compiler.rs) cover resolved relation metadata and unique inverse keys. Current [cascade tests](../../../../crates/sqlite/tests/protocol05_cascade.rs) cover local child effects and replay. [Delivery-plan tests](../../../../crates/server/tests/delivery_plan.rs) cover finite authority dependency grouping. These are maintained source references, not new execution evidence.
+The [compiler tests](../../../../crates/compiler/tests/compiler.rs) cover resolved relation metadata and unique inverse keys. Current [cascade tests](../../../../crates/sqlite/tests/cascade.rs) cover local child effects and replay. [Delivery-plan tests](../../../../crates/server/tests/delivery_plan.rs) cover finite authority dependency grouping. These are maintained source references, not new execution evidence.
 
 ## 11. Risks and Technical Debt
 

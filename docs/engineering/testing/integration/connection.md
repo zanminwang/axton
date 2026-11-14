@@ -1,6 +1,6 @@
 # Connection integration
 
-Verify native HTTP/WebSocket/timer behavior through the [joined protocol-5 host gate](../../protocol5-adoption.md), driven by [run-host.sh](../../../../integration/v05-sdk/run-host.sh) and [README.md](../../../../integration/v05-sdk/README.md). This is separate from scripted runtime effects and pure carrier validation.
+Verify native HTTP/WebSocket/timer behavior through the [joined protocol-5 host gate](../../protocol5-adoption.md), driven by [run-host.sh](../../../../integration/sdk/run-host.sh) and [README.md](../../../../integration/sdk/README.md). This is separate from scripted runtime effects and pure carrier validation.
 
 [delivery_plan.rs](../../../../crates/server/tests/delivery_plan.rs) inspects live fragment coverage without sockets; [runtime_prerequisites.rs](../../../../crates/sqlite/tests/runtime_prerequisites.rs) inspects cancellation, timer-driven backoff and late answers with a scripted Host. Neither establishes real transport behavior. [read-liveness.test.mjs](../../../../integration/persistence/server/read-liveness.test.mjs) establishes the application-read versus concurrent-write boundary under the database driver matrix, not all reconnect schedules.
 

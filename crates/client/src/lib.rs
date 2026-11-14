@@ -14,11 +14,11 @@ pub mod query;
 pub mod queue;
 pub mod rows;
 pub mod runtime;
-pub mod settlement05;
+pub mod settlement;
 pub mod store;
-pub mod store05;
+pub mod store_file;
 pub mod subscriptions;
-pub mod sync05;
+pub mod sync;
 pub mod unsent;
 
 pub use actions::SubmittedCall;

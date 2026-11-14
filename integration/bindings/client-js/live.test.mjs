@@ -121,10 +121,10 @@ import { tmpdir } from "node:os";
 import { setImmediate as tick } from "node:timers/promises";
 import { openStore, emptyPull, emptyMutation, emptyHandshake, deliveryPage } from "./store-fixture.mjs";
 async function openClient() {
-  const dir = await mkdtemp(join(tmpdir(), "axton-live05-"));
+  const dir = await mkdtemp(join(tmpdir(), "axton-live-"));
   const schema = JSON.parse(
     await readFile(
-      new URL("../../v05-sdk/schema.json", import.meta.url),
+      new URL("../../sdk/schema.json", import.meta.url),
       "utf8",
     ),
   );

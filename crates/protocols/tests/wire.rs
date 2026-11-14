@@ -595,7 +595,7 @@ fn retained_mutation_descriptor_independent_digest_vector() {
     );
 }
 #[test]
-fn protocol05_materialization_preserves_read_semantics_with_distinct_domain() {
+fn materialization_preserves_read_semantics_with_distinct_domain() {
     let mut s: axton_core::Schema =
         serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
     let a = axton_protocols::wire::materialization_id(&s, "1").unwrap();

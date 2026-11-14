@@ -44,7 +44,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         }
         match event {
             ConnectionEvent::Stop => {
-                self.release_initial_reads05(false);
+                self.release_initial_reads(false);
                 self.stop_lanes()
             }
             ConnectionEvent::Pause => self.connection.as_mut().unwrap().paused = true,

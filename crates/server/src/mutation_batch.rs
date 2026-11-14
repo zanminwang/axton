@@ -245,12 +245,12 @@ pub(crate) async fn execute_claimed(
                     &host,
                 )
                 .await?;
-                let key05 = wire::RecordKey {
+                let wire_key = wire::RecordKey {
                     model: key.model.clone(),
                     identity: key.identity.clone(),
                 };
                 let record = wire::ReadRecord {
-                    key: key05.clone(),
+                    key: wire_key.clone(),
                     cursor: (),
                     state,
                 };
@@ -260,7 +260,7 @@ pub(crate) async fn execute_claimed(
                             return Err(storage_invalid("target position mismatch"));
                         }
                         wire::SettlementTarget::Stream {
-                            key: key05,
+                            key: wire_key,
                             cursor: p.cursor,
                             fallback: record,
                         }

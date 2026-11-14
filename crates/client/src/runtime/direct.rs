@@ -135,7 +135,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         request_id: &str,
         invocation: Invocation<'_>,
     ) -> Option<std::result::Result<Value, String>> {
-        self.begin_read05(
+        self.begin_read(
             request_id,
             crate::wire::ReadInvocation::Query {
                 name: invocation.name.into(),
@@ -323,7 +323,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         _now: u64,
         _entropy: u64,
     ) {
-        self.apply_read05(request_id, response)
+        self.apply_read(request_id, response)
     }
 
     // --- Model Fetch --------------------------------------------------------
@@ -346,7 +346,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             },
             version,
         };
-        if let Err(error) = self.begin_read05(request_id, invocation, store) {
+        if let Err(error) = self.begin_read(request_id, invocation, store) {
             let kind = match error.as_str() {
                 UNAVAILABLE => FETCH_UNAVAILABLE,
                 _ => FETCH_INVALID_OPTIONS,
@@ -354,7 +354,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             self.fail(request_id.into(), kind, caused(kind, error));
         }
     }
-    fn begin_read05(
+    fn begin_read(
         &mut self,
         request_id: &str,
         invocation: crate::wire::ReadInvocation,
@@ -406,7 +406,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             return Err(UNAVAILABLE.into());
         }
         let request = crate::wire::ReadRequest {
-            context: self.client.request_context05().map_err(|e| e.to_string())?,
+            context: self.client.request_context().map_err(|e| e.to_string())?,
             request_id: self.capability_token("read", self.issued + 1),
             store,
             invocation,
@@ -419,7 +419,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         );
         self.send_direct(request_id, request.request_id, body, fetch)
     }
-    fn apply_read05(&mut self, request_id: String, response: String) {
+    fn apply_read(&mut self, request_id: String, response: String) {
         let Some(call) = self.directs.calls.remove(&request_id) else {
             return;
         };
@@ -429,7 +429,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             let request = crate::wire::decode::<crate::wire::ReadRequest>(call.body.as_bytes())?;
             let mut response =
                 crate::wire::decode::<crate::wire::ReadResponse>(response.as_bytes())?;
-            let active = self.client.request_context05()?;
+            let active = self.client.request_context()?;
             // Correlation and snapshot agreement use the caller's retained read
             // contract. The cache record remains its separate local projection.
             response.admit_correlation(&request, &active)?;
@@ -533,7 +533,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             }
         };
         let generation = self.client.generation();
-        if install && let Err(error) = self.client.install_cache05(&response.records, true) {
+        if install && let Err(error) = self.client.install_cache(&response.records, true) {
             let kind = if fetch {
                 FETCH_STORE_FAILED
             } else {

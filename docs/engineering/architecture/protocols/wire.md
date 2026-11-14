@@ -15,9 +15,9 @@ Protocol 5 requires a fresh PostgreSQL framework namespace and fresh format-5 cl
 | Owner | Responsibility |
 | --- | --- |
 | [Core carriers](../../../../crates/protocols/src/wire.rs) | Context, immutable Batch, null-cursor reads, delivery headers, manifests, parts and validation. |
-| [Client Store](../../../../crates/client/src/store05.rs) | Durable file context, operation input, frozen request, acknowledgment, S/B/C and authority evidence. |
-| [Client sync](../../../../crates/client/src/sync05/mod.rs) | Uplink, finite downlink, bounded queue and complete-unit apply. |
-| [Client settlement](../../../../crates/client/src/settlement05.rs) | Queue-owned outcomes and accepted work's authority obligations. |
+| [Client Store](../../../../crates/client/src/store_file.rs) | Durable file context, operation input, frozen request, acknowledgment, S/B/C and authority evidence. |
+| [Client sync](../../../../crates/client/src/sync/mod.rs) | Uplink, finite downlink, bounded queue and complete-unit apply. |
+| [Client settlement](../../../../crates/client/src/settlement.rs) | Queue-owned outcomes and accepted work's authority obligations. |
 | [Server Batch](../../../../crates/server/src/mutation_batch.rs) | Store admission, per-member transactions, replay and durable results. |
 | [Server delivery](../../../../crates/server/src/delivery_plan.rs) | Serializable current-state cursor pages and preparation closure. |
 | [PostgreSQL schema](../../../../packages/backend/postgres/migration.sql) | Five fresh tables: Stream, Record, Store, MutationResult and StreamRecord. Per-transaction cursor reservation is ephemeral SQL state, not another durable table. |
@@ -26,7 +26,7 @@ Protocol 5 requires a fresh PostgreSQL framework namespace and fresh format-5 cl
 
 ### Execution and settlement
 
-Canonical wire and known-descriptor slot validation remain whole-Batch admission checks. An unretained Mutation name/version, or a retained one whose input the current schema cannot key, is instead saved as that member's `mutation_version_unsupported` refusal after Store and Batch admission, without a Handler or preparation call. Independent supported members continue, and exact replay returns the saved result. [The deterministic scenario](../../../../crates/sim/tests/mutation_versions05.rs) joins the server's member engine and persistence seam to a real SQLite client, including settlement, reopen and the next Batch; the [host gate](../../../../integration/v05-sdk/README.md) covers actual HTTP and PostgreSQL.
+Canonical wire and known-descriptor slot validation remain whole-Batch admission checks. An unretained Mutation name/version, or a retained one whose input the current schema cannot key, is instead saved as that member's `mutation_version_unsupported` refusal after Store and Batch admission, without a Handler or preparation call. Independent supported members continue, and exact replay returns the saved result. [The deterministic scenario](../../../../crates/sim/tests/mutation_versions.rs) joins the server's member engine and persistence seam to a real SQLite client, including settlement, reopen and the next Batch; the [host gate](../../../../integration/sdk/README.md) covers actual HTTP and PostgreSQL.
 
 The client freezes a Batch's sequence, membership and exact input before sending. Its digest (domain `axton:batch-intent:2`) covers Store, Stream, Batch ID and ordered intent, but not the protocol number or the materialization: transport never changes intent, so a frozen Batch survives a protocol bump and is sent in the Store's current materialization. An accepted outcome names the materialization its snapshots were loaded in (that of its first execution); the client installs a snapshot only under its own. A frozen Batch whose saved digest no longer matches its retained intent cannot be resent; freezing reports one terminal error, the connection stops without retrying and nothing is deleted until the application resets the Store. Each named Mutation executes in its own Serializable server transaction. A business refusal rolls back that member's savepoint and saves rejection/progress; infrastructure failure aborts the transaction. Retrying saved members runs no Handler or preparation. Store metadata admits the current or last completed Batch; accepting the next Batch prunes the older result set transactionally. The client freezes no Batch before the handshake commits S, so every member executes after the handshake head read. It starts the next Batch only after every member of the acknowledged Batch has settled locally, preserving its saved ownership while settlement waits for the Stream. Unassigned work with unmet prerequisites does not hold this window.
 
@@ -82,7 +82,7 @@ The handshake reports the backend's projection generation. The Store's materiali
 
 ## 10. Quality Requirements
 
-[Client storage](../client/storage/protocol5.md) and [server](../server/protocol5.md) own detailed invariants. The joined native acceptance gate is `integration/v05-sdk/run-host.sh`; the paired PostgreSQL-to-SQLite capacity gate is `integration/v05-sdk/run-capacity.sh`. Candidate evidence and release gates must identify the tested commit; this document does not certify a release or mobile installation.
+[Client storage](../client/storage/protocol5.md) and [server](../server/protocol5.md) own detailed invariants. The joined native acceptance gate is `integration/sdk/run-host.sh`; the paired PostgreSQL-to-SQLite capacity gate is `integration/sdk/run-capacity.sh`. Candidate evidence and release gates must identify the tested commit; this document does not certify a release or mobile installation.
 
 ## 11. Risks and Technical Debt
 

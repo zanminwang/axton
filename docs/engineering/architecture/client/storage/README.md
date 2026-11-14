@@ -6,7 +6,7 @@ The storage adapter executes SQL and transactions; Rust owns reconciliation poli
 
 ## 5. Building Block View
 
-[Implementation](../../../../../crates/client/src/store05.rs) owns this component. [Protocol 5](../../protocols/wire.md) owns shared context, delivery and settlement rules.
+[Implementation](../../../../../crates/client/src/store_file.rs) owns this component. [Protocol 5](../../protocols/wire.md) owns shared context, delivery and settlement rules.
 
 - [protocol5](protocol5.md)
 - [reconciliation](reconciliation.md)
@@ -14,4 +14,4 @@ The storage adapter executes SQL and transactions; Rust owns reconciliation poli
 
 ## 10. Quality Requirements
 
-Changes must preserve the component boundary and the protocol’s commit/failure rules. The joined native gate `integration/v05-sdk/run-host.sh` exercises the generated client, real HTTP/WebSocket backend and SQLite. Installed-package and mobile evidence are separate adoption gates.
+Changes must preserve the component boundary and the protocol’s commit/failure rules. The joined native gate `integration/sdk/run-host.sh` exercises the generated client, real HTTP/WebSocket backend and SQLite. Installed-package and mobile evidence are separate adoption gates.

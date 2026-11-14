@@ -98,7 +98,7 @@ impl<S: ClientStore> Engine<'_, S> {
         rows.into_iter()
             .map(|row| {
                 let id = as_u64(&row[0])?;
-                let ops = self.wire_ops05(id)?;
+                let ops = self.wire_ops(id)?;
                 let args = crate::wire::reconstruct_input(&ops)?;
                 let operations = ops
                     .into_iter()
@@ -166,7 +166,7 @@ impl<S: ClientStore> Engine<'_, S> {
             }
             let act = SubmittedAct {
                 args: Some(crate::wire::reconstruct_input(
-                    &self.wire_ops05(queued.ordinal)?,
+                    &self.wire_ops(queued.ordinal)?,
                 )?),
                 operations: queued.mutation.operations.clone(),
             };

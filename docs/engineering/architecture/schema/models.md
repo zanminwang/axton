@@ -46,7 +46,7 @@ A field marked `@deprecated` keeps its place in every contract; the notice is ge
 
 ## 10. Quality Requirements
 
-Current [compiler tests](../../../../crates/compiler/tests/compiler.rs), [history tests](../../../../crates/compiler/tests/history.rs), [inheritance tests](../../../../crates/compiler/tests/inheritance.rs) and [defaults tests](../../../../crates/compiler/tests/defaults.rs) cover declaration validation, retained versions and create-only policy. [Core compatibility tests](../../../../crates/core/tests/compatibility.rs) cover storage shape; [current SQLite defaults](../../../../crates/sqlite/tests/protocol05_defaults.rs) and [DDL tests](../../../../crates/sqlite/tests/protocol05_ddl.rs) cover local behavior. These links identify maintained coverage; no execution is claimed here. Historical v0.4.2 test results do not certify the current candidate.
+Current [compiler tests](../../../../crates/compiler/tests/compiler.rs), [history tests](../../../../crates/compiler/tests/history.rs), [inheritance tests](../../../../crates/compiler/tests/inheritance.rs) and [defaults tests](../../../../crates/compiler/tests/defaults.rs) cover declaration validation, retained versions and create-only policy. [Core compatibility tests](../../../../crates/core/tests/compatibility.rs) cover storage shape; [current SQLite defaults](../../../../crates/sqlite/tests/defaults.rs) and [DDL tests](../../../../crates/sqlite/tests/ddl.rs) cover local behavior. These links identify maintained coverage; no execution is claimed here. Historical v0.4.2 test results do not certify the current candidate.
 
 ## 11. Risks and Technical Debt
 

@@ -12,7 +12,7 @@ export const fixtureBatchSize = 100;
 export const text = 'x'.repeat(textBytes);
 const identity = (prefix, i) => `${prefix}-${String(i).padStart(8, '0')}`;
 
-// Same generated SDK, backend, PostgreSQL adapter and native host as v05-sdk.
+// Same generated SDK, backend, PostgreSQL adapter and native host as sdk.
 // A new database per sample keeps fixture work outside all timing intervals.
 export async function startFixture(connectionString, count, diagnostics, databaseFactory = pg) {
   const pool = new Pool({connectionString});

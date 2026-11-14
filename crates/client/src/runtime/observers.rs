@@ -237,7 +237,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     pub(super) fn subscribe_stream(&mut self, stream: &str) -> std::result::Result<Value, String> {
         let state = self
             .client
-            .subscription_state05(stream)
+            .subscription_state(stream)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "foreign Stream".to_string())?;
         let id = state.subscription_id;
@@ -386,7 +386,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             .map(|(id, registration)| (*id, registration.stream.clone()))
             .collect();
         for (id, stream) in registrations {
-            match self.client.subscription_state05(&stream) {
+            match self.client.subscription_state(&stream) {
                 Ok(Some(state)) if state.subscription_id == id => {
                     if let Some(registration) = self.observers.registrations.get_mut(&id) {
                         registration.ready = state.starting_cursor.is_some();
@@ -438,8 +438,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         match &self.connection {
             None => "offline",
             Some(c) if c.paused => "offline",
-            Some(_) if !self.sync05_live => "connecting",
-            Some(_) if self.sync05_catching_up => "catching-up",
+            Some(_) if !self.sync_live => "connecting",
+            Some(_) if self.sync_catching_up => "catching-up",
             Some(_) => "live",
         }
     }

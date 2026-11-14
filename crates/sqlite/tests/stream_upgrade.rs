@@ -1,5 +1,5 @@
 //! Original released files remain recoverable; format5 adopts a fresh file.
-use axton_client::{Client, ClientStore, RecordKey, Schema, sync05::DeliveryQueue, wire};
+use axton_client::{Client, ClientStore, RecordKey, Schema, sync::DeliveryQueue, wire};
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 fn schema() -> Schema {
@@ -67,7 +67,7 @@ fn original_v02_layout_is_refused_unchanged_and_fresh_file_is_independent() {
         assert_eq!(c.pending_count().unwrap(), 0);
         assert_eq!(c.read_sql("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name IN ('axton_stream_member','axton_record','axton_v04_call','axton_call','axton_query_cache','axton_load','axton_mutation')", &[]).unwrap()[0]["n"], 0);
         let report = c
-            .install_cache05(
+            .install_cache(
                 &[wire::ReadRecord {
                     key: wire::RecordKey {
                         model: "Todo".into(),
@@ -95,8 +95,8 @@ fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("db");
     let mut c = Client::open(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
-    c.initialize_stream05(0, "1").unwrap();
-    let context = c.request_context05().unwrap();
+    c.initialize_stream(0, "1").unwrap();
+    let context = c.request_context().unwrap();
     let k = wire::RecordKey {
         model: "Todo".into(),
         identity: json!({"id":"e"}),
@@ -142,20 +142,20 @@ fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
         )
         .unwrap();
         q.receive(&p.header, &p.parts, &context, 1).unwrap();
-        c.apply_next_delivery05(&mut q, 1).unwrap();
+        c.apply_next_delivery(&mut q, 1).unwrap();
     }
     let key = RecordKey {
         model: k.model,
         identity: k.identity,
     };
-    assert_eq!(c.store_status05().unwrap().cursor, Some(2));
+    assert_eq!(c.store_status().unwrap().cursor, Some(2));
     assert_eq!(c.read(&key).unwrap().unwrap()["title"], "kept");
-    let evidence = c.record_evidence05(&key).unwrap();
+    let evidence = c.record_evidence(&key).unwrap();
     assert!(evidence.current.is_none());
     assert_eq!(evidence.history[&context.materialization], 1);
     drop(c);
     let mut c = Client::open(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
-    assert_eq!(c.store_status05().unwrap().cursor, Some(2));
+    assert_eq!(c.store_status().unwrap().cursor, Some(2));
     assert_eq!(c.read(&key).unwrap().unwrap()["title"], "kept");
-    assert!(c.record_evidence05(&key).unwrap().current.is_none());
+    assert!(c.record_evidence(&key).unwrap().current.is_none());
 }

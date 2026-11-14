@@ -8,4 +8,4 @@ Each Store binds one Stream. Cross-viewer delivery uses independent files. The r
 
 The proxy observes or interrupts actual network exchanges; it does not install authority or advance a cursor. Read-only SQL checks inspect durable queue input and backend business rows. Teardown closes transport, drains entered backend transactions and then closes PostgreSQL resources; unexpected background errors fail the fixture.
 
-The evolved fixture is compiled for generated compatibility only. This runner does not claim a retained-context replay proof; retained Model/Mutation history and Store upgrades are exercised by the [protocol-5 host](../v05-sdk/README.md). Nor is this suite a literal replay of retired 0.3 Load/hook/multistream behavior.
+The evolved fixture is compiled for generated compatibility only. This runner does not claim a retained-context replay proof; retained Model/Mutation history and Store upgrades are exercised by the [protocol-5 host](../sdk/README.md). Nor is this suite a literal replay of retired 0.3 Load/hook/multistream behavior.

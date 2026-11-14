@@ -72,7 +72,7 @@ fn measured(schema: Schema) -> (Harness<MeasuredStore>, Arc<Probe>) {
         inner: SqliteStore::open(dir.path().join("db")).unwrap(),
         probe: probe.clone(),
     };
-    let client = Client::open(store, common05::with_crud(schema), "User:u").unwrap();
+    let client = Client::open(store, common::with_crud(schema), "User:u").unwrap();
     (
         Harness {
             runtime: ClientRuntime::new(client),
@@ -108,7 +108,7 @@ fn submit<S: ClientStore>(
     model: &str,
     row: Value,
 ) -> Result<()> {
-    tx.submit_mutation05(&format!("{verb}{model}"), 1, json!({ "row": row }))
+    tx.submit_mutation(&format!("{verb}{model}"), 1, json!({ "row": row }))
         .map(|_| ())
 }
 fn publish(h: &mut Harness<MeasuredStore>) -> Vec<Value> {
@@ -147,11 +147,11 @@ fn metadata_does_no_model_read_and_a_changed_identity_does_not_reread_the_result
     );
     clear(&probe);
     for command in [
-        sync05::StoreCommand::Needs,
-        sync05::StoreCommand::Freeze,
-        sync05::StoreCommand::Needs,
+        sync::StoreCommand::Needs,
+        sync::StoreCommand::Freeze,
+        sync::StoreCommand::Needs,
     ] {
-        h.runtime.store_worker05(command).unwrap();
+        h.runtime.store_worker(command).unwrap();
     }
     assert!(
         read_sizes(&probe).is_empty(),
@@ -339,8 +339,8 @@ fn failed_commit_and_rolled_back_savepoints_do_not_leak_model_candidates() {
 #[test]
 fn authority_replay_rejection_cache_and_reset_refresh_the_committed_projection() {
     let (mut h, probe) = measured(schema());
-    h.runtime.client().initialize_stream05(0, "1").unwrap();
-    let context = h.runtime.client().request_context05().unwrap();
+    h.runtime.client().initialize_stream(0, "1").unwrap();
+    let context = h.runtime.client().request_context().unwrap();
     let authority = |cursor, text: &str, note: Value| wire::AuthorityChange::Record {
         key: wire::RecordKey {
             model: "Entry".into(),
@@ -351,21 +351,19 @@ fn authority_replay_rejection_cache_and_reset_refresh_the_committed_projection()
     };
     h.runtime
         .client()
-        .install_authority05(&context, &[authority(1, "base", Value::Null)], Some((0, 1)))
+        .install_authority(&context, &[authority(1, "base", Value::Null)], Some((0, 1)))
         .unwrap();
     let (observer, _) = watch(&mut h, "Entry", json!({}));
     clear(&probe);
     h.runtime
         .client()
-        .transaction(|tx| {
-            tx.submit_mutation05("Edit", 1, json!({"entry":{"id":"e","text":"mine"}}))
-        })
+        .transaction(|tx| tx.submit_mutation("Edit", 1, json!({"entry":{"id":"e","text":"mine"}})))
         .unwrap();
     assert_eq!(rows(&publish(&mut h), &observer), [json!([row("mine")])]);
-    let batch = h.runtime.client().freeze_batch05().unwrap().unwrap();
+    let batch = h.runtime.client().freeze_batch().unwrap().unwrap();
     h.runtime
         .client()
-        .install_authority05(
+        .install_authority(
             &context,
             &[authority(2, "canonical", json!("new"))],
             Some((1, 2)),
@@ -378,7 +376,7 @@ fn authority_replay_rejection_cache_and_reset_refresh_the_committed_projection()
     );
     h.runtime
         .client()
-        .acknowledge_batch05(&wire::BatchAcknowledgement {
+        .acknowledge_batch(&wire::BatchAcknowledgement {
             context: batch.context,
             batch_id: batch.batch_id,
             digest: batch.digest,
@@ -399,7 +397,7 @@ fn authority_replay_rejection_cache_and_reset_refresh_the_committed_projection()
     clear(&probe);
     h.runtime
         .client()
-        .install_authority05(&context, &[authority(2, "canonical", json!("new"))], None)
+        .install_authority(&context, &[authority(2, "canonical", json!("new"))], None)
         .unwrap();
     assert!(rows(&publish(&mut h), &observer).is_empty());
     assert!(
@@ -408,7 +406,7 @@ fn authority_replay_rejection_cache_and_reset_refresh_the_committed_projection()
     );
     h.runtime
         .client()
-        .install_cache05(
+        .install_cache(
             &[wire::ReadRecord {
                 key: wire::RecordKey {
                     model: "Entry".into(),
@@ -436,7 +434,7 @@ fn authority_replay_rejection_cache_and_reset_refresh_the_committed_projection()
 
 #[test]
 fn cascading_deletes_include_child_model_keys() {
-    let (mut h, probe) = measured(common05::family_schema());
+    let (mut h, probe) = measured(common::family_schema());
     h.runtime
         .client()
         .transaction(|tx| {
@@ -563,9 +561,7 @@ fn a_failed_incremental_read_keeps_the_watch_and_recovers_from_a_full_result() {
     let events = h.commit("change", change("Entry", "e", json!({"text":"after"})));
     assert!(rows(&events, &observer).is_empty());
     assert!(events.iter().any(|e|e["type"]=="report"&&e.to_string().contains("injected watch read failure")));
-    h.runtime
-        .store_worker05(sync05::StoreCommand::Needs)
-        .unwrap();
+    h.runtime.store_worker(sync::StoreCommand::Needs).unwrap();
     assert_eq!(rows(&h.events(), &observer), [json!([row("after")])]);
     let reads = probe.reads.lock().unwrap();
     assert_eq!(reads.len(), 1);
@@ -743,8 +739,8 @@ fn delta_splice_sequences_match_committed_filter_results() {
     let (mut h, _) = measured(schema());
     // Deliveries, not Mutations: a key is deleted and created again many
     // times, which only the Stream does without lifecycle dependencies.
-    h.runtime.client().initialize_stream05(0, "1").unwrap();
-    let context = h.runtime.client().request_context05().unwrap();
+    h.runtime.client().initialize_stream(0, "1").unwrap();
+    let context = h.runtime.client().request_context().unwrap();
     let mut cursor = 0;
     let filter = json!({"note":null});
     let (id, first) = delta_watch(&mut h, filter.clone());
@@ -768,7 +764,7 @@ fn delta_splice_sequences_match_committed_filter_results() {
             cursor += 1;
             h.runtime
                 .client()
-                .install_authority05(
+                .install_authority(
                     &context,
                     &[wire::AuthorityChange::Record {
                         key: wire::RecordKey {

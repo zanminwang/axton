@@ -238,7 +238,7 @@ impl SqliteStore {
     /// Own the Store file at `path` for `stream`. Acquire before SQLite can
     /// change journal or schema state. OS locking follows the inode through
     /// aliases/hard links. An existing file is admitted for `stream` first.
-    pub fn open_exclusive05(path: impl AsRef<Path>, stream: &str) -> Result<Self> {
+    pub fn open_exclusive(path: impl AsRef<Path>, stream: &str) -> Result<Self> {
         axton_core::check_stream(stream)?;
         let path = path.as_ref();
         let file = std::fs::OpenOptions::new()
@@ -293,7 +293,7 @@ impl SqliteStore {
                 reader,
                 _file_lock: None,
             };
-            axton_client::store05::admit05(&mut admitted, stream)?;
+            axton_client::store_file::admit(&mut admitted, stream)?;
         }
         let mut store = Self::open(path)?;
         // Keep database identity open too, preventing inode reuse while owned.

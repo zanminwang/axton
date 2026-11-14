@@ -129,7 +129,7 @@ fn slots_shared<S: ClientStore>(
         .collect();
     let descriptor = engine.mutation_descriptor(ordinal)?;
     for model in &models {
-        if !engine.shared05(&descriptor, model)? {
+        if !engine.shared(&descriptor, model)? {
             return Ok(false);
         }
     }

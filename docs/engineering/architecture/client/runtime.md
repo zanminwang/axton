@@ -22,7 +22,7 @@ including reads through the committed SQLite reader, wait outside that
 transaction. A slow callback can therefore delay local reads even though WAL
 would permit reading the previous committed state. This is runtime scheduling,
 not a server Store progress lock. The
-[transaction regression](../../../../crates/sqlite/tests/protocol05_runtime_transactions.rs)
+[transaction regression](../../../../crates/sqlite/tests/runtime_transactions.rs)
 `a_callback_transaction_owns_the_writer_until_its_result_commits` records the
 current behavior; allowing independent committed reads during the callback would
 require a separate scheduling change and coverage for observer and close ordering.

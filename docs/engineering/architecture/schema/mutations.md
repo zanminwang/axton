@@ -36,4 +36,4 @@ Member `@deprecated` annotations affect generated notices only. They preserve sc
 
 ## 10. Quality Requirements
 
-[Compiler cases](../../../../crates/compiler/tests/compiler.rs) cover input shapes, bindings and sequences; [history tests](../../../../crates/compiler/tests/history.rs) cover compatible changes and retained contracts. [Current server carrier tests](../../../../crates/server/tests/batch_entry.rs) cover trusted input reconstruction; [SQLite queue tests](../../../../crates/sqlite/tests/protocol05_queue.rs) cover durable named work. These are source coverage references, not newly executed gates.
+[Compiler cases](../../../../crates/compiler/tests/compiler.rs) cover input shapes, bindings and sequences; [history tests](../../../../crates/compiler/tests/history.rs) cover compatible changes and retained contracts. [Current server carrier tests](../../../../crates/server/tests/batch_entry.rs) cover trusted input reconstruction; [SQLite queue tests](../../../../crates/sqlite/tests/queue.rs) cover durable named work. These are source coverage references, not newly executed gates.

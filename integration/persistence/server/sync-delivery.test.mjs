@@ -301,7 +301,7 @@ test("real selected and unique-model capacity measurements", async () => {
               ? ["--release"]
               : []),
             "--test",
-            "protocol05_capacity",
+            "capacity",
             "--",
             "--ignored",
             "--exact",

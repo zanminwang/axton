@@ -2,11 +2,11 @@
 
 ## 1. Introduction and Goals
 
-Push means durable protocol-5 Batch execution. Ready named Mutations retain exact input and descriptor; freezing fixes sequence and membership. Local acknowledgment reconciles refusals atomically, while accepted members remain until authority obligations commit. Dependencies block only the work that actually depends on them.
+Push means durable Batch execution. Ready named Mutations retain exact input and descriptor; freezing fixes sequence and membership. Local acknowledgment reconciles refusals atomically, while accepted members remain until authority obligations commit. Dependencies block only the work that actually depends on them.
 
 ## 5. Building Block View
 
-[Implementation](../../../../../../crates/client/src/sync/uplink.rs) owns this component. [Protocol 5](../../../protocols/wire.md) owns shared context, delivery and settlement rules.
+[Implementation](../../../../../../crates/client/src/sync/uplink.rs) owns this component. [The sync protocol](../../../protocols/wire.md) owns shared context, delivery and settlement rules.
 
 - [batching](batching.md)
 - [dependencies](dependencies.md)

@@ -6,7 +6,7 @@ The client projects settled authority with ordered device work and pending optim
 
 ## 5. Building Block View
 
-[Implementation](../../../../crates/client/src/sync/mod.rs) owns this component. [Protocol 5](../protocols/wire.md) owns shared context, delivery and settlement rules.
+[Implementation](../../../../crates/client/src/sync/mod.rs) owns this component. [The sync protocol](../protocols/wire.md) owns shared context, delivery and settlement rules.
 
 - [connection](connection/README.md)
 - [engine](engine/README.md)

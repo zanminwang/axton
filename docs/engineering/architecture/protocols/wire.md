@@ -2,13 +2,13 @@
 
 ## 1. Introduction and Goals
 
-Protocol 5 separates durable Mutation execution from authoritative delivery. Rust owns admission, retry, replay, coverage, settlement and scheduling. SDKs carry generated interfaces and execute native HTTP, WebSocket, timer and application callback effects; they do not implement another sync policy.
+The sync protocol separates durable Mutation execution from authoritative delivery. Rust owns admission, retry, replay, coverage, settlement and scheduling. SDKs carry generated interfaces and execute native HTTP, WebSocket, timer and application callback effects; they do not implement another sync policy.
 
 ## 3. Context and Scope
 
 One physical SQLite file has one Client, Store identity and Stream. Different files may follow the same Stream. Admission carriers carry the wire version `protocol: 6`, `storeId` and `stream`; a peer on an earlier wire version is refused as `unsupported_protocol`. Contextual read, Mutation and delivery requests also carry `materialization`. The server binds the Store to its authenticated principal and Stream. A materialization identifies canonical Model read descriptors and projection generation; a retained schema artifact separately preserves queued Mutation inputs. Credentials and URLs are connection settings, not file identity.
 
-Protocol 5 requires a fresh PostgreSQL framework namespace and fresh format-5 client file. The installer refuses legacy server layouts without modifying existing data. Admission rejects another format before changing the original database, WAL or SHM. It supplies no in-place migration or automatic wipe. See [adoption](../../protocol5-adoption.md) before retiring a protocol-4 backend.
+The sync protocol requires a fresh PostgreSQL framework namespace and a fresh format-5 Store file. The installer refuses legacy server layouts without modifying existing data. Admission rejects another format before changing the original database, WAL or SHM. It supplies no in-place migration or automatic wipe. See [unsupported files](../client/storage/store-file.md#unsupported-files) before retiring a protocol-4 backend.
 
 ## 5. Building Block View
 
@@ -82,11 +82,11 @@ The handshake reports the backend's projection generation. The Store's materiali
 
 ## 10. Quality Requirements
 
-[Client storage](../client/storage/protocol5.md) and [server](../server/protocol5.md) own detailed invariants. The joined native acceptance gate is `integration/sdk/run-host.sh`; the paired PostgreSQL-to-SQLite capacity gate is `integration/sdk/run-capacity.sh`. Candidate evidence and release gates must identify the tested commit; this document does not certify a release or mobile installation.
+[The Store file](../client/storage/store-file.md) and [server Batches](../server/batches.md) own detailed invariants. The joined native acceptance gate is `integration/sdk/run-host.sh`; the paired PostgreSQL-to-SQLite capacity gate is `integration/sdk/run-capacity.sh`. Candidate evidence and release gates must identify the tested commit; this document does not certify a release or mobile installation.
 
 ## 11. Risks and Technical Debt
 
-Finite bounds do not imply short writer or transaction occupancy. Large uniqueness components intentionally apply as one unit; measured capacity, retained payload and whole-unit apply duration must be reviewed before adoption. Host-native acceptance does not prove iOS/Android artifact or device behavior. [Adoption](../../protocol5-adoption.md) owns these release limits.
+Finite bounds do not imply short writer or transaction occupancy. Large uniqueness components intentionally apply as one unit; measured capacity, retained payload and whole-unit apply duration must be reviewed before release. Host-native acceptance does not prove iOS/Android artifact or device behavior. The [release gates](../../releasing.md#release-gates) own these limits.
 
 ## Protocol definitions
 

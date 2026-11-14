@@ -6,7 +6,7 @@ The Node HTTP/WebSocket host authenticates requests, applies application admissi
 
 ## 5. Building Block View
 
-[Connection modules](../../../../../packages/backend/server/connection) own this component. [Protocol 5](../../protocols/wire.md) owns shared context, delivery and settlement rules.
+[Connection modules](../../../../../packages/backend/server/connection) own this component. [The sync protocol](../../protocols/wire.md) owns shared context, delivery and settlement rules.
 
 The [backend composition](../../../../../packages/backend/server/api/backend.mts)
 supplies readiness, transaction-bound backend methods and error reporting to the

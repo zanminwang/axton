@@ -15,6 +15,6 @@ Verify real transaction, lock, durability and adapter boundaries. [Server persis
 | Namespace admission and mixed-key guards preserve canonical locks. | [namespace-and-locks.test.mjs](../../../../integration/persistence/server/namespace-and-locks.test.mjs) checks unchanged refused layouts, equivalent DDL catalogs and observed blocked locks. | PostgreSQL adapter. |
 | Bulk Host responses preserve caller order and bounded SQL round trips. | [persistence-batching.test.mjs](../../../../integration/persistence/server/persistence-batching.test.mjs) checks 2055 identities, <=4 guard/read/target queries, <=6 published-member queries, duplicates/missing/remove positions and MVCC conflicts. | pg; explicit Prisma default interactive transaction case also bounds total queries. |
 
-Commands/prerequisites: [Running tests](../running.md) and [server runner](../../../../integration/persistence/server/run.sh). The [joined host/capacity gates](../../protocol5-adoption.md) remain release evidence.
+Commands/prerequisites: [Running tests](../running.md) and [server runner](../../../../integration/persistence/server/run.sh). The [joined host/capacity gates](../../releasing.md#release-gates) remain release evidence.
 
 Evidence below was inspected on 2026-10-09; these suites were not executed for this documentation change. Prior execution records remain in [history](../../history/pre-protocol5/testing/integration/persistence.md). Source inspection supplies neither a new passing result nor a complete-coverage claim.

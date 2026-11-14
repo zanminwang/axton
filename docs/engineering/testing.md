@@ -12,7 +12,7 @@
 
 ### Guarantees
 
-[Guarantees](guarantees.md) describe the bound Store contract, including offline durability and convergence after delivery resumes. Tests check these requirements under their stated conditions. [Protocol-5 adoption](protocol5-adoption.md) separates current host, capacity and installed-artifact gates.
+[Guarantees](guarantees.md) describe the bound Store contract, including offline durability and convergence after delivery resumes. Tests check these requirements under their stated conditions. The [release gates](releasing.md#release-gates) separate the host, capacity and installed-artifact gates.
 
 ### Component contracts
 
@@ -32,7 +32,7 @@ Component, integration and end-to-end describe the scope of a test. Simulation d
   - **[Server](testing/components/server.md)** — Request handling, handler/loader calls and publication.
 - **[Simulation](testing/simulation/README.md)** — Verify overall Rust sync behavior across clients and a server.
   - **[Scenarios](testing/simulation/scenarios.md)** — Named examples of the behavior promised by guarantees.
-  - **[Invariants](testing/simulation/invariants.md)** — Explicit properties checked by deterministic protocol-5 examples.
+  - **[Invariants](testing/simulation/invariants.md)** — Explicit properties checked by deterministic examples.
   - **[Failure and recovery](testing/simulation/recovery.md)** — Delivery faults, restart and reproducible failures.
 - **[Integration tests](testing/integration/README.md)** — Verify real boundaries and their contracts.
   - **[Storage and persistence](testing/integration/persistence.md)** — Database transactions, durability and concurrency.

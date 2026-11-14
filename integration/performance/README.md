@@ -169,7 +169,7 @@ Serializable isolation, record/Stream guards, Store ordering and bounded retries
 Raw results identify the implementation/commit; reruns are separate evidence,
 never replacements for the original samples. The old bridge request and public
 helper are removed. Fresh namespaces omit the old table; reapplying the migration
-retires it from current protocol-5 namespaces. The one-off historical lock probe
+retires it from current framework namespaces. The one-off historical lock probe
 and its runner/workflow entry points are removed; archived evidence stays at its
 recorded source commit.
 The [fence-removal results](baselines/2026-10-27-fence-removal/README.md) retain

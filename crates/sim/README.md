@@ -1,6 +1,6 @@
 # Simulation
 
-`cargo test -p axton-sim` runs deterministic protocol-5 scenarios over real SQLite: receipts,
+`cargo test -p axton-sim` runs deterministic sync scenarios over real SQLite: receipts,
 authority, delivery and reopen at every persisted boundary. After every step, each Model row
 equals the rebuild of its key from its base, its pending operations and its accepted writes.
 

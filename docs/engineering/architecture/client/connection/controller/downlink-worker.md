@@ -51,4 +51,4 @@ reconnect repair through the real SQLite Store worker.
 
 ## 5. Building Block View
 
-[Implementation](../../../../../../crates/client/src/sync/delta_applier.rs) owns this component. [Protocol 5](../../../protocols/wire.md) owns shared context, delivery and settlement rules.
+[Implementation](../../../../../../crates/client/src/sync/delta_applier.rs) owns this component. [The sync protocol](../../../protocols/wire.md) owns shared context, delivery and settlement rules.

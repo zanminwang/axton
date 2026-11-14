@@ -2,11 +2,11 @@
 
 ## 1. Introduction and Goals
 
-Persistence implements the strict Rust host operation contract inside the application transaction. Store binds principal/Stream and Batch progress; MutationResult retains member outcomes; StreamRecord retains explicit interest and current positions. Delivery responses are not persisted. Publication locks and reserved cursors are transaction-owned. The fresh namespace contains only canonical protocol-5 tables; old framework layouts are refused intact.
+Persistence implements the strict Rust host operation contract inside the application transaction. Store binds principal/Stream and Batch progress; MutationResult retains member outcomes; StreamRecord retains explicit interest and current positions. Delivery responses are not persisted. Publication locks and reserved cursors are transaction-owned. The fresh namespace contains only the canonical tables; old framework layouts are refused intact.
 
 ## 5. Building Block View
 
-[Implementation](../../../../packages/backend/postgres/migration.sql) owns this component. [Protocol 5](../protocols/wire.md) owns shared context, delivery and settlement rules.
+[Implementation](../../../../packages/backend/postgres/migration.sql) owns this component. [The sync protocol](../protocols/wire.md) owns shared context, delivery and settlement rules.
 
 PostgreSQL adapters validate known incompatible layouts once during database
 readiness, before `backend.listen` opens its port. Headless operations retain

@@ -31,7 +31,7 @@ Local-first apps read and write data on the device, so everyday interactions don
 
 ## How it works
 
-Protocol 5 uses fresh canonical framework storage: one Client, physical SQLite file and Stream, plus a fresh backend framework namespace. Existing layouts are refused intact; no old-format migration or compatibility bridge is supplied. See [adoption limits](docs/engineering/protocol5-adoption.md).
+Storage is fresh and canonical: one Client, physical SQLite file and Stream, plus a fresh backend framework namespace. Existing layouts are refused intact; no old-format migration or compatibility bridge is supplied. See [unsupported files](docs/engineering/architecture/client/storage/store-file.md#unsupported-files) and the [release gates](docs/engineering/releasing.md#release-gates).
 
 ![AXTON architecture: local state and background sync](website/docs/assets/architecture.svg)
 
@@ -212,4 +212,4 @@ AXTON is an early alpha: its API is unstable and it is not ready for production 
 
 ## Integration names
 
-Rust crates use `axton-*` and imports use `axton_*`; the compiler command is `axton`. JavaScript packages use `@axtonjs/*`; unpublished React Native packages retain `@axton/*`. Dart imports use `package:axton/axton.dart`. Native libraries and C symbols use `axton`; the Expo module is `AxtonNative`. Environment variables use `AXTON_*`. Storage admission and adoption limits belong to [Protocol 5 adoption](docs/engineering/protocol5-adoption.md).
+Rust crates use `axton-*` and imports use `axton_*`; the compiler command is `axton`. JavaScript packages use `@axtonjs/*`; unpublished React Native packages retain `@axton/*`. Dart imports use `package:axton/axton.dart`. Native libraries and C symbols use `axton`; the Expo module is `AxtonNative`. Environment variables use `AXTON_*`. Storage admission limits belong to the [Store file](docs/engineering/architecture/client/storage/store-file.md#unsupported-files).

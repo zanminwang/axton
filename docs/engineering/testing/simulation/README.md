@@ -1,6 +1,6 @@
 # Simulation
 
-Current simulation uses deterministic protocol-5 examples with distinct boundaries: real SQLite recovery with fixture acknowledgements, pure planning/progress models, and a server member-engine Host seam. It does not run a generated-action network arena or shrinker.
+Current simulation uses deterministic examples with distinct boundaries: real SQLite recovery with fixture acknowledgements, pure planning/progress models, and a server member-engine Host seam. It does not run a generated-action network arena or shrinker.
 
 - [Scenarios](scenarios.md) — Named assertions and each harness boundary.
 - [Invariants](invariants.md) — Explicit complete-unit and authority properties.

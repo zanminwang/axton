@@ -1,7 +1,7 @@
 # Architecture
 
-- [Protocol 5](protocols/wire.md) — Store admission, finite delivery and separate execution/settlement boundaries.
-- [Client storage](client/storage/protocol5.md) / [server](server/protocol5.md) — Runtime implementation and persistence responsibilities.
+- [Sync protocol](protocols/wire.md) — Store admission, finite delivery and separate execution/settlement boundaries.
+- [Client storage](client/storage/store-file.md) / [server](server/batches.md) — Runtime implementation and persistence responsibilities.
 - [Overview](../architecture.md) — Component responsibilities, graph and code map.
 - [Schema](schema/README.md) — User-written, language-independent definitions of models, fields, types, identities and mutations.
 - [Protocols](protocols/README.md) — Sync, Client bridge and Server bridge contracts.

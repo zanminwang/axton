@@ -1,6 +1,6 @@
 # Backend interfaces
 
-## Protocol 5 configuration
+## Sync configuration
 
 Set `authorizeStream(principal, stream, tx)` on backend options; `createBackend` fails at startup without it. Mutation admission/replay and finite authority planning authorize inside their Serializable transaction. Ordinary Query/Fetch validate the immutable Store binding and authorize without holding Store progress across arbitrary Handler/Loader awaits. Explicit Query tracking writes membership in its Serializable read transaction and may force a complete retry. `projectionGeneration` defaults to `"1"`; the handshake reports it to clients, whose Stores upgrade in place when it changes. A materialization identifies normalized Model read contracts, independently of credentials.
 
@@ -8,7 +8,7 @@ Set `authorizeStream(principal, stream, tx)` on backend options; `createBackend`
 
 The optional `bootstrap({ctx})` preparation and Query contexts expose explicit tracking. Returning Model identities does not track them. The initiating `ctx.stream` is supplied by authenticated engine context; the caller cannot choose it as a business argument. Track additional recipients explicitly using the generated multi-Stream declaration API.
 
-Bootstrap and Sync return complete current-state cursor pages. Each required unit commits whole; transport fragments cannot advance partial coverage. Mutation execution acknowledgment and committed local settlement are separate boundaries. Protocol 5 requires fresh local files; it does not migrate old pending work automatically.
+Bootstrap and Sync return complete current-state cursor pages. Each required unit commits whole; transport fragments cannot advance partial coverage. Mutation execution acknowledgment and committed local settlement are separate boundaries. Clients require fresh local files; AXTON does not migrate old pending work automatically.
 
 ## createBackend
 

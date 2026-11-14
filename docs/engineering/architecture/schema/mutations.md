@@ -4,7 +4,7 @@
 
 Applications declare named backend operations with `mutation Name(...)` or `query Name(...)`; [Mutations and Queries](actions.md) owns that syntax and generated interface. Each retained Mutation version fixes the accepted input and the local Model operations derived from it. An offline Call preserves its version and normalized input across reopen and retry.
 
-The parser also accepts the low-level `mutation Name { slots }` declaration used by policy descriptors and compiler fixtures. It is not the protocol-5 wire envelope or an anonymous write API.
+The parser also accepts the low-level `mutation Name { slots }` declaration used by policy descriptors and compiler fixtures. It is not the wire envelope or an anonymous write API.
 
 ## 3. Context and Scope
 
@@ -17,14 +17,14 @@ The compiler retains input Models/enums and versioned policy snapshots. Sequence
 - [parse.rs](../../../../crates/compiler/src/parse.rs) and [validate.rs](../../../../crates/compiler/src/validate.rs) own source syntax, input restrictions, binding and sequence checks.
 - [history.rs](../../../../crates/compiler/src/history.rs) retains published operation contracts and checks compatible changes.
 - [policies.rs](../../../../crates/client/src/policies.rs) derives local lifecycle and sequence dependencies.
-- [batch_entry.rs](../../../../crates/protocols/src/wire.rs) owns frozen named intent with explicit `inputPath`, operation/value entries and the immutable Batch digest.
+- [wire.rs](../../../../crates/protocols/src/wire.rs) owns frozen named intent with explicit `inputPath` and operation/value entries; [wire/mutation.rs](../../../../crates/protocols/src/wire/mutation.rs) computes the immutable Batch digest.
 - [server batch_entry.rs](../../../../crates/server/src/batch_entry.rs) selects the trusted name/version, reconstructs input and normalizes it against the retained schema before execution.
 
 The caller's descriptor fingerprint belongs to immutable intent; it does not replace the backend's retained contract. Compatible widening or field reordering need not reject a frozen Call. Business handlers and viewer Loaders remain the permission authority.
 
 ## 6. Runtime View
 
-The local transaction saves named input and optimism together. Default values for fresh creates are evaluated once before that input freezes; retries do not regenerate them. The backend executes each Batch member independently and persists its immutable outcome. An accepted Call settles locally only after its required authority/evidence commits. [Protocol 5](../protocols/wire.md) owns execution, retry and settlement boundaries.
+The local transaction saves named input and optimism together. Default values for fresh creates are evaluated once before that input freezes; retries do not regenerate them. The backend executes each Batch member independently and persists its immutable outcome. An accepted Call settles locally only after its required authority/evidence commits. [The sync protocol](../protocols/wire.md) owns execution, retry and settlement boundaries.
 
 An empty allowed update patch remains a valid no-op input. Its handler still runs; declared publication and Loader readback follow the normal rules. No identity stamp is allocated. A returned Model identity alone never tracks a Stream.
 
@@ -32,7 +32,7 @@ An empty allowed update patch remains a valid no-op input. Its handler still run
 
 Incompatible input changes require a new operation version. Compatible widening may keep a version; existing fields retain their meaning and required create inputs cannot silently grow. Retain old contracts and their handlers while they are supported. Version decrease or disappearance of a retained declaration is refused by the compiler.
 
-Member `@deprecated` annotations affect generated notices only. They preserve schema, descriptors, history and execution. Retaining operation/Model versions within format 5 is separate from adopting an older framework format: protocol 5 provides no old-file conversion or compatibility bridge.
+Member `@deprecated` annotations affect generated notices only. They preserve schema, descriptors, history and execution. Retaining operation/Model versions within format 5 is separate from adopting an older framework format: there is no old-file conversion or compatibility bridge.
 
 ## 10. Quality Requirements
 

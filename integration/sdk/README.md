@@ -1,4 +1,4 @@
-# Protocol 5 host gate
+# Joined host gate
 
 Run from the repository root:
 

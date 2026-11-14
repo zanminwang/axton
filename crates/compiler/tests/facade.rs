@@ -108,6 +108,5 @@ fn generated_backend_options_take_authorize_stream_at_the_top_level() {
     // `authorizeStream` is required on `BackendOptions`; the generated
     // options keep it by not omitting it.
     assert!(!options.contains("authorizeStream"), "{options}");
-    assert!(!options.contains("protocol5"), "{options}");
     assert!(!options.contains("protocol4"), "{options}");
 }

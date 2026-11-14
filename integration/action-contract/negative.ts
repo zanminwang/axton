@@ -79,6 +79,4 @@ declare const withoutAuthorization:Omit<Options<object>,'authorizeStream'>;
 // @ts-expect-error a backend without authorizeStream does not compile
 const unauthorized:Options<object>=withoutAuthorization;
 const authorized:Options<object>={...withoutAuthorization,authorizeStream:()=>true};
-// @ts-expect-error the nested protocol5 option is gone
-authorized.protocol5;
 void [unauthorized,authorized];

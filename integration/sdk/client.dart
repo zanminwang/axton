@@ -76,7 +76,7 @@ Future<void> main(List<String> args) async {
         'Query refusal keeps native completion ABI',
       );
     }
-    stdout.writeln('Dart protocol5 actual host: PASS');
+    stdout.writeln('Dart actual host: PASS');
   } finally {
     await client.close();
     await dir.delete(recursive: true);

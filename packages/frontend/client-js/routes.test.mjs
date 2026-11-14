@@ -6,7 +6,7 @@ for (const [name, make] of [
   ["JS", (options) => httpTransport(options)],
   ["React Native", (options) => reactNativeConnection(options).push],
 ]) {
-  test(`${name} forwards protocol5 routes unchanged and refuses others`, async () => {
+  test(`${name} forwards sync routes unchanged and refuses others`, async () => {
     const seen = [];
     const original = globalThis.fetch;
     globalThis.fetch = async (url, init) => {

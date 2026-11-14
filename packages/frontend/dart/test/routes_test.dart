@@ -7,7 +7,7 @@ import 'connection_test.dart' show FakeHost;
 
 void main() {
   test(
-    'protocol5 HTTP effects preserve route and body and refuse others',
+    'sync HTTP effects preserve route and body and refuse others',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final seen = <List<String>>[];

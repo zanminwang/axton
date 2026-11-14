@@ -1659,7 +1659,7 @@ if (process.argv[2] === "enqueue-child") {
         ["run", "client.dart", h.url],
         { cwd: new URL(".", import.meta.url).pathname, timeout: 60000 },
       );
-      assert.match(result.stdout, /Dart protocol5 actual host: PASS/);
+      assert.match(result.stdout, /Dart actual host: PASS/);
     } finally {
       await h.close();
     }

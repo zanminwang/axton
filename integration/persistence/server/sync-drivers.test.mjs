@@ -86,7 +86,7 @@ const canonical = (v) =>
         "}"
       : JSON.stringify(v);
 for (const [name, base] of adapters)
-  test(`[${name}] v05 member transactions save independent refusal and replay immutable outcomes`, async () => {
+  test(`[${name}] member transactions save independent refusal and replay immutable outcomes`, async () => {
     const namespace = `task3_${name}`;
     await check.query(`CREATE SCHEMA ${namespace}`);
     const setup = await check.connect();

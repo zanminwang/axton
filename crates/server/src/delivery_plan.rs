@@ -2,28 +2,31 @@
 use crate::{
     Config, Error, Host, Result,
     backend_interface::HostExt,
-    internal,
-    protocol_v05::{Publication05, call},
-    request_invalid, storage_invalid,
+    batch_entry::{PublicationHost, call},
+    internal, request_invalid, storage_invalid,
 };
 use axton_core::canonical_json;
 use axton_protocols::server_bridge::{
     Acknowledged, BootstrapEffects, HandledAction, HostRequest, Loaded, LoaderMode, StreamIntent,
 };
-use axton_protocols::sync::{self as v05, Validate};
+use axton_protocols::wire::{self, Validate};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 #[tracing::instrument(target = "axton::server", name = "delivery.encode", skip_all)]
 fn encode<T: serde::Serialize + Validate>(v: &T) -> Result<String> {
-    String::from_utf8(v05::encode(v).map_err(internal)?).map_err(internal)
+    String::from_utf8(wire::encode(v).map_err(internal)?).map_err(internal)
 }
 #[derive(Deserialize)]
 struct Binding {
     principal: String,
     stream: String,
 }
-async fn claim_binding(owner: &str, context: &v05::RequestContext, host: &impl Host) -> Result<()> {
+async fn claim_binding(
+    owner: &str,
+    context: &wire::RequestContext,
+    host: &impl Host,
+) -> Result<()> {
     crate::principal(owner)?;
     let s:Binding=call(host,json!({"op":"claimStore","storeId":context.store_id,"principal":owner,"stream":context.stream})).await?;
     if s.principal != owner || s.stream != context.stream {
@@ -31,7 +34,7 @@ async fn claim_binding(owner: &str, context: &v05::RequestContext, host: &impl H
     }
     Ok(())
 }
-async fn bind(owner: &str, context: &v05::RequestContext, host: &impl Host) -> Result<()> {
+async fn bind(owner: &str, context: &wire::RequestContext, host: &impl Host) -> Result<()> {
     claim_binding(owner, context, host).await?;
     let allowed: bool = call(host, json!({"op":"admit","owner":owner,"context":context})).await?;
     if !allowed {
@@ -43,7 +46,7 @@ async fn bind(owner: &str, context: &v05::RequestContext, host: &impl Host) -> R
 /// A new Store is claimed only after the application read has returned.
 async fn inspect_read_binding(
     owner: &str,
-    context: &v05::RequestContext,
+    context: &wire::RequestContext,
     host: &impl Host,
 ) -> Result<bool> {
     crate::principal(owner)?;
@@ -65,7 +68,11 @@ async fn inspect_read_binding(
 }
 /// Delivery validates immutable ownership, not Mutation progress. Only a missing
 /// Store requires the atomic claim path; existing reads take no progress lock.
-async fn bind_delivery(owner: &str, context: &v05::RequestContext, host: &impl Host) -> Result<()> {
+async fn bind_delivery(
+    owner: &str,
+    context: &wire::RequestContext,
+    host: &impl Host,
+) -> Result<()> {
     if !inspect_read_binding(owner, context, host).await? {
         claim_binding(owner, context, host).await?;
     }
@@ -75,7 +82,7 @@ async fn bind_delivery(owner: &str, context: &v05::RequestContext, host: &impl H
 async fn prepare(
     config: &Config,
     owner: &str,
-    context: &v05::RequestContext,
+    context: &wire::RequestContext,
     host: &impl Host,
 ) -> Result<()> {
     let done: bool = call(
@@ -87,7 +94,7 @@ async fn prepare(
         // Bootstrap initialization writes Store state. Keep its claim/ordering
         // guard, while a completed Store's reconnect remains a snapshot read.
         claim_binding(owner, context, host).await?;
-        let effects:BootstrapEffects=call(host,json!({"op":"handleBootstrap05","owner":owner,"storeId":context.store_id,"stream":context.stream})).await?;
+        let effects:BootstrapEffects=call(host,json!({"op":"handleBootstrap","owner":owner,"storeId":context.store_id,"stream":context.stream})).await?;
         let declarations = effects
             .declarations
             .into_iter()
@@ -103,31 +110,27 @@ async fn prepare(
     Ok(())
 }
 /// Handshake does not carry a client cursor. Preparation and initial head commit together.
-pub async fn handshake05(
+pub async fn handshake(
     config: &Config,
     owner: &str,
     bytes: &[u8],
     raw: &impl Host,
 ) -> Result<String> {
-    let r: v05::HandshakeRequest = v05::decode(bytes).map_err(request_invalid)?;
-    let projection_generation = config
-        .protocol5
-        .as_ref()
-        .map_or("1", |p| p.projection_generation.as_str())
-        .to_owned();
-    let context = v05::RequestContext {
-        protocol: v05::PROTOCOL,
+    let r: wire::HandshakeRequest = wire::decode(bytes).map_err(request_invalid)?;
+    let projection_generation = config.projection_generation.clone();
+    let context = wire::RequestContext {
+        protocol: wire::PROTOCOL,
         store_id: r.store_id.clone(),
         stream: r.stream.clone(),
-        materialization: v05::materialization_id(&config.schema, &projection_generation)
+        materialization: wire::materialization_id(&config.schema, &projection_generation)
             .map_err(internal)?,
     };
     bind_delivery(owner, &context, raw).await?;
-    let host = Publication05::new(raw);
+    let host = PublicationHost::new(raw);
     prepare(config, owner, &context, &host).await?;
     let head: u64 = call(&host, json!({"op":"deliveryHead","stream":r.stream})).await?;
-    encode(&v05::HandshakeResponse {
-        protocol: v05::PROTOCOL,
+    encode(&wire::HandshakeResponse {
+        protocol: wire::PROTOCOL,
         store_id: r.store_id,
         stream: r.stream,
         head,
@@ -142,17 +145,19 @@ struct Position {
     cursor: u64,
     kind: String,
 }
-fn context_schema<'a>(config: &'a Config, context: &v05::RequestContext) -> &'a axton_core::Schema {
+fn context_schema<'a>(
+    config: &'a Config,
+    context: &wire::RequestContext,
+) -> &'a axton_core::Schema {
     config
-        .protocol5
-        .as_ref()
-        .and_then(|p| p.materializations.get(&context.materialization))
+        .materializations
+        .get(&context.materialization)
         .map(|m| &m.schema)
         .unwrap_or(&config.schema)
 }
 fn bootstrap_model(
     config: &Config,
-    context: &v05::RequestContext,
+    context: &wire::RequestContext,
     name: &str,
     version: u64,
 ) -> bool {
@@ -164,7 +169,7 @@ fn bootstrap_model(
 }
 fn selection(
     config: &Config,
-    context: &v05::RequestContext,
+    context: &wire::RequestContext,
     bootstrap: bool,
 ) -> Result<Option<Vec<String>>> {
     let models = crate::mutation_batch::models(config, context)?;
@@ -180,7 +185,7 @@ fn selection(
 async fn prepared_candidates(
     config: &Config,
     owner: &str,
-    context: &v05::RequestContext,
+    context: &wire::RequestContext,
     after: u64,
     models: Option<Vec<String>>,
     host: &impl Host,
@@ -250,18 +255,18 @@ fn cursor_page_size(schema: &axton_core::Schema) -> Option<usize> {
 async fn materialize(
     config: &Config,
     owner: &str,
-    context: &v05::RequestContext,
+    context: &wire::RequestContext,
     positions: Vec<Position>,
     host: &impl Host,
-) -> Result<Vec<v05::AuthorityChange>> {
+) -> Result<Vec<wire::AuthorityChange>> {
     let versions = crate::mutation_batch::models(config, context)?;
     let mut changes = Vec::new();
     let mut staged_bytes = 0usize;
     let mut by_model = BTreeMap::<String, Vec<Position>>::new();
     for p in positions {
         if p.kind == "remove" {
-            changes.push(v05::AuthorityChange::Remove {
-                key: v05::RecordKey {
+            changes.push(wire::AuthorityChange::Remove {
+                key: wire::RecordKey {
                     model: p.model,
                     identity: serde_json::from_str(&p.identity_key).map_err(storage_invalid)?,
                 },
@@ -307,8 +312,8 @@ async fn materialize(
                         .map_err(|_| Error::code("loader.invalid"))?,
                     None => Value::Null,
                 };
-                let change = v05::AuthorityChange::Record {
-                    key: v05::RecordKey {
+                let change = wire::AuthorityChange::Record {
+                    key: wire::RecordKey {
                         model: model.clone(),
                         identity,
                     },
@@ -327,8 +332,8 @@ async fn materialize(
     }
     Ok(changes)
 }
-fn coalesce(units: Vec<v05::DeliveryUnit>, target: usize) -> Vec<v05::DeliveryUnit> {
-    let mut packed: Vec<v05::DeliveryUnit> = Vec::new();
+fn coalesce(units: Vec<wire::DeliveryUnit>, target: usize) -> Vec<wire::DeliveryUnit> {
+    let mut packed: Vec<wire::DeliveryUnit> = Vec::new();
     for mut unit in units {
         if let Some(last) = packed
             .last_mut()
@@ -347,11 +352,11 @@ fn coalesce(units: Vec<v05::DeliveryUnit>, target: usize) -> Vec<v05::DeliveryUn
 }
 fn components(
     schema: &axton_core::Schema,
-    changes: &[v05::AuthorityChange],
+    changes: &[wire::AuthorityChange],
     after: u64,
     through: u64,
     head: u64,
-) -> Result<Vec<v05::DeliveryUnit>> {
+) -> Result<Vec<wire::DeliveryUnit>> {
     let unique = schema
         .models
         .iter()
@@ -384,16 +389,16 @@ fn components(
             }
         }
     }
-    v05::plan_units(changes, &unique, &dependencies, after, through, head).map_err(internal)
+    wire::plan_units(changes, &unique, &dependencies, after, through, head).map_err(internal)
 }
 #[tracing::instrument(target = "axton::server", name = "delivery.units", skip_all)]
 fn units(
     schema: &axton_core::Schema,
-    changes: &[v05::AuthorityChange],
+    changes: &[wire::AuthorityChange],
     after: u64,
     through: u64,
     head: u64,
-) -> Result<Vec<v05::DeliveryUnit>> {
+) -> Result<Vec<wire::DeliveryUnit>> {
     components(schema, changes, after, through, head).map(|units| coalesce(units, 500))
 }
 /// Select complete dependency components before canonical loading. The page
@@ -410,17 +415,17 @@ fn page_positions(
     let metadata = positions
         .iter()
         .map(|p| {
-            let key = v05::RecordKey {
+            let key = wire::RecordKey {
                 model: p.model.clone(),
                 identity: serde_json::from_str(&p.identity_key).map_err(storage_invalid)?,
             };
             Ok(if p.kind == "remove" {
-                v05::AuthorityChange::Remove {
+                wire::AuthorityChange::Remove {
                     key,
                     cursor: p.cursor,
                 }
             } else {
-                v05::AuthorityChange::Record {
+                wire::AuthorityChange::Record {
                     key,
                     cursor: p.cursor,
                     state: Value::Null,
@@ -433,7 +438,11 @@ fn page_positions(
     let mut count = 0;
     let mut covered = through;
     for group in groups {
-        let minimum = group.changes.iter().map(v05::AuthorityChange::cursor).min();
+        let minimum = group
+            .changes
+            .iter()
+            .map(wire::AuthorityChange::cursor)
+            .min();
         if minimum.is_none_or(|minimum| minimum > through) {
             break;
         }
@@ -457,8 +466,8 @@ fn page_positions(
 }
 /// Validate an indexed transport fragment against its response manifest.
 pub(crate) fn verify_indexed_part(
-    header: &v05::DeliveryHeader,
-    part: &v05::DeliveryPart,
+    header: &wire::DeliveryHeader,
+    part: &wire::DeliveryPart,
 ) -> Result<()> {
     part.validate().map_err(storage_invalid)?;
     if part.plan_id != header.plan_id
@@ -467,7 +476,7 @@ pub(crate) fn verify_indexed_part(
             .units
             .get(part.unit as usize)
             .and_then(|u| u.parts.get(part.part as usize))
-            != Some(&v05::part_digest(part).map_err(storage_invalid)?)
+            != Some(&wire::part_digest(part).map_err(storage_invalid)?)
         || part
             .changes
             .iter()
@@ -480,8 +489,8 @@ pub(crate) fn verify_indexed_part(
 /// All fragments of the selected page travel in this response. Large atomic
 /// components may exceed the normal page target but are never split across reads.
 #[tracing::instrument(target = "axton::server", name = "delivery.response", skip_all)]
-fn response(frozen: v05::FrozenDelivery) -> Result<v05::DeliveryResponse> {
-    let response = v05::DeliveryResponse {
+fn response(frozen: wire::FrozenDelivery) -> Result<wire::DeliveryResponse> {
+    let response = wire::DeliveryResponse {
         header: frozen.header,
         parts: frozen.parts,
     };
@@ -491,16 +500,16 @@ fn response(frozen: v05::FrozenDelivery) -> Result<v05::DeliveryResponse> {
     Ok(response)
 }
 #[tracing::instrument(target = "axton::server", name = "delivery.plan", skip_all)]
-pub async fn process_delivery05(
+pub async fn process_delivery(
     config: &Config,
     owner: &str,
     bytes: &[u8],
     raw: &impl Host,
 ) -> Result<String> {
-    let r: v05::DeltaRequest = v05::decode(bytes).map_err(request_invalid)?;
+    let r: wire::DeltaRequest = wire::decode(bytes).map_err(request_invalid)?;
     crate::mutation_batch::models(config, &r.context)?;
     bind_delivery(owner, &r.context, raw).await?;
-    let host = Publication05::new(raw);
+    let host = PublicationHost::new(raw);
     prepare(config, owner, &r.context, &host).await?;
     let positions = prepared_candidates(
         config,
@@ -552,13 +561,13 @@ pub async fn process_delivery05(
     let now: u64 = call(&host, json!({"op":"deliveryNow"})).await?;
     let frozen = tracing::info_span!(target: "axton::server", "delivery.freeze")
         .in_scope(|| {
-            v05::freeze_delivery(
+            wire::freeze_delivery(
                 r.context.clone(),
                 uuid::Uuid::new_v4().to_string(),
                 if r.bootstrap {
-                    v05::DeliveryPurpose::Bootstrap
+                    wire::DeliveryPurpose::Bootstrap
                 } else {
-                    v05::DeliveryPurpose::Sync
+                    wire::DeliveryPurpose::Sync
                 },
                 r.after,
                 through,
@@ -573,22 +582,22 @@ pub async fn process_delivery05(
 }
 /// Query/Fetch reuse retained normalization and snapshot assembly; snapshots
 /// carry null cursors; only explicit authenticated Query tracking enrolls.
-pub async fn process_read05(
+pub async fn process_read(
     config: &Config,
     owner: &str,
     bytes: &[u8],
     raw: &impl Host,
 ) -> Result<String> {
-    let r: v05::ReadRequest = v05::decode(bytes).map_err(request_invalid)?;
+    let r: wire::ReadRequest = wire::decode(bytes).map_err(request_invalid)?;
     let versions = crate::mutation_batch::models(config, &r.context)?;
     let mut bound = inspect_read_binding(owner, &r.context, raw).await?;
-    let host = Publication05::new(raw);
+    let host = PublicationHost::new(raw);
     let _: Acknowledged = host
         .call_typed(HostRequest::Savepoint { ordinal: 1 })
         .await?;
     let read = async {
         match &r.invocation {
-            v05::ReadInvocation::Fetch { key, version } => {
+            wire::ReadInvocation::Fetch { key, version } => {
                 let cache_version = *versions
                     .get(&key.model)
                     .ok_or_else(|| Error::code("model_version_unsupported"))?;
@@ -626,8 +635,8 @@ pub async fn process_read05(
                 };
                 Ok((
                     result,
-                    vec![v05::ReadRecord {
-                        key: v05::RecordKey {
+                    vec![wire::ReadRecord {
+                        key: wire::RecordKey {
                             model: k.model,
                             identity: k.identity,
                         },
@@ -636,7 +645,7 @@ pub async fn process_read05(
                     }],
                 ))
             }
-            v05::ReadInvocation::Query {
+            wire::ReadInvocation::Query {
                 name,
                 version,
                 args,
@@ -658,7 +667,7 @@ pub async fn process_read05(
                         owner: owner.into(),
                         call_id: r.request_id.clone(),
                         ordinal: 1,
-                        context: Some(crate::protocol_v05::handler_context(owner, &r.context)),
+                        context: Some(crate::batch_entry::handler_context(owner, &r.context)),
                     })
                     .await?;
                 let outputs = match handled {
@@ -718,8 +727,8 @@ pub async fn process_read05(
                     result,
                     snapshots
                         .into_iter()
-                        .map(|s| v05::ReadRecord {
-                            key: v05::RecordKey {
+                        .map(|s| wire::ReadRecord {
+                            key: wire::RecordKey {
                                 model: s.key.model,
                                 identity: s.key.identity,
                             },
@@ -739,7 +748,7 @@ pub async fn process_read05(
     }
     let _: Acknowledged = host.call_typed(HostRequest::Release { ordinal: 1 }).await?;
     let (outcome, records) = match answer {
-        Ok((result, records)) => (v05::ReadOutcome::Succeeded { result }, records),
+        Ok((result, records)) => (wire::ReadOutcome::Succeeded { result }, records),
         Err(e)
             if !matches!(
                 e.code.as_str(),
@@ -754,7 +763,7 @@ pub async fn process_read05(
             ) =>
         {
             (
-                v05::ReadOutcome::Failed {
+                wire::ReadOutcome::Failed {
                     code: e.code,
                     message: Some(e.message),
                 },
@@ -763,7 +772,7 @@ pub async fn process_read05(
         }
         Err(e) => return Err(e),
     };
-    encode(&v05::ReadResponse {
+    encode(&wire::ReadResponse {
         context: r.context,
         request_id: r.request_id,
         outcome,
@@ -774,16 +783,16 @@ pub async fn process_read05(
 /// A fresh live offer observes its finite through under the same transaction.
 /// Subsequent fragments keep that exact bound; no delayed notification cursor
 /// is attached to content loaded at a later head.
-pub async fn process_live05(
+pub async fn process_live(
     config: &Config,
     owner: &str,
     bytes: &[u8],
     host: &impl Host,
 ) -> Result<String> {
-    let mut r: v05::DeltaRequest = v05::decode(bytes).map_err(request_invalid)?;
+    let mut r: wire::DeltaRequest = wire::decode(bytes).map_err(request_invalid)?;
     bind_delivery(owner, &r.context, host).await?;
     r.through = call(host, json!({"op":"deliveryHead","stream":r.context.stream})).await?;
-    process_delivery05(config, owner, &v05::encode(&r).map_err(internal)?, host).await
+    process_delivery(config, owner, &wire::encode(&r).map_err(internal)?, host).await
 }
 #[cfg(test)]
 mod tests {
@@ -869,21 +878,21 @@ mod tests {
     }
     #[test]
     fn indexed_fragment_rejects_changed_payload_without_scanning_other_units() {
-        let context = v05::RequestContext {
-            protocol: v05::PROTOCOL,
+        let context = wire::RequestContext {
+            protocol: wire::PROTOCOL,
             store_id: "s".into(),
             stream: "User:a".into(),
             materialization: "m".into(),
         };
-        let frozen = v05::freeze_delivery(
+        let frozen = wire::freeze_delivery(
             context,
             "p".into(),
-            v05::DeliveryPurpose::Sync,
+            wire::DeliveryPurpose::Sync,
             0,
             1,
             1,
             1000,
-            vec![v05::DeliveryUnit {
+            vec![wire::DeliveryUnit {
                 index: 0,
                 through: Some(1),
                 changes: vec![],
@@ -893,8 +902,8 @@ mod tests {
         .unwrap();
         assert!(verify_indexed_part(&frozen.header, &frozen.parts[0]).is_ok());
         let mut part = frozen.parts[0].clone();
-        part.changes.push(v05::AuthorityChange::Remove {
-            key: v05::RecordKey {
+        part.changes.push(wire::AuthorityChange::Remove {
+            key: wire::RecordKey {
                 model: "Entry".into(),
                 identity: json!({"id":"x"}),
             },
@@ -904,12 +913,12 @@ mod tests {
     }
     #[test]
     fn coalesces_independent_components_without_splitting_atomic_units() {
-        let unit = |index, rows| v05::DeliveryUnit {
+        let unit = |index, rows| wire::DeliveryUnit {
             index,
             through: Some(index + 1),
             changes: (0..rows)
-                .map(|i| v05::AuthorityChange::Record {
-                    key: v05::RecordKey {
+                .map(|i| wire::AuthorityChange::Record {
+                    key: wire::RecordKey {
                         model: "Entry".into(),
                         identity: json!({"id":format!("{index}-{i}")}),
                     },

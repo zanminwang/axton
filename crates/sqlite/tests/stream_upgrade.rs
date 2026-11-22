@@ -1,5 +1,5 @@
 //! Original released files remain recoverable; format5 adopts a fresh file.
-use axton_client::{Client, ClientStore, RecordKey, Schema, sync05::DeliveryQueue, v05};
+use axton_client::{Client, ClientStore, RecordKey, Schema, sync::DeliveryQueue, wire};
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 fn schema() -> Schema {
@@ -55,21 +55,21 @@ fn original_v02_layout_is_refused_unchanged_and_fresh_file_is_independent() {
         let saved = snapshot(&old);
         let bytes = std::fs::read(&old).unwrap();
         for _ in 0..2 {
-            let error = Client::open05(SqliteStore::open(&old).unwrap(), schema(), "User:u")
+            let error = Client::open(SqliteStore::open(&old).unwrap(), schema(), "User:u")
                 .err()
                 .unwrap();
             assert!(error.to_string().contains("unsupported Store format"));
             assert_eq!(snapshot(&old), saved);
             assert_eq!(std::fs::read(&old).unwrap(), bytes);
         }
-        let mut c = Client::open05(SqliteStore::open(&fresh).unwrap(), schema(), "User:u").unwrap();
+        let mut c = Client::open(SqliteStore::open(&fresh).unwrap(), schema(), "User:u").unwrap();
         assert!(c.query("Todo", &json!({})).unwrap().is_empty());
         assert_eq!(c.pending_count().unwrap(), 0);
         assert_eq!(c.read_sql("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name IN ('axton_stream_member','axton_record','axton_v04_call','axton_call','axton_query_cache','axton_load','axton_mutation')", &[]).unwrap()[0]["n"], 0);
         let report = c
-            .install_cache05(
-                &[v05::ReadRecord {
-                    key: v05::RecordKey {
+            .install_cache(
+                &[wire::ReadRecord {
+                    key: wire::RecordKey {
                         model: "Todo".into(),
                         identity: json!({"id":"new"}),
                     },
@@ -81,7 +81,7 @@ fn original_v02_layout_is_refused_unchanged_and_fresh_file_is_independent() {
             .unwrap();
         assert_eq!(report.applied, 1);
         drop(c);
-        let mut c = Client::open05(SqliteStore::open(&fresh).unwrap(), schema(), "User:u").unwrap();
+        let mut c = Client::open(SqliteStore::open(&fresh).unwrap(), schema(), "User:u").unwrap();
         assert_eq!(
             c.query("Todo", &json!({})).unwrap()[0]["channel"],
             "opaque Channel business field"
@@ -94,10 +94,10 @@ fn original_v02_layout_is_refused_unchanged_and_fresh_file_is_independent() {
 fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("db");
-    let mut c = Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
-    c.initialize_stream05(0, "1").unwrap();
-    let context = c.request_context05().unwrap();
-    let k = v05::RecordKey {
+    let mut c = Client::open(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
+    c.initialize_stream(0, "1").unwrap();
+    let context = c.request_context().unwrap();
+    let k = wire::RecordKey {
         model: "Todo".into(),
         identity: json!({"id":"e"}),
     };
@@ -105,10 +105,10 @@ fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
     for (id, purpose, after, through, changes) in [
         (
             "initial",
-            v05::DeliveryPurpose::Bootstrap,
+            wire::DeliveryPurpose::Bootstrap,
             0,
             0,
-            vec![v05::AuthorityChange::Record {
+            vec![wire::AuthorityChange::Record {
                 key: k.clone(),
                 cursor: 1,
                 state: json!({"title":"kept","channel":"opaque"}),
@@ -116,16 +116,16 @@ fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
         ),
         (
             "remove",
-            v05::DeliveryPurpose::Sync,
+            wire::DeliveryPurpose::Sync,
             0,
             2,
-            vec![v05::AuthorityChange::Remove {
+            vec![wire::AuthorityChange::Remove {
                 key: k.clone(),
                 cursor: 2,
             }],
         ),
     ] {
-        let p = v05::freeze_delivery(
+        let p = wire::freeze_delivery(
             context.clone(),
             id.into(),
             purpose,
@@ -133,7 +133,7 @@ fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
             through,
             through.max(1),
             8_000_000_000_000_000,
-            vec![v05::DeliveryUnit {
+            vec![wire::DeliveryUnit {
                 index: 0,
                 through: Some(through),
                 changes,
@@ -142,20 +142,20 @@ fn canonical_remove_delivery_advances_prefix_preserves_content_and_history() {
         )
         .unwrap();
         q.receive(&p.header, &p.parts, &context, 1).unwrap();
-        c.apply_next_delivery05(&mut q, 1).unwrap();
+        c.apply_next_delivery(&mut q, 1).unwrap();
     }
     let key = RecordKey {
         model: k.model,
         identity: k.identity,
     };
-    assert_eq!(c.store_status05().unwrap().cursor, Some(2));
+    assert_eq!(c.store_status().unwrap().cursor, Some(2));
     assert_eq!(c.read(&key).unwrap().unwrap()["title"], "kept");
-    let evidence = c.record_evidence05(&key).unwrap();
+    let evidence = c.record_evidence(&key).unwrap();
     assert!(evidence.current.is_none());
     assert_eq!(evidence.history[&context.materialization], 1);
     drop(c);
-    let mut c = Client::open05(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
-    assert_eq!(c.store_status05().unwrap().cursor, Some(2));
+    let mut c = Client::open(SqliteStore::open(&path).unwrap(), schema(), "User:u").unwrap();
+    assert_eq!(c.store_status().unwrap().cursor, Some(2));
     assert_eq!(c.read(&key).unwrap().unwrap()["title"], "kept");
-    assert!(c.record_evidence05(&key).unwrap().current.is_none());
+    assert!(c.record_evidence(&key).unwrap().current.is_none());
 }

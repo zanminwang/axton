@@ -18,7 +18,7 @@ import { drizzle } from "@axtonjs/postgres/drizzle";      // drizzle-orm/node-po
 
 Global publication fencing, its host operation and public helper are removed.
 Reapplying the migration drops the unused `axton_publication_fence` table from a
-current protocol-5 namespace. Incompatible historical layouts are refused before
+current framework namespace. Incompatible historical layouts are refused before
 any writes. Serializable transactions, record/Stream guards and whole-transaction
 retries remain required.
 
@@ -29,7 +29,7 @@ saving response payloads or running shared expiry cleanup. The migration drops
 the retired `axton_delivery_unit` and `axton_delivery_plan` tables; business data,
 Store progress, outcomes and Stream facts remain.
 
-An installed legacy framework layout is refused without changing its data. This candidate supplies no old-namespace migration, local-file upgrade or compatibility bridge. Use fresh framework storage and review [protocol-5 adoption](https://github.com/zanminwang/axton/blob/main/docs/engineering/protocol5-adoption.md) before replacing an existing deployment.
+An installed legacy framework layout is refused without changing its data. There is no old-namespace migration, local-file upgrade or compatibility bridge. Use fresh framework storage and review the [release gates](https://github.com/zanminwang/axton/blob/main/docs/engineering/releasing.md#release-gates) before replacing an existing deployment.
 
 `backend.listen()` awaits the adapter's namespace check before opening its port.
 For an application-owned server, await `backend.ready()` before accepting traffic.

@@ -1,4 +1,4 @@
-// Generated facade acceptance. Transport fixtures author finite protocol-5 carriers;
+// Generated facade acceptance. Transport fixtures author finite sync carriers;
 // real-host canonical Loader/settlement semantics are checked by action-e2e.
 import 'dart:async';
 import 'dart:io';
@@ -11,7 +11,7 @@ import 'generated.dart';
 import 'package:axton/axton.dart' show SubmitMutationPort;
 
 import '../../packages/frontend/dart/test/store_fixture.dart';
-import '../../packages/frontend/dart/test/protocol5_transport.dart';
+import '../../packages/frontend/dart/test/fake_transport.dart';
 
 const id = '123e4567-e89b-42d3-a456-426614174000';
 final row = Entry(
@@ -580,7 +580,7 @@ void main() {
         final failed = key['model'] == 'Counter';
         return failed
             ? {
-                ...context05(body),
+                ...contextOf(body),
                 'requestId': body['requestId'],
                 'outcome': {
                   'kind': 'failed',
@@ -589,7 +589,7 @@ void main() {
                 },
                 'records': <Object>[],
               }
-            : read05(body, state == null ? null : {...identity, ...state}, [
+            : readResponse(body, state == null ? null : {...identity, ...state}, [
                 {'key': key, 'cursor': null, 'state': state},
               ]);
       },
@@ -748,7 +748,7 @@ final class _Network {
       }
       final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
       requests.add(body);
-      if (body.containsKey('materialization')) context = context05(body);
+      if (body.containsKey('materialization')) context = contextOf(body);
       request.response.write(
         jsonEncode(await onRequest?.call(request, body) ?? emptyPull(body)),
       );
@@ -763,7 +763,7 @@ final class _Network {
   void send(int from, int to, List<Map<String, Object?>> changes) =>
       sockets.last.add(
         jsonEncode(
-          delivery05(
+          deliveryPage(
             {...context!, 'bootstrap': false, 'after': from, 'through': to},
             changes.map((change) {
               final record = change['record'] as Map;

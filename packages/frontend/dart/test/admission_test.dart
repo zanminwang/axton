@@ -1,5 +1,5 @@
 import 'store_fixture.dart';
-import 'protocol5_transport.dart';
+import 'fake_transport.dart';
 // Client metadata and admission refusals (#181): the headers a SyncServer
 // declares ride every request and the live upgrade, and a response the server
 // marks `axton-admission: refused` stops the connection and reaches onError
@@ -82,7 +82,7 @@ class AdmissionServer {
         body['protocol'] == 6
             ? switch (request.uri.path) {
                 '/sync/handshake' => emptyHandshake(body),
-                '/sync/pull' => delivery05(body),
+                '/sync/pull' => deliveryPage(body),
                 '/sync/mutations' => emptyMutation(body),
                 _ => emptyRead(body),
               }

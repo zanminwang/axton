@@ -45,44 +45,41 @@ pub(super) fn execute<S: ClientStore + 'static>(
                 return Err(invalid("Mutation does not accept store"));
             }
             let submitted =
-                client.transaction(|tx| tx.submit_mutation05(name, *version, args.clone()))?;
+                client.transaction(|tx| tx.submit_mutation(name, *version, args.clone()))?;
             json!({"callId":submitted.call_id,"ordinal":submitted.ordinal})
         }
         // The Stream commands behind the SDK subscription handles: each owns its
         // own local transaction. An uninitialized boundary answers as `null`,
         // never as zero ([#150](https://github.com/zanminwang/axton/issues/150)).
-        Command::StreamState { stream } => json!(client.subscription_state05(stream)?),
+        Command::StreamState { stream } => json!(client.subscription_state(stream)?),
         Command::StreamBootstrapState {
             stream,
             subscription_id,
-        } => json!(client.bootstrap_state05(stream, *subscription_id)?),
+        } => json!(client.bootstrap_state(stream, *subscription_id)?),
 
         Command::Readiness { key, state } => {
             client.set_readiness(key, *state)?;
             Value::Null
         }
-        Command::Drop { ordinal } => json!(client.transaction(|tx| tx.drop_mutation05(*ordinal))?),
+        Command::Drop { ordinal } => json!(client.transaction(|tx| tx.drop_mutation(*ordinal))?),
         Command::Dismiss { ordinal } => {
-            client.transaction(|tx| tx.dismiss_rejection05(*ordinal))?;
+            client.transaction(|tx| tx.dismiss_rejection(*ordinal))?;
             Value::Null
         }
-        Command::RejectionGet { id } => json!(
-            client
-                .refused_acts05()?
-                .into_iter()
-                .find(|act| act.id == *id)
-        ),
+        Command::RejectionGet { id } => {
+            json!(client.refused_acts()?.into_iter().find(|act| act.id == *id))
+        }
         Command::RetryTasks { keys } => {
             client.retry_tasks(keys)?;
             Value::Null
         }
         Command::Discard { ordinal } => {
-            json!(client.transaction(|tx| tx.discard_mutation05(*ordinal))?)
+            json!(client.transaction(|tx| tx.discard_mutation(*ordinal))?)
         }
         Command::RecordStatus { key } => client.record_status(key)?,
-        Command::CallCompletion { call_id } => json!(client.call_completion05(call_id)?),
+        Command::CallCompletion { call_id } => json!(client.call_completion(call_id)?),
         Command::Tasks => json!(client.pending_tasks()?),
-        Command::Status => client.status_snapshot05()?,
+        Command::Status => client.status_snapshot()?,
         Command::Malformed { error } => return Err(invalid(error.clone())),
         Command::Transaction
         | Command::Connect { .. }

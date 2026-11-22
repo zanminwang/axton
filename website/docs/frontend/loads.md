@@ -1,6 +1,6 @@
 # Bootstrap and history
 
-Protocol 5 has no Load declarations, handlers or job manager. Choose `@@bootstrap` on Models needed at initial open; use named Queries for business reads and Fetch for one Model identity.
+AXTON has no Load declarations, handlers or job manager. Choose `@@bootstrap` on Models needed at initial open; use named Queries for business reads and Fetch for one Model identity.
 
 ```model
 model Entry {

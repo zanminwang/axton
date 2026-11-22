@@ -55,7 +55,7 @@ test("fresh namespace has only canonical identity, Store/result, StreamRecord fa
     ).rows;
     assert.deepEqual(columns, []);
     const ensured = await answer(driver, tx, {
-      op: "protocol05",
+      op: "sync",
       request: {
         op: "guardRecords",
         records: [
@@ -164,7 +164,7 @@ test("legacy namespace installation, readiness and standalone admission refuse b
     await assert.rejects(persistence(driver).initialize(tx), /fresh namespace/);
     await assert.rejects(
       answer(driver, tx, {
-        op: "protocol05",
+        op: "sync",
         request: {
           op: "claimStore",
           storeId: "s",

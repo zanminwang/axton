@@ -4,7 +4,7 @@ import 'fake_carrier.dart';
 
 void main() {
   test(
-    'offline open sends protocol 5 without identity or connection task',
+    'offline open sends no protocol field, identity or connection task',
     () async {
       final carrier = FakeCarrier();
       final client = await Client.open(
@@ -13,7 +13,7 @@ void main() {
         stream: 'User:u',
         carrier: carrier,
       );
-      expect(carrier.openedRequest['protocol'], 5);
+      expect(carrier.openedRequest.containsKey('protocol'), false);
       expect(carrier.openedRequest['stream'], 'User:u');
       expect(carrier.openedRequest.containsKey('projectionGeneration'), false);
       expect(carrier.openedRequest.containsKey('binding'), false);

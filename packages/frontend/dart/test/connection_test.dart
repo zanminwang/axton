@@ -1,5 +1,5 @@
 import 'store_fixture.dart';
-import 'protocol5_transport.dart';
+import 'fake_transport.dart';
 // The connection as an effect executor (#134): the runtime owns the lanes,
 // direct calls, refresh coordination and timeouts; the SDK executes the
 // effects it asks for and aborts each one when it is cancelled. The executor

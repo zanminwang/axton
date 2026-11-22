@@ -125,7 +125,7 @@ async function lockStreams(q: Query, r: unknown): Promise<Acknowledged> {
     await q(SQL.LOCK_STREAMS, JSON.stringify(group));
   return null;
 }
-async function answer05(
+async function answerSync(
   q: Query,
   r: Record<string, unknown>,
 ): Promise<unknown> {
@@ -182,19 +182,19 @@ async function answer05(
         kind: row.kind,
       }));
     }
-    case "handleBootstrap05":
+    case "handleBootstrap":
       throw new Error("bootstrap belongs to application host");
     case "inspectStore": {
-      const [row] = await q(SQL.V05_STORE_INSPECT, r.storeId);
+      const [row] = await q(SQL.STORE_INSPECT, r.storeId);
       return row ? { principal: row.principal, stream: row.stream } : null;
     }
     case "claimStore": {
-      let [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
+      let [row] = await q(SQL.STORE_LOCK, r.storeId);
       if (!row) {
         // First claims still race through the unique Store identity. A stale
         // Serializable snapshot retries the whole transaction as before.
-        await q(SQL.V05_STORE_INSERT, r.storeId, r.principal, r.stream);
-        [row] = await q(SQL.V05_STORE_LOCK, r.storeId);
+        await q(SQL.STORE_INSERT, r.storeId, r.principal, r.stream);
+        [row] = await q(SQL.STORE_LOCK, r.storeId);
       }
       if (!row) throw new Error("Store missing");
       return {
@@ -211,7 +211,7 @@ async function answer05(
     }
     case "beginBatch": {
       const rows = await q(
-        SQL.V05_BATCH_BEGIN,
+        SQL.BATCH_BEGIN,
         r.storeId,
         r.batchId,
         r.digest,
@@ -221,18 +221,13 @@ async function answer05(
       return null;
     }
     case "readResult": {
-      const [row] = await q(
-        SQL.V05_RESULT_READ,
-        r.storeId,
-        r.batchId,
-        r.ordinal,
-      );
+      const [row] = await q(SQL.RESULT_READ, r.storeId, r.batchId, r.ordinal);
       return row ? json(row.result) : null;
     }
     case "saveResult": {
       const result = r.result as { mutationId: number };
       const rows = await q(
-        SQL.V05_RESULT_SAVE,
+        SQL.RESULT_SAVE,
         r.storeId,
         r.batchId,
         r.ordinal,
@@ -252,7 +247,7 @@ async function answer05(
       if (ordinal + results.length > count)
         throw new Error("Invalid result group range");
       const rows = await q(
-        SQL.V05_RESULTS_SAVE,
+        SQL.RESULTS_SAVE,
         r.storeId,
         r.batchId,
         ordinal,
@@ -356,13 +351,13 @@ async function answer05(
         const rows =
           group.length === 1
             ? await q(
-                SQL.V05_POSITION_READ,
+                SQL.POSITION_READ,
                 r.stream,
                 group[0]!.model,
                 group[0]!.identityKey,
               )
             : await q(
-                SQL.V05_POSITIONS_READ_BATCH,
+                SQL.POSITIONS_READ_BATCH,
                 r.stream,
                 JSON.stringify(group),
               );
@@ -403,7 +398,7 @@ async function answer05(
       // SQL owns reservation lifetime: both rows and their first table creation
       // roll back with caller savepoints, and COMMIT clears connection-local rows.
       // Repeated preparation/publication in this transaction reuses one cursor.
-      if (streams.length) await q(SQL.V05_PUBLICATION_CURSORS);
+      if (streams.length) await q(SQL.PUBLICATION_CURSORS);
       // A single bounded publish-only run can carry its new cursor through
       // RETURNING into the membership write in the same statement. Mixed and
       // multi-Stream runs retain their existing canonical reservation order.
@@ -413,7 +408,7 @@ async function answer05(
         deltas.every((d) => d.publish === true)
       ) {
         const rows = await q(
-          SQL.V05_RESERVE_APPLY_MEMBERS,
+          SQL.RESERVE_APPLY_MEMBERS,
           streams[0],
           r.publicationScope ?? "",
           JSON.stringify(deltas),
@@ -440,7 +435,7 @@ async function answer05(
       const cursors = new Map<string, number>();
       for (const stream of streams) {
         const [row] = await q(
-          SQL.V05_RESERVE_CURSOR,
+          SQL.RESERVE_CURSOR,
           stream,
           r.publicationScope ?? "",
         );
@@ -450,7 +445,7 @@ async function answer05(
       const positions = [];
       for (const group of batches(deltas)) {
         const rows = await q(
-          SQL.V05_APPLY_MEMBERS_BATCH,
+          SQL.APPLY_MEMBERS_BATCH,
           JSON.stringify(
             group.map((d) => ({
               ...d,
@@ -480,9 +475,7 @@ async function answer05(
       return positions;
     }
     default:
-      throw new Error(
-        `unsupported protocol05 persistence operation ${String(r.op)}`,
-      );
+      throw new Error(`unsupported sync persistence operation ${String(r.op)}`);
   }
 }
 
@@ -511,8 +504,8 @@ async function answerInitialized<Tx>(
   const q = (sql: string, ...params: unknown[]) =>
     driver.query(tx, sql, params);
   switch (r.op) {
-    case "protocol05":
-      return answer05(q, r.request);
+    case "sync":
+      return answerSync(q, r.request);
     case "head": {
       const [row] = await q(SQL.HEAD, r.stream);
       return row ? safe(row.head) : 0;
@@ -522,7 +515,7 @@ async function answerInitialized<Tx>(
     case "readTracking":
     case "guardRecords":
     case "applyStreamMembers":
-      return answer05(q, r);
+      return answerSync(q, r);
     case "savepoint":
     case "rollback":
     case "release": {
@@ -610,6 +603,6 @@ async function requireFreshLayout(q: Query): Promise<void> {
   const [row] = await q(SQL.CHECK_LAYOUT);
   if (!row || row.legacy !== false)
     throw new Error(
-      "installed legacy framework layout: protocol 5 requires a fresh namespace; existing data is unchanged",
+      "installed legacy framework layout: AXTON requires a fresh namespace; existing data is unchanged",
     );
 }

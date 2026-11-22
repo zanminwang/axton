@@ -123,7 +123,7 @@ Future<(Subscriptions, Subscription)> handle(
 
 void main() {
   // The public multi-Stream manager is retired. Current bound single-Stream
-  // Bootstrap/reconnect behavior uses the current protocol 5 transport
+  // Bootstrap/reconnect behavior uses the current sync transport
   // and generated real-backend SDK suite. These tests exercise the bound
   // Stream observer registry and its error/lifetime routes.
   test(

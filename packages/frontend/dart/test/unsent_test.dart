@@ -1,5 +1,5 @@
 import 'store_fixture.dart';
-import 'protocol5_transport.dart';
+import 'fake_transport.dart';
 // Unsent work (#186, #205, #204): refused and failed acts as streams, their
 // resolutions on the client and inside a transaction. The real runtime and
 // SQLite underneath.

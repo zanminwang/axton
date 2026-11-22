@@ -156,10 +156,8 @@ export async function createExample() {
   const backend = createBackend<Tx>({
     database: observedDatabase,
     authenticate: demoAuth,
-    protocol5: {
-      authorizeStream: (viewer, stream) =>
-        DEMO_USERS.has(viewer) && stream === SCOPE,
-    },
+    authorizeStream: (viewer, stream) =>
+      DEMO_USERS.has(viewer) && stream === SCOPE,
     mutations,
     loaders,
   });

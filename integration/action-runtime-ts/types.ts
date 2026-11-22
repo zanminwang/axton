@@ -211,7 +211,7 @@ if (false) {
     },
     queries,
     loaders,
-    protocol5: { authorizeStream: () => true },
+    authorizeStream: () => true,
   });
   void backend;
   // The external transaction hands its body the same generated handles and
@@ -233,7 +233,7 @@ if (false) {
     scope(["project:1"]).track.todo({});
   });
   // @ts-expect-error retained Queries require their handler map
-  createBackend({ database, authenticate: () => "alice", mutations: handlers, loaders, protocol5: { authorizeStream: () => true } });
+  createBackend({ database, authenticate: () => "alice", mutations: handlers, loaders, authorizeStream: () => true });
 }
 const retained = (call: MutationHandlerCall<Tx, PutV1Input>) =>
   call.args.todo.at.getUTCFullYear();

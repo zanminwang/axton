@@ -1,7 +1,7 @@
 //! Reproducible diagnostic, not a throughput guarantee. Each enqueue is a real SQLite commit.
 use axton_client::Client;
 use axton_core::Schema;
-use axton_protocols::sync as v05;
+use axton_protocols::wire;
 use axton_sqlite::SqliteStore;
 use serde_json::{Value, json};
 use std::time::Instant;
@@ -13,16 +13,16 @@ fn main() {
     for count in [10, 1000] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("capacity.sqlite");
-        let mut client = Client::open05(
+        let mut client = Client::open(
             SqliteStore::open(&path).unwrap(),
             schema.clone(),
             "User:diagnostic",
         )
         .unwrap();
-        client.initialize_stream05(0, "1").unwrap();
-        let context = client.request_context05().unwrap();
-        let authority = |cursor| v05::AuthorityChange::Record {
-            key: v05::RecordKey {
+        client.initialize_stream(0, "1").unwrap();
+        let context = client.request_context().unwrap();
+        let authority = |cursor| wire::AuthorityChange::Record {
+            key: wire::RecordKey {
                 model: "Entry".into(),
                 identity: json!({"id":"one"}),
             },
@@ -30,14 +30,14 @@ fn main() {
             state: json!({"text":"authority","note":null}),
         };
         client
-            .install_authority05(&context, &[authority(1)], Some((0, 1)))
+            .install_authority(&context, &[authority(1)], Some((0, 1)))
             .unwrap();
         let mut samples = Vec::new();
         for i in 0..count {
             let start = Instant::now();
             client
                 .transaction(|tx| {
-                    tx.submit_mutation05(
+                    tx.submit_mutation(
                         "Edit",
                         1,
                         json!({"entry":{"id":"one","text":format!("local-{i}")}}),
@@ -50,7 +50,7 @@ fn main() {
         samples.sort_by(f64::total_cmp);
         let start = Instant::now();
         client
-            .install_authority05(&context, &[authority(2)], Some((1, 2)))
+            .install_authority(&context, &[authority(2)], Some((1, 2)))
             .unwrap();
         let replay_ms = start.elapsed().as_secs_f64() * 1000.0;
         assert_eq!(client.pending_count().unwrap(), count);

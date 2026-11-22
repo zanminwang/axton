@@ -8,4 +8,4 @@ The [component](components/README.md), [simulation](simulation/README.md) and [i
 - [Simulation](simulation/scenarios.md): deterministic recovery and model/Host seams; no current generated runner or shrinker.
 - [Persistence](integration/persistence.md): member replay, publication, caller savepoints, locks, read liveness, retained Fetch and bounded SQL batching.
 
-[Protocol-5 adoption](../protocol5-adoption.md) owns the joined host/capacity commands and their release limits. Installed package and mobile artifact/device evidence remain separate; source inspection cannot certify them. [Running tests](running.md) owns commands and prerequisites. [Historical review](../history/pre-protocol5/testing/review.md) preserves the prior review and execution records.
+[Release gates](../releasing.md#release-gates) own the joined host/capacity commands and their release limits. Installed package and mobile artifact/device evidence remain separate; source inspection cannot certify them. [Running tests](running.md) owns commands and prerequisites. [Historical review](../history/pre-protocol5/testing/review.md) preserves the prior review and execution records.

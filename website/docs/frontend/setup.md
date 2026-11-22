@@ -25,7 +25,7 @@ final client = await GeneratedClient.open(
 );
 ```
 
-Opening commits local storage before starting network work; connectivity is not required to reopen a Store. Normal reopen retains its Store identity, pending Mutations, frozen Batch and delivery progress. Use a separate file for each Stream binding and one active owner per physical file. Protocol 5 requires a fresh format-5 file; another format is refused without changing the original database, WAL or SHM. Keep the old release available to drain or export unresolved work before retiring its backend. The backend reports its projection generation at every handshake; the client has no setting for it.
+Opening commits local storage before starting network work; connectivity is not required to reopen a Store. Normal reopen retains its Store identity, pending Mutations, frozen Batch and delivery progress. Use a separate file for each Stream binding and one active owner per physical file. A Client requires a fresh format-5 file; another format is refused without changing the original database, WAL or SHM. Keep the old release available to drain or export unresolved work before retiring its backend. The backend reports its projection generation at every handshake; the client has no setting for it.
 
 ## Native libraries
 

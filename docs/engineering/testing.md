@@ -12,7 +12,7 @@
 
 ### Guarantees
 
-[Guarantees](guarantees.md) describe the bound Store contract, including offline durability and convergence after delivery resumes. Tests check these requirements under their stated conditions. [Protocol-5 adoption](protocol5-adoption.md) separates current host, capacity and installed-artifact gates.
+[Guarantees](guarantees.md) describe the bound Store contract, including offline durability and convergence after delivery resumes. Tests check these requirements under their stated conditions. The [release gates](releasing.md#release-gates) separate the host, capacity and installed-artifact gates.
 
 ### Component contracts
 
@@ -32,7 +32,7 @@ Component, integration and end-to-end describe the scope of a test. Simulation d
   - **[Server](testing/components/server.md)** — Request handling, handler/loader calls and publication.
 - **[Simulation](testing/simulation/README.md)** — Verify overall Rust sync behavior across clients and a server.
   - **[Scenarios](testing/simulation/scenarios.md)** — Named examples of the behavior promised by guarantees.
-  - **[Invariants](testing/simulation/invariants.md)** — Explicit properties checked by deterministic protocol-5 examples.
+  - **[Invariants](testing/simulation/invariants.md)** — Explicit properties checked by deterministic examples.
   - **[Failure and recovery](testing/simulation/recovery.md)** — Delivery faults, restart and reproducible failures.
 - **[Integration tests](testing/integration/README.md)** — Verify real boundaries and their contracts.
   - **[Storage and persistence](testing/integration/persistence.md)** — Database transactions, durability and concurrency.
@@ -51,11 +51,11 @@ Component, integration and end-to-end describe the scope of a test. Simulation d
 | Schema | [core contracts](../../crates/core/tests/contracts.rs) |
 | Protocols | [protocol fixtures/tests](../../crates/protocols/tests) |
 | Compiler | [compiler tests](../../crates/compiler/tests) |
-| Client and SQLite | [SQLite tests](../../crates/sqlite/tests), including protocol05 suites, query, prerequisites, store and stream admission |
+| Client and SQLite | [SQLite tests](../../crates/sqlite/tests), including sync suites, query, prerequisites, store and stream admission |
 | Server | [server tests](../../crates/server/tests) for admission and finite plans |
-| Simulation | [scenario05](../../crates/sim/tests/scenario05.rs), [protocol05_coverage](../../crates/sim/tests/protocol05_coverage.rs), [mutation_versions05](../../crates/sim/tests/mutation_versions05.rs) |
+| Simulation | [scenario](../../crates/sim/tests/scenario.rs), [scenario_coverage](../../crates/sim/tests/scenario_coverage.rs), [mutation_versions](../../crates/sim/tests/mutation_versions.rs) |
 | Persistence | [PostgreSQL suite](../../integration/persistence/server), with driver boundaries described in [persistence evidence](testing/integration/persistence.md) |
-| Joined native transport and capacity | [v05-sdk](../../integration/v05-sdk/README.md) |
+| Joined native transport and capacity | [sdk](../../integration/sdk/README.md) |
 | SDK and binding boundaries | [bindings](../../integration/bindings), [generated API](../../integration/generated-api), [Dart tests](../../packages/frontend/dart/test) |
 
 Current evidence pages identify inspected assertions and their limits. Their source inspection on 2026-10-09 is not an execution result. Historical execution records are retained in [history](history/pre-protocol5/README.md).

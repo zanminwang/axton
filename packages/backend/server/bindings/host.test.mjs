@@ -64,13 +64,11 @@ for (const enabled of [false, true])
             };
           },
         },
-        protocol5: {
-          authorizeStream: (owner, stream, retained) => {
-            assert.equal(owner, principal);
-            assert.equal(stream, "User:viewer");
-            assert.strictEqual(retained, tx);
-            return true;
-          },
+        authorizeStream: (owner, stream, retained) => {
+          assert.equal(owner, principal);
+          assert.equal(stream, "User:viewer");
+          assert.strictEqual(retained, tx);
+          return true;
         },
         loaderHooks: {
           task: {
@@ -84,7 +82,7 @@ for (const enabled of [false, true])
         },
       },
       native: {
-        settleExternal05: async (config, settlement, callback) => {
+        settleExternal: async (config, settlement, callback) => {
           assert.equal(config, "retained-config");
           assert.equal(
             JSON.parse(settlement).declarations[0].stream,
@@ -107,7 +105,7 @@ for (const enabled of [false, true])
     await invoke({ op: "savepoint", ordinal: 7 });
     assert.equal(
       await invoke({
-        op: "protocol05",
+        op: "sync",
         request: {
           op: "admit",
           owner: principal,

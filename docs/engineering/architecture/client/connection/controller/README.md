@@ -6,7 +6,7 @@ The controller drives independent Uplink, direct read and finite delivery work w
 
 ## 5. Building Block View
 
-[runtime/lanes.rs](../../../../../../crates/client/src/runtime/lanes.rs) owns this component. [Protocol 5](../../../protocols/sync.md) owns shared context, delivery and settlement rules.
+[runtime/lanes.rs](../../../../../../crates/client/src/runtime/lanes.rs) owns this component. [The sync protocol](../../../protocols/wire.md) owns shared context, delivery and settlement rules.
 
 - [downlink-worker](downlink-worker.md)
 - [push-lane](push-lane.md)
@@ -14,4 +14,4 @@ The controller drives independent Uplink, direct read and finite delivery work w
 
 ## 10. Quality Requirements
 
-Changes must preserve the component boundary and the protocol’s commit/failure rules. The joined native gate `integration/v05-sdk/run-host.sh` exercises the generated client, real HTTP/WebSocket backend and SQLite. Installed-package and mobile evidence are separate adoption gates.
+Changes must preserve the component boundary and the protocol’s commit/failure rules. The joined native gate `integration/sdk/run-host.sh` exercises the generated client, real HTTP/WebSocket backend and SQLite. Installed-package and mobile evidence are separate adoption gates.

@@ -59,16 +59,16 @@ export type ApplyStreamMembersRequest = {
   deltas: TrackingDelta[];
 };
 
-/** Protocol-5 persistence/application seam. Every call uses the retained transaction. */
-export type Protocol05Context = {
+/** Sync persistence/application seam. Every call uses the retained transaction. */
+export type SyncContext = {
   protocol: 6;
   storeId: string;
   stream: string;
   materialization: string;
 };
-export type Protocol05Operation =
+export type SyncOperation =
   | { op: "bootstrapState"; storeId: string }
-  | { op: "handleBootstrap05"; owner: string; storeId: string; stream: string }
+  | { op: "handleBootstrap"; owner: string; storeId: string; stream: string }
   | { op: "finishBootstrap"; storeId: string }
   | { op: "deliveryHead"; stream: string }
   | { op: "deliveryNow" }
@@ -80,7 +80,7 @@ export type Protocol05Operation =
       capacity: number;
       pageSize?: number | null;
     }
-  | { op: "admit"; owner: string; context: Protocol05Context }
+  | { op: "admit"; owner: string; context: SyncContext }
   | { op: "inspectStore"; storeId: string }
   | { op: "claimStore"; storeId: string; principal: string; stream: string }
   | {
@@ -112,12 +112,12 @@ export type Protocol05Operation =
   | GuardRecordsRequest
   | { op: "targetPositions"; stream: string; records: MemberKey[] }
   | (ApplyStreamMembersRequest & { publicationScope?: string });
-export type Protocol05Request = {
-  op: "protocol05";
-  request: Protocol05Operation;
+export type SyncRequest = {
+  op: "sync";
+  request: SyncOperation;
 };
 export type HostRequest =
-  | Protocol05Request
+  | SyncRequest
   | HeadRequest
   | SavepointRequest
   | RollbackRequest
@@ -197,7 +197,7 @@ export type Loaded =
 
 /** The answer each operation owes, keyed by `op`. */
 export type HostResponse = {
-  protocol05: unknown;
+  sync: unknown;
   head: Head;
   savepoint: Acknowledged;
   rollback: Acknowledged;
@@ -215,7 +215,7 @@ export type HostResponse = {
  * and an extra one are both compile errors here.
  */
 const OPERATIONS: Record<HostOperation, true> = {
-  protocol05: true,
+  sync: true,
   head: true,
   savepoint: true,
   rollback: true,

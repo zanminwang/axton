@@ -6,10 +6,10 @@ The engine admits Store/Stream/context and exact immutable intent before applica
 
 ## 5. Building Block View
 
-[Implementation](../../../../../crates/server/src/protocol_v05.rs) owns this component. [Protocol 5](../../protocols/sync.md) owns shared context, delivery and settlement rules.
+[Implementation](../../../../../crates/server/src/batch_entry.rs) owns this component. [The sync protocol](../../protocols/wire.md) owns shared context, delivery and settlement rules.
 
 - [publish](publish.md)
 
 ## 10. Quality Requirements
 
-Changes must preserve the component boundary and the protocol’s commit/failure rules. The joined native gate `integration/v05-sdk/run-host.sh` exercises the generated client, real HTTP/WebSocket backend and SQLite. Installed-package and mobile evidence are separate adoption gates.
+Changes must preserve the component boundary and the protocol’s commit/failure rules. The joined native gate `integration/sdk/run-host.sh` exercises the generated client, real HTTP/WebSocket backend and SQLite. Installed-package and mobile evidence are separate adoption gates.

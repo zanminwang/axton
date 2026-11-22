@@ -6,7 +6,7 @@ Generated backend types connect application handlers and versioned Model Loaders
 
 ## 3. Context and Scope
 
-`createBackend` binds the generated descriptor to a database adapter, authentication, `protocol5` projection context/transaction-bound authorization, retained Mutation/Query handlers, Loaders and optional Bootstrap preparation. [Backend setup](../../../../website/docs/backend/setup.md) and [API guide](../../../../website/docs/backend/api.md) own complete examples.
+`createBackend` binds the generated descriptor to a database adapter, authentication, transaction-bound Stream authorization (`authorizeStream`), the projection context (`projectionGeneration`, `materializations`), retained Mutation/Query handlers, Loaders and optional Bootstrap preparation. [Backend setup](../../../../website/docs/backend/setup.md) and [API guide](../../../../website/docs/backend/api.md) own complete examples.
 
 | Handler/context | Capability |
 | --- | --- |
@@ -21,7 +21,7 @@ The initiating Stream comes from the authenticated bound request; it is not call
 
 ## 5. Building Block View
 
-[Generated backend emission](../../../../crates/compiler/src/emit.rs) supplies contracts. [Backend composition](../../../../packages/backend/server/api/backend.mts) validates registration, owns transaction Sessions and assembles the public backend. [Host bindings](../../../../packages/backend/server/bindings/host.mts) decode inputs, invoke application callbacks and collect declarations. [Connection modules](../../../../packages/backend/server/connection) own HTTP/WebSocket execution and listener shutdown through narrow backend interfaces. [Protocol 5](../protocols/sync.md) owns transactional materialization/receipt rules; [host interface](../server/backend-interface.md) owns the adapter boundary.
+[Generated backend emission](../../../../crates/compiler/src/emit.rs) supplies contracts. [Backend composition](../../../../packages/backend/server/api/backend.mts) validates registration, owns transaction Sessions and assembles the public backend. [Host bindings](../../../../packages/backend/server/bindings/host.mts) decode inputs, invoke application callbacks and collect declarations. [Connection modules](../../../../packages/backend/server/connection) own HTTP/WebSocket execution and listener shutdown through narrow backend interfaces. [The sync protocol](../protocols/wire.md) owns transactional materialization/receipt rules; [host interface](../server/backend-interface.md) owns the adapter boundary.
 
 ## 9. Architecture Decisions
 
@@ -37,4 +37,4 @@ Registration rejects missing/extra/wrong-kind versions; a Loader returns aligned
 
 Frozen retry preserves the outcome without rerunning business work, preparation or publication. Versioned materialization uses a Serializable view, and Query tracking retries preserve that correspondence. Historical v0.4.2 evidence: [protocol-4 server tests](https://github.com/zanminwang/axton/blob/v0.4.2/integration/persistence/server/protocol-v04.test.mjs) and [production transport cases](https://github.com/zanminwang/axton/blob/v0.4.2/integration/0.4/production.test.mjs). Consult [verification](../../history/pre-protocol5/testing/0.4.md) for exact scope; a contract fixture is not PostgreSQL isolation evidence.
 
-Current source coverage for replay and finite read/tracking boundaries is [protocol-5 server tests](../../../../crates/server/tests/protocol_v05.rs), [delivery plans](../../../../crates/server/tests/delivery_plan.rs), and [real protocol-5 persistence tests](../../../../integration/persistence/server/protocol-v05-delivery.test.mjs). Their execution belongs to the joined gate; archived 0.4 results are not current isolation evidence.
+Current source coverage for replay and finite read/tracking boundaries is [Batch entry tests](../../../../crates/server/tests/batch_entry.rs), [delivery plans](../../../../crates/server/tests/delivery_plan.rs), and [real PostgreSQL delivery tests](../../../../integration/persistence/server/sync-delivery.test.mjs). Their execution belongs to the joined gate; archived 0.4 results are not current isolation evidence.

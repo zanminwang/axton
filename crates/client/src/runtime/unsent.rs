@@ -43,7 +43,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         let snapshot = match view {
             UnsentView::Rejections => self
                 .client
-                .refused_acts05()
+                .refused_acts()
                 .map(|items| json!({"kind":"rejections","items":items})),
             UnsentView::Failures => self
                 .client
@@ -132,7 +132,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
     pub(super) fn resolve_in_transaction(&mut self, command: &TransactionCommand) -> Result<Value> {
         let resolved = match command {
             TransactionCommand::Dismiss { ordinal } => {
-                self.client.session(|tx| tx.dismiss_rejection05(*ordinal))?;
+                self.client.session(|tx| tx.dismiss_rejection(*ordinal))?;
                 vec![]
             }
             TransactionCommand::RetryTasks { keys } => {
@@ -142,7 +142,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             TransactionCommand::Discard { ordinal } => self
                 .client
                 .session(|tx| {
-                    tx.discard_mutation05(*ordinal)
+                    tx.discard_mutation(*ordinal)
                         .map(|report| report.completions)
                 })?
                 .into_iter()

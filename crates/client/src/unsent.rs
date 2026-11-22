@@ -98,16 +98,16 @@ impl<S: ClientStore> Engine<'_, S> {
         rows.into_iter()
             .map(|row| {
                 let id = as_u64(&row[0])?;
-                let ops = self.wire_ops05(id)?;
-                let args = crate::v05::reconstruct_input(&ops)?;
+                let ops = self.wire_ops(id)?;
+                let args = crate::wire::reconstruct_input(&ops)?;
                 let operations = ops
                     .into_iter()
                     .filter_map(|op| {
                         let kind = match op.operation {
-                            crate::v05::Operation::Create => crate::OperationKind::Create,
-                            crate::v05::Operation::Update => crate::OperationKind::Update,
-                            crate::v05::Operation::Delete => crate::OperationKind::Delete,
-                            crate::v05::Operation::Argument => return None,
+                            crate::wire::Operation::Create => crate::OperationKind::Create,
+                            crate::wire::Operation::Update => crate::OperationKind::Update,
+                            crate::wire::Operation::Delete => crate::OperationKind::Delete,
+                            crate::wire::Operation::Argument => return None,
                         };
                         Some(crate::Operation {
                             model: op.model?,
@@ -165,8 +165,8 @@ impl<S: ClientStore> Engine<'_, S> {
                 continue;
             }
             let act = SubmittedAct {
-                args: Some(crate::v05::reconstruct_input(
-                    &self.wire_ops05(queued.ordinal)?,
+                args: Some(crate::wire::reconstruct_input(
+                    &self.wire_ops(queued.ordinal)?,
                 )?),
                 operations: queued.mutation.operations.clone(),
             };

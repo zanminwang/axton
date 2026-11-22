@@ -97,7 +97,7 @@ fn decode_local_write(row: &[Value]) -> Result<LocalWrite> {
 
 impl<S: ClientStore> Engine<'_, S> {
     pub fn allocate_ordinal(&mut self) -> Result<u64> {
-        self.allocate05("next_mutation_id")
+        self.allocate("next_mutation_id")
     }
 
     fn insert_op(
@@ -107,7 +107,7 @@ impl<S: ClientStore> Engine<'_, S> {
         kind: OpKind,
         op: &Operation,
     ) -> Result<()> {
-        self.insert_owned05(ordinal, position, kind, None, op)
+        self.insert_owned(ordinal, position, kind, None, op)
     }
     pub fn add_effect(&mut self, ordinal: u64, op: &Operation) -> Result<()> {
         self.append_op(ordinal, OpKind::Effect, op)
@@ -167,7 +167,7 @@ impl<S: ClientStore> Engine<'_, S> {
     // nothing held stays as cache. A record of a Model the current schema
     // lacks or does not share with its Mutation is not held. A file without
     // them costs one empty read.
-    pub(crate) fn purge_retired_writes05(&mut self) -> Result<()> {
+    pub(crate) fn purge_retired_writes(&mut self) -> Result<()> {
         let touched = self.rows(
             "SELECT model,identity FROM axton_mutation_queue_operation WHERE kind='companion' UNION SELECT model,identity FROM axton_local_write WHERE disposition<>'accepted'",
             &[],
@@ -220,7 +220,7 @@ impl<S: ClientStore> Engine<'_, S> {
             let descriptor = row[7]
                 .as_str()
                 .ok_or_else(|| invalid("descriptor missing"))?;
-            if !self.shared05(descriptor, &text(&row[3]))? {
+            if !self.shared(descriptor, &text(&row[3]))? {
                 skipped.insert(as_u64(&row[0])?);
                 continue;
             }
@@ -258,7 +258,7 @@ impl<S: ClientStore> Engine<'_, S> {
             let mut mutation = Mutation::new(text(&row[1]), vec![]);
             mutation.version = as_u64(&row[2])?;
             mutation.call_id = row[5].as_str().map(str::to_owned);
-            mutation.args = Some(self.input05(ordinal)?);
+            mutation.args = Some(self.input(ordinal)?);
             for op in ops.get(&ordinal).into_iter().flatten() {
                 match op.kind {
                     OpKind::Wire => mutation.operations.push(op.op.clone()),
@@ -328,7 +328,7 @@ impl<S: ClientStore> Engine<'_, S> {
             let descriptor = row[0]
                 .as_str()
                 .ok_or_else(|| invalid("descriptor missing"))?;
-            if self.shared05(descriptor, &key.model)? {
+            if self.shared(descriptor, &key.model)? {
                 return Ok(true);
             }
         }

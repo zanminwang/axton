@@ -1,4 +1,4 @@
-//! Finite Bootstrap status exposed after Store05 commits.
+//! Finite Bootstrap status exposed after Store file commits.
 use serde::{Deserialize, Serialize};
 pub const SUBSCRIPTION_CLOSED: &str = "subscription.closed";
 

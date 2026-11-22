@@ -242,7 +242,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         }
         let call = self
             .client
-            .session(|tx| tx.submit_mutation05(name, version, args.clone()))?;
+            .session(|tx| tx.submit_mutation(name, version, args.clone()))?;
         let answer = submission(&call);
         if let Some(open) = &mut self.transaction {
             open.calls.push(call.call_id);

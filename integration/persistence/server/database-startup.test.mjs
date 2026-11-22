@@ -9,14 +9,16 @@ const backend = (database) =>
     config: { schema: { enums: [], models: [], actions: [] } },
     native: {
       validateConfig() {},
-      handshake05: async () => "handshake",
-      settleExternal05: async () => "{}",
+      serverMaterializationId: () => "materialization",
+      handshake: async () => "handshake",
+      settleExternal: async () => "{}",
       negotiateLive: async () => '{"handle":1,"actions":[]}',
       liveEvent: () => "[]",
       liveClose() {},
     },
     database,
     authenticate: () => "viewer",
+    authorizeStream: () => true,
     loaders: {},
   });
 

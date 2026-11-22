@@ -92,7 +92,7 @@ if (process.argv[2] === "commit-fault-child") {
     { timeout: 120000 },
     async () => {
       const h = await host(),
-        dir = await mkdtemp(join(tmpdir(), "axton-cascade05-"));
+        dir = await mkdtemp(join(tmpdir(), "axton-cascade-"));
       let client, held, pending;
       try {
         await h.backend.transaction(async ({ tx, streams }) => {
@@ -184,7 +184,7 @@ if (process.argv[2] === "commit-fault-child") {
     { timeout: 120000 },
     async () => {
       const h = await host(),
-        dir = await mkdtemp(join(tmpdir(), "axton-commit05-"));
+        dir = await mkdtemp(join(tmpdir(), "axton-commit-"));
       const path = join(dir, "db");
       let child, client;
       try {
@@ -288,7 +288,7 @@ if (process.argv[2] === "commit-fault-child") {
     { timeout: 120000 },
     async () => {
       const h = await host(),
-        dir = await mkdtemp(join(tmpdir(), "axton-unique05-"));
+        dir = await mkdtemp(join(tmpdir(), "axton-unique-"));
       let client;
       try {
         await h.backend.transaction(async ({ tx, streams }) => {
@@ -347,7 +347,7 @@ if (process.argv[2] === "commit-fault-child") {
     { timeout: 120000 },
     async () => {
       const h = await host({ projected: true }),
-        dir = await mkdtemp(join(tmpdir(), "axton-viewers05-"));
+        dir = await mkdtemp(join(tmpdir(), "axton-viewers-"));
       let alice, bob;
       try {
         await h.backend.transaction(async ({ tx, streams }) => {
@@ -418,7 +418,7 @@ if (process.argv[2] === "commit-fault-child") {
     { timeout: 120000 },
     async () => {
       const h = await host(),
-        dir = await mkdtemp(join(tmpdir(), "axton-reset05-"));
+        dir = await mkdtemp(join(tmpdir(), "axton-reset-"));
       let first, second, held, pending;
       try {
         await h.pool.query(
@@ -482,7 +482,7 @@ if (process.argv[2] === "commit-fault-child") {
     { timeout: 120000 },
     async () => {
       const h = await host(),
-        dir = await mkdtemp(join(tmpdir(), "axton-input05-"));
+        dir = await mkdtemp(join(tmpdir(), "axton-input-"));
       let client;
       try {
         await h.pool.query(
@@ -549,7 +549,7 @@ if (process.argv[2] === "commit-fault-child") {
     { timeout: 120000 },
     async () => {
       const h = await host(),
-        dir = await mkdtemp(join(tmpdir(), "axton-read-atomic05-"));
+        dir = await mkdtemp(join(tmpdir(), "axton-read-atomic-"));
       let client;
       try {
         await h.pool.query(

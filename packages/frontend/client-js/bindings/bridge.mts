@@ -171,7 +171,6 @@ export class Bridge {
         strictJson({
           ...request,
           type: "open",
-          protocol: 5,
           requestId,
         }),
         () => bridge.#drain(),

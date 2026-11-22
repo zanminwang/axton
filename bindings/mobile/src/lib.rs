@@ -121,7 +121,7 @@ mod tests {
         let (sender, wakes) = std::sync::mpsc::channel::<u64>();
         let context = Box::into_raw(Box::new(std::sync::Mutex::new(sender)));
         let request = CString::new(
-            serde_json::json!({"type":"open","requestId":"1","path":dir.path().join("db"),"schema":schema,"protocol":5,"stream":"User:a"})
+            serde_json::json!({"type":"open","requestId":"1","path":dir.path().join("db"),"schema":schema,"stream":"User:a"})
                 .to_string(),
         )
         .unwrap();
@@ -248,7 +248,7 @@ mod tests {
         let context = Box::into_raw(Box::new(std::sync::Mutex::new(sender)));
         let missing = dir.path().join("missing").join("sub").join("mobile.db");
         let request = CString::new(
-            serde_json::json!({"type":"open","requestId":"1","path":missing,"schema":schema,"protocol":5,"stream":"User:a"})
+            serde_json::json!({"type":"open","requestId":"1","path":missing,"schema":schema,"stream":"User:a"})
                 .to_string(),
         )
         .unwrap();

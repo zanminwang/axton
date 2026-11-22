@@ -31,8 +31,8 @@ bash integration/persistence/transaction-probe/run.sh
 node --test packages/backend/server/bindings/*.test.mjs
 node --test integration/performance/*.test.mjs
 bash integration/persistence/server/run.sh
-bash integration/v05-sdk/run-host.sh
-bash integration/v05-sdk/run-capacity.sh
+bash integration/sdk/run-host.sh
+bash integration/sdk/run-capacity.sh
 case "$(uname -s)" in
  Darwin) export AXTON_LIBRARY="$root/target/debug/libaxton_dart.dylib";;
  Linux) export AXTON_LIBRARY="$root/target/debug/libaxton_dart.so";;

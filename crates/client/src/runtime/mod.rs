@@ -1,7 +1,7 @@
 //! Rust-owned local runtime. Tasks route to committed results; application
 //! callbacks hold one transaction with nested savepoint capabilities. Direct
-//! protocol5 reads and prerequisite handlers run as bounded host effects.
-//! Sync05 owns the durable uplink/downlink work independently.
+//! reads and prerequisite handlers run as bounded host effects. The sync
+//! worker owns the durable uplink/downlink work independently.
 mod commands;
 mod direct;
 mod effects;
@@ -23,8 +23,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 // module documentation for the contract of the three driving calls.
 pub struct ClientRuntime<S: ClientStore> {
     client: Client<S>,
-    sync05_live: bool,
-    sync05_catching_up: bool,
+    sync_live: bool,
+    sync_catching_up: bool,
     // The runtime-owned connection: its intent, lane effects and credential
     // refresh. `None` until `connect` and after `stop`.
     connection: Option<lanes::Connection>,
@@ -73,8 +73,8 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         let capability_namespace = Some(uuid::Uuid::new_v4().to_string());
         Self {
             client,
-            sync05_live: false,
-            sync05_catching_up: false,
+            sync_live: false,
+            sync_catching_up: false,
             connection: None,
             tasks: tasks::Tasks::default(),
             transaction: None,
@@ -98,7 +98,7 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             "clientId": self.client.client_id(),
         });
 
-        if let Ok(context) = self.client.request_context05() {
+        if let Ok(context) = self.client.request_context() {
             opened["context"] = json!(context);
         }
         opened
@@ -211,19 +211,19 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
 const CLOSED_REGISTRATION: &str = "subscription.closed:";
 
 impl<S: ClientStore + 'static> ClientRuntime<S> {
-    pub fn store_worker_busy05(&self) -> bool {
+    pub fn store_worker_busy(&self) -> bool {
         self.transaction.is_some()
     }
-    pub fn store_worker05(
+    pub fn store_worker(
         &mut self,
-        command: crate::sync05::StoreCommand,
-    ) -> Result<crate::sync05::StoreReport> {
-        use crate::sync05::{StoreCommand, StoreReport};
+        command: crate::sync::StoreCommand,
+    ) -> Result<crate::sync::StoreReport> {
+        use crate::sync::{StoreCommand, StoreReport};
         if let StoreCommand::Guarded { fence, command } = command {
-            if !fence.current() || self.client.request_context05()? != fence.context {
+            if !fence.current() || self.client.request_context()? != fence.context {
                 return Ok(StoreReport::Obsolete);
             }
-            let report = self.store_worker05(*command).map_err(|e| e.to_string());
+            let report = self.store_worker(*command).map_err(|e| e.to_string());
             return Ok(StoreReport::Guarded {
                 fence,
                 report: Box::new(report),
@@ -245,47 +245,47 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
         let result = match command {
             StoreCommand::Guarded { .. } => unreachable!(),
             StoreCommand::NetworkState { live, catching_up } => {
-                self.sync05_live = live;
-                self.sync05_catching_up = catching_up;
+                self.sync_live = live;
+                self.sync_catching_up = catching_up;
                 self.publish_statuses();
-                return Ok(StoreReport::Snapshot(self.client.store_status05()?));
+                return Ok(StoreReport::Snapshot(self.client.store_status()?));
             }
             StoreCommand::Initialize(handshake) => {
                 // A changed projection generation upgrades the Store in the
                 // commit that adopts this handshake.
                 self.client
-                    .initialize_stream05(handshake.head, &handshake.projection_generation)?;
-                self.release_initial_reads05(true);
-                StoreReport::Snapshot(self.client.store_status05()?)
+                    .initialize_stream(handshake.head, &handshake.projection_generation)?;
+                self.release_initial_reads(true);
+                StoreReport::Snapshot(self.client.store_status()?)
             }
             StoreCommand::Needs => {
                 // Receipt acceptance is durable first. A failing settlement
                 // remains accepted and is retried independently of the wire.
-                let report = self.client.settle_ready05()?;
+                let report = self.client.settle_ready()?;
                 self.settled(&report);
                 StoreReport::Needs {
                     status: if report.completions.is_empty() {
                         None
                     } else {
-                        Some(self.client.store_status05()?)
+                        Some(self.client.store_status()?)
                     },
                 }
             }
             StoreCommand::Cleanup(now) => {
-                StoreReport::ActivePlans(self.client.cleanup_delivery05(now)?)
+                StoreReport::ActivePlans(self.client.cleanup_delivery(now)?)
             }
-            StoreCommand::Snapshot => StoreReport::Snapshot(self.client.store_status05()?),
-            StoreCommand::Freeze => match self.client.freeze_batch05() {
+            StoreCommand::Snapshot => StoreReport::Snapshot(self.client.store_status()?),
+            StoreCommand::Freeze => match self.client.freeze_batch() {
                 Err(crate::Error::Terminal(message)) => StoreReport::Halted(message),
                 frozen => StoreReport::Frozen(frozen?),
             },
             StoreCommand::Acknowledge(receipt) => {
                 let _span =
                     tracing::info_span!(target: "axton::client", "batch.acknowledge").entered();
-                let report = self.client.acknowledge_batch05(&receipt)?;
+                let report = self.client.acknowledge_batch(&receipt)?;
                 self.settled(&report);
                 StoreReport::Committed {
-                    status: self.client.store_status05()?,
+                    status: self.client.store_status()?,
                     report,
                     plan: None,
                     active_plans: None,
@@ -298,15 +298,15 @@ impl<S: ClientStore + 'static> ClientRuntime<S> {
             } => {
                 let report = self
                     .client
-                    .apply_next_delivery05(&mut queue, now)?
+                    .apply_next_delivery(&mut queue, now)?
                     .unwrap_or_default();
                 let next = queue.plans.get(&plan_id).map_or(u64::MAX, |p| p.next);
                 self.settled(&report);
                 StoreReport::Committed {
-                    status: self.client.store_status05()?,
+                    status: self.client.store_status()?,
                     report,
                     plan: Some((plan_id, next)),
-                    active_plans: Some(self.client.active_delivery_plans05()?),
+                    active_plans: Some(self.client.active_delivery_plans()?),
                 }
             }
         };

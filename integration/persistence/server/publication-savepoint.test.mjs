@@ -7,7 +7,7 @@ import { Pool } from "pg";
 import { drizzle as orm } from "drizzle-orm/node-postgres";
 import { pg, prisma } from "../../../packages/backend/postgres/index.mts";
 import { drizzle } from "../../../packages/backend/postgres/src/drizzle.mts";
-import { createBackend } from "../../v05-sdk/backend.ts";
+import { createBackend } from "../../sdk/backend.ts";
 const require = createRequire(import.meta.url),
   native = require("../../../bindings/node/axton-node.node");
 const { PrismaClient } = require(
@@ -57,7 +57,7 @@ for (const [name, database] of adapters)
             native,
             database,
             authenticate: () => "alice",
-            protocol5: { authorizeStream: () => true },
+            authorizeStream: () => true,
             mutations: {
               publish: async () => ({ entry: { id: "unused" } }),
               retext: async () => ({ entry: { id: "unused" } }),
@@ -180,7 +180,7 @@ for (const [name, first] of adapters)
           native,
           database,
           authenticate: () => "alice",
-          protocol5: { authorizeStream: () => true },
+          authorizeStream: () => true,
           mutations: {
             publish: async () => ({ entry: { id: "unused" } }),
             retext: async () => ({ entry: { id: "unused" } }),

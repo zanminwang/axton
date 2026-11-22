@@ -1,0 +1,773 @@
+use crate::{authority::Held, engine::Engine, *};
+use axton_core::authority as evidence;
+use serde_json::{Value, json};
+impl<S: ClientStore> Engine<'_, S> {
+    pub(crate) fn evidence(&mut self, key: &RecordKey) -> Result<evidence::RecordEvidence> {
+        self.scalar(
+            "SELECT evidence FROM axton_authority WHERE model=? AND identity=?",
+            &[json!(key.model), json!(key.encoded_identity()?)],
+        )?
+        .map(|v| crate::mutation_queue::decode(&v))
+        .transpose()
+        .map(|v| v.unwrap_or_default())
+    }
+    // A child a delivered deletion cascaded to: its row went with its parent
+    // without Stream content of its own, so it keeps its history and has no
+    // current evidence.
+    fn cascaded_evidence(&mut self, key: &RecordKey) -> Result<()> {
+        let mut e = self.evidence(key)?;
+        e.current = None;
+        self.set_evidence(key, &e)
+    }
+    pub(crate) fn set_evidence(
+        &mut self,
+        key: &RecordKey,
+        e: &evidence::RecordEvidence,
+    ) -> Result<()> {
+        self.exec("axton_authority","INSERT INTO axton_authority(model,identity,evidence) VALUES(?,?,?) ON CONFLICT(model,identity) DO UPDATE SET evidence=excluded.evidence",&[json!(key.model),json!(key.encoded_identity()?),crate::mutation_queue::text(e)?])?;
+        Ok(())
+    }
+}
+use crate::engine::as_u64;
+use crate::mutation_queue::{decode, text};
+use crate::queue::OpKind;
+use axton_protocols::wire::{self, Validate};
+use std::collections::{BTreeMap, BTreeSet};
+impl<S: ClientStore> Engine<'_, S> {
+    fn outcome(&mut self, id: u64) -> Result<Option<wire::MutationOutcome>> {
+        let r=self.rows("SELECT sync_cursor,outcome_materialization,result,targets,rejection_code,rejection_message FROM axton_mutation_queue WHERE id=?",&[json!(id)])?.rows;
+        let Some(r) = r.first() else { return Ok(None) };
+        if let Some(code) = r[4].as_str() {
+            return Ok(Some(wire::MutationOutcome::Rejected {
+                code: code.into(),
+                message: r[5].as_str().map(str::to_owned),
+            }));
+        }
+        if r[0].is_null() {
+            return Ok(None);
+        }
+        Ok(Some(wire::MutationOutcome::Accepted {
+            sync_cursor: as_u64(&r[0])?,
+            materialization: r[1]
+                .as_str()
+                .ok_or_else(|| invalid("outcome materialization missing"))?
+                .into(),
+            result: decode(&r[2])?,
+            targets: decode(&r[3])?,
+        }))
+    }
+    fn completion(&mut self, id: u64) -> Result<CallCompletion> {
+        let outcome = match self
+            .outcome(id)?
+            .ok_or_else(|| invalid("outcome missing"))?
+        {
+            wire::MutationOutcome::Accepted { result, .. } => ActionOutcome::Succeeded { result },
+            wire::MutationOutcome::Rejected { code, .. } => ActionOutcome::Failed {
+                code,
+                execution: ExecutionState::Rejected,
+            },
+        };
+        Ok(CallCompletion {
+            call_id: format!("{}:{id}", self.context()?.store_id),
+            outcome,
+        })
+    }
+    fn acknowledge(&mut self, ack: &wire::BatchAcknowledgement) -> Result<ApplyReport> {
+        ack.validate()?;
+        ack.context.admit_store(&self.context()?)?;
+        let last = as_u64(
+            &self
+                .scalar("SELECT last_acknowledged_batch_id FROM axton_store", &[])?
+                .unwrap(),
+        )?;
+        if ack.batch_id <= last {
+            let rows = self
+                .rows(
+                    "SELECT id,batch_digest FROM axton_mutation_queue WHERE batch_id=? ORDER BY id",
+                    &[json!(ack.batch_id)],
+                )?
+                .rows;
+            if rows.len() != ack.results.len() || rows.is_empty() {
+                return Err(invalid("unknown acknowledged Batch"));
+            }
+            for r in rows {
+                let id = as_u64(&r[0])?;
+                let result = ack
+                    .results
+                    .iter()
+                    .find(|r| r.mutation_id == id)
+                    .ok_or_else(|| invalid("acknowledgement membership mismatch"))?;
+                if r[1] != ack.digest || self.outcome(id)?.as_ref() != Some(&result.outcome) {
+                    return Err(invalid("acknowledgement replay differs"));
+                }
+            }
+            return Ok(ApplyReport::default());
+        }
+        if ack.batch_id != last + 1 {
+            return Err(invalid("Batch acknowledgement skipped"));
+        }
+        let request = self.reconstruct_batch(ack.batch_id)?;
+        // A target is required only on a Model the Mutation shares with the
+        // current schema.
+        let mut unshared = BTreeSet::new();
+        for mutation in &request.mutations {
+            let descriptor = self.mutation_descriptor(mutation.id)?;
+            for model in mutation
+                .operations
+                .iter()
+                .filter_map(|o| o.model.as_deref())
+            {
+                if !self.shared(&descriptor, model)? {
+                    unshared.insert((mutation.id, model.to_owned()));
+                }
+            }
+        }
+        wire::validate_acknowledgement(&request, ack, |id, model| {
+            !unshared.contains(&(id, model.to_owned()))
+        })?;
+        // Validate every result and snapshot before changing any durable
+        // outcome. The result follows the Mutation's own contract. A target
+        // on a shared Model is keyed under the current schema, so its identity
+        // must be canonical whatever the label. A snapshot is used only on a
+        // shared Model and in the Store's materialization, so its state is
+        // validated against the current schema only then.
+        let active = self.context()?.materialization;
+        for result in &ack.results {
+            if let wire::MutationOutcome::Accepted {
+                result: value,
+                materialization,
+                targets,
+                ..
+            } = &result.outcome
+            {
+                let row=self.rows("SELECT name,descriptor_version,descriptor FROM axton_mutation_queue WHERE id=?",&[json!(result.mutation_id)])?.rows.remove(0);
+                let descriptor = row[2].as_str().unwrap();
+                let retained = self.retained_schema(descriptor)?;
+                let action = retained.action(row[0].as_str().unwrap(), as_u64(&row[1])?)?;
+                axton_core::validate_action_result(&retained, action, value)?;
+                let schema = self.schema;
+                for target in targets {
+                    let k = target.key();
+                    if !self.shared(descriptor, &k.model)? {
+                        continue;
+                    }
+                    let canonical = schema.record_key(&k.model, &k.identity)?;
+                    if canonical.identity != k.identity {
+                        return Err(invalid("noncanonical settlement identity"));
+                    }
+                    if *materialization != active {
+                        continue;
+                    }
+                    let r = match target {
+                        wire::SettlementTarget::Stream { fallback, .. } => fallback,
+                        wire::SettlementTarget::Private { record } => record,
+                    };
+                    if !r.state.is_null() {
+                        schema.validate_state(&k.model, &r.state)?;
+                    }
+                }
+            }
+        }
+        let mut rejected = BTreeMap::new();
+        for result in &ack.results {
+            let id = result.mutation_id;
+            match &result.outcome {
+                wire::MutationOutcome::Accepted {
+                    sync_cursor,
+                    materialization,
+                    result,
+                    targets,
+                } => {
+                    self.exec("axton_mutation_queue","UPDATE axton_mutation_queue SET sync_cursor=?,outcome_materialization=?,result=?,targets=? WHERE id=?",&[json!(sync_cursor),json!(materialization),text(result)?,text(targets)?,json!(id)])?;
+                }
+                wire::MutationOutcome::Rejected { code, message } => {
+                    rejected.insert(id, (code.clone(), message.clone()));
+                }
+            }
+        }
+        let report = self.reject_owned(rejected)?;
+        self.exec(
+            "axton_store",
+            "UPDATE axton_store SET last_acknowledged_batch_id=?",
+            &[json!(ack.batch_id)],
+        )?;
+        Ok(report)
+    }
+    fn reject_owned(
+        &mut self,
+        mut rejected: BTreeMap<u64, (String, Option<String>)>,
+    ) -> Result<ApplyReport> {
+        let mut held = Held::new();
+        loop {
+            let mut added = false;
+            let dependencies=self.rows("SELECT ordinal,depends_on FROM axton_mutation_dependency WHERE kind='lifecycle'",&[])?.rows;
+            for r in dependencies {
+                let id = as_u64(&r[0])?;
+                let dep = as_u64(&r[1])?;
+                if rejected.contains_key(&dep) && !rejected.contains_key(&id) {
+                    rejected.insert(id, ("dependency.rejected".into(), None));
+                    added = true;
+                }
+            }
+            if !added {
+                break;
+            }
+        }
+        let mut completions = vec![];
+        for (id, (code, message)) in rejected {
+            for op in self.call_ops(id)? {
+                let key = self.schema.record_key(&op.op.model, &op.op.identity)?;
+                held.insert(key.encoded()?, key);
+            }
+            self.exec("axton_mutation_queue","UPDATE axton_mutation_queue SET rejection_code=?,rejection_message=?,reconciled=1 WHERE id=?",&[json!(code),message.map_or(Value::Null,Value::String),json!(id)])?;
+            completions.push(self.completion(id)?);
+        }
+        let reports = self.rebuild_held(&held)?;
+        Ok(ApplyReport {
+            reports,
+            completions,
+            ..Default::default()
+        })
+    }
+    fn target_evidence(&mut self, key: &wire::RecordKey) -> Result<wire::TargetEvidence> {
+        let key = self.schema.record_key(&key.model, &key.identity)?;
+        let evidence = self.evidence(&key)?;
+        let materialization = self.context()?.materialization;
+        // History holds the one delivery it last installed, in whichever
+        // contract; protection counts only in the Store's.
+        Ok(wire::TargetEvidence {
+            content_cursor: evidence.history.values().max().copied(),
+            protected: !evidence.allows_cache(&materialization),
+            removed_cursor: evidence.membership.filter(|m| !m.live).map(|m| m.cursor),
+        })
+    }
+    fn owned(&mut self, id: u64, step: u64, key: &RecordKey) -> Result<bool> {
+        let saved=self.scalar("SELECT owner_history FROM axton_mutation_queue_operation WHERE mutation_id=? AND step=?",&[json!(id),json!(step)])?.ok_or_else(||invalid("owned operation missing"))?;
+        let history: BTreeMap<String, u64> = decode(&saved)?;
+        Ok(self
+            .evidence(key)?
+            .history
+            .values()
+            .max()
+            .copied()
+            .unwrap_or(0)
+            <= history.values().max().copied().unwrap_or(0))
+    }
+    fn retain_owned(&mut self, id: u64, step: u64, op: &Operation) -> Result<()> {
+        let seq=self.scalar("SELECT local_sequence FROM axton_mutation_queue_operation WHERE mutation_id=? AND step=?",&[json!(id),json!(step)])?.ok_or_else(||invalid("owned operation missing"))?;
+        self.exec("axton_local_write","INSERT INTO axton_local_write(sequence,ordinal,position,disposition,model,identity,op,\"values\") VALUES(?,?,?,'accepted',?,?,?,?)",&[seq,json!(id),json!(step),json!(op.model),text(&op.identity)?,serde_json::to_value(op.op)?,op.values.as_ref().map(text).transpose()?.unwrap_or(Value::Null)])?;
+        Ok(())
+    }
+    /// Run inside the same transaction as authority/progress. The caller rebuilds
+    /// held keys and emits returned completion events only after COMMIT.
+    pub fn reconcile_ready(&mut self, held: &mut Held) -> Result<Vec<CallCompletion>> {
+        let context = self.context()?;
+        let row = self
+            .rows("SELECT cursor,start_cursor FROM axton_store", &[])?
+            .rows
+            .remove(0);
+        let (cursor, start_cursor) = (row[0].as_u64(), row[1].as_u64());
+        let pending = self
+            .rows(
+                "SELECT id FROM axton_mutation_queue WHERE sync_cursor IS NOT NULL AND reconciled=0 ORDER BY id",
+                &[],
+            )?
+            .rows;
+        let mut completions = vec![];
+        if pending.is_empty() {
+            return Ok(completions);
+        }
+        let bootstrap_models = self
+            .schema
+            .models
+            .iter()
+            .filter(|m| m.bootstrap)
+            .map(|m| m.name.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        for row in pending {
+            let id = as_u64(&row[0])?;
+            let Some(wire::MutationOutcome::Accepted {
+                sync_cursor,
+                materialization,
+                targets,
+                ..
+            }) = self.outcome(id)?
+            else {
+                continue;
+            };
+            // A target on a Model the Mutation does not share with the
+            // current schema is neither awaited nor installed.
+            let descriptor = self.mutation_descriptor(id)?;
+            let mut shared = vec![];
+            for target in targets {
+                if self.shared(&descriptor, &target.key().model)? {
+                    shared.push(target);
+                }
+            }
+            let targets = shared;
+            let mut evidence = BTreeMap::new();
+            for target in &targets {
+                evidence.insert(target.key().encoded()?, self.target_evidence(target.key())?);
+            }
+            if !wire::settlement_ready(
+                sync_cursor,
+                cursor,
+                start_cursor,
+                &targets,
+                &bootstrap_models,
+                &evidence,
+            )? {
+                continue;
+            }
+            let ops = self.call_ops(id)?;
+            for op in &ops {
+                let k = self.schema.record_key(&op.op.model, &op.op.identity)?;
+                held.insert(k.encoded()?, k);
+            }
+            for target in &targets {
+                if wire::target_disposition(
+                    target,
+                    start_cursor,
+                    bootstrap_models.contains(&target.key().model),
+                    &evidence[&target.key().encoded()?],
+                )? != wire::TargetDisposition::FinalizeOwned
+                {
+                    continue;
+                }
+                let record = match target {
+                    wire::SettlementTarget::Stream { fallback, .. } => fallback,
+                    wire::SettlementTarget::Private { record } => record,
+                };
+                let key = self
+                    .schema
+                    .record_key(&record.key.model, &record.key.identity)?;
+                let Some(position) = ops
+                    .iter()
+                    .filter(|o| {
+                        o.kind == OpKind::Wire
+                            && o.op.model == key.model
+                            && o.op.identity == key.identity
+                    })
+                    .map(|o| o.position)
+                    .max()
+                else {
+                    return Err(invalid("unowned private target"));
+                };
+                // A snapshot loaded in another contract is not installed; the
+                // target settles without it.
+                if materialization != context.materialization || !self.owned(id, position, &key)? {
+                    continue;
+                }
+                let op = Operation {
+                    model: key.model.clone(),
+                    identity: key.identity.clone(),
+                    op: if record.state.is_null() {
+                        OperationKind::Delete
+                    } else {
+                        OperationKind::Create
+                    },
+                    values: if record.state.is_null() {
+                        None
+                    } else {
+                        // The receipt is authority, not a new create. Project
+                        // omitted current nullable fields to null without
+                        // evaluating creation defaults. Acknowledgement
+                        // already validated it against the current schema.
+                        Some(self.schema.normalize_state(&key.model, &record.state)?)
+                    },
+                };
+                if let Some(v) = &op.values {
+                    self.schema.validate_state(&op.model, v)?;
+                }
+                self.retain_owned(id, position, &op)?;
+            }
+            self.exec(
+                "axton_mutation_queue",
+                "UPDATE axton_mutation_queue SET reconciled=1 WHERE id=?",
+                &[json!(id)],
+            )?;
+            self.exec(
+                "axton_mutation_queue_operation",
+                "DELETE FROM axton_mutation_queue_operation WHERE mutation_id=?",
+                &[json!(id)],
+            )?;
+            completions.push(self.completion(id)?);
+        }
+        Ok(completions)
+    }
+}
+impl<S: ClientStore> Client<S> {
+    pub fn acknowledge_batch(&mut self, ack: &wire::BatchAcknowledgement) -> Result<ApplyReport> {
+        self.write(|e| e.acknowledge(ack))
+    }
+    pub fn settle_ready(&mut self) -> Result<ApplyReport> {
+        self.write(|e| {
+            let mut held = Held::new();
+            let completions = e.reconcile_ready(&mut held)?;
+            let reports = e.rebuild_held(&held)?;
+            Ok(ApplyReport {
+                reports,
+                completions,
+                ..Default::default()
+            })
+        })
+    }
+    pub fn call_completion(&mut self, call: &str) -> Result<Option<CallCompletion>> {
+        let context = self.request_context()?;
+        let prefix = format!("{}:", context.store_id);
+        let Some(id) = call
+            .strip_prefix(&prefix)
+            .and_then(|s| s.parse::<u64>().ok())
+        else {
+            return Err(invalid("foreign Call"));
+        };
+        self.view(|e| {
+            if e.scalar(
+                "SELECT reconciled FROM axton_mutation_queue WHERE id=?",
+                &[json!(id)],
+            )? == Some(json!(1))
+            {
+                e.completion(id).map(Some)
+            } else {
+                Ok(None)
+            }
+        })
+    }
+}
+impl<S: ClientStore> Engine<'_, S> {
+    /// Stage admitted authority beneath local replay. No progress is inferred
+    /// from record cursors; the owning delivery worker commits coverage separately.
+    pub fn stage_authority(
+        &mut self,
+        context: &wire::RequestContext,
+        changes: &[wire::AuthorityChange],
+        held: &mut Held,
+    ) -> Result<usize> {
+        context.admit(&self.context()?)?;
+        // Immediate UNIQUE checks must see the final atomic projection, rather
+        // than a changed row conflicting with another row's superseded value.
+        // The enclosing Store transaction rolls this transient removal back on
+        // any admission, constraint or commit failure.
+        let clear_span =
+            tracing::info_span!(target: "axton::client", "delivery.apply.authority.clear")
+                .entered();
+        for change in changes {
+            change.validate()?;
+            let k = change.key();
+            let key = self.schema.record_key(&k.model, &k.identity)?;
+            if key.identity != k.identity {
+                return Err(invalid("noncanonical authority key"));
+            }
+            if let wire::AuthorityChange::Record { cursor, .. } = change
+                && self
+                    .evidence(&key)?
+                    .admission(&context.materialization, *cursor)?
+                    != evidence::AuthorityAdmission::Duplicate
+            {
+                self.main_set(&key, None)?;
+            }
+        }
+        drop(clear_span);
+        let install_span =
+            tracing::info_span!(target: "axton::client", "delivery.apply.authority.install")
+                .entered();
+        let mut applied = 0;
+        let mut ordered: Vec<_> = changes.iter().collect();
+        ordered.sort_by_key(|c| {
+            (
+                c.cursor(),
+                matches!(c,wire::AuthorityChange::Record{state,..} if state.is_null()),
+            )
+        });
+        for change in ordered {
+            change.validate()?;
+            let k = change.key();
+            let key = self.schema.record_key(&k.model, &k.identity)?;
+            if key.identity != k.identity {
+                return Err(invalid("noncanonical authority key"));
+            }
+            let mut evidence = self.evidence(&key)?;
+            match change {
+                wire::AuthorityChange::Remove { cursor, .. } => {
+                    if evidence.remove(*cursor)? {
+                        self.set_evidence(&key, &evidence)?;
+                        applied += 1;
+                    }
+                }
+                wire::AuthorityChange::Record { cursor, state, .. } => {
+                    let admission = evidence.admission(&context.materialization, *cursor)?;
+                    if admission == evidence::AuthorityAdmission::Duplicate {
+                        continue;
+                    }
+                    let incoming = if state.is_null() {
+                        None
+                    } else {
+                        Some(crate::rows::merge_identity(
+                            &key.identity,
+                            &self.schema.validate_state(&key.model, state)?,
+                        ))
+                    };
+                    evidence.install(&context.materialization, *cursor, incoming.is_none())?;
+                    self.set_evidence(&key, &evidence)?;
+                    self.exec(
+                        "axton_authority",
+                        "UPDATE axton_authority SET base=? WHERE model=? AND identity=?",
+                        &[text(&incoming)?, json!(key.model), text(&key.identity)?],
+                    )?;
+                    self.stage_one(&key, incoming.as_ref(), held)?;
+                    if incoming.is_none() {
+                        for child in self.descendants_where(&key, |e, k| {
+                            Ok(e.evidence(k)?.history.values().max().copied().unwrap_or(0)
+                                <= *cursor)
+                        })? {
+                            self.stage_one(&child, None, held)?;
+                            self.cascaded_evidence(&child)?;
+                        }
+                    }
+                    applied += 1;
+                }
+            }
+        }
+        drop(install_span);
+        Ok(applied)
+    }
+    pub fn stage_cache(
+        &mut self,
+        records: &[wire::ReadRecord],
+        store: bool,
+        held: &mut Held,
+    ) -> Result<usize> {
+        let materialization = self.context()?.materialization;
+        let mut applied = 0;
+        for record in records {
+            record.validate()?;
+            let k = &record.key;
+            let key = self.schema.record_key(&k.model, &k.identity)?;
+            if key.identity != k.identity {
+                return Err(invalid("noncanonical cache identity"));
+            }
+            let row = if record.state.is_null() {
+                None
+            } else {
+                Some(crate::rows::merge_identity(
+                    &key.identity,
+                    &self.schema.validate_state(&k.model, &record.state)?,
+                ))
+            };
+            if !store || row.is_none() || !self.evidence(&key)?.allows_cache(&materialization) {
+                continue;
+            }
+            let row = row.unwrap();
+            let mut blocked = false;
+            for relation in self.schema.model(&key.model)?.relations.clone() {
+                if relation.on_delete != "delete" {
+                    continue;
+                }
+                let mut identity = serde_json::Map::new();
+                for (field, target) in relation.fields.iter().zip(&relation.target_fields) {
+                    if row[field].is_null() {
+                        identity.clear();
+                        break;
+                    }
+                    identity.insert(target.clone(), row[field].clone());
+                }
+                if !identity.is_empty() {
+                    let parent = self
+                        .schema
+                        .record_key(&relation.target, &Value::Object(identity))?;
+                    if self
+                        .evidence(&parent)?
+                        .current
+                        .is_some_and(|e| e.deleted && e.materialization == materialization)
+                    {
+                        blocked = true;
+                        break;
+                    }
+                }
+            }
+            if blocked {
+                continue;
+            }
+            let evidence = self.evidence(&key)?;
+            self.set_evidence(&key, &evidence)?;
+            self.stage_one(&key, Some(&row), held)?;
+            applied += 1;
+        }
+        Ok(applied)
+    }
+    /// An already validated handshake establishes S and the normal starting
+    /// prefix once. Bootstrap coverage remains absent until its final owned unit.
+    /// Repeated handshakes never restamp the file's start.
+    pub fn initialize_stream(&mut self, start: u64) -> Result<()> {
+        axton_core::counter(start)?;
+        self.exec(
+            "axton_store",
+            "UPDATE axton_store SET start_cursor=?,cursor=? WHERE start_cursor IS NULL",
+            &[json!(start), json!(start)],
+        )?;
+        Ok(())
+    }
+    /// Called after an admitted complete delivery unit. Coverage and data must
+    /// share the transaction; record cursors never call this method.
+    pub fn commit_sync_coverage(&mut self, after: u64, through: u64) -> Result<()> {
+        axton_core::counter(after)?;
+        axton_core::counter(through)?;
+        if through < after {
+            return Err(invalid("invalid coverage"));
+        }
+        let cursor = self
+            .scalar("SELECT cursor FROM axton_store", &[])?
+            .filter(|v| !v.is_null())
+            .map(|v| as_u64(&v))
+            .transpose()?;
+        if cursor.unwrap_or(0) != after {
+            return Err(invalid("coverage prefix gap"));
+        }
+        self.exec(
+            "axton_store",
+            "UPDATE axton_store SET cursor=?",
+            &[json!(through)],
+        )?;
+        Ok(())
+    }
+}
+impl<S: ClientStore> Client<S> {
+    /// Storage primitive for an already admitted complete authority unit.
+    /// Task 5 supplies immutable plan/progress validation and lane ownership.
+    pub fn install_authority(
+        &mut self,
+        context: &wire::RequestContext,
+        changes: &[wire::AuthorityChange],
+        coverage: Option<(u64, u64)>,
+    ) -> Result<ApplyReport> {
+        context.admit(&self.request_context()?)?;
+        self.write(|e| {
+            let mut held = Held::new();
+            let applied = e.stage_authority(context, changes, &mut held)?;
+            if let Some((after, through)) = coverage {
+                e.commit_sync_coverage(after, through)?;
+            }
+            let completions = e.reconcile_ready(&mut held)?;
+            let reports = e.rebuild_held(&held)?;
+            Ok(ApplyReport {
+                applied,
+                reports,
+                completions,
+                ..Default::default()
+            })
+        })
+    }
+    pub fn install_cache(
+        &mut self,
+        records: &[wire::ReadRecord],
+        store: bool,
+    ) -> Result<ApplyReport> {
+        self.write(|e| {
+            let mut held = Held::new();
+            let applied = e.stage_cache(records, store, &mut held)?;
+            let reports = e.rebuild_held(&held)?;
+            Ok(ApplyReport {
+                applied,
+                reports,
+                ..Default::default()
+            })
+        })
+    }
+    pub fn record_evidence(&mut self, key: &RecordKey) -> Result<evidence::RecordEvidence> {
+        self.view(|e| e.evidence(key))
+    }
+}
+impl<S: ClientStore> ClientTransaction<'_, S> {
+    pub fn discard_mutation(&mut self, id: u64) -> Result<ApplyReport> {
+        self.cancel_unsent(id, true)
+    }
+    pub fn drop_mutation(&mut self, id: u64) -> Result<ApplyReport> {
+        self.cancel_unsent(id, false)
+    }
+    fn cancel_unsent(&mut self, id: u64, acknowledge: bool) -> Result<ApplyReport> {
+        self.savepoint(|tx| {
+            let row = tx
+                .engine
+                .rows(
+                    "SELECT batch_id,reconciled FROM axton_mutation_queue WHERE id=?",
+                    &[json!(id)],
+                )?
+                .rows;
+            let Some(row) = row.first() else {
+                return Err(invalid("unknown Mutation"));
+            };
+            if !row[0].is_null() {
+                return Err(invalid("possibly sent Mutation cannot be discarded"));
+            }
+            if row[1] == 1 {
+                return Ok(ApplyReport::default());
+            }
+            let report = tx
+                .engine
+                .reject_owned(BTreeMap::from([(id, ("dropped".into(), None))]))?;
+            if acknowledge {
+                tx.engine.acknowledge_rejection(id)?;
+            }
+            Ok(report)
+        })
+    }
+    pub fn dismiss_rejection(&mut self, id: u64) -> Result<()> {
+        self.savepoint(|tx| tx.engine.acknowledge_rejection(id))
+    }
+}
+impl<S: ClientStore> Client<S> {
+    pub fn mutation_result(&mut self, id: u64) -> Result<Option<wire::MutationResult>> {
+        self.view(|e| {
+            if e.scalar(
+                "SELECT reconciled FROM axton_mutation_queue WHERE id=?",
+                &[json!(id)],
+            )? == Some(json!(1))
+            {
+                Ok(e.outcome(id)?.map(|outcome| wire::MutationResult {
+                    mutation_id: id,
+                    outcome,
+                }))
+            } else {
+                Ok(None)
+            }
+        })
+    }
+}
+
+impl<S: ClientStore> Engine<'_, S> {
+    fn acknowledge_rejection(&mut self, id: u64) -> Result<()> {
+        if self
+            .scalar(
+                "SELECT 1 FROM axton_mutation_queue WHERE id=?",
+                &[json!(id)],
+            )?
+            .is_none()
+        {
+            return Ok(());
+        }
+        if self.scalar("SELECT 1 FROM axton_mutation_queue WHERE id=? AND rejection_code IS NOT NULL AND reconciled=1", &[json!(id)])?.is_none() {
+            return Err(invalid("completed rejection required"));
+        }
+        self.exec(
+            "axton_mutation_queue",
+            "UPDATE axton_mutation_queue SET rejection_acknowledged=1 WHERE id=?",
+            &[json!(id)],
+        )?;
+        self.exec(
+            "axton_mutation_queue_operation",
+            "DELETE FROM axton_mutation_queue_operation WHERE mutation_id=?",
+            &[json!(id)],
+        )?;
+        self.exec(
+            "axton_mutation_prerequisite",
+            "DELETE FROM axton_mutation_prerequisite WHERE ordinal=?",
+            &[json!(id)],
+        )?;
+        self.exec(
+            "axton_mutation_dependency",
+            "DELETE FROM axton_mutation_dependency WHERE ordinal=? OR depends_on=?",
+            &[json!(id), json!(id)],
+        )?;
+        Ok(())
+    }
+}

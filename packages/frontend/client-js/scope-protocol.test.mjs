@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { Client } from './api/index.mts';
-import { delivery05, emptyHandshake, read05 } from '../../../integration/bindings/client-js/store-fixture.mjs';
+import { deliveryPage, emptyHandshake, readResponse } from '../../../integration/bindings/client-js/store-fixture.mjs';
 
 async function until(predicate) {
   const end = Date.now() + 5000;
@@ -21,17 +21,17 @@ test('bound Stream Remove retains guards and newer canonical null protects delet
  const dir=await mkdtemp(join(tmpdir(),'axton-sdk-scope-'));
  const schema=JSON.parse(await readFile(new URL('../../../fixtures/schemas/entry.json',import.meta.url),'utf8'));
  const envelopes=[],errors=[];
- const page=(context,from,to,changes)=>delivery05({...context,bootstrap:false,after:from,through:to},changes);
+ const page=(context,from,to,changes)=>deliveryPage({...context,bootstrap:false,after:from,through:to},changes);
  const upsert=(cursor,state)=>({kind:'record',cursor,key:{model:'Entry',identity:{id:'e'}},state});
  let context,socket;
  const server=createServer(async(request,response)=>{
   let text='';for await(const chunk of request)text+=chunk;
   const body=JSON.parse(text);envelopes.push(body);
   if(request.url==='/sync/handshake') response.end(JSON.stringify({...emptyHandshake(body),head:1}));
-  else if(request.url==='/sync/fetch') response.end(JSON.stringify(read05(body,{id:'e',text:'read',note:null},[{key:{model:'Entry',identity:{id:'e'}},cursor:null,state:{text:'read',note:null}}])));
+  else if(request.url==='/sync/fetch') response.end(JSON.stringify(readResponse(body,{id:'e',text:'read',note:null},[{key:{model:'Entry',identity:{id:'e'}},cursor:null,state:{text:'read',note:null}}])));
   else {
     context={protocol:body.protocol,storeId:body.storeId,stream:body.stream,materialization:body.materialization};
-    response.end(JSON.stringify(delivery05(body,body.after===0&&body.through===1?[upsert(1,{text:'held',note:null})]:[])));
+    response.end(JSON.stringify(deliveryPage(body,body.after===0&&body.through===1?[upsert(1,{text:'held',note:null})]:[])));
   }
  });
  const ws=new WebSocketServer({server});ws.on('connection',current=>{socket=current;current.on('message',text=>{const body=JSON.parse(text.toString());envelopes.push(body);current.send(JSON.stringify({...emptyHandshake(body),head:1}));});});

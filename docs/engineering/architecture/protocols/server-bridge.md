@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-Define the Rust Server engine's host requests and responses: handler/Loader calls, tracking, guards, positions, publication and protocol-5 persistence operations. Error codes, refusal versus infrastructure failure and canonical identity/counter validation remain part of the contract.
+Define the Rust Server engine's host requests and responses: handler/Loader calls, tracking, guards, positions, publication and the sync persistence operations. Error codes, refusal versus infrastructure failure and canonical identity/counter validation remain part of the contract.
 
 ## 5. Building Block View
 

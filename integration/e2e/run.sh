@@ -29,6 +29,6 @@ cargo run -p axton-compiler --locked -- compile "$root/integration/e2e/behavior/
 node --test --test-timeout=120000 "$root/integration/e2e/behavior/acceptance.test.mjs"
 node --experimental-strip-types --test "$root/integration/e2e/dart-codecs.test.mts"
 
-# Retained HTTP shutdown assertions use the default protocol5 generated API.
+# Retained HTTP shutdown assertions use the default generated API.
 createdb -h 127.0.0.1 -p "$port" axton_http_shutdown
 DATABASE_URL="postgresql://$(id -un)@127.0.0.1:$port/axton_http_shutdown" node --experimental-strip-types --test "$root/integration/e2e/http-shutdown.test.mts"

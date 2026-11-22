@@ -1,11 +1,11 @@
-// Retained Bootstrap lifecycle tests use finite protocol 5 ranges.
+// Retained Bootstrap lifecycle tests use finite cursor ranges.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:axton/axton.dart';
 import 'package:test/test.dart';
 import 'store_fixture.dart';
-import 'protocol5_transport.dart';
+import 'fake_transport.dart';
 
 void main() {
   late Directory directory;

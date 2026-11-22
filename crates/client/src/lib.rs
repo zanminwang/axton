@@ -14,11 +14,11 @@ pub mod query;
 pub mod queue;
 pub mod rows;
 pub mod runtime;
-pub mod settlement05;
+pub mod settlement;
 pub mod store;
-pub mod store05;
+pub mod store_file;
 pub mod subscriptions;
-pub mod sync05;
+pub mod sync;
 pub mod unsent;
 
 pub use actions::SubmittedCall;
@@ -33,5 +33,5 @@ pub mod frontend_interface;
 pub use axton_protocols::client_bridge::model::{
     Operation, OperationKind, Readiness, Report, ReportKind,
 };
-pub use axton_protocols::sync as v05;
+pub use axton_protocols::wire;
 pub use frontend_interface::*;

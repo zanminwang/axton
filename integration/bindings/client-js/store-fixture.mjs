@@ -19,14 +19,14 @@ const canonical = (value) =>
           .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
           .join(",")}}`
       : JSON.stringify(value);
-const context05 = (body) =>
+const contextOf = (body) =>
   Object.fromEntries(
     ["protocol", "storeId", "stream", "materialization"].map((key) => [
       key,
       body[key],
     ]),
   );
-const hash05 = (domain, value) =>
+const domainHash = (domain, value) =>
   createHash("sha256")
     .update(domain + "\0")
     .update(canonical(value))
@@ -41,7 +41,7 @@ export function emptyHandshake(body) {
   };
 }
 const fixtureExpiry = Date.now() + 300000;
-export function delivery05(body, changes = [], head = body.through) {
+export function deliveryPage(body, changes = [], head = body.through) {
   const through = body.through;
   const unit = { index: 0, through, changes };
   const part = {
@@ -56,11 +56,11 @@ export function delivery05(body, changes = [], head = body.through) {
     minimumCursor: changes.length
       ? Math.min(...changes.map((change) => change.cursor))
       : null,
-    digest: hash05("axton:delivery-unit:5", unit),
-    parts: [hash05("axton:delivery-part:5", { unit: 0, part: 0, changes })],
+    digest: domainHash("axton:delivery-unit:5", unit),
+    parts: [domainHash("axton:delivery-part:5", { unit: 0, part: 0, changes })],
   };
   const header = {
-    ...context05(body),
+    ...contextOf(body),
     planId: part.planId,
     digest: "",
     bootstrap: body.bootstrap ?? false,
@@ -71,36 +71,36 @@ export function delivery05(body, changes = [], head = body.through) {
     units: [manifest],
   };
   const { digest, ...unsigned } = header;
-  header.digest = hash05("axton:delivery-plan:5", unsigned);
+  header.digest = domainHash("axton:delivery-plan:5", unsigned);
   part.planDigest = header.digest;
   return { header, parts: [part] };
 }
-export function read05(body, result = null, records = []) {
+export function readResponse(body, result = null, records = []) {
   return {
-    ...context05(body),
+    ...contextOf(body),
     requestId: body.requestId,
     outcome: { kind: "succeeded", result },
     records,
   };
 }
-const request05 = (text) => {
+const parseRequest = (text) => {
   const request = typeof text === "string" ? JSON.parse(text) : text;
   if (request.protocol !== 6) throw Error("fixture requires protocol 6");
   return request;
 };
 export function emptyPull(text) {
-  const request = request05(text);
-  return JSON.stringify(request.materialization ? delivery05(request) : emptyHandshake(request));
+  const request = parseRequest(text);
+  return JSON.stringify(request.materialization ? deliveryPage(request) : emptyHandshake(request));
 }
 export function emptyRead(text) {
-  const request = request05(text);
-  return JSON.stringify(read05(request, null,
+  const request = parseRequest(text);
+  return JSON.stringify(readResponse(request, null,
     request.invocation.kind === "fetch" ? [{ key: request.invocation.key, cursor: null, state: null }] : []));
 }
 export function emptyMutation(text) {
-  const request = request05(text);
+  const request = parseRequest(text);
   return JSON.stringify({
-    ...context05(request), batchId: request.batchId, digest: request.digest,
+    ...contextOf(request), batchId: request.batchId, digest: request.digest,
     results: request.mutations.map(mutation => ({mutationId: mutation.id,
       outcome: {kind: "accepted", syncCursor: 0, materialization: request.materialization, result: null, targets: []}})),
   });
@@ -113,7 +113,7 @@ export function emptyMutation(text) {
 export const deliveringNetwork = (records) => () => ({
   open() {},
   async push(route, text) {
-    const request = request05(text);
+    const request = parseRequest(text);
     if (route === "handshake")
       return JSON.stringify({ ...emptyHandshake(request), head: 1 });
     if (route !== "pull") throw Error("offline");
@@ -125,7 +125,7 @@ export const deliveringNetwork = (records) => () => ({
           state,
         }))
       : [];
-    return JSON.stringify(delivery05(request, changes, 1));
+    return JSON.stringify(deliveryPage(request, changes, 1));
   },
 });
 /** Open the Store with `Client` over `deliveringNetwork`, take its Bootstrap, and close it. */
@@ -169,21 +169,21 @@ export function streamServer(initial = []) {
         void Promise.resolve().then(() => on.message(JSON.stringify(handshake)));
       },
       async push(route, text) {
-        const request = request05(text);
+        const request = parseRequest(text);
         if (route === "handshake")
           return JSON.stringify({ ...emptyHandshake(request), head: log.length });
         if (route !== "pull") throw Error("offline");
-        context = context05(request);
+        context = contextOf(request);
         const from = request.bootstrap ? 0 : request.after;
         return JSON.stringify(
-          delivery05(request, log.slice(from, request.through).flat(), log.length),
+          deliveryPage(request, log.slice(from, request.through).flat(), log.length),
         );
       },
     }),
     async send(rows) {
       log.push(rows.map(record(log.length + 1)));
       const through = log.length;
-      const page = delivery05(
+      const page = deliveryPage(
         { ...context, bootstrap: false, after: through - 1, through },
         log[through - 1],
         through,

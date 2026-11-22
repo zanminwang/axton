@@ -84,7 +84,7 @@ pub enum LoaderMode {
 }
 
 pub const OPERATIONS: [&str; 11] = [
-    "protocol05",
+    "sync",
     "head",
     "savepoint",
     "rollback",
@@ -98,7 +98,7 @@ pub const OPERATIONS: [&str; 11] = [
 ];
 
 /// Every request the engine issues to a host, tagged by `op` on the wire.
-/// Additive protocol-5 storage operations, all inside the caller's transaction.
+/// Sync storage operations, all inside the caller's transaction.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "op",
@@ -106,11 +106,11 @@ pub const OPERATIONS: [&str; 11] = [
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
-pub enum Protocol05Operation {
+pub enum SyncOperation {
     BootstrapState {
         store_id: String,
     },
-    HandleBootstrap05 {
+    HandleBootstrap {
         owner: String,
         store_id: String,
         stream: String,
@@ -132,7 +132,7 @@ pub enum Protocol05Operation {
     },
     Admit {
         owner: String,
-        context: crate::sync::RequestContext,
+        context: crate::wire::RequestContext,
     },
     /// Read immutable Store ownership without locking Batch progress.
     InspectStore {
@@ -166,7 +166,7 @@ pub enum Protocol05Operation {
         ordinal: u64,
         #[serde(with = "cursor")]
         count: u64,
-        result: crate::sync::MutationResult,
+        result: crate::wire::MutationResult,
     },
     SaveResults {
         store_id: String,
@@ -177,7 +177,7 @@ pub enum Protocol05Operation {
         #[serde(with = "cursor")]
         count: u64,
         digest: String,
-        results: Vec<crate::sync::MutationResult>,
+        results: Vec<crate::wire::MutationResult>,
     },
     ReadTracking {
         records: Vec<MemberKey>,
@@ -210,9 +210,9 @@ pub enum Protocol05Operation {
     deny_unknown_fields
 )]
 pub enum HostRequest {
-    /// Protocol 5 persistence/application seam; its inner operation is validated by the v05 executor.
-    Protocol05 {
-        request: Protocol05Operation,
+    /// Sync persistence/application seam; its inner operation is validated by the Batch entry executor.
+    Sync {
+        request: SyncOperation,
     },
     /// The stream's current head cursor.
     Head {
@@ -609,7 +609,7 @@ impl TryFrom<HandledWire> for Handled {
     }
 }
 
-/// Trusted carrier constructed only after protocol-5 principal/Store/Stream admission.
+/// Trusted carrier constructed only after principal/Store/Stream admission.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HandlerContext {

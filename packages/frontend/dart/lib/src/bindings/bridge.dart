@@ -553,7 +553,6 @@ class Bridge implements RuntimeHost, ObserverHost, Finalizable {
       'path': path,
       'schema': schema,
       'stream': stream,
-      'protocol': 5,
       if (diagnostics != null) 'diagnostics': true,
       if (prerequisiteHandlers.isNotEmpty)
         'prerequisiteHandlers': prerequisiteHandlers,
